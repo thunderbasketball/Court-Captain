@@ -2,6 +2,7 @@
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import type { Role } from "./teams";
+import { hasArea } from "./org-admin";
 
 type Deps = { pool: Pool; now: () => Date };
 
@@ -19,7 +20,7 @@ const NEXT_PRACTICES = 3;
 
 // Director only. Null when the player isn't on a team.
 export async function playerTeam(deps: Deps, viewer: SessionUser, registrantId: unknown): Promise<PlayerTeam | null> {
-  if (!viewer.isDirector) throw new Error("Director only");
+  if (!hasArea(viewer, "players", "teams")) throw new Error("Director only");
   if (typeof registrantId !== "string" || !/^[\w-]{1,40}$/.test(registrantId)) return null;
   const t = await deps.pool.query<Omit<PlayerTeam, "staff" | "practices">>(
     `select t.id::text, t.name, t.level, p.rostered_by as "rosteredBy", p.rostered_at as "rosteredAt"

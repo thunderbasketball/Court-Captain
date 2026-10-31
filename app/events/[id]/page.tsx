@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
+import { requireFeature } from "@/lib/features-server";
 import { db } from "@/lib/db";
 import { gradesText } from "@/lib/event-names";
 import { getEvent } from "@/lib/events";
@@ -10,6 +11,7 @@ import ChatLink from "../../ChatLink";
 import { eventWhen } from "../format";
 import CheckIn from "./CheckIn";
 import EventTools from "./EventTools";
+import { hasArea } from "@/lib/org-admin";
 
 export default function EventPage({ params }: PageProps<"/events/[id]">) {
   return (
@@ -22,13 +24,14 @@ export default function EventPage({ params }: PageProps<"/events/[id]">) {
 async function Event({ params }: { params: PageProps<"/events/[id]">["params"] }) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
+  await requireFeature("thunder", "events");
   const { id } = await params;
   const event = await getEvent({ pool: db, now: () => new Date() }, user, id);
   if (!event) notFound();
 
   return (
     <>
-      <AppHeader user={user} tab="events" context={user.isDirector ? "director" : undefined} />
+      <AppHeader user={user} tab="schedule" context={user.isDirector ? "director" : undefined} />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
         <Link href="/events" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
           ← Events
@@ -46,7 +49,7 @@ async function Event({ params }: { params: PageProps<"/events/[id]">["params"] }
           {event.staff.length ? event.staff.join(", ") : "Director only"}
         </p>
         {event.notes && <p className="mt-2 text-sm whitespace-pre-wrap">{event.notes}</p>}
-        {user.isDirector && <EventTools id={event.id} name={event.name} />}
+        {hasArea(user, "programs") && <EventTools id={event.id} name={event.name} />}
         <CheckIn target={{ kind: "event", id: event.id }} players={event.players} />
       </main>
     </>

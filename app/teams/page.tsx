@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
+import { requireFeature } from "@/lib/features-server";
 import { dmKey } from "@/lib/chat";
 import { db } from "@/lib/db";
 import { gradesText } from "@/lib/event-names";
@@ -12,6 +13,7 @@ import { ContactChip, GroupTextButton } from "../Contacts";
 import ChatLink from "../ChatLink";
 import NotifyButton from "../NotifyButton";
 import RosterCountButton from "./RosterCountButton";
+import { hasArea } from "@/lib/org-admin";
 
 export default function TeamsPage() {
   return (
@@ -24,7 +26,8 @@ export default function TeamsPage() {
 async function Teams() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
-  if (!user.isDirector) redirect("/");
+  await requireFeature("thunder", "team-building");
+  if (!hasArea(user, "teams")) redirect("/");
 
   const teams = await listTeams({ pool: db, now: () => new Date() }, user);
   const groups: { level: string; gender: string; teams: TeamListItem[] }[] = [];

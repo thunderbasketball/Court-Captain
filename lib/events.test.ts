@@ -106,7 +106,7 @@ describe("events", () => {
     expect(await bad({ gender: "Unisex" })).toBe("Pick Boys, Girls, or Coed.");
     expect(await bad({ grades: [] })).toBe("Pick at least one grade.");
     expect(await bad({ staff: ["5550003"] })).toBe("One of the check-in people is no longer active. Pick again.");
-    expect(await createEvent(deps(), helper, tryouts)).toEqual({ ok: false, message: "Only the Director can manage events." });
+    expect(await createEvent(deps(), helper, tryouts)).toEqual({ ok: false, message: "Only a Director of Programs can manage events." });
   });
 
   it("only the Director and the event's check-in people can open it or mark players; who marked it is recorded", async () => {

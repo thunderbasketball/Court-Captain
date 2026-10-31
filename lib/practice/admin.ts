@@ -6,6 +6,7 @@ import { withTx } from "../sql";
 import { zonedTime } from "../time";
 import { describeRule, insertRule, materializeRules, removeRule, specFrom, yearsToFill, type RuleKind } from "./rules";
 import { blockScope, reopenScope, type RemovedBooking } from "./scope";
+import { hasArea } from "../org-admin";
 
 export type { RemovedBooking } from "./scope";
 
@@ -21,7 +22,7 @@ async function run<T extends object>(fn: () => Promise<T>): Promise<Result<T>> {
     throw e;
   }
 }
-const directorOnly = { ok: false as const, message: "Only the Director can change gyms and practice slots." };
+const directorOnly = { ok: false as const, message: "Only a Director of Facilities can change gyms and practice slots." };
 const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
 
 export const SLOT_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]; // 8 AM – 9 PM starts
@@ -46,7 +47,8 @@ function cleanRange(
   if (!a || !b) throw new UserError("Pick a From and To date.");
   const start = Date.UTC(+a[1], +a[2] - 1, +a[3]);
   const end = Date.UTC(+b[1], +b[2] - 1, +b[3]);
-  if (Number.isNaN(start) || Number.isNaN(end) || end < start) throw new UserError("The To date must be on or after the From date.");
+  if (Number.isNaN(start) || Number.isNaN(end) || end < start)
+    throw new UserError("The To date must be on or after the From date.");
   if ((end - start) / 86_400_000 > MAX_DAYS) throw new UserError("Pick a range of about a year or less.");
   const days = [];
   for (let t = start; t <= end; t += 86_400_000) {
@@ -64,15 +66,31 @@ function cleanRange(
 
 // ---- Gyms ----
 
-export async function addGym(deps: Deps, viewer: SessionUser, input: { name: unknown; courts: unknown }): Promise<Result<{ id: string }>> {
-  if (!viewer.isDirector) return directorOnly;
+export async function addGym(
+  deps: Deps,
+  viewer: SessionUser,
+  input: { name: unknown; courts: unknown },
+): Promise<Result<{ id: string }>> {
+  if (!hasArea(viewer, "facilities")) return directorOnly;
   return run(async () => {
     const name = cleanPlaceName(input.name, "gym name");
     const list = Array.isArray(input.courts) ? input.courts : [];
     if (list.length < 1 || list.length > 12) throw new UserError("A gym needs 1 to 12 courts.");
     const courts = list.map((c) => cleanPlaceName(c, "court name"));
-    if (new Set(courts.map((c) => c.toLowerCase())).size !== courts.length) throw new UserError("Each court needs a different name.");
+    if (new Set(courts.map((c) => c.toLowerCase())).size !== courts.length)
+      throw new UserError("Each court needs a different name.");
     return withTx(deps.pool, async (q) => {
+      // A gym that was removed but kept for its past practices (any capitals) comes back with these courts.
+      const old = await q.query<{ id: string }>("select id::text from gyms where lower(name) = lower($1) and not active for update", [name]);
+      if (old.rows[0]) {
+        await q.query("update gyms set active = true where id = $1", [old.rows[0].id]);
+        await q.query("update courts set active = (name = any($2::text[])) where gym_id = $1", [old.rows[0].id, courts]);
+        await q.query("insert into courts (gym_id, name) select $1, unnest($2::text[]) on conflict (gym_id, name) do nothing", [
+          old.rows[0].id,
+          courts,
+        ]);
+        return { id: old.rows[0].id };
+      }
       const g = await q.query<{ id: string }>("insert into gyms (name) values ($1) on conflict (name) do nothing returning id::text", [
         name,
       ]);
@@ -81,6 +99,45 @@ export async function addGym(deps: Deps, viewer: SessionUser, input: { name: unk
       return { id: g.rows[0].id };
     });
   });
+}
+
+// Delete a gym. Refused while any of its courts has an upcoming booked practice. A gym with past practices is kept
+// (inactive, hidden) so practice history and attendance stay; its upcoming open slots and availability go.
+// A gym that never had a practice is deleted with its courts, slots, blackouts and availability.
+export async function deleteGym(deps: Deps, viewer: SessionUser, gymId: unknown): Promise<Result<{ kept: boolean }>> {
+  if (!hasArea(viewer, "facilities")) return directorOnly;
+  if (typeof gymId !== "string" || !/^\d{1,18}$/.test(gymId)) return { ok: false, message: "That gym no longer exists." };
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      const g = await q.query<{ name: string }>("select name from gyms where id = $1 and active for update", [gymId]);
+      if (!g.rows[0]) throw new UserError("That gym no longer exists.");
+      const n = await q.query<{ upcoming: number; past: number }>(
+        `select count(*) filter (where s.starts_at > $2)::int as upcoming, count(*) filter (where s.starts_at <= $2)::int as past
+         from slots s join courts c on c.id = s.court_id where c.gym_id = $1 and s.team_id is not null`,
+        [gymId, deps.now()],
+      );
+      const { upcoming, past } = n.rows[0];
+      if (upcoming)
+        throw new UserError(
+          `${g.rows[0].name} has ${upcoming} upcoming booked practice${upcoming === 1 ? "" : "s"}. Release or move ${upcoming === 1 ? "it" : "them"} first.`,
+        );
+      if (!past) {
+        await q.query("delete from gyms where id = $1", [gymId]);
+        return { kept: false };
+      }
+      await q.query("delete from slots s using courts c where c.id = s.court_id and c.gym_id = $1 and s.starts_at > $2", [
+        gymId,
+        deps.now(),
+      ]);
+      await q.query(
+        "delete from gym_availability where gym_id = $1 and day >= ($2::timestamptz at time zone 'America/New_York')::date",
+        [gymId, deps.now()],
+      );
+      await q.query("update courts set active = false where gym_id = $1", [gymId]);
+      await q.query("update gyms set active = false where id = $1", [gymId]);
+      return { kept: true };
+    }),
+  );
 }
 
 // ---- Slots ----
@@ -104,7 +161,7 @@ export async function addSlots(
   viewer: SessionUser,
   input: AddSlotsInput,
 ): Promise<Result<{ added: number; skipped: number; blocked: number }>> {
-  if (!viewer.isDirector) return directorOnly;
+  if (!hasArea(viewer, "facilities")) return directorOnly;
   return run(async () => {
     if (!isId(input.gymId)) throw new UserError("Pick a gym.");
     const range = cleanRange(input.from, input.to);
@@ -149,9 +206,74 @@ export async function addSlots(
   });
 }
 
+// Facilities → Availability (lib/facilities.ts): make a gym's practice slots on these dates match its Practice hours.
+// `window(day)` is the day's Practice hours ("HH:MM"), or null when the day isn't Practice any more. Each goal (active
+// court) gets a 60-minute slot at every hour that fits (6–9 PM → 6, 7, 8); blacked-out times come in blocked. Open slots
+// outside the hours go. Booked practices are never removed: if any would be, nothing changes and `error` says so.
+export async function syncPracticeSlots(
+  q: PoolClient,
+  gymId: string,
+  days: string[],
+  window: (day: string) => { starts: string; ends: string } | null,
+  who: string,
+  now: Date,
+): Promise<{ added: number; removed: number } | { error: string }> {
+  const mins = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+  const courts = (await q.query<{ id: string }>("select id::text from courts where gym_id = $1 and active order by name", [gymId])).rows;
+  const existing = await q.query<{ id: string; court_id: string; day: string; minute: number; team_id: string | null }>(
+    `select s.id::text, s.court_id::text, to_char((s.starts_at at time zone 'America/New_York')::date, 'YYYY-MM-DD') as day,
+            (extract(hour from s.starts_at at time zone 'America/New_York') * 60
+             + extract(minute from s.starts_at at time zone 'America/New_York'))::int as minute, s.team_id::text
+     from slots s join courts c on c.id = s.court_id
+     where c.gym_id = $1 and c.active and (s.starts_at at time zone 'America/New_York')::date = any($2::date[])`,
+    [gymId, days],
+  );
+  const wanted = new Map(
+    days.map((d) => {
+      const w = window(d);
+      const list: number[] = [];
+      if (w) for (let m = mins(w.starts); m + 60 <= mins(w.ends); m += 60) list.push(m);
+      return [d, list];
+    }),
+  );
+  const drop = existing.rows.filter((s) => !wanted.get(s.day)!.includes(s.minute));
+  const booked = drop.filter((s) => s.team_id).length;
+  if (booked)
+    return {
+      error: `${booked} booked practice${booked === 1 ? " falls" : "s fall"} outside those hours. Release or move ${booked === 1 ? "it" : "them"} first.`,
+    };
+  if (drop.length) await q.query("delete from slots where id = any($1::bigint[])", [drop.map((s) => s.id)]);
+  const have = new Set(existing.rows.map((s) => `${s.court_id}|${s.day}|${s.minute}`));
+  await materializeRules(q, [...new Set(days.map((d) => Number(d.slice(0, 4))))], now);
+  let added = 0;
+  for (const [day, list] of wanted)
+    for (const m of list) {
+      const reason = await blackoutFor(q, gymId, day, m);
+      const startsAt = zonedTime(Number(day.slice(0, 4)), Number(day.slice(5, 7)), Number(day.slice(8, 10)), Math.floor(m / 60), m % 60);
+      for (const c of courts) {
+        if (have.has(`${c.id}|${day}|${m}`)) continue;
+        const r = await q.query(
+          `insert into slots (court_id, starts_at, blackout, note, booked_by, booked_at, created_by)
+           values ($1, $2, $3, $4, $5, $6, $5) on conflict (court_id, starts_at) do nothing`,
+          [c.id, startsAt, reason !== null, reason || null, who, reason !== null ? now : null],
+        );
+        added += r.rowCount ?? 0;
+      }
+    }
+  return { added, removed: drop.length };
+}
+
 // ---- Blackouts ----
 
-export type BlackoutInput = { mode: unknown; gymId: unknown; from: unknown; to: unknown; hour: unknown; reason: unknown; repeat?: unknown };
+export type BlackoutInput = {
+  mode: unknown;
+  gymId: unknown;
+  from: unknown;
+  to: unknown;
+  hour: unknown;
+  reason: unknown;
+  repeat?: unknown;
+};
 
 function cleanReason(v: unknown): string | null {
   const s = typeof v === "string" ? v.trim().replace(/\s+/g, " ") : "";
@@ -167,17 +289,19 @@ export async function blackoutDates(
   viewer: SessionUser,
   input: BlackoutInput,
 ): Promise<Result<{ slots: number; removed: RemovedBooking[]; rule: string | null }>> {
-  if (!viewer.isDirector) return directorOnly;
+  if (!hasArea(viewer, "facilities")) return directorOnly;
   return run(async () => {
     const mode = input.mode === "block" || input.mode === "restore" ? input.mode : null;
     if (!mode) throw new UserError("Choose Block or Restore.");
     const range = cleanRange(input.from, input.to);
     const gymId = input.gymId === "all" ? null : isId(input.gymId) ? input.gymId : undefined;
     if (gymId === undefined) throw new UserError("Pick a gym.");
-    const minute = input.hour === "all" ? null : SLOT_HOURS.includes(input.hour as number) ? (input.hour as number) * 60 : undefined;
+    const minute =
+      input.hour === "all" ? null : SLOT_HOURS.includes(input.hour as number) ? (input.hour as number) * 60 : undefined;
     if (minute === undefined) throw new UserError("Pick a time.");
     const reason = cleanReason(input.reason);
-    const repeat = input.repeat === "date" || input.repeat === "nth" || input.repeat === "last" ? (input.repeat as RuleKind) : null;
+    const repeat =
+      input.repeat === "date" || input.repeat === "nth" || input.repeat === "last" ? (input.repeat as RuleKind) : null;
     if (repeat && range.days.length > 14) throw new UserError("A yearly blackout can cover up to 14 days.");
     const now = deps.now();
     const scope = { from: range.from, to: range.to, gymId, minute, now };
@@ -228,8 +352,12 @@ export async function blackoutDates(
   });
 }
 
-export async function deleteBlackoutRule(deps: Deps, viewer: SessionUser, ruleId: unknown): Promise<Result<{ reopened: number }>> {
-  if (!viewer.isDirector) return directorOnly;
+export async function deleteBlackoutRule(
+  deps: Deps,
+  viewer: SessionUser,
+  ruleId: unknown,
+): Promise<Result<{ reopened: number }>> {
+  if (!hasArea(viewer, "facilities")) return directorOnly;
   if (!isId(ruleId)) return { ok: false, message: "That yearly blackout no longer exists." };
   return run(() => withTx(deps.pool, async (q) => ({ reopened: await removeRule(q, ruleId, deps.now()) })));
 }
@@ -240,7 +368,7 @@ export async function setSlotBlocked(
   viewer: SessionUser,
   input: { slotId: unknown; blocked: unknown; reason?: unknown },
 ): Promise<Result<{ removed: string | null }>> {
-  if (!viewer.isDirector) return directorOnly;
+  if (!hasArea(viewer, "facilities")) return directorOnly;
   if (!isId(input.slotId)) return { ok: false, message: "That practice slot no longer exists." };
   const slotId = input.slotId;
   return run(async () => {
@@ -253,17 +381,16 @@ export async function setSlotBlocked(
       if (!s.rows[0]) throw new UserError("That practice slot no longer exists.");
       if (s.rows[0].starts_at <= deps.now()) throw new UserError("That practice time has already passed.");
       if (input.blocked === true) {
-        await q.query("update slots set blackout = true, team_id = null, note = $2, booked_by = $3, booked_at = $4 where id = $1", [
-          slotId,
-          reason,
-          by(viewer),
-          deps.now(),
-        ]);
+        await q.query(
+          "update slots set blackout = true, team_id = null, note = $2, booked_by = $3, booked_at = $4 where id = $1",
+          [slotId, reason, by(viewer), deps.now()],
+        );
         return { removed: s.rows[0].team };
       }
-      await q.query("update slots set blackout = false, note = null, booked_by = null, booked_at = null where id = $1 and blackout", [
-        slotId,
-      ]);
+      await q.query(
+        "update slots set blackout = false, note = null, booked_by = null, booked_at = null where id = $1 and blackout",
+        [slotId],
+      );
       return { removed: null };
     });
   });

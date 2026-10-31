@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
+import { requireFeature } from "@/lib/features-server";
 import { listChats, newChatOptions } from "@/lib/chat";
 import { currentContexts } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
@@ -28,6 +29,7 @@ const when = (d: Date) => {
 async function Chats() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
+  await requireFeature("thunder", "chat");
   if (!user.hasThunderRole) redirect("/");
   const deps = { pool: db, now: () => new Date() };
   const [chats, options, { active }] = await Promise.all([listChats(deps, user), newChatOptions(deps, user), currentContexts(user)]);

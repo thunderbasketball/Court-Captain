@@ -2,6 +2,7 @@ import "server-only";
 import { db } from "./db";
 import type { SessionUser } from "./auth/service";
 import { getSyncStatus, type SyncStatus } from "./teamsnap/sync";
+import { hasArea } from "./org-admin";
 
 export type PlayerListItem = {
   registrantId: string;
@@ -18,28 +19,77 @@ export type PlayerListItem = {
   team: string | null; // the team they're rostered on
 };
 
-export type PlayerGroup = { gender: "Boys" | "Girls"; grade: string; players: PlayerListItem[] };
+export type MemberPlayer = PlayerListItem & {
+  gradeSort: number;
+  interestedTeams: string[]; // teams that marked them Interested (shown on unrostered players)
+  playsUp: string | null; // "3rd grader" when rostered on a team of another grade
+};
+export type GradeTeam = { id: string; name: string; players: MemberPlayer[] };
+export type GradeGroup = { gender: "Boys" | "Girls"; grade: string; unrostered: MemberPlayer[]; teams: GradeTeam[] };
 
-// Director only. Grouped by Gender, then Grade (K first); each group sorted by last name.
-export async function listPlayerGroups(viewer: SessionUser): Promise<{ groups: PlayerGroup[]; importedAt: Date | null; importedBy: string | null; sync: SyncStatus | null }> {
-  if (!viewer.isDirector) throw new Error("Director only");
-  const r = await db.query<PlayerListItem & { importedAt: Date; importedBy: string }>(
-    `select registrant_id as "registrantId", first_name as "firstName", last_name as "lastName", gender, grade,
-            to_char(birthdate, 'YYYY-MM-DD') as birthdate,
-            nullif(trim(coalesce(parent1_first, '') || ' ' || coalesce(parent1_last, '')), '') as "parentName",
-            parent1_cell as "parentCell", parent1_email as "parentEmail",
-            coach_request as "coachRequest", coaching_interest as "coachingInterest",
-            (select t.name from team_players p join teams t on t.id = p.team_id
-             where p.registrant_id = registrations.registrant_id order by t.name limit 1) as team,
-            imported_at as "importedAt", imported_by as "importedBy"
-     from registrations
-     order by gender, grade_sort, lower(last_name), lower(first_name)`,
+const gradeOf = (sort: number) => (sort === 0 ? "K" : String(sort));
+const ordinalOf = (g: string) => (g === "K" ? "Kindergartner" : `${g}${["", "st", "nd", "rd"][Number(g)] ?? "th"} grader`);
+
+// Members → Players (Directors of Players or Teams). Boys then Girls, by grade; in each grade the unrostered players first
+// (by last name), then each team's roster (teams by name). A rostered player is listed with their team's grade, noting
+// their own grade when it differs ("plays up").
+export async function listPlayersByGrade(
+  viewer: SessionUser,
+): Promise<{
+  groups: GradeGroup[];
+  total: number;
+  boys: number;
+  girls: number;
+  importedAt: Date | null;
+  importedBy: string | null;
+  sync: SyncStatus | null;
+}> {
+  if (!hasArea(viewer, "players", "teams")) throw new Error("Director only");
+  const r = await db.query<
+    PlayerListItem & { gradeSort: number; teamId: string | null; teamGrade: number | null; interestedTeams: string[] }
+  >(
+    `select r.registrant_id as "registrantId", r.first_name as "firstName", r.last_name as "lastName", r.gender, r.grade,
+            r.grade_sort as "gradeSort", to_char(r.birthdate, 'YYYY-MM-DD') as birthdate,
+            nullif(trim(coalesce(r.parent1_first, '') || ' ' || coalesce(r.parent1_last, '')), '') as "parentName",
+            r.parent1_cell as "parentCell", r.parent1_email as "parentEmail",
+            r.coach_request as "coachRequest", r.coaching_interest as "coachingInterest",
+            t.id::text as "teamId", t.name as team, t.grade_sort as "teamGrade",
+            array(select t2.name from evaluations e join teams t2 on t2.id = e.team_id
+                  where e.registrant_id = r.registrant_id and e.interested order by t2.name) as "interestedTeams"
+     from registrations r
+     left join lateral (select p.team_id from team_players p join teams x on x.id = p.team_id
+                        where p.registrant_id = r.registrant_id order by x.name limit 1) tp on true
+     left join teams t on t.id = tp.team_id
+     order by lower(r.last_name), lower(r.first_name)`,
   );
-  const groups: PlayerGroup[] = [];
-  for (const p of r.rows) {
-    let g = groups.at(-1);
-    if (!g || g.gender !== p.gender || g.grade !== p.grade) groups.push((g = { gender: p.gender, grade: p.grade, players: [] }));
-    g.players.push(p);
+  const groups = new Map<string, GradeGroup & { sort: number }>();
+  for (const { teamId, teamGrade, ...p } of r.rows) {
+    const sort = teamId !== null && teamGrade !== null ? teamGrade : p.gradeSort;
+    const key = `${p.gender}|${String(sort).padStart(2, "0")}`;
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = { gender: p.gender, grade: gradeOf(sort), sort, unrostered: [], teams: [] }));
+    const player: MemberPlayer = { ...p, playsUp: teamId !== null && p.gradeSort !== sort ? ordinalOf(p.grade) : null };
+    if (teamId === null) g.unrostered.push(player);
+    else {
+      let t = g.teams.find((x) => x.id === teamId);
+      if (!t) g.teams.push((t = { id: teamId, name: p.team!, players: [] }));
+      t.players.push(player);
+    }
   }
-  return { groups, importedAt: r.rows[0]?.importedAt ?? null, importedBy: r.rows[0]?.importedBy ?? null, sync: await getSyncStatus(db) };
+  const list: GradeGroup[] = [...groups.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, g]) => ({ gender: g.gender, grade: g.grade, unrostered: g.unrostered, teams: g.teams }));
+  for (const g of list) g.teams.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const imported = await db.query<{ at: Date; by: string }>(
+    "select imported_at as at, imported_by as by from registrations limit 1",
+  );
+  return {
+    groups: list,
+    total: r.rows.length,
+    boys: r.rows.filter((p) => p.gender === "Boys").length,
+    girls: r.rows.filter((p) => p.gender === "Girls").length,
+    importedAt: imported.rows[0]?.at ?? null,
+    importedBy: imported.rows[0]?.by ?? null,
+    sync: await getSyncStatus(db),
+  };
 }

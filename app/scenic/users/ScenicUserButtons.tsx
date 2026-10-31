@@ -64,7 +64,7 @@ export function RequestButtons({ coachId, name, wants }: { coachId: string; name
 }
 
 // Pop-up to change someone's Scenic City roles.
-export function EditScenicRoles({ coachId, name, roles, isSelf }: { coachId: string; name: string; roles: ScenicRole[]; isSelf: boolean }) {
+export function EditScenicRoles({ coachId, name, roles }: { coachId: string; name: string; roles: ScenicRole[] }) {
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const close = () => dialog.current?.close();
@@ -115,25 +115,24 @@ export function EditScenicRoles({ coachId, name, roles, isSelf }: { coachId: str
             <CloseButton onClick={close} />
           </div>
           <div className="divide-y divide-zinc-100 dark:divide-white/5">
-            {SCENIC_ROLES.map((r) => {
-              const locked = isSelf && r === "Director";
+            {SCENIC_ROLES.filter((r) => r !== "Director").map((r) => {
               return (
-                <label key={r} className={`flex items-center gap-3 py-3 ${locked ? "opacity-50" : ""}`}>
+                <label key={r} className="flex items-center gap-3 py-3">
                   <input
                     type="checkbox"
                     className="size-5 accent-scenic-navy"
                     checked={on.includes(r)}
-                    disabled={locked}
                     onChange={(e) => setOn(e.target.checked ? [...on, r] : on.filter((x) => x !== r))}
                   />
                   <span>
                     <span className="block text-sm font-medium">{r}</span>
-                    <span className="block text-xs text-zinc-500">{locked ? "You can't remove your own Director role." : ABOUT[r]}</span>
+                    <span className="block text-xs text-zinc-500">{ABOUT[r]}</span>
                   </span>
                 </label>
               );
             })}
           </div>
+          <p className="text-xs text-zinc-500">Directors are added in the Directors section of this page.</p>
           {on.includes("Partner") || !roles.includes("Partner") ? null : (
             <p className="text-xs text-zinc-500">Removing Partner also takes them off their schools/organizations.</p>
           )}

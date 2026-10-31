@@ -42,9 +42,9 @@ describe("userContexts", () => {
     expect(await userContexts(db.pool, base)).toEqual([]);
   });
 
-  it("one Scenic City chip, with the highest Scenic City role; a Request alone gives none", async () => {
+  it("one Scenic City chip per Scenic City role (Director, Partner, Solo, Coach order); a Request alone gives none", async () => {
     await grant(db.pool, "5550001 scenic-city Request");
-    expect((await userContexts(db.pool, base)).map((x) => x.key)).not.toContain("scenic");
+    expect((await userContexts(db.pool, base)).some((x) => x.org === "scenic-city")).toBe(false);
     await grant(db.pool, "5550001 scenic-city Coach", "5550001 scenic-city Partner");
     const c = await userContexts(db.pool, { ...base, isDirector: true });
     expect(c.map((x) => `${x.org}:${x.label}`)).toEqual([
@@ -53,8 +53,9 @@ describe("userContexts", () => {
       "thunder:4G Test · Head Coach",
       "thunder:10B Other · Team Parent",
       "scenic-city:Partner",
+      "scenic-city:Coach",
     ]);
-    expect(c.at(-1)).toMatchObject({ key: "scenic", href: "/scenic", role: "Partner" });
+    expect(c.at(-2)).toMatchObject({ key: "scenic:Partner", href: "/scenic", role: "Partner" });
   });
 
   it("remembers the last context only while the person still holds it", async () => {

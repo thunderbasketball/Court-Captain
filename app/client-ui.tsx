@@ -1,6 +1,7 @@
 "use client";
 // Small client-side pieces shared by the pop-up forms.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 export const dialogCls =
   "m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-2xl bg-white p-0 text-zinc-900 shadow-xl backdrop:bg-zinc-950/40 backdrop:backdrop-blur-sm dark:bg-zinc-900 dark:text-zinc-100";
@@ -83,11 +84,17 @@ export function useConfirm(): [(o: ConfirmOptions) => Promise<boolean>, ReactNod
         <div className="p-6 text-center">
           <span
             className={`mx-auto flex size-12 items-center justify-center rounded-full ${
-              danger ? "bg-red-100 text-red-600 dark:bg-red-500/15 dark:text-red-400" : "bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400"
+              danger
+                ? "bg-red-100 text-red-600 dark:bg-red-500/15 dark:text-red-400"
+                : "bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400"
             }`}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden className="size-6">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0 3.75h.008M10.34 3.94 1.82 18.7A1.88 1.88 0 0 0 3.45 21.5h17.1a1.88 1.88 0 0 0 1.63-2.8L13.66 3.94a1.88 1.88 0 0 0-3.32 0Z" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v3.75m0 3.75h.008M10.34 3.94 1.82 18.7A1.88 1.88 0 0 0 3.45 21.5h17.1a1.88 1.88 0 0 0 1.63-2.8L13.66 3.94a1.88 1.88 0 0 0-3.32 0Z"
+              />
             </svg>
           </span>
           <h2 className="mt-4 text-lg font-semibold">{opts.title}</h2>
@@ -116,4 +123,14 @@ export function useConfirm(): [(o: ConfirmOptions) => Promise<boolean>, ReactNod
     </dialog>
   );
   return [ask, element];
+}
+
+// Renders its children at the end of the page (document.body), e.g. a pop-up opened from a menu that hides itself.
+export function OnPage({ children }: { children: ReactNode }) {
+  const ready = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
+  return ready ? createPortal(children, document.body) : null;
 }

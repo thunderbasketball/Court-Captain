@@ -4,6 +4,10 @@ import type { Pool, PoolClient } from "pg";
 import { withTx } from "../sql";
 import { localParts, parseSheetTime } from "../time";
 
+// The sheet's "North" / "South" are the two practice halves of one court, called Goal #1 / Goal #2 in the app.
+const GOALS: Record<string, string> = { north: "Goal #1", south: "Goal #2" };
+const courtName = (c: string) => GOALS[c.toLowerCase()] ?? c;
+
 export type Problem = { row: number; tab: string; message: string };
 type SheetSlot = {
   row: number;
@@ -26,7 +30,8 @@ export type ParsedPractice = {
 
 const cols = (rows: string[][]) => {
   const h = (rows[0] ?? []).map((c) => c.trim().toLowerCase());
-  return (r: string[], name: string) => (h.indexOf(name.toLowerCase()) < 0 ? "" : (r[h.indexOf(name.toLowerCase())] ?? "").trim());
+  return (r: string[], name: string) =>
+    h.indexOf(name.toLowerCase()) < 0 ? "" : (r[h.indexOf(name.toLowerCase())] ?? "").trim();
 };
 const bool = (v: string) => /^(true|yes|1|x)$/i.test(v);
 const clean = (v: string) => v.replace(/\s+/g, " ").trim();
@@ -38,7 +43,7 @@ export function parsePracticeTabs(tabs: { gyms: string[][]; slots: string[][]; b
   tabs.gyms.slice(1).forEach((r, i) => {
     if (!r.some((c) => c.trim())) return;
     const gym = clean(g(r, "Gym"));
-    const court = clean(g(r, "Court"));
+    const court = courtName(clean(g(r, "Court")));
     if (!gym || !court) return out.errors.push({ row: i + 2, tab: "Gyms", message: "Missing gym or court." });
     out.courts.push({ gym, court, active: g(r, "Active") === "" ? true : bool(g(r, "Active")) });
   });
@@ -51,7 +56,7 @@ export function parsePracticeTabs(tabs: { gyms: string[][]; slots: string[][]; b
     if (!r.some((c) => c.trim())) return;
     const fail = (message: string) => out.errors.push({ row, tab: "PracticeSlots", message });
     const gym = clean(s(r, "Gym"));
-    const court = clean(s(r, "Court"));
+    const court = courtName(clean(s(r, "Court")));
     const startsAt = parseSheetTime(s(r, "Time"));
     if (!gym || !court) return fail("Missing gym or court.");
     if (!startsAt) return fail(`Can't read the time "${s(r, "Time")}".`);
@@ -85,7 +90,8 @@ export function parsePracticeTabs(tabs: { gyms: string[][]; slots: string[][]; b
   tabs.blackouts.slice(1).forEach((r, i) => {
     if (!r.some((c) => c.trim())) return;
     const m = b(r, "Date").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (!m) return out.warnings.push({ row: i + 2, tab: "BlackOuts", message: `Can't read the date "${b(r, "Date")}"; skipped.` });
+    if (!m)
+      return out.warnings.push({ row: i + 2, tab: "BlackOuts", message: `Can't read the date "${b(r, "Date")}"; skipped.` });
     const gym = clean(b(r, "Gym"));
     const time = clean(b(r, "Time"));
     out.blackouts.push({
@@ -115,7 +121,11 @@ class DryRun extends Error {
   }
 }
 
-export async function importPractice(pool: Pool, parsed: ParsedPractice, opts: { by: string; dryRun: boolean }): Promise<ImportReport> {
+export async function importPractice(
+  pool: Pool,
+  parsed: ParsedPractice,
+  opts: { by: string; dryRun: boolean },
+): Promise<ImportReport> {
   if (parsed.errors.length) throw new Error(`The sheet has ${parsed.errors.length} error(s); nothing was changed.`);
   try {
     return await withTx(pool, async (q) => {
@@ -161,7 +171,10 @@ async function run(q: PoolClient, p: ParsedPractice, by: string): Promise<Import
   }
 
   const teams = new Map(
-    (await q.query<{ id: string; name: string }>("select id::text, name from teams")).rows.map((t) => [t.name.toLowerCase(), t.id]),
+    (await q.query<{ id: string; name: string }>("select id::text, name from teams")).rows.map((t) => [
+      t.name.toLowerCase(),
+      t.id,
+    ]),
   );
   // Blackout notes by date (and gym/time when given).
   const noteFor = (s: SheetSlot) => {

@@ -80,7 +80,7 @@ describe("rosters", () => {
     await addPlayers(deps(), director, team, ["r1"]);
     expect((await listRoster(deps(), head, team))?.length).toBe(1);
     expect(await listRoster(deps(), stranger, team)).toBeNull();
-    expect(await addPlayers(deps(), head, team, ["r2"])).toEqual({ ok: false, message: "Only the Director can change rosters." });
+    expect(await addPlayers(deps(), head, team, ["r2"])).toEqual({ ok: false, message: "Only a Director of Teams can change rosters." });
     expect(await removePlayer(deps(), head, team, "r1")).toMatchObject({ ok: false });
     expect(await rosterCandidates(deps(), head, team)).toEqual([]);
   });

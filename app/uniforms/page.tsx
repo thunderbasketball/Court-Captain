@@ -1,10 +1,12 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
+import { requireFeature } from "@/lib/features-server";
 import { db } from "@/lib/db";
 import { SIZES, jerseyName, listUniformOrders, type UniformOrder } from "@/lib/uniforms";
 import AppHeader from "../AppHeader";
 import { GroupCard, PageTitle } from "../ui";
+import { hasArea } from "@/lib/org-admin";
 
 export default function UniformsPage() {
   return (
@@ -20,7 +22,8 @@ const missing = <span className="font-medium text-red-600 dark:text-red-400">—
 async function Uniforms() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
-  if (!user.isDirector) redirect("/");
+  await requireFeature("thunder", "uniforms");
+  if (!hasArea(user, "players")) redirect("/");
 
   const rows = await listUniformOrders({ pool: db, now: () => new Date() }, user);
   const teams = new Map<string, UniformOrder[]>();

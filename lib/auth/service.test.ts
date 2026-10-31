@@ -538,8 +538,9 @@ describe("sessions", () => {
     expect(await auth.getSessionUser(deps, t)).toBeNull();
   });
 
-  it("act as: a Director views as someone else (re-checked every request); Stop or losing Director ends it", async () => {
+  it("act as: an Admin views as someone else (re-checked every request); Stop or losing Admin ends it", async () => {
     await addUser({ director: true });
+    await grant(db.pool, "5551234 thunder Admin");
     await addUser({ cell: "4235550002", email: "pat@example.com", coach: true });
     const t = token(await auth.submitPin(deps, CELL, "5678"));
     expect(await auth.setActingAs(deps, t, "5550002")).toEqual({ ok: true });
@@ -549,11 +550,11 @@ describe("sessions", () => {
       actingBy: { coachId: "5551234", name: "Earl Epps" },
     });
 
-    // Losing the Director role ends it at once; getting it back resumes.
-    await db.pool.query("delete from org_roles where coach_id = '5551234' and role = 'Director'");
-    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5551234" });
+    // Losing Admin ends it at once; getting it back resumes.
+    await db.pool.query("delete from org_roles where coach_id = '5551234' and role = 'Admin'");
+    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5551234", isAdmin: false });
     expect((await auth.getSessionUser(deps, t))?.actingBy).toBeUndefined();
-    await grant(db.pool, "5551234 thunder Director");
+    await grant(db.pool, "5551234 thunder Admin");
 
     // The other person deactivated: back to yourself.
     await db.pool.query("update users set active = false where coach_id = '5550002'");
@@ -561,17 +562,35 @@ describe("sessions", () => {
     await db.pool.query("update users set active = true where coach_id = '5550002'");
 
     expect(await auth.setActingAs(deps, t, null)).toEqual({ ok: true });
-    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5551234", isDirector: true });
+    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5551234", isDirector: true, isAdmin: true });
     expect(await auth.setActingAs(deps, t, "5551234")).toEqual({ ok: false, message: "Pick someone else." });
     expect(await auth.setActingAs(deps, t, "9999999")).toEqual({ ok: false, message: "Only active users can be viewed." });
   });
 
-  it("act as: only a Director can start it", async () => {
-    await addUser({});
+  it("act as: only an Admin can start it (a Director isn't enough)", async () => {
+    await addUser({ director: true });
     await addUser({ cell: "4235550002", email: "pat@example.com" });
     const t = token(await auth.submitPin(deps, CELL, "5678"));
-    expect(await auth.setActingAs(deps, t, "5550002")).toEqual({ ok: false, message: "Only the Director can act as someone else." });
+    expect(await auth.setActingAs(deps, t, "5550002")).toEqual({ ok: false, message: "Only an Admin can view the app as someone else." });
     expect(await auth.setActingAs(deps, "junk", "5550002")).toEqual({ ok: false, message: "Please log in again." });
+  });
+
+  it("act as: a Scenic City Admin views Scenic City people only; leaving the organization ends it", async () => {
+    await addUser({}); // Earl: no Thunder role
+    await grant(db.pool, "5551234 scenic-city Director", "5551234 scenic-city Admin");
+    await addUser({ cell: "4235550002", email: "pat@example.com" });
+    await grant(db.pool, "5550002 scenic-city Partner");
+    await addUser({ cell: "4235550003", email: "cy@example.com", coach: true }); // Thunder only
+    const t = token(await auth.submitPin(deps, CELL, "5678"));
+
+    expect(await auth.setActingAs(deps, t, "5550003")).toEqual({ ok: false, message: "You can only view people in your organization." });
+    expect(await auth.setActingAs(deps, t, "5550002")).toEqual({ ok: true });
+    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5550002", actingBy: { coachId: "5551234" } });
+
+    // Pat leaves Scenic City: back to yourself at once.
+    await db.pool.query("delete from org_roles where coach_id = '5550002'");
+    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5551234" });
+    expect((await auth.getSessionUser(deps, t))?.actingBy).toBeUndefined();
   });
 
   it("logout deletes the session; junk tokens get nothing", async () => {

@@ -23,13 +23,17 @@ describe("org_roles", () => {
   it("has Thunder and Scenic City with their roles", async () => {
     const r = await db.pool.query("select org || ':' || role as r from org_role_types order by 1");
     expect(r.rows.map((x) => x.r)).toEqual([
+      "scenic-city:Admin",
       "scenic-city:Coach",
       "scenic-city:Director",
+      "scenic-city:Owner",
       "scenic-city:Partner",
       "scenic-city:Request",
       "scenic-city:Solo",
+      "thunder:Admin",
       "thunder:Coach",
       "thunder:Director",
+      "thunder:Owner",
       "thunder:Request",
     ]);
   });

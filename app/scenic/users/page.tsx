@@ -2,9 +2,14 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
+import { directorsPanel } from "@/lib/org-admin";
+import { ORGS } from "@/lib/orgs";
 import { formatCell } from "@/lib/phone";
+import { currentScenic } from "@/lib/contexts-server";
 import { listScenicPeople } from "@/lib/scenic";
 import AppHeader from "../../AppHeader";
+import { AddMenu, DirectorButtons, DirectorRole } from "../../DirectorTools";
+import { ViewAsButton } from "../../ViewAsButton";
 import { Chip, EmailLink, GroupCard, PageTitle, PersonRow, PhoneLink, Stats } from "../../ui";
 import { EditScenicRoles, RequestButtons } from "./ScenicUserButtons";
 
@@ -22,9 +27,13 @@ const TONE = { Director: "blue", Partner: "orange", Solo: "pink", Coach: "green"
 async function ScenicUsers() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
+  const scenic = await currentScenic(user);
+  if (scenic?.role !== "Director") redirect("/scenic");
   const people = await listScenicPeople({ pool: db, now: () => new Date() }, user);
   if (!people) redirect("/scenic");
   const { requests, members } = people;
+  // Admins only: Directors' roles and areas, shown in their rows.
+  const panel = await directorsPanel({ pool: db, now: () => new Date() }, user, "scenic-city");
   const active = members.filter((m) => m.active);
   const inactive = members.filter((m) => !m.active);
 
@@ -39,9 +48,22 @@ async function ScenicUsers() {
 
   return (
     <>
-      <AppHeader user={user} context="scenic" />
+      <AppHeader user={user} context={scenic.key} tab="scenic-users" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <PageTitle title="Scenic City Users" subtitle="Join requests, then everyone with a Scenic City role, by last name" />
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <PageTitle title="Scenic City Users" subtitle="Join requests, then everyone with a Scenic City role, by last name" />
+          {panel && (
+            <AddMenu>
+              <DirectorButtons
+                org="scenic-city"
+                areas={panel.areas}
+                options={panel.options}
+                canManageAdmins={panel.canManageAdmins}
+                adminOptions={panel.adminOptions}
+              />
+            </AddMenu>
+          )}
+        </div>
         <Stats
           items={[
             { label: "Requests", value: requests.length, tone: requests.length ? "text-amber-600 dark:text-amber-400" : "" },
@@ -68,7 +90,9 @@ async function ScenicUsers() {
                       {r.partner.name} · {r.partner.kind}
                       {!r.partner.approved && <span className="text-amber-700 dark:text-amber-300"> · new partner</span>}
                       <span className="block text-xs font-normal text-zinc-500">
-                        {[r.partner.hostsGames && "Hosting games", r.partner.registersTeams && "Registering teams"].filter(Boolean).join(" · ")}
+                        {[r.partner.hostsGames && "Hosting games", r.partner.registersTeams && "Registering teams"]
+                          .filter(Boolean)
+                          .join(" · ")}
                       </span>
                     </p>
                   )}
@@ -87,17 +111,32 @@ async function ScenicUsers() {
                 first={m.firstName}
                 last={m.lastName}
                 avatarTone={m.roles.includes("Director") ? "blue" : "zinc"}
-                chips={m.roles.map((r) => (
-                  <Chip key={r} tone={TONE[r]}>
-                    {r}
-                  </Chip>
-                ))}
+                under={m.coachId !== user.coachId && <ViewAsButton coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} />}
+                chips={m.roles.map((r) => {
+                  const d = r === "Director" ? panel?.directors.find((x) => x.id === m.coachId) : undefined;
+                  return (
+                    <Chip key={r} tone={TONE[r]}>
+                      {d?.owner ? "Owner" : d?.admin ? "Admin" : r}
+                    </Chip>
+                  );
+                })}
               >
-                {m.partners.length > 0 && <p className="font-medium text-zinc-800 dark:text-zinc-100">{m.partners.join(" · ")}</p>}
+                {panel && panel.directors.some((d) => d.id === m.coachId) && (
+                  <DirectorRole
+                    org="scenic-city"
+                    orgName={ORGS["scenic-city"].name}
+                    person={panel.directors.find((d) => d.id === m.coachId)!}
+                    areas={panel.areas}
+                    canManageAdmins={panel.canManageAdmins}
+                  />
+                )}
+                {m.partners.length > 0 && (
+                  <p className="font-medium text-zinc-800 dark:text-zinc-100">{m.partners.join(" · ")}</p>
+                )}
                 {contact(m)}
                 <div className="flex items-end justify-between gap-2 pt-1">
                   <p className="text-xs text-zinc-500">{m.grantedBy && `Last role from ${m.grantedBy}`}</p>
-                  <EditScenicRoles coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} roles={m.roles} isSelf={m.coachId === user.coachId} />
+                  <EditScenicRoles coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} roles={m.roles} />
                 </div>
               </PersonRow>
             ))}

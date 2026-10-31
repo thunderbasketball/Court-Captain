@@ -4,6 +4,7 @@ import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import type { Attendee } from "./events";
 import { STATUSES } from "./events";
+import { hasArea } from "./org-admin";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -35,7 +36,7 @@ const SUMMARY = `
 // Booked practices from the last 60 days on. The Director sees every team's; staff see their own teams'.
 export async function listPractices(deps: Deps, viewer: SessionUser): Promise<PracticeSummary[]> {
   const since = new Date(deps.now().getTime() - PAST_DAYS * 86_400_000);
-  const r = viewer.isDirector
+  const r = hasArea(viewer, "teams", "facilities")
     ? await deps.pool.query<PracticeSummary>(`${SUMMARY} where s.starts_at >= $1 order by s.starts_at, t.name`, [since])
     : await deps.pool.query<PracticeSummary>(
         `${SUMMARY} where s.starts_at >= $1 and exists (select 1 from team_staff ts where ts.team_id = t.id and ts.coach_id = $2)
@@ -63,7 +64,7 @@ async function practiceTeam(q: Pick<Pool, "query">, viewer: SessionUser, slotId:
     [slotId, viewer.coachId],
   );
   const row = r.rows[0];
-  return row && (viewer.isDirector || row.staff) ? row.team_id : null;
+  return row && (hasArea(viewer, "teams", "facilities") || row.staff) ? row.team_id : null;
 }
 
 export type PracticeDetail = PracticeSummary & { players: Attendee[] };

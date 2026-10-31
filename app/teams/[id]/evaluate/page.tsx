@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
+import { requireFeature } from "@/lib/features-server";
 import { currentContexts } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
 import { listEvaluations } from "@/lib/evaluations";
@@ -10,6 +11,7 @@ import { getTeam } from "@/lib/teams";
 import AppHeader from "../../../AppHeader";
 import { PageTitle } from "../../../ui";
 import EvalBoard from "./EvalBoard";
+import { hasArea } from "@/lib/org-admin";
 
 export default function EvaluatePage({ params }: PageProps<"/teams/[id]/evaluate">) {
   return (
@@ -22,6 +24,7 @@ export default function EvaluatePage({ params }: PageProps<"/teams/[id]/evaluate
 async function Evaluate({ params }: { params: PageProps<"/teams/[id]/evaluate">["params"] }) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
+  await requireFeature("thunder", "team-building");
   const { id } = await params;
   const deps = { pool: db, now: () => new Date() };
   const team = await getTeam(deps, user, id);
@@ -29,7 +32,7 @@ async function Evaluate({ params }: { params: PageProps<"/teams/[id]/evaluate">[
   const cards = await listEvaluations(deps, user, team.id);
   if (!cards) redirect(`/teams/${team.id}`);
   const { active } = await currentContexts(user);
-  const asDirector = user.isDirector && !(active?.key === `team:${team.id}` && team.myRoles.length > 0);
+  const asDirector = hasArea(user, "teams") && !(active?.key === `team:${team.id}` && team.myRoles.length > 0);
 
   return (
     <>

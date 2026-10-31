@@ -2,6 +2,7 @@
 //   npm run user -- list
 //   npm run user -- add <cell> <first> <last> [email]   (starter PIN 1234, Coach role)
 //   npm run user -- director <cell>                       (give Director role, clear request)
+//   npm run user -- admin <cell>                          (make them a CourtCaptain Admin)
 //   npm run user -- delete <cell>
 import pg from "pg";
 
@@ -44,11 +45,18 @@ try {
       [cellArg(args[0])],
     );
     console.log(r.rowCount ? "Director role granted." : "No user with that number.");
+  } else if (cmd === "admin") {
+    const r = await client.query(
+      `insert into platform_admins (coach_id, granted_by) select coach_id, 'npm run user' from users where cell = $1
+       on conflict do nothing returning coach_id`,
+      [cellArg(args[0])],
+    );
+    console.log(r.rowCount ? "CourtCaptain Admin granted." : "No user with that number, or already an admin.");
   } else if (cmd === "delete") {
     const r = await client.query("delete from users where cell = $1", [cellArg(args[0])]);
     console.log(r.rowCount ? "Deleted." : "No user with that number.");
   } else {
-    console.log("Commands: list | add <cell> <first> <last> [email] | director <cell> | delete <cell>");
+    console.log("Commands: list | add <cell> <first> <last> [email] | director <cell> | admin <cell> | delete <cell>");
   }
 } catch (e) {
   console.error(e instanceof Error ? e.message : e);

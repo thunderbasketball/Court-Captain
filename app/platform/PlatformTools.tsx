@@ -1,0 +1,160 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { setOrgOwner, setOrgFeature } from "./actions";
+import { Toast, useConfirm } from "../client-ui";
+import { inputCls } from "../ui";
+
+// One feature's on/off switch for an organization (turning on is free here, until upgrades are paid for).
+export function FeatureSwitch({
+  org,
+  orgName,
+  feature,
+  name,
+  on,
+}: {
+  org: string;
+  orgName: string;
+  feature: string;
+  name: string;
+  on: boolean;
+}) {
+  const router = useRouter();
+  const [busy, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
+  return (
+    <>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={`${name} for ${orgName}`}
+        disabled={busy}
+        onClick={async () => {
+          if (
+            on &&
+            !(await confirm({
+              title: `Turn off ${name}?`,
+              message: `${orgName} loses ${name} at once: its tabs disappear and its pages show "not found". Its data is kept.`,
+              confirmLabel: "Turn off",
+            }))
+          )
+            return;
+          start(async () => {
+            const r = await setOrgFeature(org, feature, !on);
+            if (r.ok) router.refresh();
+            else setError(r.message);
+          });
+        }}
+        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+          on ? "bg-emerald-600" : "bg-zinc-300 dark:bg-zinc-700"
+        }`}
+      >
+        <span
+          className={`inline-block size-5 rounded-full bg-white shadow transition-transform ${on ? "translate-x-5.5" : "translate-x-0.5"}`}
+        />
+      </button>
+      {error && <Toast key={error} message={error} />}
+      {confirmDialog}
+    </>
+  );
+}
+
+// "+ Add Owner": any active user becomes an Owner of this organization (and an Admin and Director).
+export function AddOwner({ org, options }: { org: string; options: { id: string; name: string }[] }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pick, setPick] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, start] = useTransition();
+
+  if (!open)
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setPick("");
+          setError(null);
+          setOpen(true);
+        }}
+        className="rounded-full px-3 py-0.5 text-sm font-medium text-zinc-700 ring-1 ring-zinc-950/15 hover:bg-zinc-50 dark:text-zinc-200 dark:ring-white/20"
+      >
+        + Add Owner
+      </button>
+    );
+  return (
+    <form
+      className="flex w-full flex-wrap items-center gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          const r = await setOrgOwner(org, pick, true);
+          if (!r.ok) return setError(r.message);
+          setOpen(false);
+          router.refresh();
+        });
+      }}
+    >
+      <select className={`${inputCls} max-w-64 py-2`} value={pick} onChange={(e) => setPick(e.target.value)} autoFocus>
+        <option value="" disabled>
+          Pick a person…
+        </option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name}
+          </option>
+        ))}
+      </select>
+      <button
+        type="submit"
+        disabled={busy || !pick}
+        className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
+      >
+        Add
+      </button>
+      <button type="button" onClick={() => setOpen(false)} className="text-sm text-zinc-500">
+        Cancel
+      </button>
+      {error && <p className="w-full text-sm text-red-600">{error}</p>}
+    </form>
+  );
+}
+
+export function RemoveOwner({ org, orgName, coachId, name }: { org: string; orgName: string; coachId: string; name: string }) {
+  const router = useRouter();
+  const [busy, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
+  return (
+    <>
+      <button
+        type="button"
+        disabled={busy}
+        aria-label={`Remove ${name} as Owner`}
+        className="rounded-full p-1 text-zinc-400 hover:bg-zinc-200 hover:text-red-600 dark:hover:bg-zinc-700"
+        onClick={async () => {
+          if (
+            await confirm({
+              title: `Remove ${name} as Owner?`,
+              message: `${name} won't be an Owner of ${orgName} any more (they stay an Admin).`,
+              confirmLabel: "Remove",
+            })
+          )
+            start(async () => {
+              const r = await setOrgOwner(org, coachId, false);
+              if (r.ok) router.refresh();
+              else setError(r.message);
+            });
+        }}
+      >
+        <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden className="size-4">
+          <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+        </svg>
+      </button>
+      {error && <Toast key={error} message={error} />}
+      {confirmDialog}
+    </>
+  );
+}

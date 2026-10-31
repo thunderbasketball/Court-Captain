@@ -1,10 +1,12 @@
-// Director tools for users: add, edit (name, email, Active, Coach, Director), approve/deny requests, reset login, delete.
+// Director tools for users: add, edit (name, email, Active, Coach), approve/deny requests, reset login, delete.
+// Directors (and Admins) aren't set here: Admins choose Directors and their areas (lib/org-admin.ts).
 // Thunder roles live in org_roles (SPEC.md section 13).
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { cleanEmail, cleanName } from "./auth/validate";
 import { coachIdFromCell, normalizeCell } from "./phone";
 import { withTx, type Queryable } from "./sql";
+import { isThunderAdmin } from "./org-admin";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -20,7 +22,7 @@ async function run<T extends object>(fn: () => Promise<T>): Promise<Result<T>> {
 }
 
 const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
-const directorOnly = { ok: false as const, message: "Only the Director can manage users." };
+const directorOnly = { ok: false as const, message: "Only an Admin can manage users." };
 const bool = (v: unknown) => v === true;
 
 function cleanFields(input: { first: unknown; last: unknown; email: unknown }) {
@@ -33,28 +35,21 @@ function cleanFields(input: { first: unknown; last: unknown; email: unknown }) {
   return { first, last, email };
 }
 
-// Sets Thunder Coach and Director. Granting either clears a pending request.
-async function setThunderRoles(q: Queryable, coachId: string, coach: boolean, director: boolean, who: string) {
-  await q.query("select set_role($1, 'thunder', 'Coach', $2, $4), set_role($1, 'thunder', 'Director', $3, $4)", [
-    coachId,
-    coach,
-    director,
-    who,
-  ]);
-  if (coach || director) await q.query("select set_role($1, 'thunder', 'Request', false, $2)", [coachId, who]);
+// Sets Thunder Coach. Granting it clears a pending request.
+async function setThunderCoach(q: Queryable, coachId: string, coach: boolean, who: string) {
+  await q.query("select set_role($1, 'thunder', 'Coach', $2, $3)", [coachId, coach, who]);
+  if (coach) await q.query("select set_role($1, 'thunder', 'Request', false, $2)", [coachId, who]);
 }
 
-export type EditUserInput = { first: unknown; last: unknown; email: unknown; active: unknown; coach: unknown; director: unknown };
+export type EditUserInput = { first: unknown; last: unknown; email: unknown; active: unknown; coach: unknown };
 
 export async function updateUser(deps: Deps, viewer: SessionUser, coachId: string, input: EditUserInput): Promise<Result> {
-  if (!viewer.isDirector) return directorOnly;
+  if (!isThunderAdmin(viewer)) return directorOnly;
   if (!/^\d{7}$/.test(coachId)) return { ok: false, message: "That user no longer exists." };
   return run(async () => {
     const f = cleanFields(input);
     const active = bool(input.active);
     const coach = bool(input.coach);
-    const director = bool(input.director);
-    if (coachId === viewer.coachId && !director) throw new UserError("You can't remove your own Director role.");
     if (coachId === viewer.coachId && !active) throw new UserError("You can't deactivate yourself.");
     return withTx(deps.pool, async (q) => {
       const r = await q.query(
@@ -63,7 +58,7 @@ export async function updateUser(deps: Deps, viewer: SessionUser, coachId: strin
         [coachId, f.first, f.last, f.email, active, deps.now(), by(viewer)],
       );
       if (!r.rowCount) throw new UserError("That user no longer exists.");
-      await setThunderRoles(q, coachId, coach, director, by(viewer));
+      await setThunderCoach(q, coachId, coach, by(viewer));
       return {};
     });
   });
@@ -71,7 +66,7 @@ export async function updateUser(deps: Deps, viewer: SessionUser, coachId: strin
 
 // Deny an access request: clears the request without giving a role.
 export async function denyRequest(deps: Deps, viewer: SessionUser, coachId: string): Promise<Result> {
-  if (!viewer.isDirector) return directorOnly;
+  if (!isThunderAdmin(viewer)) return directorOnly;
   if (!/^\d{7}$/.test(coachId)) return { ok: false, message: "That user no longer exists." };
   await withTx(deps.pool, async (q) => {
     const r = await q.query("update users set updated_at = $2, updated_by = $3 where coach_id = $1", [coachId, deps.now(), by(viewer)]);
@@ -80,11 +75,11 @@ export async function denyRequest(deps: Deps, viewer: SessionUser, coachId: stri
   return { ok: true };
 }
 
-export type AddUserInput = { first: unknown; last: unknown; cell: unknown; email: unknown; coach: unknown; director: unknown };
+export type AddUserInput = { first: unknown; last: unknown; cell: unknown; email: unknown; coach: unknown };
 
 // A new login with the starter PIN (1234). Refuses a cell that's taken or whose last 7 digits belong to someone else.
 export async function addUser(deps: Deps, viewer: SessionUser, input: AddUserInput): Promise<Result<{ coachId: string }>> {
-  if (!viewer.isDirector) return directorOnly;
+  if (!isThunderAdmin(viewer)) return directorOnly;
   return run(async () => {
     const f = cleanFields(input);
     const cell = typeof input.cell === "string" ? normalizeCell(input.cell) : null;
@@ -102,7 +97,7 @@ export async function addUser(deps: Deps, viewer: SessionUser, input: AddUserInp
          values ($1, $2, $3, $4, $5, $6, $6, $7)`,
         [coachId, f.first, f.last, cell, f.email, deps.now(), by(viewer)],
       );
-      await setThunderRoles(q, coachId, bool(input.coach), bool(input.director), by(viewer));
+      await setThunderCoach(q, coachId, bool(input.coach), by(viewer));
       return { coachId };
     });
   });
@@ -111,7 +106,7 @@ export async function addUser(deps: Deps, viewer: SessionUser, input: AddUserInp
 // Reset login: back to starter PIN 1234 with no email, logged out everywhere, PIN lockout cleared.
 // At their next login they give an email, confirm it with a code, and choose a new PIN.
 export async function resetLogin(deps: Deps, viewer: SessionUser, coachId: string): Promise<Result> {
-  if (!viewer.isDirector) return directorOnly;
+  if (!isThunderAdmin(viewer)) return directorOnly;
   if (!/^\d{7}$/.test(coachId)) return { ok: false, message: "That user no longer exists." };
   if (coachId === viewer.coachId) return { ok: false, message: "You can't reset your own login." };
   return run(() =>
@@ -139,7 +134,7 @@ export function deleteBlocker(u: { coachId: string; teams: unknown[]; scenicCity
 }
 
 export async function deleteUser(deps: Deps, viewer: SessionUser, coachId: string): Promise<Result> {
-  if (!viewer.isDirector) return directorOnly;
+  if (!isThunderAdmin(viewer)) return directorOnly;
   if (!/^\d{7}$/.test(coachId)) return { ok: false, message: "That user no longer exists." };
   return run(() =>
     withTx(deps.pool, async (q) => {

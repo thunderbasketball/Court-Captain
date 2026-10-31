@@ -3,7 +3,8 @@
 import { useState, useTransition } from "react";
 import { logout, requestAccess } from "./login/actions";
 
-export function LogoutButton() {
+// `to`: the organization's own login page, so they come back to the same place.
+export function LogoutButton({ to = "/login" }: { to?: string }) {
   const [busy, start] = useTransition();
   return (
     <button
@@ -12,7 +13,7 @@ export function LogoutButton() {
       onClick={() =>
         start(async () => {
           await logout();
-          window.location.replace("/login");
+          window.location.replace(to);
         })
       }
     >

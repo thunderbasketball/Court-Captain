@@ -161,8 +161,8 @@ describe("booking", () => {
   });
 
   it("only the Director and that team's coaches/manager can book", async () => {
-    expect(await book(parent, "North:13:18")).toMatchObject({ ok: false, message: /Only the Director/ });
-    expect(await book(otherHead, "North:13:18")).toMatchObject({ ok: false, message: /Only the Director/ });
+    expect(await book(parent, "North:13:18")).toMatchObject({ ok: false, message: /Only a Director of Facilities/ });
+    expect(await book(otherHead, "North:13:18")).toMatchObject({ ok: false, message: /Only a Director of Facilities/ });
     expect(await teamOf("North:13:18")).toEqual({ team_id: null, booked_by: null });
   });
 

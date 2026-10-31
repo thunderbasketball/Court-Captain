@@ -5,6 +5,7 @@ import { withTx } from "../sql";
 import { coachIdFromCell, normalizeCell } from "../phone";
 import { STARTER_PIN, hashCode, hashPin, isStarterPin, newCode, newSessionToken, sha256, verifyPin } from "./crypto";
 import { cleanEmail, cleanName, isCode, isPin, maskEmail } from "./validate";
+import { AREAS, type Area } from "../org-admin";
 
 // Same device stays logged in this long after entering the PIN; then the PIN is asked again.
 export const SESSION_HOURS = 24;
@@ -56,6 +57,8 @@ type UserRow = {
   verified_email: string | null;
   thunder_coach: boolean;
   thunder_director: boolean;
+  thunder_admin: boolean;
+  thunder_areas: Area[]; // Director areas in Thunder (SPEC section 14)
   on_team: boolean; // holds any team staff role (HeadCoach, AsstCoach, Manager, TeamParent)
   any_role: boolean; // a role (not just a Request) in any organization
   any_request: boolean; // a pending Request in any organization
@@ -66,6 +69,11 @@ export type SessionUser = {
   firstName: string;
   lastName: string;
   isDirector: boolean;
+  // Thunder Director areas (Players, Teams, Facilities, Programs, Officials): what this Director manages. Admins have all.
+  // Check with hasArea() in lib/org-admin.ts.
+  thunderAreas?: Area[];
+  // Thunder Admin: runs Thunder (Users, view as someone, every area). Check with isThunderAdmin() in lib/org-admin.ts.
+  isAdmin?: boolean;
   isCoach: boolean;
   requestPending: boolean;
   hasThunderRole: boolean;
@@ -108,6 +116,8 @@ function hasThunderRole(u: UserRow): boolean {
 const ON_TEAM = `exists (select 1 from team_staff ts where ts.coach_id = u.coach_id) as on_team,
   has_role(u.coach_id, 'thunder', 'Coach') as thunder_coach,
   has_role(u.coach_id, 'thunder', 'Director') as thunder_director,
+  has_role(u.coach_id, 'thunder', 'Admin') as thunder_admin,
+  array(select a.area from director_areas a where a.coach_id = u.coach_id and a.org = 'thunder') as thunder_areas,
   exists (select 1 from org_roles r where r.coach_id = u.coach_id and r.role <> 'Request') as any_role,
   exists (select 1 from org_roles r where r.coach_id = u.coach_id and r.role = 'Request') as any_request`;
 
@@ -274,16 +284,26 @@ export async function getSessionUser(deps: Deps, token: string | undefined): Pro
   );
   const real = r.rows[0];
   if (!real || !real.active) return null;
-  // Act as: only while the real person is still an active Director, and the other person is active.
-  if (real.acting_as && real.thunder_director && real.acting_as !== real.coach_id) {
-    const t = await deps.pool.query<UserRow>(`select u.*, ${ON_TEAM} from users u where u.coach_id = $1 and u.active`, [real.acting_as]);
+  // Act as: only while the real person is still an Admin of an organization the other person is in, and they're active.
+  if (real.acting_as && real.acting_as !== real.coach_id) {
+    const t = await deps.pool.query<UserRow>(
+      `select u.*, ${ON_TEAM} from users u where u.coach_id = $1 and u.active and ${CAN_VIEW_AS("$2", "$1")}`,
+      [real.acting_as, real.coach_id],
+    );
     if (t.rows[0])
       return { ...toSessionUser(t.rows[0]), actingBy: { coachId: real.coach_id, name: `${real.first_name} ${real.last_name}` } };
   }
   return toSessionUser(real);
 }
 
-// Director: view the app as another user (view only), or stop.
+// An Admin may view the app as anyone in their organization: anyone with a role (or Request) there, or, for Thunder,
+// anyone on a team's staff. SQL condition on the two coach ids.
+const CAN_VIEW_AS = (admin: string, target: string) => `exists (
+  select 1 from org_roles a where a.coach_id = ${admin} and a.role = 'Admin'
+    and (exists (select 1 from org_roles t where t.coach_id = ${target} and t.org = a.org)
+         or (a.org = 'thunder' and exists (select 1 from team_staff ts where ts.coach_id = ${target}))))`;
+
+// Admins: view the app as another user in their organization (view only), or stop.
 export async function setActingAs(
   deps: Deps,
   token: string | undefined,
@@ -291,7 +311,8 @@ export async function setActingAs(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   if (!token) return { ok: false, message: "Please log in again." };
   const s = await deps.pool.query<{ coach_id: string; director: boolean }>(
-    `select s.coach_id, has_role(u.coach_id, 'thunder', 'Director') and u.active as director from sessions s join users u on u.coach_id = s.coach_id
+    `select s.coach_id, u.active and exists (select 1 from org_roles a where a.coach_id = u.coach_id and a.role = 'Admin') as director
+     from sessions s join users u on u.coach_id = s.coach_id
      where s.token_hash = $1 and s.expires_at > $2`,
     [sha256(token), deps.now()],
   );
@@ -301,10 +322,14 @@ export async function setActingAs(
     await deps.pool.query("update sessions set acting_as = null where token_hash = $1", [sha256(token)]);
     return { ok: true };
   }
-  if (!me.director) return { ok: false, message: "Only the Director can act as someone else." };
+  if (!me.director) return { ok: false, message: "Only an Admin can view the app as someone else." };
   if (!/^\d{7}$/.test(coachId) || coachId === me.coach_id) return { ok: false, message: "Pick someone else." };
-  const t = await deps.pool.query("select 1 from users where coach_id = $1 and active", [coachId]);
+  const t = await deps.pool.query<{ ok: boolean }>(`select ${CAN_VIEW_AS("$2", "$1")} as ok from users where coach_id = $1 and active`, [
+    coachId,
+    me.coach_id,
+  ]);
   if (!t.rows[0]) return { ok: false, message: "Only active users can be viewed." };
+  if (!t.rows[0].ok) return { ok: false, message: "You can only view people in your organization." };
   await deps.pool.query("update sessions set acting_as = $2 where token_hash = $1", [sha256(token), coachId]);
   return { ok: true };
 }
@@ -315,6 +340,8 @@ function toSessionUser(u: UserRow): SessionUser {
     firstName: u.first_name,
     lastName: u.last_name,
     isDirector: u.thunder_director,
+    thunderAreas: !u.thunder_director ? [] : u.thunder_admin ? AREAS.map((a) => a.key) : u.thunder_areas,
+    isAdmin: u.thunder_director && u.thunder_admin,
     isCoach: u.thunder_coach,
     requestPending: pending(u),
     hasThunderRole: hasThunderRole(u),

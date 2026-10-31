@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { deleteBlackoutRule } from "../actions";
+import { deleteBlackoutRule } from "../../practice/actions";
 import { Toast, useConfirm } from "../../client-ui";
 
 export function DeleteRuleButton({ ruleId, label }: { ruleId: string; label: string }) {

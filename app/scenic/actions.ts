@@ -1,18 +1,24 @@
 "use server";
 
 import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
+import { featureRefusal } from "@/lib/features-server";
+import type { Feature } from "@/lib/features";
 import { db } from "@/lib/db";
 import * as scenic from "@/lib/scenic";
 import * as partners from "@/lib/scenic-partners";
+import * as programs from "@/lib/scenic-programs";
+import * as teams from "@/lib/scenic-teams";
 import type { JoinInput } from "@/lib/scenic";
 
 const deps = { pool: db, now: () => new Date() };
 
 // Session (and, inside lib/scenic, the Scenic City role) checked on the server for every change.
-async function guarded<T>(fn: (user: NonNullable<Awaited<ReturnType<typeof currentUser>>>) => Promise<T>) {
+async function guarded<T>(fn: (user: NonNullable<Awaited<ReturnType<typeof currentUser>>>) => Promise<T>, feature?: Feature) {
   const user = await currentUser();
   if (!user) return { ok: false as const, message: "Please log in again." };
   if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  const refused = feature && (await featureRefusal("scenic-city", feature));
+  if (refused) return refused;
   try {
     return await fn(user);
   } catch (e) {
@@ -37,23 +43,74 @@ export async function setScenicRoles(coachId: string, roles: string[]) {
 // ---- Partners, gyms, courts, game days (rules and role checks in lib/scenic-partners) ----
 
 export async function savePartner(id: string | null, input: partners.PartnerInput) {
-  return guarded((u) => partners.savePartner(deps, u, id, input));
+  return guarded((u) => partners.savePartner(deps, u, id, input), "hosting-partners");
 }
 export async function saveGym(partnerId: string, gymId: string | null, input: { name: string; address: string }) {
-  return guarded((u) => partners.saveGym(deps, u, partnerId, gymId, input));
+  return guarded((u) => partners.saveGym(deps, u, partnerId, gymId, input), "hosting-partners");
 }
 export async function deleteGym(gymId: string) {
-  return guarded((u) => partners.deleteGym(deps, u, gymId));
+  return guarded((u) => partners.deleteGym(deps, u, gymId), "hosting-partners");
 }
 export async function addCourt(gymId: string, name: string) {
-  return guarded((u) => partners.addCourt(deps, u, gymId, name));
+  return guarded((u) => partners.addCourt(deps, u, gymId, name), "hosting-partners");
 }
 export async function deleteCourt(courtId: string) {
-  return guarded((u) => partners.deleteCourt(deps, u, courtId));
+  return guarded((u) => partners.deleteCourt(deps, u, courtId), "hosting-partners");
 }
-export async function addGameDays(input: { from: string; to?: string; weekdays?: number[] }) {
-  return guarded((u) => partners.addGameDays(deps, u, input));
+export async function saveGameDays(input: { add: string[]; remove: string[] }) {
+  return guarded((u) => partners.saveGameDays(deps, u, input), "hosting-partners");
 }
-export async function deleteGameDay(id: string) {
-  return guarded((u) => partners.deleteGameDay(deps, u, id));
+export async function setHours(partnerId: string, input: partners.HoursInput) {
+  return guarded((u) => partners.setHours(deps, u, partnerId, input), "hosting-partners");
+}
+export async function setContact(partnerId: string, coachId: string, on: boolean) {
+  return guarded((u) => partners.setContact(deps, u, partnerId, coachId, on), "hosting-partners");
+}
+
+// ---- Teams (rules and role checks in lib/scenic-teams) ----
+
+export async function createScenicTeam(input: teams.TeamInput) {
+  return guarded((u) => teams.createScenicTeam(deps, u, input), "team-registration");
+}
+export async function updateScenicTeam(id: string, input: teams.TeamInput) {
+  return guarded((u) => teams.updateScenicTeam(deps, u, id, input), "team-registration");
+}
+export async function deleteScenicTeam(id: string) {
+  return guarded((u) => teams.deleteScenicTeam(deps, u, id), "team-registration");
+}
+
+// ---- Programs (rules and role checks in lib/scenic-programs) ----
+
+export async function saveProgram(id: string | null, input: programs.ProgramInput) {
+  return guarded((u) => programs.saveProgram(deps, u, id, input), "programs");
+}
+export async function deleteProgram(id: string) {
+  return guarded((u) => programs.deleteProgram(deps, u, id), "programs");
+}
+export async function registerTeam(programId: string, teamId: string) {
+  return guarded((u) => programs.registerTeam(deps, u, programId, teamId), "programs");
+}
+export async function withdrawTeam(programId: string, teamId: string) {
+  return guarded((u) => programs.withdrawTeam(deps, u, programId, teamId), "programs");
+}
+export async function setPaid(programId: string, teamId: string, paid: boolean) {
+  return guarded((u) => programs.setPaid(deps, u, programId, teamId, paid === true), "programs");
+}
+export async function addDivision(programId: string, input: programs.DivisionInput) {
+  return guarded((u) => programs.addDivision(deps, u, programId, input), "programs");
+}
+export async function removeDivision(id: string) {
+  return guarded((u) => programs.removeDivision(deps, u, id), "programs");
+}
+export async function addPool(groupId: string) {
+  return guarded((u) => programs.addPool(deps, u, groupId), "programs");
+}
+export async function removePool(poolId: string) {
+  return guarded((u) => programs.removePool(deps, u, poolId), "programs");
+}
+export async function moveTeam(programId: string, teamId: string, poolId: string) {
+  return guarded((u) => programs.moveTeam(deps, u, programId, teamId, poolId), "programs");
+}
+export async function saveProgramDates(programId: string, input: { add: string[]; remove: string[] }) {
+  return guarded((u) => programs.saveProgramDates(deps, u, programId, input), "programs");
 }

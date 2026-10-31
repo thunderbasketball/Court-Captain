@@ -32,7 +32,7 @@ describe("user admin", () => {
         [id],
       )
     ).rows[0];
-  const edit = { first: "Pat", last: "Test", email: "pat@example.com", active: true, coach: true, director: false };
+  const edit = { first: "Pat", last: "Test", email: "pat@example.com", active: true, coach: true };
 
   beforeEach(async () => {
     await db.reset();
@@ -45,8 +45,8 @@ describe("user admin", () => {
     await grant(db.pool, "9913694 thunder Director", "5550001 thunder Request", "5550002 scenic-city Coach");
   });
 
-  it("edits name, email, Active and roles, records who did it, and leaves Scenic City roles alone", async () => {
-    expect(await updateUser(deps(), director, "5550002", { first: "Samuel", last: "Scenic", email: "Sam@Example.com", active: false, coach: true, director: true })).toEqual({
+  it("edits name, email, Active and Coach, records who did it, and leaves Director and Scenic City roles alone", async () => {
+    expect(await updateUser(deps(), director, "5550002", { first: "Samuel", last: "Scenic", email: "Sam@Example.com", active: false, coach: true })).toEqual({
       ok: true,
     });
     expect(await user("5550002")).toMatchObject({
@@ -54,7 +54,7 @@ describe("user admin", () => {
       email: "sam@example.com",
       active: false,
       thunder_coach: true,
-      thunder_director: true,
+      thunder_director: false,
       scenic_city_coach: true,
       updated_by: "Earl Epps",
     });
@@ -77,9 +77,10 @@ describe("user admin", () => {
     expect(u.verified_email).toBe("pat@example.com");
   });
 
-  it("you can't remove your own Director role or deactivate yourself", async () => {
-    const me = { first: "Earl", last: "Epps", email: "", active: true, coach: false, director: true };
-    expect(await updateUser(deps(), director, "9913694", { ...me, director: false })).toEqual({ ok: false, message: "You can't remove your own Director role." });
+  it("you can't deactivate yourself, and editing yourself leaves your Director role alone", async () => {
+    const me = { first: "Earl", last: "Epps", email: "", active: true, coach: false };
+    expect(await updateUser(deps(), director, "9913694", me)).toEqual({ ok: true });
+    expect(await user("9913694")).toMatchObject({ thunder_director: true });
     expect(await updateUser(deps(), director, "9913694", { ...me, active: false })).toEqual({ ok: false, message: "You can't deactivate yourself." });
     expect(await updateUser(deps(), director, "9913694", { ...me, coach: true })).toEqual({ ok: true });
   });
@@ -90,14 +91,14 @@ describe("user admin", () => {
   });
 
   it("adds a user with the starter PIN; refuses a taken cell or matching last 7 digits", async () => {
-    const r = await addUser(deps(), director, { first: "New", last: "Coach", cell: "(423) 555-9999", email: "", coach: true, director: false });
+    const r = await addUser(deps(), director, { first: "New", last: "Coach", cell: "(423) 555-9999", email: "", coach: true });
     expect(r).toEqual({ ok: true, coachId: "5559999" });
     expect(await user("5559999")).toMatchObject({ pin_hash: null, thunder_coach: true, email: null, updated_by: "Earl Epps" });
-    expect(await addUser(deps(), director, { first: "A", last: "B", cell: "4235559999", email: "", coach: false, director: false })).toMatchObject({
+    expect(await addUser(deps(), director, { first: "A", last: "B", cell: "4235559999", email: "", coach: false })).toMatchObject({
       ok: false,
       message: "New Coach already has that cell number.",
     });
-    expect(await addUser(deps(), director, { first: "A", last: "B", cell: "6155559999", email: "", coach: false, director: false })).toMatchObject({
+    expect(await addUser(deps(), director, { first: "A", last: "B", cell: "6155559999", email: "", coach: false })).toMatchObject({
       ok: false,
       message: expect.stringMatching(/same 7 digits as New Coach/),
     });
@@ -130,9 +131,16 @@ describe("user admin", () => {
 
   it("only the Director can manage users", async () => {
     expect(await updateUser(deps(), coach, "5550002", edit)).toMatchObject({ ok: false });
-    expect(await addUser(deps(), coach, { first: "A", last: "B", cell: "4235558888", email: "", coach: true, director: true })).toMatchObject({ ok: false });
+    expect(await addUser(deps(), coach, { first: "A", last: "B", cell: "4235558888", email: "", coach: true })).toMatchObject({ ok: false });
     expect(await deleteUser(deps(), coach, "5550002")).toMatchObject({ ok: false });
     expect(await denyRequest(deps(), coach, "5550001")).toMatchObject({ ok: false });
     expect(await user("5550001")).toMatchObject({ thunder_request: true });
+  });
+
+  it("only an Admin manages users: a Director with areas but not Admin is refused", async () => {
+    const facilities = { ...director, thunderAreas: ["facilities" as const], isAdmin: false };
+    expect(await updateUser(deps(), facilities, "5550001", edit)).toEqual({ ok: false, message: "Only an Admin can manage users." });
+    expect(await resetLogin(deps(), facilities, "5550001")).toEqual({ ok: false, message: "Only an Admin can manage users." });
+    expect(await updateUser(deps(), { ...facilities, isAdmin: true }, "5550001", edit)).toEqual({ ok: true });
   });
 });

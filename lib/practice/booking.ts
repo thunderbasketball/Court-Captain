@@ -10,6 +10,7 @@ import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "../auth/service";
 import { withTx } from "../sql";
 import { localParts, weekOf } from "../time";
+import { hasArea } from "../org-admin";
 
 export const PRACTICE_MINUTES = 60;
 export const EXTRA_HOURS = 72;
@@ -39,7 +40,7 @@ export async function upcomingInWeek(q: Pick<PoolClient, "query">, teamId: strin
 }
 
 async function canBookFor(q: PoolClient, viewer: SessionUser, teamId: string): Promise<boolean> {
-  if (viewer.isDirector) return true;
+  if (hasArea(viewer, "facilities")) return true;
   const r = await q.query("select 1 from team_staff where team_id = $1 and coach_id = $2 and role = any($3)", [
     teamId,
     viewer.coachId,
@@ -88,7 +89,7 @@ export async function bookSlot(
   if (!/^\d{1,18}$/.test(slotId) || !/^\d{1,18}$/.test(teamId)) return { ok: false, message: "Pick a practice slot and a team." };
   const now = deps.now();
   // The Director is exempt, except when booking from a team's view (they see and book it as a coach would).
-  const exempt = viewer.isDirector && input.asTeam !== true;
+  const exempt = hasArea(viewer, "facilities") && input.asTeam !== true;
   try {
     return await withTx(deps.pool, async (q) => {
       const team = await q.query("select 1 from teams where id = $1", [teamId]);
@@ -96,7 +97,7 @@ export async function bookSlot(
       // One booking request per team at a time, so counts can't race.
       await q.query("select pg_advisory_xact_lock(hashtext('team-book:' || $1))", [teamId]);
       if (!(await canBookFor(q, viewer, teamId)))
-        throw new UserError("Only the Director or this team's coaches and manager can book its practices.");
+        throw new UserError("Only a Director of Facilities or this team's coaches and manager can book its practices.");
 
       const first = await lockSlot(q, slotId);
       if (!first) throw new UserError("That practice slot no longer exists.");
@@ -163,7 +164,7 @@ export async function releaseSlot(
       const teamId = first.team_id;
       await q.query("select pg_advisory_xact_lock(hashtext('team-book:' || $1))", [teamId]);
       if (!(await canBookFor(q, viewer, teamId)))
-        throw new UserError("Only the Director or this team's coaches and manager can release its practices.");
+        throw new UserError("Only a Director of Facilities or this team's coaches and manager can release its practices.");
       if (first.starts_at <= now) throw new UserError("That practice has already started.");
 
       const ids = [first.id, ...(input.everyWeek === true ? await sameSlotLaterWeeks(q, first) : [])];

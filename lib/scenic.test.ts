@@ -12,7 +12,7 @@ const person = (coachId: string, firstName: string): SessionUser => ({
   requestPending: false,
   hasThunderRole: false,
 });
-const dee = person("9913694", "Dee"); // Scenic City Director
+const dee = person("9913694", "Dee"); // Scenic City Admin
 const pat = person("5550001", "Pat");
 const sam = person("5550002", "Sam");
 let thunderId = ""; // approved partner
@@ -33,7 +33,7 @@ describe("Scenic City joining and users", () => {
       `insert into users (coach_id, first_name, last_name, cell) values
          ('9913694', 'Dee', 'X', '4239913694'), ('5550001', 'Pat', 'X', '4235550001'), ('5550002', 'Sam', 'X', '4235550002')`,
     );
-    await grant(db.pool, "9913694 scenic-city Director");
+    await grant(db.pool, "9913694 scenic-city Director", "9913694 scenic-city Admin");
     const p = await db.pool.query<{ id: string }>(
       `insert into partners (name, kind, hosts_games, registers_teams, approved, created_by) values
          ('Thunder Basketball', 'Organization', true, true, true, 'setup'),
@@ -119,22 +119,26 @@ describe("Scenic City joining and users", () => {
     expect(await joinStatus(deps(), pat)).toBe("none");
   });
 
-  it("edit roles: can't drop your own Director; dropping Partner takes them off their partners", async () => {
+  it("edit roles: Director is left alone (Admins set it); dropping Partner takes them off their partners", async () => {
     await requestJoin(deps(), pat, { wants: "Partner", partnerId: thunderId });
     await approveRequest(deps(), dee, pat.coachId, "Partner");
-    expect(await setScenicRoles(deps(), dee, dee.coachId, ["Coach"])).toEqual({ ok: false, message: "You can't remove your own Director role." });
+    expect(await setScenicRoles(deps(), dee, dee.coachId, ["Coach"])).toEqual({ ok: true });
+    expect(await roles(dee.coachId)).toEqual(["Admin", "Coach", "Director"]); // Admin and Director are left alone
+    expect(await approveRequest(deps(), dee, pat.coachId, "Director")).toMatchObject({ ok: false });
     expect(await setScenicRoles(deps(), dee, pat.coachId, ["Coach", "Solo", "Bogus"])).toEqual({ ok: true });
     expect(await roles(pat.coachId)).toEqual(["Coach", "Solo"]);
     expect((await db.pool.query("select count(*)::int n from partner_contacts")).rows[0].n).toBe(0);
   });
 
-  it("only Scenic City Directors manage requests and roles", async () => {
+  it("only Scenic City Admins manage requests and roles (a Director with areas isn't enough)", async () => {
     await requestJoin(deps(), sam, { wants: "Solo" });
-    await grant(db.pool, "5550001 thunder Director", "5550001 scenic-city Partner");
+    await grant(db.pool, "5550001 thunder Director", "5550001 scenic-city Partner", "5550001 scenic-city Director");
+    await db.pool.query("insert into director_areas (coach_id, org, area, granted_by) values ('5550001', 'scenic-city', 'facilities', 'test')");
     expect(await listScenicPeople(deps(), pat)).toBeNull();
     expect(await approveRequest(deps(), pat, sam.coachId, "Solo")).toMatchObject({ ok: false });
     expect(await denyRequest(deps(), pat, sam.coachId)).toMatchObject({ ok: false });
     expect(await setScenicRoles(deps(), pat, sam.coachId, ["Director"])).toMatchObject({ ok: false });
+    expect(await approveRequest(deps(), pat, sam.coachId, "Solo")).toEqual({ ok: false, message: "Only a Scenic City Admin can do that." });
     expect(await roles(sam.coachId)).toEqual(["Request"]);
   });
 });

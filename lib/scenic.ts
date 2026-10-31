@@ -4,6 +4,7 @@ import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { SCENIC_ROLES, type ScenicRole } from "./orgs";
 import { withTx, type Queryable } from "./sql";
+import { isOrgAdmin, orgHasArea } from "./org-admin";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -11,7 +12,7 @@ class ScenicError extends Error {}
 
 const ORG = "scenic-city";
 const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
-const directorOnly = { ok: false as const, message: "Only a Scenic City Director can do that." };
+const directorOnly = { ok: false as const, message: "Only a Scenic City Admin can do that." };
 const isCoachId = (v: unknown): v is string => typeof v === "string" && /^\d{7}$/.test(v);
 
 async function run<T extends object>(fn: () => Promise<T>): Promise<Result<T>> {
@@ -23,8 +24,9 @@ async function run<T extends object>(fn: () => Promise<T>): Promise<Result<T>> {
   }
 }
 
-export async function isScenicDirector(q: Queryable, coachId: string): Promise<boolean> {
-  return (await q.query<{ d: boolean }>("select has_role($1, 'scenic-city', 'Director') as d", [coachId])).rows[0].d;
+// Scenic City Director tools for game days, partners, gyms and courts: a Director of Facilities, or an Admin.
+export async function isScenicFacilities(q: Queryable, coachId: string): Promise<boolean> {
+  return orgHasArea(q, coachId, ORG, "facilities");
 }
 
 // ---- Partners ----
@@ -135,7 +137,7 @@ export type ScenicMember = {
 
 // Requests (oldest first) and everyone holding a Scenic City role (by last name).
 export async function listScenicPeople(deps: Deps, viewer: SessionUser): Promise<{ requests: ScenicRequest[]; members: ScenicMember[] } | null> {
-  if (!(await isScenicDirector(deps.pool, viewer.coachId))) return null;
+  if (!(await isOrgAdmin(deps.pool, viewer.coachId, ORG))) return null;
   const [requests, members] = await Promise.all([
     deps.pool.query<ScenicRequest>(
       `select u.coach_id as "coachId", u.first_name as "firstName", u.last_name as "lastName", u.cell, u.email,
@@ -168,9 +170,10 @@ export async function listScenicPeople(deps: Deps, viewer: SessionUser): Promise
 export async function approveRequest(deps: Deps, viewer: SessionUser, coachId: unknown, as: unknown): Promise<Result> {
   if (!isCoachId(coachId)) return { ok: false, message: "That request no longer exists." };
   if (!SCENIC_ROLES.includes(as as ScenicRole)) return { ok: false, message: "Pick a role." };
+  if (as === "Director") return { ok: false, message: "Approve them as another role; Admins add Directors in the Directors section." };
   return run(() =>
     withTx(deps.pool, async (q) => {
-      if (!(await isScenicDirector(q, viewer.coachId))) throw new ScenicError(directorOnly.message);
+      if (!(await isOrgAdmin(q, viewer.coachId, ORG))) throw new ScenicError(directorOnly.message);
       const r = await q.query<{ partner_id: string | null }>(
         "select partner_id::text from access_requests where coach_id = $1 and org = $2 for update",
         [coachId, ORG],
@@ -199,7 +202,7 @@ export async function denyRequest(deps: Deps, viewer: SessionUser, coachId: unkn
   if (!isCoachId(coachId)) return { ok: false, message: "That request no longer exists." };
   return run(() =>
     withTx(deps.pool, async (q) => {
-      if (!(await isScenicDirector(q, viewer.coachId))) throw new ScenicError(directorOnly.message);
+      if (!(await isOrgAdmin(q, viewer.coachId, ORG))) throw new ScenicError(directorOnly.message);
       const r = await q.query<{ partner_id: string | null }>(
         "delete from access_requests where coach_id = $1 and org = $2 returning partner_id::text",
         [coachId, ORG],
@@ -226,13 +229,14 @@ async function removeOrphanPartner(q: Queryable, partnerId: string | null) {
 export async function setScenicRoles(deps: Deps, viewer: SessionUser, coachId: unknown, roles: unknown): Promise<Result> {
   if (!isCoachId(coachId)) return { ok: false, message: "That user no longer exists." };
   const want = new Set(Array.isArray(roles) ? roles.filter((r): r is ScenicRole => SCENIC_ROLES.includes(r)) : []);
-  if (coachId === viewer.coachId && !want.has("Director")) return { ok: false, message: "You can't remove your own Director role." };
   return run(() =>
     withTx(deps.pool, async (q) => {
-      if (!(await isScenicDirector(q, viewer.coachId))) throw new ScenicError(directorOnly.message);
+      if (!(await isOrgAdmin(q, viewer.coachId, ORG))) throw new ScenicError(directorOnly.message);
       if (!(await q.query("select 1 from users where coach_id = $1 for update", [coachId])).rows[0])
         throw new ScenicError("That user no longer exists.");
-      for (const role of SCENIC_ROLES) await q.query("select set_role($1, $2, $3, $4, $5)", [coachId, ORG, role, want.has(role), by(viewer)]);
+      // Director is left as it is: Admins choose Directors and their areas (lib/org-admin.ts).
+      for (const role of SCENIC_ROLES)
+        if (role !== "Director") await q.query("select set_role($1, $2, $3, $4, $5)", [coachId, ORG, role, want.has(role), by(viewer)]);
       if (want.size) {
         await q.query("select set_role($1, $2, 'Request', false, $3)", [coachId, ORG, by(viewer)]);
         await q.query("delete from access_requests where coach_id = $1 and org = $2", [coachId, ORG]);

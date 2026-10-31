@@ -1,13 +1,15 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
+import { requireFeature } from "@/lib/features-server";
 import { db } from "@/lib/db";
-import { isScenicDirector } from "@/lib/scenic";
-import { listGameDays } from "@/lib/scenic-partners";
+import { isScenicFacilities } from "@/lib/scenic";
+import { listGameDays, openCourtsByDay } from "@/lib/scenic-partners";
+import { currentScenic } from "@/lib/contexts-server";
+import { dayLabel, localParts } from "@/lib/time";
 import AppHeader from "../../AppHeader";
-import { GroupCard, PageTitle } from "../../ui";
-import { AddGameDays, RemoveGameDay } from "./GameDayTools";
+import { PageTitle, card } from "../../ui";
+import GameDayCalendar from "./GameDayCalendar";
 
 export default function GameDaysPage() {
   return (
@@ -17,48 +19,59 @@ export default function GameDaysPage() {
   );
 }
 
-const dayLabel = (d: string) =>
-  new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric" });
-const monthLabel = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "long", year: "numeric" });
-
-// Scenic City game days from today on, by month. Directors add and remove them; everyone in Scenic City can see them.
+// Scenic City game days on a calendar. Directors tap dates to add or remove them, then Submit (no times);
+// they also see how many partner courts are open each day. Everyone else in Scenic City sees the calendar.
 async function GameDays() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
+  await requireFeature("scenic-city", "hosting-partners");
   const deps = { pool: db, now: () => new Date() };
   const days = await listGameDays(deps, user);
   if (!days) redirect("/");
-  const director = await isScenicDirector(db, user.coachId);
-  const months = new Map<string, typeof days>();
-  for (const d of days) months.set(monthLabel(d.day), [...(months.get(monthLabel(d.day)) ?? []), d]);
+  const scenic = await currentScenic(user);
+  if (!scenic) redirect("/");
+  // Shown as the chip in use: only the Director chip edits game days (Directors of Facilities and Admins).
+  const director = scenic.role === "Director" && (await isScenicFacilities(db, user.coachId));
+  const byId = director ? ((await openCourtsByDay(deps, user)) ?? {}) : {};
+  const openCourts = Object.fromEntries(days.filter((d) => byId[d.id]).map((d) => [d.day, byId[d.id]]));
+  const t = localParts(new Date());
+  const today = `${t.year}-${String(t.month).padStart(2, "0")}-${String(t.day).padStart(2, "0")}`;
 
   return (
     <>
-      <AppHeader user={user} context="scenic" />
+      <AppHeader user={user} context={scenic.key} tab="game-days" />
       <main className="mx-auto w-full max-w-md flex-1 px-4 py-6">
-        <Link href="/scenic" className="text-sm text-zinc-500 hover:underline">
-          ← Scenic City
-        </Link>
-        <div className="flex items-start justify-between gap-3">
-          <PageTitle title="Game days" subtitle={`${days.length} upcoming. Hosting partners give their courts' hours on these days.`} />
-          {director && <AddGameDays />}
+        <PageTitle
+          title="Game days"
+          subtitle={
+            director
+              ? `${days.length} upcoming. Tap dates to add or remove game days, then Submit.`
+              : `${days.length} upcoming, set by each program's game dates. Hosting partners give their courts' hours on these days.`
+          }
+        />
+        <div className={`${card} p-4`}>
+          <GameDayCalendar today={today} days={days.map((d) => d.day)} openCourts={openCourts} editable={director} />
         </div>
-        <div className="space-y-3">
-          {!days.length && <p className="text-zinc-500">No game days yet.{director && " Tap “+ Add” to add some."}</p>}
-          {[...months].map(([month, list]) => (
-            <GroupCard key={month} title={month} count={list.length}>
-              {list.map((d) => (
-                <li key={d.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
-                  <span className="font-medium tabular-nums">{dayLabel(d.day)}</span>
-                  <span className="flex items-center gap-3">
-                    <span className="text-xs text-zinc-500">{d.createdBy}</span>
-                    {director && <RemoveGameDay id={d.id} label={dayLabel(d.day)} />}
+        {days.length > 0 && (
+          <section className={`${card} mt-4 overflow-hidden`}>
+            <h2 className="px-4 pt-4 pb-2 font-semibold">Upcoming game days</h2>
+            <ul className="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-white/5 dark:border-white/5">
+              {days.map((d) => (
+                <li key={d.id} className="flex items-start justify-between gap-3 px-4 py-2.5 text-sm">
+                  <span className="font-medium whitespace-nowrap">{dayLabel(d.day)}</span>
+                  <span className="text-right text-zinc-600 dark:text-zinc-300">
+                    {d.programs.length ? d.programs.join(", ") : <span className="text-zinc-400">No program yet</span>}
+                    {openCourts[d.day] ? (
+                      <span className="block text-xs text-emerald-700 dark:text-emerald-300">
+                        {openCourts[d.day]} court{openCourts[d.day] === 1 ? "" : "s"} open
+                      </span>
+                    ) : null}
                   </span>
                 </li>
               ))}
-            </GroupCard>
-          ))}
-        </div>
+            </ul>
+          </section>
+        )}
       </main>
     </>
   );

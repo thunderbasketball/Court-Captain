@@ -4,7 +4,7 @@ import { createTestDb, grant } from "./testing/db";
 import { HEADER, row } from "./teamsnap/fixtures";
 import { importRegistrations } from "./teamsnap/import";
 import { parseRegistrations } from "./teamsnap/parse";
-import { createTeam, personOptions, listTeams, teamName } from "./teams";
+import { createTeam, deleteTeam, personOptions, listTeams, teamName } from "./teams";
 
 const director: SessionUser = {
   coachId: "9913694",
@@ -115,7 +115,7 @@ describe("teams", () => {
 
   it("only the Director can create or list teams", async () => {
     const r = await createTeam(deps(), coach, { gender: "Girls", grades: ["4"], level: "REC", headCoach: "user:9913694" });
-    expect(r).toEqual({ ok: false, message: "Only the Director can create teams." });
+    expect(r).toEqual({ ok: false, message: "Only a Director of Teams can create teams." });
     await expect(listTeams(deps(), coach)).rejects.toThrow("Director only");
     await expect(personOptions(deps(), coach)).rejects.toThrow("Director only");
   });
@@ -128,5 +128,22 @@ describe("teams", () => {
     await mk("Girls", ["K"], "COMP");
     await mk("Boys", ["4"], "REC");
     expect((await listTeams(deps(), director)).map((t) => t.name)).toEqual(["2B Epps", "10B Epps", "KG Epps", "4B Epps", "5G Epps"]);
+  });
+
+  it("a Director of Teams deletes a team: its staff go and its booked practice times open up; others can't", async () => {
+    const r = (await createTeam(deps(), director, { gender: "Girls", grades: ["4"], level: "REC", headCoach: "user:9913694" })) as { id: string };
+    const g = await db.pool.query<{ id: string }>("insert into gyms (name) values ('Gym') returning id::text");
+    const c = await db.pool.query<{ id: string }>("insert into courts (gym_id, name) values ($1, 'Main') returning id::text", [g.rows[0].id]);
+    await db.pool.query(
+      "insert into slots (court_id, starts_at, team_id, booked_by, booked_at, created_by) values ($1, '2026-11-10T23:00:00Z', $2, 'Earl Epps', now(), 'x')",
+      [c.rows[0].id, r.id],
+    );
+    expect(await deleteTeam(deps(), coach, r.id)).toEqual({ ok: false, message: "Only a Director of Teams can delete a team." });
+    expect(await deleteTeam(deps(), { ...director, thunderAreas: ["facilities"] }, r.id)).toMatchObject({ ok: false });
+
+    expect(await deleteTeam(deps(), director, r.id)).toEqual({ ok: true });
+    expect((await db.pool.query("select count(*)::int n from team_staff")).rows[0].n).toBe(0);
+    expect((await db.pool.query("select team_id, booked_by, booked_at from slots")).rows).toEqual([{ team_id: null, booked_by: null, booked_at: null }]);
+    expect(await deleteTeam(deps(), director, r.id)).toEqual({ ok: false, message: "That team no longer exists." });
   });
 });

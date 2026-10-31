@@ -2,11 +2,13 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
+import { requireFeature } from "@/lib/features-server";
 import { db } from "@/lib/db";
 import { seasonCalendar } from "@/lib/practice/schedule";
 import AppHeader from "../../AppHeader";
 import { PageTitle, card } from "../../ui";
-import PracticeNav from "../PracticeNav";
+import ScheduleNav from "../../ScheduleNav";
+import { hasArea } from "@/lib/org-admin";
 
 export default function SeasonPage() {
   return (
@@ -20,16 +22,17 @@ export default function SeasonPage() {
 async function Season() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
-  if (!user.isDirector) redirect("/");
+  await requireFeature("thunder", "practice");
+  if (!hasArea(user, "facilities")) redirect("/");
   const months = await seasonCalendar({ pool: db, now: () => new Date() }, user);
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
 
   return (
     <>
-      <AppHeader user={user} tab="practice" context="director" />
+      <AppHeader user={user} tab="schedule" context="director" />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
         <PageTitle title="Season calendar" subtitle="Practice days at a glance. Tap a day to open that week." />
-        <PracticeNav current="season" />
+        <ScheduleNav user={user} current="season" />
         <div className="mb-4 flex flex-wrap gap-3 text-xs text-zinc-600 dark:text-zinc-400">
           <span className="flex items-center gap-1.5">
             <span className="size-3 rounded bg-emerald-500" /> Open slots

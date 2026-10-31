@@ -1,6 +1,8 @@
 "use server";
 
 import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
+import { featureRefusal } from "@/lib/features-server";
+import { hasArea } from "@/lib/org-admin";
 import { db } from "@/lib/db";
 import { playerEvaluations } from "@/lib/evaluations";
 import { playerTeam } from "@/lib/player-team";
@@ -10,7 +12,9 @@ import * as rosters from "@/lib/rosters";
 export async function loadPlayerTeam(registrantId: string) {
   const user = await currentUser();
   if (!user) return { ok: false as const, message: "Please log in again." };
-  if (!user.isDirector) return { ok: false as const, message: "Only the Director can see this." };
+  const refused = await featureRefusal("thunder", "player-registration");
+  if (refused) return refused;
+  if (!hasArea(user, "players", "teams")) return { ok: false as const, message: "Only a Director of Players or Teams can see this." };
   try {
     return { ok: true as const, team: await playerTeam({ pool: db, now: () => new Date() }, user, String(registrantId)) };
   } catch (e) {
@@ -23,9 +27,11 @@ export async function loadPlayerTeam(registrantId: string) {
 export async function loadRosterBoard(gender: string, grade: string) {
   const user = await currentUser();
   if (!user) return { ok: false as const, message: "Please log in again." };
+  const refused = await featureRefusal("thunder", "player-registration");
+  if (refused) return refused;
   try {
     const board = await rosters.rosterBoard({ pool: db, now: () => new Date() }, user, String(gender), String(grade));
-    return board ? { ok: true as const, board } : { ok: false as const, message: "Only the Director can roster players." };
+    return board ? { ok: true as const, board } : { ok: false as const, message: "Only a Director of Teams can roster players." };
   } catch (e) {
     console.error("Roster board failed:", e);
     return { ok: false as const, message: "Something went wrong. Please try again." };
@@ -36,6 +42,8 @@ export async function loadRosterBoard(gender: string, grade: string) {
 export async function movePlayer(registrantId: string, teamId: string | null) {
   const user = await currentUser();
   if (!user) return { ok: false as const, message: "Please log in again." };
+  const refused = await featureRefusal("thunder", "player-registration");
+  if (refused) return refused;
   if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
   try {
     return await rosters.movePlayer(
@@ -54,9 +62,11 @@ export async function movePlayer(registrantId: string, teamId: string | null) {
 export async function loadPlayerEvaluations(registrantId: string) {
   const user = await currentUser();
   if (!user) return { ok: false as const, message: "Please log in again." };
+  const refused = await featureRefusal("thunder", "player-registration");
+  if (refused) return refused;
   try {
     const teams = await playerEvaluations({ pool: db, now: () => new Date() }, user, String(registrantId));
-    return teams ? { ok: true as const, teams } : { ok: false as const, message: "Only the Director can evaluate here." };
+    return teams ? { ok: true as const, teams } : { ok: false as const, message: "Only a Director of Teams can evaluate here." };
   } catch (e) {
     console.error("Player evaluations failed:", e);
     return { ok: false as const, message: "Something went wrong. Please try again." };

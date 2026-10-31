@@ -4,10 +4,13 @@ import { after } from "next/server";
 import { popupAnnouncements, unreadCount } from "@/lib/announcements";
 import { chatUnreadCount } from "@/lib/chat";
 import type { SessionUser } from "@/lib/auth/service";
+import { PLATFORM } from "@/lib/contexts";
 import { currentContexts } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
 import { myEventCount } from "@/lib/events";
-import { ORGS } from "@/lib/orgs";
+import { orgFeatures, type Feature } from "@/lib/features";
+import { directorAreas, hasArea, isOrgAdmin, isThunderAdmin, type Area } from "@/lib/org-admin";
+import { ORGS, ORG_SLUGS, PLATFORM_BRAND } from "@/lib/orgs";
 import { myPracticesToday } from "@/lib/practice-attendance";
 import { localParts, TZ, zonedTime } from "@/lib/time";
 import { syncIfStale } from "@/lib/teamsnap/scheduler";
@@ -15,10 +18,12 @@ import { stopActing } from "./act-as/actions";
 import AnnouncementPopup from "./AnnouncementPopup";
 import ChatPopup from "./ChatPopup";
 import NotifyButton from "./NotifyButton";
+import OrgSwitcher from "./OrgSwitcher";
 import { LogoutButton } from "./HomeActions";
 import { Avatar } from "./ui";
 
-type Tab = "teams" | "practice" | "events" | "users" | "players" | "coaches" | "uniforms";
+type Tab = "teams" | "schedule" | "members" | "uniforms" | "facilities" | "features" | ScenicTab;
+type ScenicTab = "scenic-home" | "game-days" | "partners" | "scenic-teams" | "programs" | "scenic-users";
 export type TeamTab = "staff" | "roster" | "uniforms" | "practices";
 
 // Events the person runs check-in for (from yesterday on), plus their teams' practices today.
@@ -33,8 +38,8 @@ async function checkInsFor(user: SessionUser): Promise<number> {
 }
 
 // Sticky top bar: the organization's brand, the user, one chip per role to switch between them, and the Director tabs.
-// `context` is the role this page is shown as ("director", "team:<id>" or "scenic"); it highlights that chip and picks the
-// organization (Thunder unless it's "scenic"). Thunder's chat, bell and check-in only show in Thunder.
+// `context` is the role this page is shown as ("director", "team:<id>" or "scenic:<role>"); it highlights that chip and picks
+// the organization (Thunder unless it's a Scenic City role). Thunder's chat, bell and check-in only show in Thunder.
 // `teamTab`: on a team page seen as its staff, the Staff / Roster / Uniforms / Practices menu (top on a computer, bottom on
 // a phone). `alert` makes that tab flash red (Uniforms, while any player's number or size is missing).
 export default async function AppHeader({
@@ -49,48 +54,128 @@ export default async function AppHeader({
   teamTab?: { teamId: string; tab: TeamTab; alert?: TeamTab[] };
 }) {
   const deps = { pool: db, now: () => new Date() };
-  const org = context === "scenic" ? "scenic-city" : "thunder";
-  const brand = ORGS[org];
-  const thunder = org === "thunder" && user.hasThunderRole;
-  const [{ contexts }, unread, myEvents, popups, chatUnread] = await Promise.all([
+  // The CourtCaptain page (admins) has the platform's own brand and no organization tools.
+  const platform = context === "platform";
+  const org = context?.startsWith("scenic:") ? "scenic-city" : "thunder";
+  const brand = platform ? PLATFORM_BRAND : ORGS[org];
+  const thunder = !platform && org === "thunder" && user.hasThunderRole;
+  const [{ contexts }, features, unread, myEvents, popups, chatUnread] = await Promise.all([
     currentContexts(user),
+    orgFeatures(db, org),
     thunder ? unreadCount(deps, user) : 0,
     thunder && !user.isDirector ? checkInsFor(user) : 0,
     // Not while a Director is viewing as this person.
     user.actingBy || !thunder ? [] : popupAnnouncements(deps, user),
     thunder ? chatUnreadCount(deps, user) : 0,
   ]);
-  // Chips grouped by organization; the group names show only when there's more than one.
-  const groups = (["thunder", "scenic-city"] as const)
-    .map((o) => ({ org: o, items: contexts.filter((c) => c.org === o) }))
-    .filter((g) => g.items.length);
+  // Only the features this organization has (SPEC section 14); tabs with no feature are always there.
+  const has = (t: { feature?: Feature }) => !t.feature || features.has(t.feature);
+  const chatOn = features.has("chat");
+  // Chips for this organization only; the logo next to Log out switches organizations (SPEC section 14).
+  const orgChips = platform ? [] : contexts.filter((c) => c.org === org);
+  const switchTo = [
+    ...(contexts.some((c) => c.key === "platform")
+      ? [{ slug: PLATFORM, name: "CourtCaptain", logo: PLATFORM_BRAND.logo.src }]
+      : []),
+    ...ORG_SLUGS.filter((o) => contexts.some((c) => c.org === o) || (o === "thunder" && user.hasThunderRole)).map((o) => ({
+      slug: o,
+      name: ORGS[o].name,
+      logo: ORGS[o].logo.src,
+    })),
+  ];
   // Backup for the sheet timer: after this page is sent, refresh registrations if the last check is stale.
   after(syncIfStale);
-  const directorTabs: { key: string; href: string; label: string; icon: string }[] = [
-    { key: "teams", href: "/teams", label: "Teams", icon: ICONS.teams },
-    {
-      key: "practice",
-      href: "/practice",
-      label: "Practice",
-      icon: ICONS.practice,
-    },
-    { key: "events", href: "/events", label: "Events", icon: ICONS.events },
-    { key: "users", href: "/users", label: "Users", icon: ICONS.users },
-    { key: "players", href: "/players", label: "Players", icon: ICONS.players },
-    { key: "coaches", href: "/coaches", label: "Coaches", icon: ICONS.coaches },
-    { key: "uniforms", href: "/uniforms", label: "Uniforms", icon: ICONS.uniforms },
+  // `areas`: Director tabs show only for a Director with one of these areas (Admins have all; SPEC section 14).
+  // `admin`: Admins only.
+  const scheduleHref =
+    features.has("practice") && hasArea(user, "facilities")
+      ? "/practice"
+      : features.has("events") && hasArea(user, "programs")
+        ? "/events"
+        : null;
+  type TabLink = { key: string; href: string; label: string; icon: string; feature?: Feature; areas?: Area[]; admin?: boolean };
+  const directorTabs: TabLink[] = [
+    { key: "teams", href: "/teams", label: "Teams", icon: ICONS.teams, feature: "team-building", areas: ["teams"] },
+    // Schedule: Practice and Season (Facilities, Practice Management), Events (Programs, Event Management); opens the first.
+    ...(scheduleHref ? [{ key: "schedule", href: scheduleHref, label: "Schedule", icon: ICONS.practice }] : []),
+    // Members: Staff (Admins), Coaches (Coaches area), Players (Players or Teams areas); opens the first one they can see.
+    ...(isThunderAdmin(user) || hasArea(user, "coaches", "players", "teams")
+      ? [{ key: "members", href: "/members", label: "Members", icon: ICONS.users }]
+      : []),
+    { key: "uniforms", href: "/uniforms", label: "Uniforms", icon: ICONS.uniforms, feature: "uniforms", areas: ["players"] },
+    { key: "facilities", href: "/facilities", label: "Facilities", icon: ICONS.facilities, areas: ["facilities"] },
+    { key: "features", href: "/upgrades", label: "Features", icon: ICONS.features, admin: true },
   ];
-  const tabs = teamTab
-    ? [
-        { key: "staff", href: `/teams/${teamTab.teamId}`, label: "Staff", icon: ICONS.teams },
-        { key: "roster", href: `/teams/${teamTab.teamId}?tab=roster`, label: "Roster", icon: ICONS.roster },
-        { key: "uniforms", href: `/teams/${teamTab.teamId}?tab=uniforms`, label: "Uniforms", icon: ICONS.uniforms },
-        { key: "practices", href: `/teams/${teamTab.teamId}?tab=practices`, label: "Practices", icon: ICONS.practice },
-      ]
-    : directorTabs;
+  // Scenic City: Home and Game days for everyone there, Partners for Partners and Directors of Facilities, Teams for
+  // everyone but Directors without the Teams area, Users for Admins.
+  const scenicContext = contexts.find((c) => c.key === context);
+  const scenicRole = scenicContext?.key.startsWith("scenic:") && "role" in scenicContext ? scenicContext.role : undefined;
+  const [scenicAreas, scenicAdmin] =
+    org === "scenic-city" && scenicRole === "Director"
+      ? await Promise.all([directorAreas(db, user.coachId, "scenic-city"), isOrgAdmin(db, user.coachId, "scenic-city")])
+      : [[] as Area[], false];
+  const scenicTabs: TabLink[] | null =
+    org === "scenic-city" && scenicRole
+      ? [
+          { key: "scenic-home", href: "/scenic", label: "Home", icon: ICONS.home },
+          { key: "game-days", href: "/scenic/game-days", label: "Game days", icon: ICONS.practice, feature: "hosting-partners" },
+          ...(scenicAreas.includes("facilities") || scenicRole === "Partner"
+            ? [
+                {
+                  key: "partners",
+                  href: "/scenic/partners",
+                  label: "Partners",
+                  icon: ICONS.coaches,
+                  feature: "hosting-partners" as const,
+                },
+              ]
+            : []),
+          ...(scenicRole !== "Director" || scenicAreas.includes("teams")
+            ? [
+                {
+                  key: "scenic-teams",
+                  href: "/scenic/teams",
+                  label: "Teams",
+                  icon: ICONS.teams,
+                  feature: "team-registration" as const,
+                },
+              ]
+            : []),
+          ...(scenicRole !== "Director" || scenicAreas.includes("programs")
+            ? [{ key: "programs", href: "/scenic/programs", label: "Programs", icon: ICONS.events, feature: "programs" as const }]
+            : []),
+          ...(scenicAdmin ? [{ key: "features", href: "/upgrades", label: "Features", icon: ICONS.features }] : []),
+          ...(scenicAdmin ? [{ key: "scenic-users", href: "/scenic/users", label: "Users", icon: ICONS.users }] : []),
+        ]
+      : null;
+  const tabs = (
+    scenicTabs
+      ? scenicTabs
+      : teamTab
+        ? ([
+            { key: "staff", href: `/teams/${teamTab.teamId}`, label: "Staff", icon: ICONS.teams },
+            { key: "roster", href: `/teams/${teamTab.teamId}?tab=roster`, label: "Roster", icon: ICONS.roster },
+            {
+              key: "uniforms",
+              href: `/teams/${teamTab.teamId}?tab=uniforms`,
+              label: "Uniforms",
+              icon: ICONS.uniforms,
+              feature: "uniforms",
+            },
+            {
+              key: "practices",
+              href: `/teams/${teamTab.teamId}?tab=practices`,
+              label: "Practices",
+              icon: ICONS.practice,
+              feature: "practice",
+            },
+          ] satisfies TabLink[])
+        : directorTabs.filter((t) => (!t.areas || hasArea(user, ...t.areas)) && (!t.admin || isThunderAdmin(user)))
+  ).filter(has);
   const activeTab: string | undefined = teamTab ? teamTab.tab : tab;
   const alerting = (key: string) => !!teamTab?.alert?.includes(key as TeamTab);
-  const showTabs = !!teamTab || (user.isDirector && context === "director");
+  const showTabs = !!scenicTabs || !!teamTab || (user.isDirector && context === "director");
+  const activeBg = scenicTabs ? "bg-scenic-navy" : "bg-thunder-blue";
   return (
     <>
       <header
@@ -121,7 +206,9 @@ export default async function AppHeader({
             />
             <span className="min-w-0 leading-tight">
               <span className="block truncate font-semibold tracking-tight">{brand.name}</span>
-              <span className="block text-xs font-medium text-thunder-orange">CourtCaptain</span>
+              <span className="block text-xs font-medium text-thunder-orange">
+                {platform ? "Platform admin" : "CourtCaptain"}
+              </span>
             </span>
           </Link>
           <div className="flex min-w-0 items-center gap-3">
@@ -134,6 +221,7 @@ export default async function AppHeader({
               </Link>
             )}
             {thunder &&
+              chatOn &&
               // Directors: the bubble chats with every Head Coach (the full list is linked inside).
               (user.isDirector ? (
                 <ChatPopup chatKey={`heads-${user.coachId}`} label="Chat with all Head Coaches" className={headerBtn} allChats>
@@ -163,50 +251,46 @@ export default async function AppHeader({
             <p className="hidden truncate text-sm font-medium sm:block">
               {user.firstName} {user.lastName}
             </p>
-            <Avatar first={user.firstName} last={user.lastName} tone="orange" />
-            <LogoutButton />
+            <span className={switchTo.length > 1 ? "hidden sm:block" : undefined}>
+              <Avatar first={user.firstName} last={user.lastName} tone="orange" />
+            </span>
+            {switchTo.length > 1 && <OrgSwitcher current={platform ? PLATFORM : org} orgs={switchTo} />}
+            <LogoutButton to={brand.login} />
           </div>
         </div>
 
-        {contexts.length > 1 && (
+        {orgChips.length > 1 && (
           <nav aria-label="Switch role" className="mx-auto max-w-3xl">
             <div className="flex items-center gap-2 overflow-x-auto px-4 pb-3 [scrollbar-width:none]">
-              {groups.map((g, i) => [
-                groups.length > 1 && (
-                  <span
-                    key={g.org}
-                    className={`shrink-0 text-[11px] font-semibold tracking-wide whitespace-nowrap text-zinc-500 uppercase dark:text-zinc-400 ${i ? "ml-2" : ""}`}
+              {orgChips.map((c) => {
+                const on = c.key === context;
+                return (
+                  <a
+                    key={c.key}
+                    href={`/switch?to=${encodeURIComponent(c.key)}`}
+                    aria-current={on ? "true" : undefined}
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap ring-1 ring-inset transition-colors ${
+                      on
+                        ? c.org === "thunder"
+                          ? "bg-thunder-orange text-white ring-thunder-orange"
+                          : "bg-scenic-navy text-white ring-scenic-navy dark:bg-white dark:text-scenic-navy dark:ring-white"
+                        : "bg-white text-zinc-600 ring-zinc-950/10 hover:text-zinc-900 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-white/15"
+                    }`}
                   >
-                    {g.org === "thunder" ? "Thunder" : "Scenic City"}
-                  </span>
-                ),
-                ...g.items.map((c) => {
-                  const on = c.key === context;
-                  return (
-                    <a
-                      key={c.key}
-                      href={`/switch?to=${encodeURIComponent(c.key)}`}
-                      aria-current={on ? "true" : undefined}
-                      className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap ring-1 ring-inset transition-colors ${
-                        on
-                          ? c.org === "thunder"
-                            ? "bg-thunder-orange text-white ring-thunder-orange"
-                            : "bg-scenic-navy text-white ring-scenic-navy dark:bg-white dark:text-scenic-navy dark:ring-white"
-                          : "bg-white text-zinc-600 ring-zinc-950/10 hover:text-zinc-900 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-white/15"
-                      }`}
-                    >
-                      {c.label}
-                    </a>
-                  );
-                }),
-              ])}
+                    {c.label}
+                  </a>
+                );
+              })}
             </div>
           </nav>
         )}
 
         {/* Tablets and computers: tabs under the header. */}
         {showTabs && (
-          <nav aria-label={teamTab ? "Team" : "Director"} className="mx-auto hidden max-w-3xl px-4 pb-3 sm:block">
+          <nav
+            aria-label={scenicTabs ? "Scenic City" : teamTab ? "Team" : "Director"}
+            className="mx-auto hidden max-w-3xl px-4 pb-3 sm:block"
+          >
             <div className="inline-flex rounded-full bg-zinc-100 p-1 dark:bg-zinc-900">
               {tabs.map((t) => (
                 <Link
@@ -217,7 +301,7 @@ export default async function AppHeader({
                     alerting(t.key)
                       ? "flash-red"
                       : activeTab === t.key
-                        ? "bg-thunder-blue text-white shadow-sm"
+                        ? `${activeBg} text-white shadow-sm`
                         : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
                   }`}
                 >
@@ -236,10 +320,10 @@ export default async function AppHeader({
       {showTabs && (
         <nav
           id="bottom-tabs"
-          aria-label={teamTab ? "Team" : "Director"}
+          aria-label={scenicTabs ? "Scenic City" : teamTab ? "Team" : "Director"}
           className="fixed inset-x-0 bottom-0 z-20 border-t border-zinc-950/10 bg-white/95 backdrop-blur-xl sm:hidden dark:border-white/10 dark:bg-zinc-950/95"
         >
-          <div className={`grid ${tabs.length === 4 ? "grid-cols-4" : "grid-cols-7"}`}>
+          <div className="grid" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
             {tabs.map((t) => {
               const on = activeTab === t.key;
               return (
@@ -248,11 +332,24 @@ export default async function AppHeader({
                   href={t.href}
                   aria-current={on ? "page" : undefined}
                   className={`relative flex flex-col items-center gap-0.5 pt-2 pb-1.5 text-[11px] font-medium ${
-                    alerting(t.key) ? "flash-red-text" : on ? "text-thunder-blue dark:text-blue-400" : "text-zinc-500 dark:text-zinc-400"
+                    alerting(t.key)
+                      ? "flash-red-text"
+                      : on
+                        ? scenicTabs
+                          ? "text-scenic-navy dark:text-white"
+                          : "text-thunder-blue dark:text-blue-400"
+                        : "text-zinc-500 dark:text-zinc-400"
                   }`}
                 >
-                  {on && <span className="absolute inset-x-3 top-0 h-0.5 rounded-full bg-thunder-blue" />}
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={on ? 2 : 1.6} aria-hidden className="size-6">
+                  {on && <span className={`absolute inset-x-3 top-0 h-0.5 rounded-full ${activeBg}`} />}
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={on ? 2 : 1.6}
+                    aria-hidden
+                    className="size-6"
+                  >
                     <path strokeLinecap="round" strokeLinejoin="round" d={t.icon} />
                   </svg>
                   {t.label}
@@ -264,12 +361,7 @@ export default async function AppHeader({
           {/* A strip under the tabs for the host's "Powered by" badge (bottom right), so it never covers a tab.
             Also clears the iPhone home bar. Today's date fills the free left side. */}
           <div className="flex h-[max(3.75rem,env(safe-area-inset-bottom))] items-center px-4 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-            {new Date().toLocaleDateString("en-US", {
-              timeZone: TZ,
-              weekday: "short",
-              month: "short",
-              day: "numeric",
-            })}
+            {new Date().toLocaleDateString("en-US", { timeZone: TZ, weekday: "short", month: "short", day: "numeric" })}
           </div>
         </nav>
       )}
@@ -300,6 +392,11 @@ function HeaderIcon({ d, badge }: { d: string; badge: number }) {
 
 // Outline icons (Heroicons) for the header and the phone tab bar.
 const ICONS = {
+  facilities:
+    "M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3.75h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Z",
+  features:
+    "M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 0 0 2.25-2.25V6a2.25 2.25 0 0 0-2.25-2.25H6A2.25 2.25 0 0 0 3.75 6v2.25A2.25 2.25 0 0 0 6 10.5Zm0 9.75h2.25A2.25 2.25 0 0 0 10.5 18v-2.25a2.25 2.25 0 0 0-2.25-2.25H6a2.25 2.25 0 0 0-2.25 2.25V18A2.25 2.25 0 0 0 6 20.25Zm9.75-9.75H18a2.25 2.25 0 0 0 2.25-2.25V6A2.25 2.25 0 0 0 18 3.75h-2.25A2.25 2.25 0 0 0 13.5 6v2.25a2.25 2.25 0 0 0 2.25 2.25Z",
+  home: "m2.25 12 8.954-8.955a1.126 1.126 0 0 1 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25",
   chat: "M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z",
   bell: "M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0",
   teams:

@@ -2,8 +2,10 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
-import { currentContexts } from "@/lib/contexts-server";
+import { currentScenic } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
+import { orgFeatures, type Feature } from "@/lib/features";
+import { directorAreas, isOrgAdmin, type Area } from "@/lib/org-admin";
 import AppHeader from "../AppHeader";
 import { card, PageTitle } from "../ui";
 
@@ -15,37 +17,95 @@ export default function ScenicPage() {
   );
 }
 
-// What Scenic City will offer, by role (SPEC.md section 13). Each part arrives in a later build step.
-const PARTS: { title: string; about: string; who: string[]; href?: string }[] = [
-  { title: "Programs", about: "Circuit, League and Tournament: divisions, dates and registered teams.", who: ["Director"] },
-  { title: "Game days", about: "The dates Scenic City plays.", who: ["Director", "Partner", "Solo", "Coach"], href: "/scenic/game-days" },
+// What Scenic City offers, by role and by the features it has (SPEC.md sections 13-14). Parts without a link come later.
+// For the Director chip: `area` needs that Director area, `admin` needs an Admin (Admins have every area).
+const PARTS: { title: string; about: string; who: string[]; href?: string; feature?: Feature; area?: Area; admin?: boolean }[] = [
+  {
+    title: "Programs",
+    about: "Circuit, League and Tournament: divisions, dates and registered teams.",
+    who: ["Director", "Partner", "Solo", "Coach"],
+    href: "/scenic/programs",
+    feature: "programs",
+    area: "programs",
+  },
+  {
+    title: "Game days",
+    about: "The dates Scenic City plays.",
+    who: ["Director", "Partner", "Solo", "Coach"],
+    href: "/scenic/game-days",
+    feature: "hosting-partners",
+  },
   {
     title: "Partners",
     about: "Schools and organizations that host games, register teams, or both: their gyms and courts.",
     who: ["Director", "Partner"],
     href: "/scenic/partners",
+    feature: "hosting-partners",
+    area: "facilities",
   },
-  { title: "Court availability", about: "Gyms, courts and open times from hosting partners.", who: ["Director", "Partner"] },
-  { title: "Teams", about: "Register teams into programs.", who: ["Director", "Partner", "Solo", "Coach"] },
-  { title: "Users", about: "Approve Partner and Solo requests; manage Scenic City roles.", who: ["Director"], href: "/scenic/users" },
+  {
+    title: "Court availability",
+    about: "Each partner's courts and when they're open on game days (open a partner).",
+    who: ["Director", "Partner"],
+    href: "/scenic/partners",
+    feature: "hosting-partners",
+    area: "facilities",
+  },
+  {
+    title: "Teams",
+    about: "Partners' and Solo coaches' teams: name, gender, grade and coach.",
+    who: ["Director", "Partner", "Solo", "Coach"],
+    href: "/scenic/teams",
+    feature: "team-registration",
+    area: "teams",
+  },
+  {
+    title: "Officials",
+    about: "Referees and scorekeepers for your games.",
+    who: ["Director"],
+    feature: "officials",
+    area: "officials",
+  },
+  {
+    title: "Users",
+    about: "Approve Partner and Solo requests; manage Scenic City roles.",
+    who: ["Director"],
+    href: "/scenic/users",
+    admin: true,
+  },
+  {
+    title: "Features",
+    about: "Scenic City's CourtCaptain features, and upgrades you can add.",
+    who: ["Director"],
+    href: "/upgrades",
+    admin: true,
+  },
 ];
 
 // Scenic City home: only for people who hold a Scenic City role (checked on the server).
 async function Scenic() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
-  const { contexts } = await currentContexts(user);
-  const scenic = contexts.find((c) => c.key === "scenic");
-  if (!scenic || scenic.key !== "scenic") redirect("/");
-  const parts = PARTS.filter((p) => p.who.includes(scenic.role));
-  const requests =
-    scenic.role === "Director"
-      ? (await db.query<{ n: number }>("select count(*)::int as n from access_requests where org = 'scenic-city'")).rows[0].n
-      : 0;
+  const scenic = await currentScenic(user);
+  if (!scenic) redirect("/");
+  const features = await orgFeatures(db, "scenic-city");
+  const director = scenic.role === "Director";
+  const [admin, areas] = director
+    ? await Promise.all([isOrgAdmin(db, user.coachId, "scenic-city"), directorAreas(db, user.coachId, "scenic-city")])
+    : [false, [] as Area[]];
+  const parts = PARTS.filter(
+    (p) =>
+      p.who.includes(scenic.role) &&
+      (!p.feature || features.has(p.feature)) &&
+      (!director || ((!p.area || areas.includes(p.area)) && (!p.admin || admin))),
+  );
+  const requests = admin
+    ? (await db.query<{ n: number }>("select count(*)::int as n from access_requests where org = 'scenic-city'")).rows[0].n
+    : 0;
 
   return (
     <>
-      <AppHeader user={user} context="scenic" />
+      <AppHeader user={user} context={scenic.key} tab="scenic-home" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
         <PageTitle title="Scenic City Basketball" subtitle={`Welcome, ${user.firstName} · ${scenic.role}`} />
         <div className="grid gap-3 sm:grid-cols-2">

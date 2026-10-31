@@ -18,8 +18,8 @@ export async function createTestDb() {
     pool,
     async reset() {
       const r = await pool.query<{ tablename: string }>(
-        // Keep the migrations log and reference data the migrations seed (organizations and their roles).
-        "select tablename from pg_tables where schemaname = $1 and tablename not in ('schema_migrations', 'organizations', 'org_role_types')",
+        // Keep the migrations log and reference data the migrations seed (organizations, their roles and features).
+        "select tablename from pg_tables where schemaname = $1 and tablename not in ('schema_migrations', 'organizations', 'org_role_types', 'org_features')",
         [schema],
       );
       if (r.rows.length) await pool.query(`truncate ${r.rows.map((t) => t.tablename).join(", ")} cascade`);

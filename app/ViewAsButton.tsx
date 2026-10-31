@@ -25,7 +25,7 @@ function Eye() {
   );
 }
 
-// Director: open the app as this person, view only (the server checks the Director role).
+// Admins: open the app as this person, view only (the server checks they are an Admin of an organization this person is in).
 export function ViewAsButton({ coachId, name }: { coachId: string; name: string }) {
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);

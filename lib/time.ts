@@ -69,3 +69,20 @@ export function parseSheetTime(v: string): Date | null {
   if (m[6].toUpperCase() === "PM") hour += 12;
   return zonedTime(Number(m[3]), Number(m[1]), Number(m[2]), hour, Number(m[5]));
 }
+
+// A clock time "HH:MM" (24-hour) for people: "21:00" → "9:00 PM".
+export function timeLabel(t: string): string {
+  const [h, m] = t.split(":").map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+}
+
+// The Eastern calendar date of an instant, "YYYY-MM-DD".
+export function easternDate(d: Date): string {
+  const p = localParts(d);
+  return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+}
+
+// A calendar date "YYYY-MM-DD" as "Jan 9, 2027" (no time zone shift: it's a date, not an instant).
+export function dayLabel(iso: string): string {
+  return new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+}

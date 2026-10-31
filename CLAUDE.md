@@ -14,7 +14,7 @@ Secrets live only in `.env.local` (never committed, never pasted into chat). The
 - `npm test` — run tests (Vitest; tests live next to code as `*.test.ts`). Takes ~90 s: only 2 files run at once because Supabase allows 60 connections and its pooler holds idle ones for a while. If tests fail with "too many clients", wait a minute and rerun.
 - `npx tsc --noEmit` and `npm run lint` — type check and lint
 - `npm run db:migrate` — apply new `db/migrations/*.sql` files
-- `npm run user -- list | add <cell> <first> <last> [email] | director <cell> | delete <cell>` — test accounts until the Users tab exists
+- `npm run user -- list | add <cell> <first> <last> [email] | director <cell> | admin <cell> | delete <cell>` — test accounts; `admin` makes a CourtCaptain Admin (platform page `/platform`)
 - `npm run import:teamsnap -- --sheet [--dry-run]` (or a `"data/import/<file>.csv"` path) — replace registrations from the Winter Registrations sheet's TeamSnapAPI tab (all columns kept; birthdates shifted +1 day when TeamSnap shows an evening time)
 - `npm run import:practice -- [--dry-run]` — import Gyms, PracticeSlots, BlackOuts tabs; safe to re-run (existing slots left alone). Booking rules live in `lib/practice/booking.ts`; times are Eastern via `lib/time.ts`.
 - `npm run import:evaluations -- [--dry-run]` — import the sheet's Evaluations tab; safe to re-run (cards already in the app left alone). Rules in `lib/evaluations.ts`.

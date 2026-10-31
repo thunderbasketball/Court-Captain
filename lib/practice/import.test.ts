@@ -56,7 +56,7 @@ describe("practice import", () => {
       `select g.name gym, c.name court, s.starts_at, t.name team, s.blackout, s.note, s.booked_by
        from slots s join courts c on c.id = s.court_id join gyms g on g.id = c.gym_id left join teams t on t.id = s.team_id order by s.starts_at, c.name`,
     );
-    expect(s.rows[0]).toMatchObject({ court: "North", starts_at: zonedTime(2026, 11, 9, 18), team: "4G Epps", booked_by: "Earl Epps" });
+    expect(s.rows[0]).toMatchObject({ court: "Goal #1", starts_at: zonedTime(2026, 11, 9, 18), team: "4G Epps", booked_by: "Earl Epps" });
     expect(s.rows[1]).toMatchObject({ team: null, blackout: false, booked_by: null });
     // Both Thanksgiving slots are blacked out: one marked "BLACKOUT: ..." in PracticeSlots, one from the BlackOuts tab.
     expect(s.rows.slice(2).map((x) => [x.blackout, x.note])).toEqual([

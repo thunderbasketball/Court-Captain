@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
+import { requireFeature } from "@/lib/features-server";
 import { currentContexts } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
 import { listEvents } from "@/lib/events";
@@ -10,6 +11,8 @@ import { localParts, zonedTime } from "@/lib/time";
 import AppHeader from "../AppHeader";
 import { PageTitle, card } from "../ui";
 import { eventWhen } from "./format";
+import { hasArea } from "@/lib/org-admin";
+import ScheduleNav from "../ScheduleNav";
 
 export default function EventsPage({ searchParams }: PageProps<"/events">) {
   return (
@@ -36,10 +39,11 @@ type Item = {
 async function Events({ searchParams }: { searchParams: PageProps<"/events">["searchParams"] }) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
+  await requireFeature("thunder", "events");
   const deps = { pool: db, now: () => new Date() };
   const showPractices = (await searchParams).practices !== "off";
   const [events, practices, { active }] = await Promise.all([listEvents(deps, user), listPractices(deps, user), currentContexts(user)]);
-  if (!user.isDirector && !events.length && !practices.length) redirect("/");
+  if (!hasArea(user, "programs") && !events.length && !practices.length) redirect("/");
 
   const items: Item[] = [
     ...events.map((e) => ({
@@ -76,16 +80,17 @@ async function Events({ searchParams }: { searchParams: PageProps<"/events">["se
 
   return (
     <>
-      <AppHeader user={user} tab="events" context={user.isDirector ? "director" : active?.org === "thunder" ? active.key : undefined} />
+      <AppHeader user={user} tab="schedule" context={user.isDirector ? "director" : active?.org === "thunder" ? active.key : undefined} />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+        {user.isDirector && <ScheduleNav user={user} current="events" />}
         <div className="flex items-start justify-between gap-3">
           <PageTitle
             title="Events"
             subtitle={
-              user.isDirector ? "Events and team practices with player check-in" : "Your team practices and the events you run check-in for"
+              hasArea(user, "programs") ? "Events and team practices with player check-in" : "Your team practices and the events you run check-in for"
             }
           />
-          {user.isDirector && (
+          {hasArea(user, "programs") && (
             <Link
               href="/events/new"
               className="shrink-0 rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark"
@@ -109,7 +114,7 @@ async function Events({ searchParams }: { searchParams: PageProps<"/events">["se
           </span>
           Show practices ({practices.length})
         </Link>
-        {!items.length && <p className="text-zinc-500">Nothing here yet.{user.isDirector && " Tap “+ New event” to create one."}</p>}
+        {!items.length && <p className="text-zinc-500">Nothing here yet.{hasArea(user, "programs") && " Tap “+ New event” to create one."}</p>}
         <div className="space-y-3">
           {upcoming.map((e) => (
             <ItemCard key={e.key} e={e} />

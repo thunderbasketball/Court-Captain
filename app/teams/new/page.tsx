@@ -2,11 +2,13 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
+import { requireFeature } from "@/lib/features-server";
 import { db } from "@/lib/db";
 import { personOptions } from "@/lib/teams";
 import AppHeader from "../../AppHeader";
 import { PageTitle } from "../../ui";
 import NewTeamForm from "./NewTeamForm";
+import { hasArea } from "@/lib/org-admin";
 
 export default function NewTeamPage() {
   return (
@@ -19,7 +21,8 @@ export default function NewTeamPage() {
 async function NewTeam() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
-  if (!user.isDirector) redirect("/");
+  await requireFeature("thunder", "team-building");
+  if (!hasArea(user, "teams")) redirect("/");
 
   const options = await personOptions({ pool: db, now: () => new Date() }, user);
   return (

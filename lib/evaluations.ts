@@ -5,6 +5,7 @@ import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { HEIGHTS, NOTES_MAX, POSITIONS, SPEEDS, type Fields } from "./evaluation-fields";
 import { withTx } from "./sql";
+import { hasArea } from "./org-admin";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -18,7 +19,7 @@ const cantEvaluate = { ok: false as const, message: "Only this team's coaches ca
 // Head Coach, Assistant Coach, or the Director.
 export async function canEvaluate(q: Pick<Pool, "query">, viewer: SessionUser, teamId: string): Promise<boolean> {
   if (!isId(teamId)) return false;
-  if (viewer.isDirector) return true;
+  if (hasArea(viewer, "teams")) return true;
   const r = await q.query("select 1 from team_staff where team_id = $1 and coach_id = $2 and role in ('HeadCoach', 'AsstCoach')", [
     teamId,
     viewer.coachId,
@@ -78,7 +79,7 @@ export type TeamEvalCard = { teamId: string; teamName: string; card: EvalCard };
 // Director, Players page: one registered player's card for every team they can play for (same gender; the team's
 // grade or one above theirs) and any other team that already rated them. Their own team first, then Comp, by grade.
 export async function playerEvaluations(deps: Deps, viewer: SessionUser, registrantId: unknown): Promise<TeamEvalCard[] | null> {
-  if (!viewer.isDirector || !isRegistrant(registrantId)) return null;
+  if (!hasArea(viewer, "teams") || !isRegistrant(registrantId)) return null;
   const r = await deps.pool.query<EvalCard & { teamId: string; teamName: string }>(
     `select t.id::text as "teamId", t.name as "teamName",
             g.registrant_id as "registrantId", g.first_name as "firstName", g.last_name as "lastName", g.grade,

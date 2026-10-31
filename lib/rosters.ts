@@ -3,16 +3,17 @@
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { withTx } from "./sql";
+import { hasArea } from "./org-admin";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
 
-const directorOnly = { ok: false as const, message: "Only the Director can change rosters." };
+const directorOnly = { ok: false as const, message: "Only a Director of Teams can change rosters." };
 const isId = (v: unknown): v is string => typeof v === "string" && /^\d{1,18}$/.test(v);
 const isRegistrant = (v: unknown): v is string => typeof v === "string" && /^[\w-]{1,40}$/.test(v);
 
 export async function canSeeRoster(q: Pick<Pool, "query">, viewer: SessionUser, teamId: string): Promise<boolean> {
-  if (viewer.isDirector) return true;
+  if (hasArea(viewer, "teams")) return true;
   const r = await q.query("select 1 from team_staff where team_id = $1 and coach_id = $2", [teamId, viewer.coachId]);
   return r.rows.length > 0;
 }
@@ -54,7 +55,7 @@ export type RosterCandidate = {
 
 // Director: registered players not on this team yet. Those who fit the team come first.
 export async function rosterCandidates(deps: Deps, viewer: SessionUser, teamId: string): Promise<RosterCandidate[]> {
-  if (!viewer.isDirector || !isId(teamId)) return [];
+  if (!hasArea(viewer, "teams") || !isId(teamId)) return [];
   const r = await deps.pool.query<RosterCandidate>(
     `select g.registrant_id as "registrantId", g.first_name as "firstName", g.last_name as "lastName", g.gender, g.grade,
             (g.gender = t.gender and g.grade = any(t.grades)) as fits,
@@ -81,7 +82,7 @@ async function leaveTeams(q: Pick<Pool, "query">, registrantId: string, keep: st
 
 // A player can be on only one team: anyone already on another team is refused (move them on the roster board instead).
 export async function addPlayers(deps: Deps, viewer: SessionUser, teamId: unknown, ids: unknown): Promise<Result<{ added: number }>> {
-  if (!viewer.isDirector) return directorOnly;
+  if (!hasArea(viewer, "teams")) return directorOnly;
   if (!isId(teamId)) return { ok: false, message: "That team no longer exists." };
   const list = Array.isArray(ids) ? [...new Set(ids.filter(isRegistrant))].slice(0, 200) : [];
   if (!list.length) return { ok: false, message: "Pick at least one player." };
@@ -110,7 +111,7 @@ export async function addPlayers(deps: Deps, viewer: SessionUser, teamId: unknow
 }
 
 export async function removePlayer(deps: Deps, viewer: SessionUser, teamId: unknown, registrantId: unknown): Promise<Result> {
-  if (!viewer.isDirector) return directorOnly;
+  if (!hasArea(viewer, "teams")) return directorOnly;
   if (!isId(teamId) || !isRegistrant(registrantId)) return { ok: false, message: "That player isn't on this team." };
   return withTx(deps.pool, async (q) => {
     const r = await q.query("delete from team_players where team_id = $1 and registrant_id = $2", [teamId, registrantId]);
@@ -130,7 +131,7 @@ export type RosterBoard = { unrostered: BoardPlayer[]; teams: BoardTeam[] };
 // The teams named for this grade (same gender, top grade = this grade), each with its whole roster, and the registered
 // players they can take who aren't on any team: this grade and one grade below (e.g. 1st grade: 1st and K).
 export async function rosterBoard(deps: Deps, viewer: SessionUser, gender: unknown, grade: unknown): Promise<RosterBoard | null> {
-  if (!viewer.isDirector) return null;
+  if (!hasArea(viewer, "teams")) return null;
   if ((gender !== "Boys" && gender !== "Girls") || typeof grade !== "string" || !/^(K|\d{1,2})$/.test(grade)) return null;
   const sort = grade === "K" ? 0 : Number(grade);
   const [teams, players, free] = await Promise.all([
@@ -175,7 +176,7 @@ export async function rosterBoard(deps: Deps, viewer: SessionUser, gender: unkno
 
 // Puts a player on one team (taking them off any other), or takes them off every team (teamId null).
 export async function movePlayer(deps: Deps, viewer: SessionUser, registrantId: unknown, teamId: unknown): Promise<Result> {
-  if (!viewer.isDirector) return directorOnly;
+  if (!hasArea(viewer, "teams")) return directorOnly;
   if (!isRegistrant(registrantId)) return { ok: false, message: "That player isn't registered." };
   if (teamId !== null && !isId(teamId)) return { ok: false, message: "That team no longer exists." };
   return withTx(deps.pool, async (q) => {

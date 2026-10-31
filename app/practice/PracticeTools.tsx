@@ -4,21 +4,12 @@ import { useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { repeatOptions, ruleStart, type RuleKind, type RuleSpec } from "@/lib/practice/rule-dates";
 import type { GymWithCourts } from "@/lib/practice/schedule";
-import { addGym, addSlots, blackoutDates } from "./actions";
+import { addGym, blackoutDates } from "./actions";
 import { Alert, CloseButton, Toast, dialogCls, useConfirm } from "../client-ui";
 import { fieldLabel, inputCls, pillCls, primaryBtn } from "../ui";
 
 const HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
 const hourLabel = (h: number) => `${h % 12 || 12} ${h < 12 ? "AM" : "PM"}`;
-const DAYS = [
-  [1, "Mon"],
-  [2, "Tue"],
-  [3, "Wed"],
-  [4, "Thu"],
-  [5, "Fri"],
-  [6, "Sat"],
-  [0, "Sun"],
-] as const;
 const todayIso = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
 
 // A button that opens a pop-up with a title and a form; `onSubmit` returns an error message or a success message.
@@ -190,98 +181,6 @@ export function AddGymButton() {
   );
 }
 
-export function AddSlotsButton({ gyms }: { gyms: GymWithCourts[] }) {
-  const [gymId, setGymId] = useState(gyms[0]?.id ?? "");
-  const [courtId, setCourtId] = useState("all");
-  const [from, setFrom] = useState(todayIso());
-  const [to, setTo] = useState("");
-  const [days, setDays] = useState<number[]>([]);
-  const [hours, setHours] = useState<number[]>([]);
-  const gym = gyms.find((g) => g.id === gymId);
-  const toggle = (list: number[], v: number) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
-  return (
-    <ToolDialog
-      label="+ Add slots"
-      title="Add practice slots"
-      submitLabel="Add slots"
-      canSubmit={!!gymId && !!from && !!to && days.length > 0 && hours.length > 0}
-      onOpen={() => setFrom((f) => f || todayIso())}
-      onSubmit={async () => {
-        const r = await addSlots({ gymId, courtId, from, to, days, hours });
-        if (!r.ok) return { error: r.message };
-        const parts = [`${r.added} slot${r.added === 1 ? "" : "s"} added`];
-        if (r.skipped) parts.push(`${r.skipped} already existed`);
-        if (r.blocked) parts.push(`${r.blocked} added as blocked (blackout dates)`);
-        return { done: parts.join(" · ") + "." };
-      }}
-    >
-      <div className="grid grid-cols-2 gap-3">
-        <label className="block">
-          <span className={fieldLabel}>Gym</span>
-          <GymSelect
-            gyms={gyms.filter((g) => g.active)}
-            value={gymId}
-            onChange={(v) => {
-              setGymId(v);
-              setCourtId("all");
-            }}
-          />
-        </label>
-        <label className="block">
-          <span className={fieldLabel}>Court</span>
-          <select className={inputCls} value={courtId} onChange={(e) => setCourtId(e.target.value)}>
-            <option value="all">All courts</option>
-            {gym?.courts
-              .filter((c) => c.active)
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-          </select>
-        </label>
-      </div>
-      <DateRange from={from} to={to} setFrom={setFrom} setTo={setTo} />
-      <div>
-        <span className={fieldLabel}>Days</span>
-        <div className="grid grid-cols-7 gap-1.5">
-          {DAYS.map(([d, l]) => (
-            <button
-              key={d}
-              type="button"
-              aria-pressed={days.includes(d)}
-              className={`${pillCls(days.includes(d))} px-0`}
-              onClick={() => setDays(toggle(days, d))}
-            >
-              {l}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div>
-        <span className={fieldLabel}>Start times</span>
-        <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-7">
-          {HOURS.map((h) => (
-            <button
-              key={h}
-              type="button"
-              aria-pressed={hours.includes(h)}
-              className={`${pillCls(hours.includes(h))} px-0`}
-              onClick={() => setHours(toggle(hours, h))}
-            >
-              {hourLabel(h)}
-            </button>
-          ))}
-        </div>
-      </div>
-      <p className="text-xs text-zinc-500">
-        Each slot is 60 minutes. Slots that already exist are skipped. Blacked-out dates are added as blocked.
-      </p>
-    </ToolDialog>
-  );
-}
-
-// Common holidays; tapping one fills the form for its next date and ticks "Repeat every year".
 const PRESETS: { label: string; reason: string; spec: RuleSpec }[] = [
   { label: "Thanksgiving", reason: "Thanksgiving", spec: { kind: "nth", month: 11, nth: 4, weekday: 4, spanDays: 2 } },
   { label: "Christmas", reason: "Christmas", spec: { kind: "date", month: 12, day: 24, spanDays: 2 } },

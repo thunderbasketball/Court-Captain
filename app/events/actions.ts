@@ -1,6 +1,8 @@
 "use server";
 
 import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
+import { featureRefusal } from "@/lib/features-server";
+import type { Feature } from "@/lib/features";
 import { db } from "@/lib/db";
 import * as ev from "@/lib/events";
 import * as pa from "@/lib/practice-attendance";
@@ -9,10 +11,15 @@ import type { EventInput, PlayerFilter } from "@/lib/events";
 const deps = { pool: db, now: () => new Date() };
 
 // Session and role are checked again inside each lib/events function.
-async function guarded<T>(fn: (user: NonNullable<Awaited<ReturnType<typeof currentUser>>>) => Promise<T>) {
+async function guarded<T>(
+  fn: (user: NonNullable<Awaited<ReturnType<typeof currentUser>>>) => Promise<T>,
+  feature: Feature = "events",
+) {
   const user = await currentUser();
   if (!user) return { ok: false as const, message: "Please log in again." };
   if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  const refused = await featureRefusal("thunder", feature);
+  if (refused) return refused;
   try {
     return await fn(user);
   } catch (e) {
@@ -49,5 +56,5 @@ export async function setPracticeStatus(input: { slotId: unknown; registrantId: 
   return guarded(async (u) => {
     const r = await pa.setPracticeStatus(deps, u, input);
     return r.ok ? { ...r, updatedAt: r.updatedAt?.toISOString() ?? null } : r;
-  });
+  }, "practice");
 }

@@ -1,6 +1,8 @@
 "use server";
 
 import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
+import { featureRefusal } from "@/lib/features-server";
+import type { Feature } from "@/lib/features";
 import { db } from "@/lib/db";
 import * as evaluations from "@/lib/evaluations";
 import * as rosters from "@/lib/rosters";
@@ -14,10 +16,13 @@ type Result = ({ ok: true } & object) | { ok: false; message: string };
 // Session and role are checked again inside each lib/teams function.
 async function guarded<T extends Result>(
   fn: (user: NonNullable<Awaited<ReturnType<typeof currentUser>>>) => Promise<T>,
+  feature: Feature = "team-building",
 ): Promise<T | { ok: false; message: string }> {
   const user = await currentUser();
   if (!user) return { ok: false, message: "Please log in again." };
   if (user.actingBy) return { ok: false, message: VIEW_ONLY };
+  const refused = await featureRefusal("thunder", feature);
+  if (refused) return refused;
   try {
     return await fn(user);
   } catch (e) {
@@ -30,6 +35,9 @@ export async function createTeam(input: CreateTeamInput): Promise<CreateTeamResu
   return guarded((u) => teams.createTeam(deps, u, input));
 }
 
+export async function deleteTeam(id: string) {
+  return guarded((u) => teams.deleteTeam(deps, u, String(id)));
+}
 export async function updateTeam(id: string, input: UpdateTeamInput) {
   return guarded((u) => teams.updateTeam(deps, u, String(id), input));
 }
@@ -56,5 +64,5 @@ export async function saveEvaluation(teamId: string, registrantId: string, chang
 
 export async function saveUniform(teamId: string, registrantId: string, changes: { number?: string | null; size?: string | null }) {
   const clean = changes && typeof changes === "object" ? changes : {};
-  return guarded((u) => uniforms.saveUniform(deps, u, String(teamId), String(registrantId), clean));
+  return guarded((u) => uniforms.saveUniform(deps, u, String(teamId), String(registrantId), clean), "uniforms");
 }

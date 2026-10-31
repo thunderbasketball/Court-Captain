@@ -1,6 +1,7 @@
 import "server-only";
 import { db } from "./db";
 import type { SessionUser } from "./auth/service";
+import { hasArea, isThunderAdmin } from "./org-admin";
 
 export type UserListItem = {
   coachId: string;
@@ -18,9 +19,9 @@ export type UserListItem = {
   updatedBy: string | null;
 };
 
-// Director only. Sorted by last name, then first name.
+// Admins (Members → Staff) and Directors of Coaches (Members → Coaches). Sorted by last name, then first name.
 export async function listUsers(viewer: SessionUser): Promise<UserListItem[]> {
-  if (!viewer.isDirector) throw new Error("Director only");
+  if (!isThunderAdmin(viewer) && !hasArea(viewer, "coaches")) throw new Error("Director only");
   const r = await db.query<UserListItem>(
     `select coach_id as "coachId", first_name as "firstName", last_name as "lastName", cell, email,
             (email is not null and lower(trim(email)) = lower(trim(coalesce(verified_email, '')))) as verified,

@@ -4,7 +4,7 @@ import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { UserListItem } from "@/lib/users";
 import { addUser, deleteUser, denyRequest, resetLogin, updateUser } from "./actions";
-import { Alert, CloseButton, Toast, dialogCls, useConfirm } from "../client-ui";
+import { Alert, CloseButton, OnPage, Toast, dialogCls, useConfirm } from "../client-ui";
 import { fieldLabel, inputCls, primaryBtn } from "../ui";
 
 // An on/off switch row: label on the left, toggle on the right.
@@ -36,13 +36,23 @@ function Toggle({
         onClick={() => onChange(!on)}
         className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${on ? "bg-thunder-blue" : "bg-zinc-300 dark:bg-zinc-700"}`}
       >
-        <span className={`absolute top-1 left-1 size-5 rounded-full bg-white shadow transition-transform ${on ? "translate-x-5" : ""}`} />
+        <span
+          className={`absolute top-1 left-1 size-5 rounded-full bg-white shadow transition-transform ${on ? "translate-x-5" : ""}`}
+        />
       </button>
     </label>
   );
 }
 
-export function EditUserButton({ user, isSelf, deleteBlocker }: { user: UserListItem; isSelf: boolean; deleteBlocker: string | null }) {
+export function EditUserButton({
+  user,
+  isSelf,
+  deleteBlocker,
+}: {
+  user: UserListItem;
+  isSelf: boolean;
+  deleteBlocker: string | null;
+}) {
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const close = () => dialog.current?.close();
@@ -110,7 +120,9 @@ export function EditUserButton({ user, isSelf, deleteBlocker }: { user: UserList
                   type="button"
                   disabled={busy}
                   className="rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white"
-                  onClick={() => act(() => updateUser(user.coachId, { ...f, coach: true }), `${f.first} ${f.last} approved as Coach.`)}
+                  onClick={() =>
+                    act(() => updateUser(user.coachId, { ...f, coach: true }), `${f.first} ${f.last} approved as Coach.`)
+                  }
                 >
                   Approve as Coach
                 </button>
@@ -140,7 +152,9 @@ export function EditUserButton({ user, isSelf, deleteBlocker }: { user: UserList
             <span className={fieldLabel}>Email</span>
             <input className={inputCls} type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
             {f.email.trim().toLowerCase() !== (user.email ?? "") && f.email.trim() && (
-              <span className="mt-1 block text-xs text-zinc-500">They&apos;ll confirm the new email with a code at their next login.</span>
+              <span className="mt-1 block text-xs text-zinc-500">
+                They&apos;ll confirm the new email with a code at their next login.
+              </span>
             )}
           </label>
           <p className="text-sm text-zinc-500">
@@ -156,16 +170,11 @@ export function EditUserButton({ user, isSelf, deleteBlocker }: { user: UserList
               onChange={(v) => setF({ ...f, active: v })}
             />
             <Toggle label="Coach" on={f.coach} onChange={(v) => setF({ ...f, coach: v })} />
-            <Toggle
-              label="Director"
-              hint={isSelf ? "You can't remove your own Director role." : "Sees and manages everything."}
-              on={f.director}
-              disabled={isSelf}
-              onChange={(v) => setF({ ...f, director: v })}
-            />
           </div>
           {user.teams.length > 0 && (
-            <p className="text-xs text-zinc-500">On teams: {user.teams.join(", ")}. Team roles are changed on each team&apos;s page.</p>
+            <p className="text-xs text-zinc-500">
+              On teams: {user.teams.join(", ")}. Team roles are changed on each team&apos;s page.
+            </p>
           )}
           {user.updatedBy && <p className="text-xs text-zinc-400">Last changed by {user.updatedBy}</p>}
 
@@ -187,10 +196,12 @@ export function EditUserButton({ user, isSelf, deleteBlocker }: { user: UserList
                       message: (
                         <>
                           <p>
-                            Their PIN goes back to <strong className="font-semibold">1234</strong>, their email is cleared, and they&apos;re
-                            logged out everywhere.
+                            Their PIN goes back to <strong className="font-semibold">1234</strong>, their email is cleared, and
+                            they&apos;re logged out everywhere.
                           </p>
-                          <p className="mt-2">At their next login they enter an email, confirm it with a code, and choose a new PIN.</p>
+                          <p className="mt-2">
+                            At their next login they enter an email, confirm it with a code, and choose a new PIN.
+                          </p>
                         </>
                       ),
                       confirmLabel: "Reset login",
@@ -237,9 +248,10 @@ export function EditUserButton({ user, isSelf, deleteBlocker }: { user: UserList
   );
 }
 
-const blank = { first: "", last: "", cell: "", email: "", coach: true, director: false };
+const blank = { first: "", last: "", cell: "", email: "", coach: true };
 
-export function AddUserButton() {
+// `label` / `className`: shown as an item in the Users page's "+ Add" menu.
+export function AddUserButton({ label = "+ Add user", className }: { label?: string; className?: string } = {}) {
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const close = () => dialog.current?.close();
@@ -257,73 +269,87 @@ export function AddUserButton() {
           setError(null);
           dialog.current?.showModal();
         }}
-        className="shrink-0 rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark"
+        className={
+          className ??
+          "shrink-0 rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark"
+        }
       >
-        + Add user
+        {label}
       </button>
       {done && <Toast key={done} message={done} />}
-      <dialog ref={dialog} className={dialogCls} onClick={(e) => e.target === dialog.current && close()}>
-        <form
-          className="space-y-4 p-5"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setError(null);
-            start(async () => {
-              const r = await addUser(f);
-              if (!r.ok) return setError(r.message);
-              close();
-              setDone(`${f.first} ${f.last} added. They can log in with PIN 1234.`);
-              router.refresh();
-            });
-          }}
-        >
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Add user</h2>
-            <CloseButton onClick={close} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
+      <OnPage>
+        <dialog ref={dialog} className={dialogCls} onClick={(e) => e.target === dialog.current && close()}>
+          <form
+            className="space-y-4 p-5"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setError(null);
+              start(async () => {
+                const r = await addUser(f);
+                if (!r.ok) return setError(r.message);
+                close();
+                setDone(`${f.first} ${f.last} added. They can log in with PIN 1234.`);
+                router.refresh();
+              });
+            }}
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Add user</h2>
+              <CloseButton onClick={close} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className={fieldLabel}>First name</span>
+                <input
+                  className={inputCls}
+                  autoComplete="off"
+                  value={f.first}
+                  onChange={(e) => setF({ ...f, first: e.target.value })}
+                />
+              </label>
+              <label className="block">
+                <span className={fieldLabel}>Last name</span>
+                <input
+                  className={inputCls}
+                  autoComplete="off"
+                  value={f.last}
+                  onChange={(e) => setF({ ...f, last: e.target.value })}
+                />
+              </label>
+            </div>
             <label className="block">
-              <span className={fieldLabel}>First name</span>
-              <input className={inputCls} autoComplete="off" value={f.first} onChange={(e) => setF({ ...f, first: e.target.value })} />
+              <span className={fieldLabel}>Cell</span>
+              <input
+                className={inputCls}
+                type="tel"
+                inputMode="tel"
+                autoComplete="off"
+                placeholder="(423) 555-1234"
+                value={f.cell}
+                onChange={(e) => setF({ ...f, cell: e.target.value })}
+              />
             </label>
             <label className="block">
-              <span className={fieldLabel}>Last name</span>
-              <input className={inputCls} autoComplete="off" value={f.last} onChange={(e) => setF({ ...f, last: e.target.value })} />
+              <span className={fieldLabel}>Email (for their login code)</span>
+              <input
+                className={inputCls}
+                type="email"
+                autoComplete="off"
+                value={f.email}
+                onChange={(e) => setF({ ...f, email: e.target.value })}
+              />
             </label>
-          </div>
-          <label className="block">
-            <span className={fieldLabel}>Cell</span>
-            <input
-              className={inputCls}
-              type="tel"
-              inputMode="tel"
-              autoComplete="off"
-              placeholder="(423) 555-1234"
-              value={f.cell}
-              onChange={(e) => setF({ ...f, cell: e.target.value })}
-            />
-          </label>
-          <label className="block">
-            <span className={fieldLabel}>Email (for their login code)</span>
-            <input
-              className={inputCls}
-              type="email"
-              autoComplete="off"
-              value={f.email}
-              onChange={(e) => setF({ ...f, email: e.target.value })}
-            />
-          </label>
-          <div className="divide-y divide-zinc-100 rounded-xl px-4 ring-1 ring-zinc-950/5 dark:divide-white/5 dark:ring-white/10">
-            <Toggle label="Coach" on={f.coach} onChange={(v) => setF({ ...f, coach: v })} />
-            <Toggle label="Director" on={f.director} onChange={(v) => setF({ ...f, director: v })} />
-          </div>
-          <p className="text-xs text-zinc-500">They start with PIN 1234 and choose their own at first login.</p>
-          {error && <Alert tone="red">{error}</Alert>}
-          <button type="submit" disabled={busy || !f.first || !f.last || !f.cell} className={primaryBtn}>
-            {busy ? "Adding…" : "Add user"}
-          </button>
-        </form>
-      </dialog>
+            <div className="divide-y divide-zinc-100 rounded-xl px-4 ring-1 ring-zinc-950/5 dark:divide-white/5 dark:ring-white/10">
+              <Toggle label="Coach" on={f.coach} onChange={(v) => setF({ ...f, coach: v })} />
+            </div>
+            <p className="text-xs text-zinc-500">They start with PIN 1234 and choose their own at first login.</p>
+            {error && <Alert tone="red">{error}</Alert>}
+            <button type="submit" disabled={busy || !f.first || !f.last || !f.cell} className={primaryBtn}>
+              {busy ? "Adding…" : "Add user"}
+            </button>
+          </form>
+        </dialog>
+      </OnPage>
     </>
   );
 }

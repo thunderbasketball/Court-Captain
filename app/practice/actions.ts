@@ -1,18 +1,25 @@
 "use server";
 
 import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
+import { featureRefusal } from "@/lib/features-server";
+import type { Feature } from "@/lib/features";
 import { db } from "@/lib/db";
 import * as admin from "@/lib/practice/admin";
-import type { AddSlotsInput, BlackoutInput } from "@/lib/practice/admin";
+import type { BlackoutInput } from "@/lib/practice/admin";
 import * as booking from "@/lib/practice/booking";
 
 const deps = { pool: db, now: () => new Date() };
 
 // Session and role are checked again inside each lib/practice function.
-async function guarded<T>(fn: (user: NonNullable<Awaited<ReturnType<typeof currentUser>>>) => Promise<T>) {
+async function guarded<T>(
+  fn: (user: NonNullable<Awaited<ReturnType<typeof currentUser>>>) => Promise<T>,
+  feature: Feature = "practice",
+) {
   const user = await currentUser();
   if (!user) return { ok: false as const, message: "Please log in again." };
   if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  const refused = await featureRefusal("thunder", feature);
+  if (refused) return refused;
   try {
     return await fn(user);
   } catch (e) {
@@ -26,8 +33,8 @@ const iso = <T extends { startsAt: Date }>(list: T[]) => list.map((x) => ({ ...x
 export async function addGym(input: { name: unknown; courts: unknown }) {
   return guarded((u) => admin.addGym(deps, u, input));
 }
-export async function addSlots(input: AddSlotsInput) {
-  return guarded((u) => admin.addSlots(deps, u, input));
+export async function deleteGym(gymId: string) {
+  return guarded((u) => admin.deleteGym(deps, u, String(gymId)));
 }
 export async function blackoutDates(input: BlackoutInput) {
   return guarded(async (u) => {

@@ -2,14 +2,15 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
+import { requireFeature } from "@/lib/features-server";
 import { currentContexts } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
-import { listGyms, pickWeek, teamChoices, weekGrid } from "@/lib/practice/schedule";
+import { pickWeek, teamChoices, weekGrid } from "@/lib/practice/schedule";
 import AppHeader from "../AppHeader";
 import { PageTitle } from "../ui";
-import PracticeNav from "./PracticeNav";
-import { AddGymButton, AddSlotsButton, BlackoutButton } from "./PracticeTools";
+import ScheduleNav from "../ScheduleNav";
 import WeekGridView from "./WeekGridView";
+import { hasArea } from "@/lib/org-admin";
 
 export default function PracticePage({ searchParams }: PageProps<"/practice">) {
   return (
@@ -22,6 +23,7 @@ export default function PracticePage({ searchParams }: PageProps<"/practice">) {
 async function Practice({ searchParams }: { searchParams: PageProps<"/practice">["searchParams"] }) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
+  await requireFeature("thunder", "practice");
   const sp = await searchParams;
   const deps = { pool: db, now: () => new Date() };
 
@@ -29,7 +31,7 @@ async function Practice({ searchParams }: { searchParams: PageProps<"/practice">
   const { active } = await currentContexts(user);
   const asked = typeof sp.team === "string" && /^\d{1,18}$/.test(sp.team) ? sp.team : null;
   const teamId = asked ?? (active?.key.startsWith("team:") ? active.key.slice(5) : null);
-  if (!teamId && !user.isDirector) redirect("/");
+  if (!teamId && !hasArea(user, "facilities")) redirect("/");
   const mode = teamId ? "team" : "director";
 
   const start = await pickWeek(deps, typeof sp.week === "string" ? sp.week : undefined);
@@ -39,24 +41,21 @@ async function Practice({ searchParams }: { searchParams: PageProps<"/practice">
   } catch {
     notFound();
   }
-  const [gyms, teams] = mode === "director" ? await Promise.all([listGyms(deps), teamChoices(deps)]) : [[], []];
+  const teams = mode === "director" ? await teamChoices(deps) : [];
   const link = (week: string) => `/practice?week=${week}${asked ? `&team=${asked}` : ""}`;
 
   return (
     <>
-      <AppHeader user={user} tab="practice" context={mode === "director" ? "director" : `team:${teamId}`} />
+      <AppHeader user={user} tab="schedule" context={mode === "director" ? "director" : `team:${teamId}`} />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
         {mode === "director" ? (
           <>
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <PageTitle title="Master Practice Schedule" subtitle="All practices, open gym slots and blocked dates" />
-              <div className="flex flex-wrap gap-2">
-                <AddGymButton />
-                <BlackoutButton gyms={gyms} />
-                <AddSlotsButton gyms={gyms} />
-              </div>
-            </div>
-            <PracticeNav current="schedule" />
+            {/* Gyms, blackout dates and practice slots are set up under Facilities. */}
+            <PageTitle
+              title="Master Practice Schedule"
+              subtitle="All practices, open gym slots and blocked dates. Gyms, blackouts and practice times are set under Facilities."
+            />
+            <ScheduleNav user={user} current="practice" />
           </>
         ) : (
           <>

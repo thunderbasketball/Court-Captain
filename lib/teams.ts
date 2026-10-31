@@ -3,9 +3,11 @@
 import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { cleanEmail, cleanName } from "./auth/validate";
-import { coachIdFromCell, normalizeCell } from "./phone";
+import { normalizeCell } from "./phone";
 import { withTx } from "./sql";
 import { GRADES, LEVELS, gradeSort, teamName } from "./team-names";
+import { hasArea } from "./org-admin";
+import { matchOrCreateUser } from "./user-match";
 
 export { GRADES, LEVELS, teamName } from "./team-names";
 
@@ -51,7 +53,7 @@ const roleOrder = `array_position(array['HeadCoach','AsstCoach','Manager','TeamP
 
 // Director only. Grouped by level (Comp first), then Gender; youngest grade first, then name.
 export async function listTeams(deps: Deps, viewer: SessionUser): Promise<TeamListItem[]> {
-  if (!viewer.isDirector) throw new Error("Director only");
+  if (!hasArea(viewer, "teams")) throw new Error("Director only");
   const r = await deps.pool.query<Omit<TeamListItem, "headCoach">>(
     `select t.id::text, t.name, t.gender, t.grades, t.level, t.created_by as "createdBy", t.practice_locations as "practiceLocations",
             coalesce((select json_agg(json_build_object('coachId', u.coach_id, 'role', s.role, 'first', u.first_name, 'last', u.last_name,
@@ -109,14 +111,14 @@ export async function getTeam(deps: Deps, viewer: SessionUser, id: string): Prom
   // Anyone on the team's staff can view it; the Director sees every team.
   const myRoles = staff.rows.filter((s) => s.coachId === viewer.coachId).map((s) => s.role);
   const isHead = myRoles.includes("HeadCoach");
-  if (!viewer.isDirector && !myRoles.length) return null;
+  if (!hasArea(viewer, "teams") && !myRoles.length) return null;
   return {
     ...t.rows[0],
     grades: sortGrades(t.rows[0].grades),
     staff: staff.rows,
     myRoles,
-    canEditTeam: viewer.isDirector,
-    canEditStaff: viewer.isDirector || isHead,
+    canEditTeam: hasArea(viewer, "teams"),
+    canEditStaff: hasArea(viewer, "teams") || isHead,
   };
 }
 
@@ -131,7 +133,7 @@ export type PersonOption = {
 
 // Director only. Active app users, plus registration volunteers who don't have a login yet (matched by cell).
 export async function personOptions(deps: Deps, viewer: SessionUser): Promise<{ users: PersonOption[]; volunteers: PersonOption[] }> {
-  if (!viewer.isDirector) throw new Error("Director only");
+  if (!hasArea(viewer, "teams")) throw new Error("Director only");
   const users = await deps.pool.query<PersonOption>(
     `select 'user:' || coach_id as value, first_name as "firstName", last_name as "lastName",
             case when has_role(coach_id, 'thunder', 'Director') then 'Director' when has_role(coach_id, 'thunder', 'Coach') then 'Coach' else 'User' end as detail
@@ -209,31 +211,11 @@ async function resolvePerson(
   return found;
 }
 
-// Uses the existing user with this cell, or creates one. Refuses a cell whose last 7 digits belong to someone else.
-async function createOrMatchUser(
-  q: PoolClient,
-  p: { first: string; last: string; cell: string; email: string | null },
-  now: Date,
-): Promise<{ coachId: string; lastName: string; who: string; newLogin: boolean }> {
-  const coachId = coachIdFromCell(p.cell);
-  await q.query("select pg_advisory_xact_lock(hashtext('user:' || $1))", [coachId]);
-  const existing = await q.query<{ cell: string; first_name: string; last_name: string; active: boolean }>(
-    "select cell, first_name, last_name, active from users where coach_id = $1",
-    [coachId],
-  );
-  const e = existing.rows[0];
-  if (e && e.cell !== p.cell)
-    throw new UserError(
-      `${p.first} ${p.last}'s cell ends in the same 7 digits as ${e.first_name} ${e.last_name}'s. Please contact support.`,
-    );
-  if (e && !e.active) throw new UserError(`${e.first_name} ${e.last_name} has a deactivated account.`);
-  if (e) return { coachId, lastName: e.last_name, who: `${e.first_name} ${e.last_name}`, newLogin: false };
-  await q.query(
-    `insert into users (coach_id, first_name, last_name, cell, email, created_at, updated_at)
-     values ($1, $2, $3, $4, $5, $6, $6)`,
-    [coachId, p.first, p.last, p.cell, p.email, now],
-  );
-  return { coachId, lastName: p.last, who: `${p.first} ${p.last}`, newLogin: true };
+// Uses the existing user with this cell, or creates one (lib/user-match.ts).
+async function createOrMatchUser(q: PoolClient, p: { first: string; last: string; cell: string; email: string | null }, now: Date) {
+  const r = await matchOrCreateUser(q, p, now);
+  if ("error" in r) throw new UserError(r.error);
+  return r;
 }
 
 // ---- Team fields ----
@@ -286,7 +268,7 @@ export type CreateTeamInput = { gender: unknown; grades: unknown; level: unknown
 export type CreateTeamResult = Result<{ id: string; name: string }>;
 
 export async function createTeam(deps: Deps, viewer: SessionUser, input: CreateTeamInput): Promise<CreateTeamResult> {
-  if (!viewer.isDirector) return { ok: false, message: "Only the Director can create teams." };
+  if (!hasArea(viewer, "teams")) return { ok: false, message: "Only a Director of Teams can create teams." };
   const now = deps.now();
   const by = byOf(viewer);
   return run(async () => {
@@ -317,7 +299,7 @@ export type UpdateTeamInput = { gender: unknown; grades: unknown; level: unknown
 
 // Director only. The name follows the new grades/gender.
 export async function updateTeam(deps: Deps, viewer: SessionUser, id: string, input: UpdateTeamInput): Promise<Result<{ name: string }>> {
-  if (!viewer.isDirector) return { ok: false, message: "Only the Director can edit a team." };
+  if (!hasArea(viewer, "teams")) return { ok: false, message: "Only a Director of Teams can edit a team." };
   return run(async () => {
     const f = cleanTeamFields(input);
     const locations = cleanLocations(input.practiceLocations);
@@ -332,19 +314,35 @@ export async function updateTeam(deps: Deps, viewer: SessionUser, id: string, in
   });
 }
 
+// Directors of Teams: delete a team. Its staff, roster, evaluations, uniforms and practice attendance go with it;
+// its booked practice times (past and future) open up again.
+export async function deleteTeam(deps: Deps, viewer: SessionUser, id: string): Promise<Result> {
+  if (!hasArea(viewer, "teams")) return { ok: false, message: "Only a Director of Teams can delete a team." };
+  if (!/^\d{1,18}$/.test(id)) return { ok: false, message: "That team no longer exists." };
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      const t = await q.query("select 1 from teams where id = $1 for update", [id]);
+      if (!t.rows[0]) throw new UserError("That team no longer exists.");
+      await q.query("update slots set team_id = null, booked_by = null, booked_at = null where team_id = $1", [id]);
+      await q.query("delete from teams where id = $1", [id]);
+      return {};
+    }),
+  );
+}
+
 // ---- Staff ----
 
 async function lockTeamForStaff(q: PoolClient, viewer: SessionUser, teamId: string, role: Role) {
   const t = await q.query("select 1 from teams where id = $1 for update", [teamId]);
   if (!t.rows[0]) throw new UserError("That team no longer exists.");
-  if (viewer.isDirector) return;
+  if (hasArea(viewer, "teams")) return;
   // A head coach can manage their own team's other staff, but not the head coach spot.
   const head = await q.query("select 1 from team_staff where team_id = $1 and role = 'HeadCoach' and coach_id = $2", [
     teamId,
     viewer.coachId,
   ]);
-  if (!head.rows[0]) throw new UserError("Only the Director or this team's head coach can change staff.");
-  if (role === "HeadCoach") throw new UserError("Only the Director can change the head coach.");
+  if (!head.rows[0]) throw new UserError("Only a Director of Teams or this team's head coach can change staff.");
+  if (role === "HeadCoach") throw new UserError("Only a Director of Teams can change the head coach.");
 }
 
 export type AddStaffResult = Result<{ who: string; newLogin: boolean; name: string }>;

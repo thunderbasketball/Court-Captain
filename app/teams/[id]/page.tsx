@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
+import { requireFeature } from "@/lib/features-server";
 import { db } from "@/lib/db";
 import { gradesText } from "@/lib/event-names";
 import { gradeLabel } from "@/lib/grades";
@@ -19,7 +20,8 @@ import { Chip, EmailLink, PersonRow, PhoneLink, card } from "../../ui";
 import AvailablePlayers from "./AvailablePlayers";
 import UniformsBoard from "./UniformsBoard";
 import { AddPlayersButton, RemovePlayerButton } from "./RosterTools";
-import { AddStaffButton, RemoveStaffButton, TeamEditForm } from "./TeamEditor";
+import { AddStaffButton, DeleteTeamButton, RemoveStaffButton, TeamEditForm } from "./TeamEditor";
+import { hasArea, isThunderAdmin } from "@/lib/org-admin";
 
 export default function TeamPage({ params, searchParams }: PageProps<"/teams/[id]">) {
   return (
@@ -40,6 +42,7 @@ async function Team({
 }) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
+  await requireFeature("thunder", "team-building");
   const { id } = await params;
   const deps = { pool: db, now: () => new Date() };
   const team = await getTeam(deps, user, id);
@@ -47,7 +50,7 @@ async function Team({
   // Shown as the role the person switched to: a team chip shows the team as that role sees it,
   // even for the Director; otherwise the Director sees everything.
   const { active } = await currentContexts(user);
-  const asDirector = user.isDirector && !(active?.key === `team:${team.id}` && team.myRoles.length > 0);
+  const asDirector = hasArea(user, "teams") && !(active?.key === `team:${team.id}` && team.myRoles.length > 0);
   const canEditTeam = asDirector && team.canEditTeam;
   const canEditStaff = asDirector || team.myRoles.includes("HeadCoach");
   // Only the Director picks from the full user and volunteer lists; a head coach adds people by cell number.
@@ -151,7 +154,7 @@ async function Team({
                   last={s.lastName}
                   avatarTone={roleTone[s.role]}
                   under={
-                    asDirector && s.coachId !== user.coachId && <ViewAsButton coachId={s.coachId} name={`${s.firstName} ${s.lastName}`} />
+                    asDirector && isThunderAdmin(user) && s.coachId !== user.coachId && <ViewAsButton coachId={s.coachId} name={`${s.firstName} ${s.lastName}`} />
                   }
                   chips={<Chip tone={roleTone[s.role]}>{roleLabel(s.role)}</Chip>}
                 >
@@ -260,6 +263,7 @@ async function Team({
             </ul>
           </section>
         )}
+        {canEditTeam && <DeleteTeamButton teamId={team.id} name={team.name} players={roster?.length ?? 0} practices={practices.length} />}
       </main>
     </>
   );
