@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
+import { hasFeature } from "@/lib/features";
 import { requireFeature } from "@/lib/features-server";
 import { db } from "@/lib/db";
 import { gradesText } from "@/lib/event-names";
@@ -63,19 +64,28 @@ async function Team({
   ]);
   const players = roster ?? [];
   const canBook = asDirector || team.myRoles.some((r) => r !== "TeamParent");
-  // Seen as its staff, the team page is split into the Staff / Roster / Practices tabs; the Director sees it all.
+  // The team page is split into the Staff / Roster / Uniforms / Practices tabs: in the header for its staff, and on the
+  // page for Admins and Directors (the same views as the coaches, with their own tools), to help support the team.
   const requested = (await searchParams).tab;
   const teamTab: TeamTab = requested === "roster" || requested === "uniforms" || requested === "practices" ? requested : "staff";
-  const show = (t: TeamTab) => asDirector || teamTab === t;
+  const show = (t: TeamTab) => teamTab === t;
   // The Roster tab lists the players still available (eligible, not on any team) for the coaches to star and evaluate.
   const available =
-    !asDirector && teamTab === "roster" && mayEvaluate
+    teamTab === "roster" && mayEvaluate
       ? ((await listEvaluations(deps, user, team.id)) ?? []).filter((c) => c.registered && !c.rosteredOn.length)
       : null;
-  // Uniforms live only in the team menu; their tab flashes red while anything is missing.
-  const [uniforms, missingUniforms] = asDirector
-    ? [null, 0]
-    : await Promise.all([teamTab === "uniforms" ? listUniforms(deps, user, team.id) : null, uniformsMissing(deps, team.id)]);
+  // Uniforms: their tab flashes red while anything is missing.
+  const [uniforms, missingUniforms, uniformsOn] = await Promise.all([
+    teamTab === "uniforms" ? listUniforms(deps, user, team.id) : null,
+    uniformsMissing(deps, team.id),
+    hasFeature(db, "thunder", "uniforms"),
+  ]);
+  const tabs: { key: TeamTab; label: string; alert?: boolean }[] = [
+    { key: "staff", label: "Staff" },
+    { key: "roster", label: "Roster" },
+    ...(uniformsOn ? [{ key: "uniforms" as const, label: "Uniforms", alert: missingUniforms > 0 }] : []),
+    { key: "practices", label: "Practices" },
+  ];
 
   return (
     <>
@@ -90,6 +100,27 @@ async function Team({
           <Link href="/teams" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
             ← Teams
           </Link>
+        )}
+        {asDirector && (
+          <nav
+            aria-label={`${team.name} tabs`}
+            className="flex gap-1 overflow-x-auto border-b border-zinc-200 dark:border-white/10"
+          >
+            {tabs.map((t) => (
+              <Link
+                key={t.key}
+                href={t.key === "staff" ? `/teams/${team.id}` : `/teams/${team.id}?tab=${t.key}`}
+                aria-current={teamTab === t.key ? "page" : undefined}
+                className={`shrink-0 border-b-2 px-3 py-2 text-sm font-semibold whitespace-nowrap ${
+                  teamTab === t.key
+                    ? "border-thunder-orange text-zinc-900 dark:text-white"
+                    : "border-transparent text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+                } ${t.alert ? "animate-pulse text-red-600! dark:text-red-400!" : ""}`}
+              >
+                {t.label}
+              </Link>
+            ))}
+          </nav>
         )}
 
         {show("staff") && (
@@ -153,9 +184,13 @@ async function Team({
                   first={s.firstName}
                   last={s.lastName}
                   avatarTone={roleTone[s.role]}
-                  href={asDirector && isThunderAdmin(user) ? (s.coachId === user.coachId ? "/me" : `/me/${s.coachId}`) : undefined}
+                  href={
+                    asDirector && isThunderAdmin(user) ? (s.coachId === user.coachId ? "/me" : `/me/${s.coachId}`) : undefined
+                  }
                   under={
-                    asDirector && isThunderAdmin(user) && s.coachId !== user.coachId && <ViewAsButton coachId={s.coachId} name={`${s.firstName} ${s.lastName}`} />
+                    asDirector &&
+                    isThunderAdmin(user) &&
+                    s.coachId !== user.coachId && <ViewAsButton coachId={s.coachId} name={`${s.firstName} ${s.lastName}`} />
                   }
                   chips={<Chip tone={roleTone[s.role]}>{roleLabel(s.role)}</Chip>}
                 >
@@ -170,7 +205,12 @@ async function Team({
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs">Added by {s.addedBy}</p>
                     {canEditStaff && (s.role !== "HeadCoach" || asDirector) && (
-                      <RemoveStaffButton teamId={team.id} coachId={s.coachId} role={s.role} label={`${s.firstName} ${s.lastName}`} />
+                      <RemoveStaffButton
+                        teamId={team.id}
+                        coachId={s.coachId}
+                        role={s.role}
+                        label={`${s.firstName} ${s.lastName}`}
+                      />
                     )}
                   </div>
                 </PersonRow>
@@ -214,7 +254,8 @@ async function Team({
             <div className="px-4 pt-4 pb-3">
               <h2 className="font-semibold">Available players ({available.length})</h2>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                {team.gender} in {gradesText(team.grades)} and one grade below, not on a team yet. ★ marks your interest; only {team.name}
+                {team.gender} in {gradesText(team.grades)} and one grade below, not on a team yet. ★ marks your interest; only{" "}
+                {team.name}
                 &apos;s coaches and the Director see your ratings.
               </p>
             </div>
@@ -251,8 +292,8 @@ async function Team({
                     href={`/events/practice/${p.id}`}
                     className="font-semibold text-thunder-blue underline-offset-2 hover:underline dark:text-blue-400"
                   >
-                    {p.startsAt.toLocaleDateString("en-US", { timeZone: TZ, weekday: "short", month: "numeric", day: "numeric" })} ·{" "}
-                    {p.startsAt.toLocaleTimeString("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" })}
+                    {p.startsAt.toLocaleDateString("en-US", { timeZone: TZ, weekday: "short", month: "numeric", day: "numeric" })}{" "}
+                    · {p.startsAt.toLocaleTimeString("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" })}
                     <span className="block text-xs font-normal">✓ Attendance</span>
                   </Link>
                   <span className="text-right text-zinc-500">
@@ -264,7 +305,9 @@ async function Team({
             </ul>
           </section>
         )}
-        {canEditTeam && <DeleteTeamButton teamId={team.id} name={team.name} players={roster?.length ?? 0} practices={practices.length} />}
+        {canEditTeam && show("staff") && (
+          <DeleteTeamButton teamId={team.id} name={team.name} players={roster?.length ?? 0} practices={practices.length} />
+        )}
       </main>
     </>
   );

@@ -27,7 +27,7 @@ export default async function ScheduleNav({ user, current }: { user: SessionUser
           key={l.key}
           href={l.href}
           aria-current={current === l.key ? "page" : undefined}
-          className={`-mb-px shrink-0 border-b-2 px-3 py-2 text-sm font-semibold ${
+          className={`shrink-0 border-b-2 px-3 py-2 text-sm font-semibold ${
             current === l.key
               ? "border-thunder-orange text-zinc-900 dark:text-white"
               : "border-transparent text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
