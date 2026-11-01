@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import { directorsPanel, isThunderAdmin } from "@/lib/org-admin";
-import { ORGS } from "@/lib/orgs";
 import { listUsers } from "@/lib/users";
 import AppHeader from "../../AppHeader";
 import UserList from "../../UserList";
@@ -33,7 +32,7 @@ async function Users() {
         <UserList
           users={await listUsers(user)}
           viewer={user}
-          team={panel && { org: "thunder", orgName: ORGS.thunder.name, ...panel }}
+          team={panel && { org: "thunder", orgName: "Thunder Basketball", ...panel }}
         />
       </main>
     </>

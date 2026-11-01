@@ -5,7 +5,7 @@ import { getSessionUser } from "./auth/service";
 import { sha256 } from "./auth/crypto";
 import { addGym } from "./practice/admin";
 import { addPlayers } from "./rosters";
-import { directorAreas, directorsPanel, hasArea, isOrgAdmin, orgAreas, setAdmin, setDirectorAreas } from "./org-admin";
+import { directorAreas, directorsPanel, hasArea, isOrgAdmin, orgAreas, setAdmin, setDirectorAreas, setOwner } from "./org-admin";
 import { createTestDb, grant } from "./testing/db";
 
 const person = (coachId: string, firstName: string, isDirector = false): SessionUser => ({
@@ -46,14 +46,33 @@ describe("Admins and Director areas", () => {
   });
 
   it("offers only the areas whose features the organization has", async () => {
-    expect((await orgAreas(db.pool, "thunder")).map((a) => a.key)).toEqual(["players", "teams", "coaches", "facilities", "programs"]);
-    expect((await orgAreas(db.pool, "scenic-city")).map((a) => a.key)).toEqual(["teams", "coaches", "facilities", "programs", "officials"]);
+    expect((await orgAreas(db.pool, "thunder")).map((a) => a.key)).toEqual([
+      "players",
+      "teams",
+      "coaches",
+      "facilities",
+      "programs",
+    ]);
+    expect((await orgAreas(db.pool, "scenic-city")).map((a) => a.key)).toEqual([
+      "teams",
+      "coaches",
+      "facilities",
+      "programs",
+      "officials",
+      "scheduling",
+    ]);
   });
 
   it("Admins have every area; Directors only theirs", async () => {
     expect(await isOrgAdmin(db.pool, ada.coachId, "thunder")).toBe(true);
     expect(await isOrgAdmin(db.pool, ada.coachId, "scenic-city")).toBe(false);
-    expect(await directorAreas(db.pool, ada.coachId, "thunder")).toEqual(["players", "teams", "coaches", "facilities", "programs"]);
+    expect(await directorAreas(db.pool, ada.coachId, "thunder")).toEqual([
+      "players",
+      "teams",
+      "coaches",
+      "facilities",
+      "programs",
+    ]);
     expect(await directorAreas(db.pool, bo.coachId, "thunder")).toEqual([]);
     expect(await setDirectorAreas(deps(), ada, "thunder", bo.coachId, ["programs", "players", "players"])).toEqual({ ok: true });
     expect(await directorAreas(db.pool, bo.coachId, "thunder")).toEqual(["players", "programs"]);
@@ -110,14 +129,24 @@ describe("Admins and Director areas", () => {
 
   it("the session carries Thunder areas, read fresh each request, and they limit what a Director can do", async () => {
     const now = new Date("2026-10-31T12:00:00Z");
-    for (const [token, id] of [["t-ada", "5550001"], ["t-bo", "5550002"]])
-      await db.pool.query("insert into sessions (token_hash, coach_id, created_at, expires_at) values ($1, $2, $3, $3::timestamptz + interval '1 day')", [
-        sha256(token),
-        id,
-        now,
-      ]);
+    for (const [token, id] of [
+      ["t-ada", "5550001"],
+      ["t-bo", "5550002"],
+    ])
+      await db.pool.query(
+        "insert into sessions (token_hash, coach_id, created_at, expires_at) values ($1, $2, $3, $3::timestamptz + interval '1 day')",
+        [sha256(token), id, now],
+      );
     const session = async (token: string) => (await getSessionUser({ ...deps(), sendEmail: async () => {} }, token))!;
-    expect((await session("t-ada")).thunderAreas).toEqual(["players", "teams", "coaches", "facilities", "programs", "officials"]);
+    expect((await session("t-ada")).thunderAreas).toEqual([
+      "players",
+      "teams",
+      "coaches",
+      "facilities",
+      "programs",
+      "officials",
+      "scheduling",
+    ]);
     expect((await session("t-bo")).thunderAreas).toEqual([]);
 
     await setDirectorAreas(deps(), ada, "thunder", bo.coachId, ["facilities"]);
@@ -129,28 +158,64 @@ describe("Admins and Director areas", () => {
 
     // Facilities: can add a gym; can't change rosters.
     expect(await addGym(deps(), boNow, { name: "North Gym", courts: ["A", "B"] })).toMatchObject({ ok: true });
-    expect(await addPlayers(deps(), boNow, "1", ["r1"])).toEqual({ ok: false, message: "Only a Director of Teams can change rosters." });
+    expect(await addPlayers(deps(), boNow, "1", ["r1"])).toEqual({
+      ok: false,
+      message: "Only a Director of Teams can change rosters.",
+    });
     expect(await addGym(deps(), await session("t-ada"), { name: "South Gym", courts: ["A"] })).toMatchObject({ ok: true });
   });
 
   it("Owners add and remove Admins; Admins can't, and an Owner's Admin stays", async () => {
     await grant(db.pool, "5550001 thunder Owner");
-    expect(await setAdmin(deps(), bo, "thunder", cy.coachId, true)).toEqual({ ok: false, message: "Only a Thunder Owner can do that." });
+    expect(await setAdmin(deps(), bo, "thunder", cy.coachId, true)).toEqual({
+      ok: false,
+      message: "Only a Thunder Owner can do that.",
+    });
     await grant(db.pool, "5550002 thunder Admin");
     expect(await setAdmin(deps(), bo, "thunder", cy.coachId, true)).toMatchObject({ ok: false }); // an Admin isn't enough
 
     expect(await setAdmin(deps(), ada, "thunder", cy.coachId, true)).toEqual({ ok: true });
     const roles = async () =>
-      (await db.pool.query<{ role: string }>("select role from org_roles where coach_id = '5550003' and org = 'thunder' order by role")).rows.map(
-        (r) => r.role,
-      );
+      (
+        await db.pool.query<{ role: string }>(
+          "select role from org_roles where coach_id = '5550003' and org = 'thunder' order by role",
+        )
+      ).rows.map((r) => r.role);
     expect(await roles()).toEqual(["Admin", "Director"]); // Request cleared
     expect((await directorsPanel(deps(), ada, "thunder"))!.canManageAdmins).toBe(true);
     expect((await directorsPanel(deps(), bo, "thunder"))!.canManageAdmins).toBe(false);
 
     expect(await setAdmin(deps(), ada, "thunder", cy.coachId, false)).toEqual({ ok: true });
     expect(await roles()).toEqual(["Director"]);
-    expect(await setAdmin(deps(), ada, "thunder", ada.coachId, false)).toEqual({ ok: false, message: "Owners are always Admins." });
+    expect(await setAdmin(deps(), ada, "thunder", ada.coachId, false)).toEqual({
+      ok: false,
+      message: "Owners are always Admins.",
+    });
     expect((await userContexts(db.pool, ada)).find((c) => c.key === "director")?.label).toBe("Owner");
+  });
+
+  it("Owners add other Owners (also Admin and Director) and remove them; at least one Owner stays", async () => {
+    await grant(db.pool, "5550001 thunder Owner", "5550002 thunder Admin");
+    expect(await setOwner(deps(), bo, "thunder", cy.coachId, true)).toEqual({
+      ok: false,
+      message: "Only a Thunder Owner can do that.",
+    });
+    expect((await directorsPanel(deps(), ada, "thunder"))!.ownerOptions.map((o) => o.name)).toEqual(["Bo X", "Cy X"]);
+    expect(await setOwner(deps(), ada, "thunder", cy.coachId, true)).toEqual({ ok: true });
+    const roles = async (id: string) =>
+      (
+        await db.pool.query<{ role: string }>(
+          "select role from org_roles where coach_id = $1 and org = 'thunder' order by role",
+          [id],
+        )
+      ).rows.map((r) => r.role);
+    expect(await roles("5550003")).toEqual(["Admin", "Director", "Owner"]); // Request cleared
+    // The new Owner can remove the first; the last one can't go.
+    expect(await setOwner(deps(), cy, "thunder", ada.coachId, false)).toEqual({ ok: true });
+    expect(await roles("5550001")).toEqual(["Admin", "Director"]);
+    expect(await setOwner(deps(), cy, "thunder", cy.coachId, false)).toEqual({
+      ok: false,
+      message: "Thunder needs at least one Owner.",
+    });
   });
 });

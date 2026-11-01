@@ -25,6 +25,7 @@ async function Evaluate({ params }: { params: PageProps<"/teams/[id]/evaluate">[
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   await requireFeature("thunder", "team-building");
+  await requireFeature("thunder", "player-registration"); // evaluations are part of Player Registration
   const { id } = await params;
   const deps = { pool: db, now: () => new Date() };
   const team = await getTeam(deps, user, id);

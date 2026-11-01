@@ -57,9 +57,6 @@ export async function addCourt(gymId: string, name: string) {
 export async function deleteCourt(courtId: string) {
   return guarded((u) => partners.deleteCourt(deps, u, courtId), "hosting-partners");
 }
-export async function saveGameDays(input: { add: string[]; remove: string[] }) {
-  return guarded((u) => partners.saveGameDays(deps, u, input), "hosting-partners");
-}
 export async function setHours(partnerId: string, input: partners.HoursInput) {
   return guarded((u) => partners.setHours(deps, u, partnerId, input), "hosting-partners");
 }
@@ -87,14 +84,20 @@ export async function saveProgram(id: string | null, input: programs.ProgramInpu
 export async function deleteProgram(id: string) {
   return guarded((u) => programs.deleteProgram(deps, u, id), "programs");
 }
-export async function registerTeam(programId: string, teamId: string) {
-  return guarded((u) => programs.registerTeam(deps, u, programId, teamId), "programs");
+export async function registerTeam(programId: string, teamId: string, choice?: unknown) {
+  return guarded((u) => programs.registerTeam(deps, u, programId, teamId, choice), "programs");
+}
+export async function setTeamOff(programId: string, teamId: string, what: string, out: boolean) {
+  return guarded((u) => programs.setTeamOff(deps, u, programId, teamId, what, out === true), "programs");
 }
 export async function withdrawTeam(programId: string, teamId: string) {
   return guarded((u) => programs.withdrawTeam(deps, u, programId, teamId), "programs");
 }
 export async function setPaid(programId: string, teamId: string, paid: boolean) {
   return guarded((u) => programs.setPaid(deps, u, programId, teamId, paid === true), "programs");
+}
+export async function copyDivisions(programId: string, fromProgramId: string) {
+  return guarded((u) => programs.copyDivisions(deps, u, programId, fromProgramId), "programs");
 }
 export async function addDivision(programId: string, input: programs.DivisionInput) {
   return guarded((u) => programs.addDivision(deps, u, programId, input), "programs");
@@ -111,6 +114,6 @@ export async function removePool(poolId: string) {
 export async function moveTeam(programId: string, teamId: string, poolId: string) {
   return guarded((u) => programs.moveTeam(deps, u, programId, teamId, poolId), "programs");
 }
-export async function saveProgramDates(programId: string, input: { add: string[]; remove: string[] }) {
+export async function saveProgramDates(programId: string, input: { add: string[]; addBrackets: string[]; remove: string[] }) {
   return guarded((u) => programs.saveProgramDates(deps, u, programId, input), "programs");
 }

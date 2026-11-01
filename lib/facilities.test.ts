@@ -31,15 +31,16 @@ describe("Thunder Facilities: what each gym is for, by date", () => {
     await db.pool.query("insert into courts (gym_id, name) values ($1, 'Goal #1'), ($1, 'Goal #2')", [gym]);
   });
 
-  it("choices follow Thunder's features: Partner Games only once a hosting partnership is approved", async () => {
+  it("choices follow Thunder's features: League Games only once a league approves", async () => {
     expect(await availableUses(db.pool)).toEqual({
       uses: ["practice"],
-      partnerNote: "Partner Games appears once an organization approves Thunder as a hosting partner.",
+      partnerNote: "League game dates appear once a league approves Thunder as a hosting site.",
+      leagues: "",
     });
     await db.pool.query(
       "insert into org_partnerships (host_org, for_org, status, requested_by) values ('thunder', 'scenic-city', 'approved', 'x')",
     );
-    expect(await availableUses(db.pool)).toEqual({ uses: ["practice", "partner"], partnerNote: null });
+    expect(await availableUses(db.pool)).toEqual({ uses: ["practice", "partner"], partnerNote: null, leagues: "Scenic City" });
     expect(
       await setAvailability(deps(), director, { gymId: gym, days: ["2026-11-07"], use: "in-house", defaults: true }),
     ).toEqual({ ok: false, message: "Thunder can't use In-House Games yet." });
@@ -55,7 +56,7 @@ describe("Thunder Facilities: what each gym is for, by date", () => {
       }),
     ).toEqual({ ok: true, saved: 2, slotsAdded: 6 + 24, slotsRemoved: 0 }); // Fri 6, 7, 8 PM and Sat 9 AM–8 PM on both goals
     let v = (await facilitiesView(deps(), director))!;
-    expect(v.gyms).toEqual([{ id: gym, name: "Action Church", courts: ["Goal #1", "Goal #2"] }]);
+    expect(v.gyms).toEqual([{ id: gym, name: "Action Church", short: null, courts: ["Goal #1", "Goal #2"] }]);
     expect(v.days[key("2026-11-06")]).toEqual({ use: "practice", starts: "18:00", ends: "21:00", setBy: "Earl Epps" });
     expect(v.days[key("2026-11-07")]).toEqual({ use: "practice", starts: "09:00", ends: "21:00", setBy: "Earl Epps" });
 

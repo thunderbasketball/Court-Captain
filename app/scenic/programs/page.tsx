@@ -4,10 +4,12 @@ import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { currentScenic } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
+import { money, optionName } from "@/lib/program-options";
 import { requireFeature } from "@/lib/features-server";
 import { listPrograms } from "@/lib/scenic-programs";
 import { dayLabel } from "@/lib/time";
 import AppHeader from "../../AppHeader";
+import { ProgramsNav } from "../ScenicNav";
 import { card, PageTitle } from "../../ui";
 import { ProgramEditor } from "./ProgramTools";
 import { RegBadge } from "./RegBadge";
@@ -36,6 +38,7 @@ async function Programs() {
     <>
       <AppHeader user={user} context={scenic.key} tab="programs" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+        <ProgramsNav current="all" />
         <div className="flex items-start justify-between gap-3">
           <PageTitle title="Programs" subtitle="Leagues, Circuits and Tournaments" />
           {manage && <ProgramEditor />}
@@ -56,7 +59,9 @@ async function Programs() {
               </p>
               <p className="text-xs text-zinc-500">
                 {p.divisions} division{p.divisions === 1 ? "" : "s"} · {p.teams} team{p.teams === 1 ? "" : "s"}
-                {p.feeCents !== null && ` · $${(p.feeCents / 100).toFixed(2)} per team`}
+                {p.kind === "League"
+                  ? p.options.length > 0 && ` · ${p.options.map((o) => optionName(o.kind)).join(", ")}`
+                  : p.feeCents !== null && ` · ${money(p.feeCents)} per team`}
               </p>
             </Link>
           ))}

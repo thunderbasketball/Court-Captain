@@ -7,6 +7,7 @@ import { requireFeature } from "@/lib/features-server";
 import { formatCell } from "@/lib/phone";
 import { GRADE_CHOICES, gradeLabel, listScenicTeams } from "@/lib/scenic-teams";
 import AppHeader from "../../AppHeader";
+import { ProgramsNav } from "../ScenicNav";
 import { GroupCard, PageTitle, PhoneLink } from "../../ui";
 import { DeleteTeam, TeamEditor } from "./TeamEditor";
 
@@ -40,8 +41,9 @@ async function ScenicTeams() {
 
   return (
     <>
-      <AppHeader user={user} context={scenic.key} tab="scenic-teams" />
+      <AppHeader user={user} context={scenic.key} tab="programs" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+        <ProgramsNav current="teams" />
         <div className="flex items-start justify-between gap-3">
           <PageTitle title="Teams" subtitle={`${SUBTITLE[scenic.role]} · ${teams.length}`} />
           {addFor.length > 0 && <TeamEditor addFor={addFor} grades={GRADE_CHOICES} />}
@@ -49,7 +51,6 @@ async function ScenicTeams() {
         {!teams.length && (
           <p className="text-zinc-500">
             No teams yet.{addFor.length > 0 && " Tap “+ Add team”."}
-            {scenic.role === "Partner" && !addFor.length && " Your partners don't register teams, or you aren't a contact yet."}
           </p>
         )}
         <div className="grid gap-4">
@@ -65,9 +66,13 @@ async function ScenicTeams() {
                       </span>
                     </p>
                     <p className="text-zinc-600 dark:text-zinc-300">{t.partnerName ?? `Solo · ${t.ownerName}`}</p>
-                    <p>
-                      Coach {t.coachFirst} {t.coachLast} · <PhoneLink cell={t.coachCell} label={formatCell(t.coachCell)} />
-                    </p>
+                    {t.coachCell ? (
+                      <p>
+                        Coach {t.coachFirst} {t.coachLast} · <PhoneLink cell={t.coachCell} label={formatCell(t.coachCell)} />
+                      </p>
+                    ) : (
+                      <p className="text-zinc-500">No coach yet</p>
+                    )}
                     <p className="text-xs text-zinc-500">
                       Added by {t.createdBy}
                       {t.updatedBy !== t.createdBy && ` · last changed by ${t.updatedBy}`}

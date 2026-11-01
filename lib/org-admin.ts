@@ -5,7 +5,8 @@
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { orgFeatures, type Feature } from "./features";
-import { ORGS, isOrgSlug, type OrgSlug } from "./orgs";
+import { isOrgSlug, type OrgSlug } from "./orgs";
+import { orgShort } from "./org-registry";
 import { withTx, type Queryable } from "./sql";
 
 type Deps = { pool: Pool; now: () => Date };
@@ -23,6 +24,7 @@ export const AREAS = [
   { key: "facilities", name: "Facilities", covers: "Practice & game locations", features: ["practice", "hosting-partners"] },
   { key: "programs", name: "Programs", covers: "Events, Leagues, Circuits & Tournaments", features: ["events", "programs"] },
   { key: "officials", name: "Officials", covers: "Officials for games", features: ["officials"] },
+  { key: "scheduling", name: "Scheduling", covers: "Game days: who plays when", features: ["programs"] },
 ] as const satisfies readonly { key: string; name: string; covers: string; features: readonly Feature[] }[];
 
 export type Area = (typeof AREAS)[number]["key"];
@@ -43,13 +45,14 @@ export function isThunderAdmin(viewer: Pick<SessionUser, "isDirector" | "isAdmin
 }
 
 export async function isOrgOwner(pool: Pick<Queryable, "query">, coachId: string, org: OrgSlug): Promise<boolean> {
-  const r = await pool.query("select 1 from org_roles where coach_id = $1 and org = $2 and role = 'Owner'", [coachId, org]);
-  return r.rowCount === 1;
+  // CourtCaptain staff pass too (Owner-level access to every organization, in the background).
+  const r = await pool.query<{ ok: boolean }>("select acts_as($1, $2, 'Owner') as ok", [coachId, org]);
+  return r.rows[0].ok;
 }
 
 export async function isOrgAdmin(pool: Pick<Queryable, "query">, coachId: string, org: OrgSlug): Promise<boolean> {
-  const r = await pool.query("select 1 from org_roles where coach_id = $1 and org = $2 and role = 'Admin'", [coachId, org]);
-  return r.rowCount === 1;
+  const r = await pool.query<{ ok: boolean }>("select acts_as($1, $2, 'Admin') as ok", [coachId, org]);
+  return r.rows[0].ok;
 }
 
 // The areas this organization offers: those whose features it has.
@@ -62,7 +65,7 @@ export async function orgAreas(pool: Pick<Queryable, "query">, org: OrgSlug) {
 // Admins have every area; a Director needs one of them.
 export async function orgHasArea(q: Pick<Queryable, "query">, coachId: string, org: OrgSlug, ...areas: Area[]): Promise<boolean> {
   const r = await q.query(
-    `select 1 where has_role($1, $2, 'Admin')
+    `select 1 where acts_as($1, $2, 'Admin')
         or (has_role($1, $2, 'Director') and exists (select 1 from director_areas where coach_id = $1 and org = $2 and area = any($3::text[])))`,
     [coachId, org, areas],
   );
@@ -79,16 +82,17 @@ export async function directorAreas(pool: Pick<Queryable, "query">, coachId: str
   return AREAS.map((a) => a.key).filter((k) => r.rows.some((x) => x.area === k));
 }
 
-export type DirectorRow = { id: string; name: string; owner: boolean; admin: boolean; areas: Area[] };
+export type DirectorRow = { id: string; name: string; cell: string; owner: boolean; admin: boolean; areas: Area[] };
 
 // An organization's Admins and Directors (by last name) with their areas.
 export async function listDirectors(pool: Pick<Queryable, "query">, org: OrgSlug): Promise<DirectorRow[]> {
   const r = await pool.query<DirectorRow>(
-    `select u.coach_id as id, u.first_name || ' ' || u.last_name as name,
+    `select u.coach_id as id, u.first_name || ' ' || u.last_name as name, u.cell,
             has_role(u.coach_id, $1, 'Owner') as owner, has_role(u.coach_id, $1, 'Admin') as admin,
             array(select area from director_areas a where a.coach_id = u.coach_id and a.org = $1) as areas
      from users u
-     where has_role(u.coach_id, $1, 'Director') or has_role(u.coach_id, $1, 'Admin')
+     where (has_role(u.coach_id, $1, 'Director') or has_role(u.coach_id, $1, 'Admin'))
+       and not exists (select 1 from platform_admins p where p.coach_id = u.coach_id) -- CourtCaptain staff stay in the background
      order by lower(u.last_name), lower(u.first_name)`,
     [org],
   );
@@ -104,6 +108,7 @@ export async function directorsPanel(deps: Deps, viewer: SessionUser, org: OrgSl
     deps.pool.query<{ id: string; name: string }>(
       `select coach_id as id, first_name || ' ' || last_name as name from users
        where active and not has_role(coach_id, $1, 'Director') and not has_role(coach_id, $1, 'Admin')
+         and not exists (select 1 from platform_admins p where p.coach_id = users.coach_id)
        order by lower(last_name), lower(first_name)`,
       [org],
     ),
@@ -113,14 +118,50 @@ export async function directorsPanel(deps: Deps, viewer: SessionUser, org: OrgSl
     directors,
     areas: areas.map((a) => ({ key: a.key, name: a.name, covers: a.covers })),
     options: people.rows,
-    // Owners also choose Admins: from anyone active who isn't an Admin yet (Directors included).
+    // Owners also choose Admins (anyone active who isn't one yet, Directors included) and other Owners (Admins too).
     canManageAdmins: owner,
+    ownerOptions: owner
+      ? [...people.rows, ...directors.filter((d) => !d.owner).map((d) => ({ id: d.id, name: d.name }))].sort((a, b) =>
+          a.name.localeCompare(b.name),
+        )
+      : [],
     adminOptions: owner
       ? [...people.rows, ...directors.filter((d) => !d.admin).map((d) => ({ id: d.id, name: d.name }))].sort((a, b) =>
           a.name.localeCompare(b.name),
         )
       : [],
   };
+}
+
+// Owners: make someone another Owner (also Admin and Director, every area), or take Owner away (they stay an Admin).
+// Every organization keeps at least one Owner.
+export async function setOwner(deps: Deps, viewer: SessionUser, org: unknown, coachId: unknown, on: boolean): Promise<Result> {
+  if (!isOrgSlug(org) || !isCoachId(coachId)) return { ok: false, message: "Pick a person." };
+  return withTx(deps.pool, async (q) => {
+    // One change per organization at a time, so two removals can't leave it with no Owner.
+    if (!(await q.query("select 1 from organizations where slug = $1 for update", [org])).rowCount)
+      return { ok: false as const, message: "That organization no longer exists." };
+    if (!(await isOrgOwner(q, viewer.coachId, org)))
+      return { ok: false as const, message: `Only a ${await orgShort(q, org)} Owner can do that.` };
+    const u = await q.query("select 1 from users where coach_id = $1 and active", [coachId]);
+    if (!u.rowCount) return { ok: false as const, message: "That person isn't an active user." };
+    if (on) {
+      await q.query(
+        `select set_role($1, $2, 'Owner', true, $3), set_role($1, $2, 'Admin', true, $3), set_role($1, $2, 'Director', true, $3),
+                set_role($1, $2, 'Request', false, $3)`,
+        [coachId, org, by(viewer)],
+      );
+      return { ok: true as const };
+    }
+    const others = await q.query<{ n: number }>(
+      `select count(*)::int as n from org_roles r where r.org = $1 and r.role = 'Owner' and r.coach_id <> $2
+       and not exists (select 1 from platform_admins p where p.coach_id = r.coach_id)`,
+      [org, coachId],
+    );
+    if (others.rows[0].n === 0) return { ok: false as const, message: `${await orgShort(q, org)} needs at least one Owner.` };
+    await q.query("select set_role($1, $2, 'Owner', false, $3)", [coachId, org, by(viewer)]);
+    return { ok: true as const };
+  });
 }
 
 // Admins only: give a person the Director role with these areas, or (no areas) take the Director role away.
@@ -137,12 +178,13 @@ export async function setDirectorAreas(
   if (!want.every(isArea)) return { ok: false, message: "Pick areas from the list." };
   return withTx(deps.pool, async (q) => {
     if (!(await isOrgAdmin(q, viewer.coachId, org)))
-      return { ok: false as const, message: `Only a ${ORGS[org].short} Admin can do that.` };
+      return { ok: false as const, message: `Only a ${await orgShort(q, org)} Admin can do that.` };
     const u = await q.query("select 1 from users where coach_id = $1 and active for update", [coachId]);
     if (!u.rowCount) return { ok: false as const, message: "That person isn't an active user." };
     if (await isOrgAdmin(q, coachId, org)) return { ok: false as const, message: "Admins have every area." };
     const offered = new Set<string>((await orgAreas(q, org)).map((a) => a.key));
-    if (!want.every((a) => offered.has(a))) return { ok: false as const, message: `${ORGS[org].short} doesn't have that area.` };
+    if (!want.every((a) => offered.has(a)))
+      return { ok: false as const, message: `${await orgShort(q, org)} doesn't have that area.` };
     await q.query("delete from director_areas where coach_id = $1 and org = $2", [coachId, org]);
     for (const area of want)
       await q.query("insert into director_areas (coach_id, org, area, granted_by, granted_at) values ($1, $2, $3, $4, $5)", [
@@ -165,7 +207,7 @@ export async function setAdmin(deps: Deps, viewer: SessionUser, org: unknown, co
   if (!isOrgSlug(org) || !isCoachId(coachId)) return { ok: false, message: "Pick a person." };
   return withTx(deps.pool, async (q) => {
     if (!(await isOrgOwner(q, viewer.coachId, org)))
-      return { ok: false as const, message: `Only a ${ORGS[org].short} Owner can do that.` };
+      return { ok: false as const, message: `Only a ${await orgShort(q, org)} Owner can do that.` };
     const u = await q.query("select 1 from users where coach_id = $1 and active for update", [coachId]);
     if (!u.rowCount) return { ok: false as const, message: "That person isn't an active user." };
     if (!on && (await isOrgOwner(q, coachId, org))) return { ok: false as const, message: "Owners are always Admins." };

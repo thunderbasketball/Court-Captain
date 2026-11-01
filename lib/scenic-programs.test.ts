@@ -1,8 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
+
+const ALL = { allSeason: true, days: [] }; // register for ALL Season
 import {
   addDivision,
   addPool,
+  copyDivisions,
   deleteProgram,
   getProgram,
   listPrograms,
@@ -12,6 +15,7 @@ import {
   removePool,
   saveProgram,
   saveProgramDates,
+  setTeamOff,
   setPaid,
   withdrawTeam,
 } from "./scenic-programs";
@@ -106,11 +110,34 @@ describe("Scenic City programs", () => {
     const id = await newLeague();
     expect(await getProgram(deps(), pat, id)).toMatchObject({
       kind: "League",
-      feeCents: 15000,
+      feeCents: null, // a League's fees are on its options: ALL Season when none are given
+      options: [{ kind: "all_season", feeCents: 15000 }],
       status: "open",
       createdBy: "Dee X",
       divisionList: [],
     });
+    // Registration Options, each with a fee; at least one; 2nd Game needs a way to play the day first.
+    const opts = (o: unknown) => saveProgram(deps(), dee, id, league({ options: o }));
+    expect(await opts([])).toEqual({ ok: false, message: "Pick at least one Registration Option." });
+    expect(await opts([{ kind: "single_2nd", fee: "20" }])).toMatchObject({ ok: false });
+    expect(await opts([{ kind: "all_season", fee: "12x" }])).toMatchObject({ ok: false });
+    expect(
+      await opts([
+        { kind: "single_2", fee: "60" },
+        { kind: "all_season", fee: "300" },
+        { kind: "single_1", fee: "$35.50" },
+        { kind: "single_2nd", fee: "" },
+        { kind: "nope", fee: "1" },
+      ]),
+    ).toEqual({ ok: true, id });
+    expect((await getProgram(deps(), pat, id))!.options).toEqual([
+      { kind: "all_season", feeCents: 30000 },
+      { kind: "single_1", feeCents: 3550 },
+      { kind: "single_2", feeCents: 6000 },
+      { kind: "single_2nd", feeCents: null },
+    ]);
+    await opts([{ kind: "all_season", fee: "150" }]);
+    expect((await getProgram(deps(), pat, id))!.options).toEqual([{ kind: "all_season", feeCents: 15000 }]);
     expect(await saveProgram(deps(), dee, null, league({ name: "winter league 2027" }))).toEqual({
       ok: false,
       message: "There's already a program with that name.",
@@ -173,18 +200,30 @@ describe("Scenic City programs", () => {
     ]);
     expect(view!.cantRegister).toEqual([{ name: "Baylor 5th", why: "no Boys 5th REC here" }]);
 
-    expect(await registerTeam(deps(), pat, id, b34c)).toEqual({ ok: true, division: "Boys 3rd–4th · 4th COMP · Pool A" });
-    expect(await registerTeam(deps(), pat, id, b34c)).toEqual({ ok: false, message: "Baylor 3/4 Comp is already registered." });
-    expect(await registerTeam(deps(), pat, id, b5)).toEqual({ ok: false, message: "This program has no Boys 5th REC." });
-    expect(await registerTeam(deps(), pat, id, solo)).toEqual({ ok: false, message: "You can only register teams you manage." });
+    expect(await registerTeam(deps(), pat, id, b34c, ALL)).toMatchObject({
+      ok: true,
+      division: "Boys 3rd–4th · 4th COMP · Pool A",
+    });
+    expect(await registerTeam(deps(), pat, id, b34c, ALL)).toEqual({ ok: false, message: "Already registered for ALL Season." });
+    expect(await registerTeam(deps(), pat, id, b5, ALL)).toEqual({ ok: false, message: "This program has no Boys 5th REC." });
+    expect(await registerTeam(deps(), pat, id, solo, ALL)).toEqual({
+      ok: false,
+      message: "You can only register teams you manage.",
+    });
 
     // Add Pool B to Girls 5th REC: the next team goes to the emptier pool.
     const girls5 = () => getProgram(deps(), dee, id).then((p) => p!.divisionList[1].groups.find((g) => g.label === "5th REC")!);
     expect(await addPool(deps(), dee, (await girls5()).id)).toEqual({ ok: true, name: "Pool B" });
     expect(await addPool(deps(), pat, (await girls5()).id)).toMatchObject({ ok: false });
-    expect(await registerTeam(deps(), sam, id, solo)).toEqual({ ok: true, division: "Girls 4th–6th · 5th REC · Pool A" });
+    expect(await registerTeam(deps(), sam, id, solo, ALL)).toMatchObject({
+      ok: true,
+      division: "Girls 4th–6th · 5th REC · Pool A",
+    });
     const g2 = await team(sam, "solo", "Sam Girls 2", "Girls", "5", "REC");
-    expect(await registerTeam(deps(), sam, id, g2)).toEqual({ ok: true, division: "Girls 4th–6th · 5th REC · Pool B" });
+    expect(await registerTeam(deps(), sam, id, g2, ALL)).toMatchObject({
+      ok: true,
+      division: "Girls 4th–6th · 5th REC · Pool B",
+    });
 
     // Move between pools of the same grade group (recorded); not into another grade's pool.
     const [poolA, poolB] = (await girls5()).pools;
@@ -211,9 +250,12 @@ describe("Scenic City programs", () => {
     await div(id, "Boys", 5, 5, ["REC"]);
     const b5 = await team(pat, baylor, "Baylor 5th", "Boys", "5");
     now = new Date("2026-12-16T15:00:00Z"); // the day after it closes
-    expect(await registerTeam(deps(), pat, id, b5)).toEqual({ ok: false, message: "Registration isn't open for this program." });
+    expect(await registerTeam(deps(), pat, id, b5, ALL)).toEqual({
+      ok: false,
+      message: "Registration isn't open for this program.",
+    });
     expect((await getProgram(deps(), pat, id))!.canRegister).toEqual([]);
-    expect(await registerTeam(deps(), dee, id, b5)).toMatchObject({ ok: true });
+    expect(await registerTeam(deps(), dee, id, b5, ALL)).toMatchObject({ ok: true });
     expect(await withdrawTeam(deps(), pat, id, b5)).toEqual({
       ok: false,
       message: "Registration is closed. Ask a Director of Programs.",
@@ -226,7 +268,7 @@ describe("Scenic City programs", () => {
     await div(id, "Boys", 5, 5, ["REC"]);
     await div(id, "Girls", 5, 5, ["REC"]);
     const b5 = await team(pat, baylor, "Baylor 5th", "Boys", "5");
-    await registerTeam(deps(), pat, id, b5);
+    await registerTeam(deps(), pat, id, b5, ALL);
     expect(await setPaid(deps(), pat, id, b5, true)).toMatchObject({ ok: false });
     expect(await setPaid(deps(), dee, id, b5, true)).toEqual({ ok: true });
     expect((await db.pool.query("select paid, paid_set_by from scenic_registrations")).rows[0]).toEqual({
@@ -269,6 +311,20 @@ describe("Scenic City programs", () => {
     });
     await saveProgramDates(deps(), dee, other, { add: ["2027-01-16"], remove: [] });
     expect(await dates(id)).toEqual(["2027-01-09", "2027-01-16", "2027-01-23"]);
+
+    // Bracket Days: added as brackets, or an existing Game Day switched; a date can't be both.
+    expect(
+      await saveProgramDates(deps(), dee, id, { add: [], addBrackets: ["2027-03-06", "2027-01-23"], remove: [] }),
+    ).toMatchObject({ ok: true, added: 1 });
+    expect(
+      await saveProgramDates(deps(), dee, id, { add: ["2027-03-05"], addBrackets: ["2027-03-05"], remove: [] }),
+    ).toMatchObject({ ok: false });
+    const p = (await getProgram(deps(), dee, id))!;
+    expect([p.gameDates, p.bracketDates]).toEqual([
+      ["2027-01-09", "2027-01-16"],
+      ["2027-01-23", "2027-03-06"],
+    ]);
+    await saveProgramDates(deps(), dee, id, { add: ["2027-01-23"], remove: ["2027-03-06"] }); // back to the way it was
     expect((await listGameDays(deps(), sam))!.map((d) => `${d.day}:${d.programs.join("+")}`)).toEqual([
       "2027-01-09:Winter League 2027",
       "2027-01-16:Winter Circuit+Winter League 2027",
@@ -305,5 +361,66 @@ describe("Scenic City programs", () => {
       ok: false,
       message: "Past game dates can't change.",
     });
+  });
+
+  it("copies another program's divisions (grade groups and pools, no teams); skips overlaps", async () => {
+    const a = await newLeague();
+    const b = await newLeague({ name: "Spring League 2027" });
+    await div(a, "Boys", 3, 4, ["REC", "COMP"]);
+    await div(a, "Girls", 5, 5, ["REC"]);
+    const g = await db.pool.query<{ id: string }>(
+      `select g.id::text from scenic_grade_groups g join scenic_divisions d on d.id = g.division_id
+       where d.program_id = $1 and d.gender = 'Boys' and g.grade = 4 and g.level = 'REC'`,
+      [a],
+    );
+    await addPool(deps(), dee, g.rows[0].id);
+    await div(b, "Girls", 5, 6, ["COMP"]);
+
+    expect(await copyDivisions(deps(), pat, b, a)).toMatchObject({ ok: false });
+    expect(await copyDivisions(deps(), dee, b, b)).toMatchObject({ ok: false });
+    expect(await copyDivisions(deps(), dee, b, a)).toEqual({ ok: true, copied: ["Boys 3rd–4th"], skipped: ["Girls 5th"] });
+    const p = (await getProgram(deps(), dee, b))!;
+    expect(
+      p.divisionList.map(
+        (d) => `${d.label}: ${d.groups.map((x) => `${x.label} ${x.pools.map((o) => o.name).join("/")}`).join(", ")}`,
+      ),
+    ).toEqual([
+      "Boys 3rd–4th: 3rd REC Pool A, 3rd COMP Pool A, 4th REC Pool A/Pool B, 4th COMP Pool A",
+      "Girls 5th–6th: 5th COMP Pool A, 6th COMP Pool A",
+    ]);
+  });
+
+  it("Admins and Directors of Scheduling take a team out of a Game Day, the Brackets or the program, and restore it", async () => {
+    const id = await newLeague();
+    await saveProgramDates(deps(), dee, id, { add: ["2027-01-09", "2027-01-16"], addBrackets: ["2027-03-06"], remove: [] });
+    await div(id, "Boys", 3, 4, ["COMP"]);
+    const t = await team(pat, baylor, "Baylor 3/4", "Boys", "3-4", "COMP");
+    await registerTeam(deps(), pat, id, t, ALL);
+    const off = (who: SessionUser, what: string, out = true) => setTeamOff(deps(), who, id, t, what, out);
+    const shown = async () =>
+      (await getProgram(deps(), dee, id))!.divisionList[0].groups.flatMap((g) => g.pools.flatMap((o) => o.teams))[0];
+
+    expect(await off(dee, "2027-01-09")).toEqual({
+      ok: false,
+      message: "Only a Scenic City Admin or Director of Scheduling can do that.",
+    });
+    await db.pool.query(
+      "insert into director_areas (coach_id, org, area, granted_by) values ('5550004', 'scenic-city', 'scheduling', 'test')",
+    );
+    expect((await getProgram(deps(), fay, id))!.canSchedule).toBe(true);
+    expect(await off(fay, "2027-01-10")).toEqual({ ok: false, message: "That isn't one of this program's Game Days." });
+    expect(await off(fay, "2027-03-06")).toMatchObject({ ok: false }); // a Bracket Day: use "brackets"
+    expect(await off(fay, "2027-01-09")).toEqual({ ok: true });
+    expect(await off(fay, "brackets")).toEqual({ ok: true });
+    expect(await off(fay, "program")).toEqual({ ok: true });
+    expect(await shown()).toMatchObject({
+      name: "Baylor 3/4",
+      removedBy: "Fay X",
+      off: { "2027-01-09": "Fay X", brackets: "Fay X" },
+    });
+    // Restore: still registered all along.
+    expect(await off(fay, "program", false)).toEqual({ ok: true });
+    expect(await off(fay, "2027-01-09", false)).toEqual({ ok: true });
+    expect(await shown()).toMatchObject({ removedBy: null, off: { brackets: "Fay X" } });
   });
 });

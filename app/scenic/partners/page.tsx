@@ -9,6 +9,7 @@ import { hostingRequests } from "@/lib/org-partnerships";
 import { TZ } from "@/lib/time";
 import { listPartners } from "@/lib/scenic-partners";
 import AppHeader from "../../AppHeader";
+import { FacilitiesNav } from "../ScenicNav";
 import { DecideHostingButtons } from "../../hosting/HostingButtons";
 import { Chip, PageTitle, card } from "../../ui";
 import { PartnerButton } from "./PartnerEditor";
@@ -27,7 +28,7 @@ async function Partners() {
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   await requireFeature("scenic-city", "hosting-partners");
   const scenic = await currentScenic(user);
-  if (!scenic || (scenic.role !== "Director" && scenic.role !== "Partner")) redirect("/scenic");
+  if (!scenic || scenic.role !== "Director") redirect("/scenic");
   const deps = { pool: db, now: () => new Date() };
   const { partners, isDirector } = await listPartners(deps, user, scenic.role === "Director");
   // Organizations asking to host Scenic City's games (Admins and Directors of Facilities, on the Director chip).
@@ -36,11 +37,12 @@ async function Partners() {
 
   return (
     <>
-      <AppHeader user={user} context={scenic.key} tab="partners" />
+      <AppHeader user={user} context={scenic.key} tab="scenic-facilities" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+        <FacilitiesNav user={user} current="all" />
         <div className="flex items-start justify-between gap-3">
           <PageTitle
-            title="Partners"
+            title="Hosting Sites"
             subtitle={isDirector ? "Schools and organizations, by name" : "Your schools and organizations"}
           />
           {isDirector && <PartnerButton />}
@@ -71,7 +73,7 @@ async function Partners() {
                 <div className="flex items-start justify-between gap-2">
                   <h2 className="font-semibold">{p.name}</h2>
                   {!p.approved && <Chip tone="amber">Not approved</Chip>}
-                  {p.org && <Chip tone="blue">Organization partner</Chip>}
+                  {p.org && <Chip tone="blue">Hosting Site</Chip>}
                 </div>
                 <p className="text-sm text-zinc-500">
                   {p.kind} ·{" "}

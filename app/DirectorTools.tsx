@@ -2,9 +2,12 @@
 
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { setAdmin, setDirectorAreas } from "./org-admin/actions";
-import { CloseButton, OnPage, Toast, dialogCls, useConfirm } from "./client-ui";
+import { setAdmin, setDirectorAreas, setOwner } from "./org-admin/actions";
+import { PopUp, Toast, useConfirm } from "./client-ui";
 import { inputCls } from "./ui";
+
+const AREAS_NOTE =
+  "Each Director manages only their areas. Admins have every area and choose Directors; Owners also choose Admins.";
 
 type AreaOption = { key: string; name: string; covers: string };
 export type Director = { id: string; name: string; owner: boolean; admin: boolean; areas: string[] };
@@ -50,28 +53,35 @@ export function AddMenu({ children }: { children: ReactNode }) {
   );
 }
 
-// "Director" and (Owners) "Admin" items for the "+ Add" menu, each opening a pop-up.
+// "Director" and (Owners) "Admin" and "Owner" items for the "+ Add" menu, each opening a pop-up.
 export function DirectorButtons({
   org,
   areas,
   options,
   canManageAdmins,
   adminOptions,
+  ownerOptions = [],
 }: {
   org: string;
   areas: AreaOption[];
   options: Person[];
   canManageAdmins: boolean;
   adminOptions: Person[];
+  ownerOptions?: Person[]; // Owners: who can be made another Owner
 }) {
   return (
     <>
-      <PopUp label="Director (choose their areas)" title="Add a Director" className={menuItem}>
+      <PopUp label="Director (choose their areas)" title="Add a Director" className={menuItem} note={AREAS_NOTE}>
         {(close) => <DirectorForm org={org} areas={areas} options={options} onDone={close} />}
       </PopUp>
       {canManageAdmins && (
-        <PopUp label="Admin (every area)" title="Add an Admin" className={menuItem}>
+        <PopUp label="Admin (every area)" title="Add an Admin" className={menuItem} note={AREAS_NOTE}>
           {(close) => <AdminForm org={org} options={adminOptions} onDone={close} />}
+        </PopUp>
+      )}
+      {canManageAdmins && (
+        <PopUp label="Owner (also Admin, every area)" title="Add an Owner" className={menuItem} note={AREAS_NOTE}>
+          {(close) => <AdminForm org={org} options={ownerOptions} onDone={close} owner />}
         </PopUp>
       )}
     </>
@@ -105,8 +115,9 @@ export function DirectorRole({
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
       <p className="text-xs font-medium text-thunder-blue dark:text-blue-300">{label}</p>
       {person.admin && !person.owner && canManageAdmins && <RemoveAdmin org={org} orgName={orgName} person={person} />}
+      {person.owner && canManageAdmins && <RemoveOwner org={org} orgName={orgName} person={person} />}
       {!person.admin && (
-        <PopUp label="Edit areas" title={`${person.name}: Director areas`} link>
+        <PopUp label="Edit areas" title={`${person.name}: Director areas`} link note={AREAS_NOTE}>
           {(close) => <DirectorForm org={org} orgName={orgName} areas={areas} person={person} onDone={close} />}
         </PopUp>
       )}
@@ -114,64 +125,8 @@ export function DirectorRole({
   );
 }
 
-function PopUp({
-  label,
-  title,
-  link,
-  className,
-  children,
-}: {
-  label: string;
-  title: string;
-  link?: boolean;
-  className?: string;
-  children: (close: () => void) => ReactNode;
-}) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  const [open, setOpen] = useState(false);
-  // The pop-up follows `open`, so a form can close it after saving.
-  useEffect(() => {
-    if (open && !dialog.current?.open) dialog.current?.showModal();
-    if (!open && dialog.current?.open) dialog.current.close();
-  }, [open]);
-  const close = () => setOpen(false);
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className={className ?? (link ? "text-xs font-medium text-thunder-blue hover:underline" : pill)}
-      >
-        {label}
-      </button>
-      <OnPage>
-        <dialog
-          ref={dialog}
-          className={dialogCls}
-          onClick={(e) => e.target === dialog.current && close()}
-          onClose={() => setOpen(false)}
-        >
-          <div className="space-y-3 p-5">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">{title}</h2>
-              <CloseButton onClick={close} />
-            </div>
-            {open && children(close)}
-            <p className="text-xs text-zinc-500">
-              Each Director manages only their areas. Admins have every area and choose Directors; Owners also choose Admins.
-            </p>
-          </div>
-        </dialog>
-      </OnPage>
-    </>
-  );
-}
-
-const pill =
-  "rounded-full px-3 py-2 text-sm font-medium text-zinc-700 ring-1 ring-zinc-950/15 hover:bg-zinc-50 dark:text-zinc-200 dark:ring-white/20";
-
-// Owners: pick a person to make an Admin (every area).
-function AdminForm({ org, options, onDone }: { org: string; options: Person[]; onDone: () => void }) {
+// Owners: pick a person to make an Admin (every area), or (`owner`) another Owner.
+function AdminForm({ org, options, onDone, owner }: { org: string; options: Person[]; onDone: () => void; owner?: boolean }) {
   const router = useRouter();
   const [pick, setPick] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -182,7 +137,7 @@ function AdminForm({ org, options, onDone }: { org: string; options: Person[]; o
       onSubmit={(e) => {
         e.preventDefault();
         start(async () => {
-          const r = await setAdmin(org, pick, true);
+          const r = owner ? await setOwner(org, pick, true) : await setAdmin(org, pick, true);
           if (!r.ok) return setError(r.message);
           onDone();
           router.refresh();
@@ -191,7 +146,7 @@ function AdminForm({ org, options, onDone }: { org: string; options: Person[]; o
     >
       <select className={`${inputCls} py-2`} value={pick} onChange={(e) => setPick(e.target.value)} autoFocus>
         <option value="" disabled>
-          Pick a person to make an Admin…
+          Pick a person to make {owner ? "an Owner" : "an Admin"}…
         </option>
         {options.map((o) => (
           <option key={o.id} value={o.id}>
@@ -206,13 +161,48 @@ function AdminForm({ org, options, onDone }: { org: string; options: Person[]; o
           disabled={busy || !pick}
           className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
         >
-          Make Admin
+          {owner ? "Make Owner" : "Make Admin"}
         </button>
         <button type="button" onClick={onDone} className="text-sm text-zinc-500">
           Cancel
         </button>
       </div>
     </form>
+  );
+}
+
+// Owners: take Owner away from someone (they stay an Admin). The last Owner can't be removed.
+function RemoveOwner({ org, orgName, person }: { org: string; orgName: string; person: Person }) {
+  const router = useRouter();
+  const [busy, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
+  return (
+    <>
+      <button
+        type="button"
+        disabled={busy}
+        className="shrink-0 text-xs font-medium text-red-600 hover:underline"
+        onClick={async () => {
+          if (
+            await confirm({
+              title: `Remove ${person.name} as Owner?`,
+              message: `${person.name} won't be an Owner of ${orgName} any more. They stay an Admin.`,
+              confirmLabel: "Remove",
+            })
+          )
+            start(async () => {
+              const r = await setOwner(org, person.id, false);
+              if (r.ok) router.refresh();
+              else setError(r.message);
+            });
+        }}
+      >
+        Remove Owner
+      </button>
+      {error && <Toast key={error} message={error} />}
+      {confirmDialog}
+    </>
   );
 }
 

@@ -83,7 +83,7 @@ describe("Scenic City teams", () => {
     expect(gradeLabel(0, 0)).toBe("K");
   });
 
-  it("a partner's contact adds its teams; the coach's cell becomes their login with the Coach role", async () => {
+  it("a school's contact adds its teams; the coach's cell becomes their login with the Coach role", async () => {
     const r = await createScenicTeam(deps(), pat, { ...team(), for: baylor });
     expect(r).toMatchObject({ ok: true, newLogin: true });
     const coach = await db.pool.query(
@@ -91,7 +91,8 @@ describe("Scenic City teams", () => {
     );
     expect(coach.rows[0]).toEqual({ first_name: "Cy", cell: "4235550003", pin_hash: null, email: null, coach: true });
 
-    const list = await listScenicTeams(deps(), pat, "Partner");
+    // (Partner is retired: the team shows in a Director of Teams' list.)
+    const list = await listScenicTeams(deps(), dee, "Director");
     expect(list!.teams).toMatchObject([
       {
         name: "Baylor 5th Boys",
@@ -103,6 +104,7 @@ describe("Scenic City teams", () => {
       },
     ]);
     expect(list!.addFor).toEqual([{ value: baylor, label: "Baylor School" }]);
+    expect(await listScenicTeams(deps(), pat, "Partner")).toMatchObject({ teams: [] });
 
     // Same name at the same partner: refused (any case). Not for a partner they aren't a contact of, or one that only hosts.
     expect(await createScenicTeam(deps(), pat, { ...team({ name: "baylor 5th boys" }), for: baylor })).toMatchObject({
@@ -145,7 +147,6 @@ describe("Scenic City teams", () => {
       "Sam's Girls:3rd/4th:Sam X",
     ]);
     expect(solo!.addFor).toEqual([{ value: "solo", label: "My teams (Solo)" }]);
-    expect((await listScenicTeams(deps(), pat, "Partner"))!.teams.map((t) => t.name)).toEqual(["Baylor 5th Boys"]);
 
     const all = await listScenicTeams(deps(), dee, "Director");
     expect(all!.teams.map((t) => t.name)).toEqual(["Sam 4th", "Baylor 5th Boys", "Sam's Girls"]);

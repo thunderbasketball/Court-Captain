@@ -153,6 +153,7 @@ async function Team({
                   first={s.firstName}
                   last={s.lastName}
                   avatarTone={roleTone[s.role]}
+                  href={asDirector && isThunderAdmin(user) ? (s.coachId === user.coachId ? "/me" : `/me/${s.coachId}`) : undefined}
                   under={
                     asDirector && isThunderAdmin(user) && s.coachId !== user.coachId && <ViewAsButton coachId={s.coachId} name={`${s.firstName} ${s.lastName}`} />
                   }

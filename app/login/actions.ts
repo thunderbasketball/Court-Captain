@@ -52,8 +52,19 @@ export async function startSignup(form: {
   pin1: string;
   pin2: string;
   join?: string;
+  purpose?: string;
+  staffRole?: string;
+  teamId?: string;
+  teamText?: string;
+  notes?: string;
 }) {
   return run(() => auth.startSignup(deps, form));
+}
+
+// For the sign-up form's "Which team?" list: Thunder's team names (names only, no login needed), by grade then name.
+export async function signupTeams(): Promise<{ id: string; name: string }[]> {
+  const r = await deps.pool.query<{ id: string; name: string }>("select id::text, name from teams order by gender, grade_sort, name");
+  return r.rows;
 }
 export async function completeSignup(cell: string, code: string) {
   return run(() => auth.completeSignup(deps, cell, code));
@@ -63,9 +74,6 @@ export async function devLogin(cell: string, code: string) {
   return run(() => auth.devLogin(deps, cell, code));
 }
 
-export async function requestAccess() {
-  return run(async () => auth.requestAccess(deps, await sessionToken()));
-}
 
 export async function logout() {
   await auth.logout(deps, await sessionToken());

@@ -10,7 +10,6 @@ import { inputCls, pillCls } from "../ui";
 import MonthCalendar, { addMonths, monthOf, type DayLook } from "../scenic/MonthCalendar";
 
 type Gym = { id: string; name: string; courts: string[] }; // courts: the practice goals (Goal #1, Goal #2)
-const SHORT: Record<Use, string> = { practice: "Practice", partner: "Partner", "in-house": "In-House" };
 const TONE: Record<Use, DayLook["tone"]> = { practice: "practice", partner: "open", "in-house": "inhouse" };
 const short = (t: string) => timeLabel(t).replace(":00", "").replace(" AM", "a").replace(" PM", "p");
 
@@ -20,19 +19,23 @@ const TIMES = Array.from({ length: 35 }, (_, i) => {
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${m % 60 ? "30" : "00"}`;
 });
 
-// One gym at a time: its use on each date (Practice Slots, Partner Games, In-House Games) and hours. Practice covers
+// One gym at a time: its use on each date (Practice Slots, a league's games, e.g. "Scenic City", In-House Games) and hours. Practice covers
 // all its goals (Goal #1, Goal #2); games use the gym.
 // Tap dates, pick the use, keep the default hours or set them, Save. Or clear the selected dates.
 export default function FacilityCalendar({
+  org,
   today,
   gyms,
   uses,
   days,
+  gameDays = {},
 }: {
+  org?: string; // the organization (Thunder when left out)
   today: string;
   gyms: Gym[];
   uses: { key: Use; name: string }[];
   days: Record<string, CourtDay>;
+  gameDays?: Record<string, string>; // date → league that plays then
 }) {
   const router = useRouter();
   const [gymId, setGymId] = useState(gyms[0]?.id ?? "");
@@ -45,14 +48,18 @@ export default function FacilityCalendar({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [busy, start] = useTransition();
-  if (!gym) return <p className="text-sm text-zinc-500">No gyms yet. Add one under Facilities → Gyms.</p>;
+  const league = uses.find((u) => u.key === "partner")?.name ?? "League";
+  const SHORT: Record<Use, string> = { practice: "Practice", partner: league, "in-house": "In-House" };
+  if (!gym) return <p className="text-sm text-zinc-500">No gyms yet. Add one first.</p>;
 
   const look = (date: string): DayLook => {
     if (picked.includes(date)) return { tappable: true, tone: "selected", note: "Selected" };
     const d = days[`${gym.id}:${date}`];
     const tappable = date >= today;
-    if (!d) return { tappable, tone: "plain" };
-    return { tappable, tone: TONE[d.use], note: `${SHORT[d.use]} ${short(d.starts)}–${short(d.ends)}` };
+    const plays = gameDays[date];
+    // A league's game day not marked yet: outlined with the league's name, so hosts see when they can offer the gym.
+    if (!d) return plays ? { tappable, tone: "game", note: `${plays} games` } : { tappable, tone: "plain" };
+    return { tappable, tone: TONE[d.use], note: `${SHORT[d.use]} ${short(d.starts)}–${short(d.ends)}`, dot: !!plays };
   };
   const tap = (date: string) =>
     date >= today && setPicked((p) => (p.includes(date) ? p.filter((d) => d !== date) : [...p, date]));
@@ -61,6 +68,7 @@ export default function FacilityCalendar({
     start(async () => {
       setError(null);
       const r = await setAvailability({
+        org,
         gymId: gym.id,
         days: picked,
         use: clear ? null : use || undefined,
@@ -113,13 +121,19 @@ export default function FacilityCalendar({
         onTap={tap}
       />
       <p className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
+        {Object.keys(gameDays).length > 0 && (
+          <span>
+            <span className="mr-1 inline-block size-2.5 rounded-sm bg-white ring-2 ring-scenic-navy/60" />
+            League game day (dot when already marked)
+          </span>
+        )}
         <span>
           <span className="mr-1 inline-block size-2.5 rounded-sm bg-sky-100 ring-2 ring-sky-600/50" />
           Practice Slots
         </span>
         <span>
           <span className="mr-1 inline-block size-2.5 rounded-sm bg-emerald-100 ring-2 ring-emerald-600/50" />
-          Partner Games
+          {league === "League" ? "League Games" : league}
         </span>
         <span>
           <span className="mr-1 inline-block size-2.5 rounded-sm bg-amber-100 ring-2 ring-amber-600/50" />

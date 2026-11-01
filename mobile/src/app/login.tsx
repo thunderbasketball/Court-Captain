@@ -29,6 +29,10 @@ export default function Login() {
   const [pin1, setPin1] = useState('');
   const [pin2, setPin2] = useState('');
   const [email, setEmail] = useState('');
+  const [purpose, setPurpose] = useState<'' | 'family' | 'staff' | 'other'>('');
+  const [staffRole, setStaffRole] = useState('');
+  const [teamText, setTeamText] = useState('');
+  const [notes, setNotes] = useState('');
   const [first, setFirst] = useState('');
   const [last, setLast] = useState('');
   const pinRef = useRef<TextInputHandle>(null);
@@ -78,7 +82,18 @@ export default function Login() {
     setPin2('');
   }
 
-  const signupFields = { cell, firstName: first, lastName: last, email, pin1, pin2 };
+  const signupFields = {
+    cell,
+    firstName: first,
+    lastName: last,
+    email,
+    pin1,
+    pin2,
+    purpose,
+    staffRole: purpose === 'staff' ? staffRole : null,
+    teamText: purpose === 'staff' ? teamText : null,
+    notes: purpose === 'other' ? notes : null,
+  };
   const codeField = (
     <Field
       label="6-digit code"
@@ -195,6 +210,35 @@ export default function Login() {
           />
           {pinField('Choose a 4-digit PIN', pin1, setPin1)}
           {pinField('Type it again', pin2, setPin2)}
+          <Text style={[styles.question, { color: c.text }]}>What brings you to Thunder?</Text>
+          {(
+            [
+              ['family', 'New family'],
+              ['staff', 'New team staff'],
+              ['other', 'Other'],
+            ] as const
+          ).map(([k, label]) => (
+            <LinkButton key={k} title={`${purpose === k ? '● ' : '○ '}${label}`} onPress={() => setPurpose(k)} />
+          ))}
+          {purpose === 'family' && (
+            <Text style={{ color: c.textSecondary }}>Your account is ready right away. We find your players from registration by your cell number.</Text>
+          )}
+          {purpose === 'staff' && (
+            <>
+              {(
+                [
+                  ['HeadCoach', 'Head Coach'],
+                  ['AsstCoach', 'Asst Coach'],
+                  ['Manager', 'Team Manager'],
+                  ['TeamParent', 'Team Parent'],
+                ] as const
+              ).map(([k, label]) => (
+                <LinkButton key={k} title={`${staffRole === k ? '● ' : '○ '}${label}`} onPress={() => setStaffRole(k)} />
+              ))}
+              <Field label="Team name (as Thunder lists it) or coach" value={teamText} onChangeText={setTeamText} />
+            </>
+          )}
+          {purpose === 'other' && <Field label="Tell us why you're joining" value={notes} onChangeText={setNotes} multiline />}
           <Button title="Email me a code" busy={busy} onPress={() => go('startSignup', signupFields)} />
         </Panel>
       );
@@ -327,4 +371,5 @@ const styles = StyleSheet.create({
   logo: { width: 112, height: 112 },
   title: { fontSize: 24, fontWeight: '600', letterSpacing: -0.3 },
   center: { textAlign: 'center' },
+  question: { fontSize: 15, fontWeight: '600' },
 });

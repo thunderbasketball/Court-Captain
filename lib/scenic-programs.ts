@@ -9,10 +9,13 @@
 import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { orgHasArea } from "./org-admin";
+import { REG_OPTIONS, planChoice, type Choice, type ChoiceResult, type ProgramOption, type SingleKind } from "./program-options";
 import { cleanPlaceName } from "./scenic-partners";
 import { LEVELS, gradeLabel, gradeRange, teamsICanManage, type Level } from "./scenic-teams";
 import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
+
+export { REG_OPTIONS, type ProgramOption, type RegOptionKind } from "./program-options";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -21,6 +24,7 @@ class ProgramError extends Error {}
 const ORG = "scenic-city";
 export const PROGRAM_KINDS = ["League", "Circuit", "Tournament"] as const;
 export type ProgramKind = (typeof PROGRAM_KINDS)[number];
+
 const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
 const isId = (v: unknown): v is string => typeof v === "string" && /^\d{1,18}$/.test(v);
 const isDate = (v: unknown): v is string =>
@@ -28,11 +32,15 @@ const isDate = (v: unknown): v is string =>
 const programsOnly = "Only a Scenic City Director of Programs can do that.";
 
 export const isProgramsDirector = (q: Queryable, viewer: SessionUser) => orgHasArea(q, viewer.coachId, ORG, "programs");
+// Admins and Directors of Scheduling take teams out of a Game Day, the Brackets or a whole program (and restore them).
+export const isScheduler = (q: Pick<Queryable, "query">, viewer: SessionUser) => orgHasArea(q, viewer.coachId, ORG, "scheduling");
 
 async function inScenicCity(q: Queryable, viewer: SessionUser): Promise<boolean> {
-  const r = await q.query("select 1 from org_roles where coach_id = $1 and org = 'scenic-city' and role <> 'Request' limit 1", [
-    viewer.coachId,
-  ]);
+  const r = await q.query(
+    `select 1 where acts_as($1, 'scenic-city', 'Director')
+       or exists (select 1 from org_roles where coach_id = $1 and org = 'scenic-city' and role <> 'Request')`,
+    [viewer.coachId],
+  );
   return r.rowCount === 1;
 }
 
@@ -61,7 +69,8 @@ export type ProgramSummary = {
   endsOn: string;
   regOpens: string;
   regCloses: string;
-  feeCents: number | null;
+  feeCents: number | null; // Circuits and Tournaments; a League's fees are on its options
+  options: ProgramOption[]; // a League's Registration Options, in REG_OPTIONS order
   status: RegStatus;
   divisions: number;
   teams: number;
@@ -70,7 +79,10 @@ export type ProgramSummary = {
 const SUMMARY = `select p.id::text, p.kind, p.name, p.starts_on::text as "startsOn", p.ends_on::text as "endsOn",
     p.reg_opens::text as "regOpens", p.reg_closes::text as "regCloses", p.fee_cents as "feeCents",
     (select count(*)::int from scenic_divisions d where d.program_id = p.id) as divisions,
-    (select count(*)::int from scenic_registrations r where r.program_id = p.id) as teams
+    (select count(*)::int from scenic_registrations r where r.program_id = p.id) as teams,
+    coalesce((select json_agg(json_build_object('kind', o.kind, 'feeCents', o.fee_cents)
+                              order by array_position(array['all_season', 'single_1', 'single_2', 'single_2nd'], o.kind))
+              from scenic_program_options o where o.program_id = p.id), '[]') as options
   from scenic_programs p`;
 
 // Everyone in Scenic City sees the programs: soonest first, finished ones last.
@@ -101,13 +113,16 @@ export type RegisteredTeam = {
   gradeLabel: string;
   level: Level;
   from: string; // partner name, or "Solo · owner"
-  coach: string;
-  coachCell: string;
+  coach: string | null; // an organization's team may have no Head Coach yet
+  coachCell: string | null;
   registeredBy: string;
   movedBy: string | null;
   paid: boolean;
   paidSetBy: string | null;
   canWithdraw: boolean;
+  entry: Entry | null; // a League: what it registered for (1GG/2GG per date, brackets, fee)
+  removedBy: string | null; // taken out of the whole program (still listed, crossed out)
+  off: Record<string, string>; // taken out of a Game Day (YYYY-MM-DD) or "brackets" → by whom
 };
 export type PoolView = { id: string; name: string; teams: RegisteredTeam[] };
 export type GradeGroup = { id: string; grade: number; level: Level; label: string; pools: PoolView[] };
@@ -123,11 +138,13 @@ export type DivisionView = {
 
 export type ProgramDetail = ProgramSummary & {
   today: string; // Eastern, YYYY-MM-DD
-  gameDates: string[]; // the program's game dates, YYYY-MM-DD, soonest first
+  gameDates: string[]; // the program's Game Days (regular season), YYYY-MM-DD, soonest first
+  bracketDates: string[]; // its Bracket Days (post-season brackets at the end)
   createdBy: string;
   updatedBy: string;
   divisionList: DivisionView[];
   canManage: boolean;
+  canSchedule: boolean; // take teams out of a day, the Brackets or the program, and restore them
   // The viewer's teams that can register now, with where each would go (none while registration is closed).
   canRegister: { teamId: string; name: string; division: string }[];
   // Their teams that can't, and why.
@@ -145,8 +162,8 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
   if (!prog) return null;
   const status = regStatus(today, prog.regOpens, prog.regCloses);
   const [dates, divs, groups, pools, regs, manage, mine] = await Promise.all([
-    deps.pool.query<{ day: string }>(
-      `select to_char(g.day, 'YYYY-MM-DD') as day from program_game_days pg join game_days g on g.id = pg.game_day_id
+    deps.pool.query<{ day: string; kind: "game" | "bracket" }>(
+      `select to_char(g.day, 'YYYY-MM-DD') as day, pg.kind from program_game_days pg join game_days g on g.id = pg.game_day_id
        where pg.program_id = $1 order by g.day`,
       [id],
     ),
@@ -180,11 +197,15 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
       moved_by: string | null;
       paid: boolean;
       paid_set_by: string | null;
+      removed_by: string | null;
+      off: Record<string, string>;
     }>(
       `select r.pool_id::text, t.id::text as team_id, t.name, t.grade_low, t.grade, t.level, p.name as partner,
               o.first_name || ' ' || o.last_name as owner, c.first_name || ' ' || c.last_name as coach, c.cell as coach_cell,
-              r.registered_by, r.moved_by, r.paid, r.paid_set_by
-       from scenic_registrations r join scenic_teams t on t.id = r.team_id join users c on c.coach_id = t.coach_id
+              r.registered_by, r.moved_by, r.paid, r.paid_set_by, r.removed_by,
+              coalesce((select json_object_agg(x.off, x.set_by) from scenic_team_off x
+                        where x.program_id = r.program_id and x.team_id = r.team_id), '{}') as off
+       from scenic_registrations r join scenic_teams t on t.id = r.team_id left join users c on c.coach_id = t.coach_id
        left join partners p on p.id = t.partner_id left join users o on o.coach_id = t.owner_coach_id
        where r.program_id = $1 order by lower(t.name)`,
       [id],
@@ -194,6 +215,10 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
   ]);
   const mineIds = new Set(mine.map((t) => t.id));
   const registered = new Set(regs.rows.map((r) => r.team_id));
+  const league = prog.kind === "League";
+  const [terms, picked] = league
+    ? await Promise.all([leagueTerms(deps.pool, id), choices(deps.pool, id)])
+    : [null, new Map<string, Choice>()];
   const team = (r: (typeof regs.rows)[number]): RegisteredTeam => ({
     teamId: r.team_id,
     name: r.name,
@@ -207,6 +232,9 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
     paid: r.paid,
     paidSetBy: r.paid_set_by,
     canWithdraw: manage || (status === "open" && mineIds.has(r.team_id)),
+    entry: terms && picked.has(r.team_id) ? entryOf(picked.get(r.team_id)!, terms) : null,
+    removedBy: r.removed_by,
+    off: r.off,
   });
   const divisionList: DivisionView[] = divs.rows.map((d) => {
     const gs = groups.rows
@@ -246,9 +274,11 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
     ...prog,
     status,
     today,
-    gameDates: dates.rows.map((r) => r.day),
+    gameDates: dates.rows.filter((r) => r.kind === "game").map((r) => r.day),
+    bracketDates: dates.rows.filter((r) => r.kind === "bracket").map((r) => r.day),
     divisionList,
     canManage: manage,
+    canSchedule: await isScheduler(deps.pool, viewer),
     canRegister,
     cantRegister,
   };
@@ -263,7 +293,15 @@ export type ProgramInput = {
   endsOn: unknown;
   regOpens: unknown;
   regCloses: unknown;
-  fee: unknown; // dollars, e.g. "150" or "150.00"; blank for none
+  fee: unknown; // dollars, e.g. "150" or "150.00"; blank for none (Circuits and Tournaments)
+  options?: unknown; // a League's Registration Options: [{ kind, fee }] (fee in dollars, blank for none)
+};
+
+const cents = (v: unknown): number | null => {
+  const t = typeof v === "string" ? v.trim().replace(/^\$/, "") : typeof v === "number" ? String(v) : "";
+  if (!t) return null;
+  if (!/^\d{1,6}(\.\d{1,2})?$/.test(t)) throw new ProgramError("Enter fees in dollars, like 150 or 150.00.");
+  return Math.round(Number(t) * 100);
 };
 
 function cleanProgram(input: ProgramInput) {
@@ -276,13 +314,26 @@ function cleanProgram(input: ProgramInput) {
   if (endsOn < startsOn) throw new ProgramError("The program ends before it starts.");
   if (!isDate(regOpens) || !isDate(regCloses)) throw new ProgramError("Enter when registration opens and closes.");
   if (regCloses < regOpens) throw new ProgramError("Registration closes before it opens.");
-  const feeText = typeof input.fee === "string" ? input.fee.trim().replace(/^\$/, "") : "";
+  // A League's fees are on its Registration Options (at least one); others have one fee per team.
+  let options: ProgramOption[] = [];
   let feeCents: number | null = null;
-  if (feeText) {
-    if (!/^\d{1,6}(\.\d{1,2})?$/.test(feeText)) throw new ProgramError("Enter the fee in dollars, like 150 or 150.00.");
-    feeCents = Math.round(Number(feeText) * 100);
-  }
-  return { kind, name, startsOn, endsOn, regOpens, regCloses, feeCents };
+  if (kind === "League") {
+    // Nothing given (older callers): ALL Season at the fee.
+    const list =
+      input.options === undefined
+        ? [{ kind: "all_season", fee: input.fee }]
+        : Array.isArray(input.options)
+          ? (input.options as { kind?: unknown; fee?: unknown }[])
+          : [];
+    options = REG_OPTIONS.filter((o) => list.some((x) => x?.kind === o.key)).map((o) => ({
+      kind: o.key,
+      feeCents: cents(list.find((x) => x?.kind === o.key)!.fee),
+    }));
+    if (!options.length) throw new ProgramError("Pick at least one Registration Option.");
+    if (options.some((o) => o.kind === "single_2nd") && !options.some((o) => o.kind === "all_season" || o.kind === "single_1"))
+      throw new ProgramError("Add a 2nd Game needs ALL Season or 1 Game – Single Day too.");
+  } else feeCents = cents(input.fee);
+  return { kind, name, startsOn, endsOn, regOpens, regCloses, feeCents, options };
 }
 
 // New (id null) or edit: the program's details. Divisions are added and removed on their own (below).
@@ -314,6 +365,16 @@ export async function saveProgram(
         if (!r.rowCount) throw new ProgramError("That program no longer exists.");
         pid = id;
       }
+      await q.query("delete from scenic_program_options where program_id = $1 and kind <> all($2::text[])", [
+        pid,
+        f.options.map((o) => o.kind),
+      ]);
+      for (const o of f.options)
+        await q.query(
+          `insert into scenic_program_options (program_id, kind, fee_cents) values ($1, $2, $3)
+           on conflict (program_id, kind) do update set fee_cents = excluded.fee_cents`,
+          [pid, o.kind, o.feeCents],
+        );
       return { id: pid };
     });
   });
@@ -333,23 +394,27 @@ export async function deleteProgram(deps: Deps, viewer: SessionUser, id: unknown
 
 // ---- Game dates (Directors of Programs) ----
 
-// The calendar's changes in one go. Added dates must be in the season and not past; each becomes a Scenic City game day
+// The calendar's changes in one go: `add` Game Days, `addBrackets` Bracket Days (an existing date in either list changes
+// to that kind), `remove` dates. Added dates must be in the season and not past; each becomes a Scenic City game day
 // (made if new). A removed date leaves the program; it stops being a game day unless another program plays then or
 // partners already gave court hours for it (then it stays, and `kept` counts it).
 export async function saveProgramDates(
   deps: Deps,
   viewer: SessionUser,
   programId: unknown,
-  input: { add: unknown; remove: unknown },
+  input: { add: unknown; addBrackets?: unknown; remove: unknown },
 ): Promise<Result<{ added: number; removed: number; kept: number }>> {
   if (!isId(programId)) return { ok: false, message: "That program no longer exists." };
   const list = (v: unknown) => (Array.isArray(v) ? [...new Set(v)] : null);
   const add = list(input.add);
+  const brackets = list(input.addBrackets ?? []);
   const remove = list(input.remove);
-  if (!add || !remove || !add.every(isDate) || !remove.every(isDate))
+  if (!add || !brackets || !remove || ![...add, ...brackets, ...remove].every(isDate))
     return { ok: false, message: "Those dates don't look right." };
-  if (add.length + remove.length > 400) return { ok: false, message: "Too many dates at once." };
-  if (!add.length && !remove.length) return { ok: false, message: "Tap the dates to add or remove first." };
+  if (add.some((d) => brackets.includes(d))) return { ok: false, message: "A date is a Game Day or a Bracket Day, not both." };
+  if (add.length + brackets.length + remove.length > 400) return { ok: false, message: "Too many dates at once." };
+  if (!add.length && !brackets.length && !remove.length) return { ok: false, message: "Tap the dates to add or remove first." };
+  const all = [...add, ...brackets];
   return run(() =>
     withTx(deps.pool, async (q) => {
       if (!(await isProgramsDirector(q, viewer))) throw new ProgramError(programsOnly);
@@ -359,18 +424,27 @@ export async function saveProgramDates(
       );
       if (!p.rows[0]) throw new ProgramError("That program no longer exists.");
       const { starts, ends } = p.rows[0];
-      if (add.some((d) => d < starts || d > ends)) throw new ProgramError("Game dates must be within the program's season.");
+      if (all.some((d) => d < starts || d > ends)) throw new ProgramError("Game dates must be within the program's season.");
       const today = easternDate(deps.now());
-      if (add.some((d) => d < today) || remove.some((d) => d < today)) throw new ProgramError("Past game dates can't change.");
+      if (all.some((d) => d < today) || remove.some((d) => d < today)) throw new ProgramError("Past game dates can't change.");
       await q.query(
         "insert into game_days (day, created_by) select d, $2 from unnest($1::date[]) d on conflict (day) do nothing",
-        [add, by(viewer)],
+        [all, by(viewer)],
       );
-      const a = await q.query(
-        `insert into program_game_days (program_id, game_day_id, added_by, added_at)
-         select $1, g.id, $3, $4 from game_days g where g.day = any($2::date[]) on conflict do nothing`,
-        [programId, add, by(viewer), deps.now()],
-      );
+      let added = 0;
+      for (const [days, kind] of [
+        [add, "game"],
+        [brackets, "bracket"],
+      ] as const) {
+        const a = await q.query<{ inserted: boolean }>(
+          `insert into program_game_days (program_id, game_day_id, added_by, added_at, kind)
+           select $1, g.id, $3, $4, $5 from game_days g where g.day = any($2::date[])
+           on conflict (program_id, game_day_id) do update set kind = excluded.kind
+           returning (xmax = 0) as inserted`,
+          [programId, days, by(viewer), deps.now(), kind],
+        );
+        added += a.rows.filter((r) => r.inserted).length;
+      }
       const r = await q.query<{ game_day_id: string }>(
         `delete from program_game_days pg using game_days g
          where pg.program_id = $1 and pg.game_day_id = g.id and g.day = any($2::date[]) returning pg.game_day_id::text`,
@@ -383,7 +457,7 @@ export async function saveProgramDates(
            and not exists (select 1 from court_hours h where h.game_day_id = g.id)`,
         [gone],
       );
-      return { added: a.rowCount ?? 0, removed: r.rowCount ?? 0, kept: gone.length - (d.rowCount ?? 0) };
+      return { added, removed: r.rowCount ?? 0, kept: gone.length - (d.rowCount ?? 0) };
     }),
   );
 }
@@ -434,6 +508,57 @@ export async function addDivision(
         [d.rows[0].id, from, to, levels],
       );
       return { label: divisionLabel({ gender, gradeLow: from, gradeHigh: to }) };
+    }),
+  );
+}
+
+// Copy another program's divisions here: each with its grade groups (grade and level) and its pools' names, no teams.
+// A division that would overlap one already here (same gender, a shared grade) is skipped and named.
+export async function copyDivisions(
+  deps: Deps,
+  viewer: SessionUser,
+  programId: unknown,
+  fromProgramId: unknown,
+): Promise<Result<{ copied: string[]; skipped: string[] }>> {
+  if (!isId(programId) || !isId(fromProgramId)) return { ok: false, message: "Pick a program to copy from." };
+  if (programId === fromProgramId) return { ok: false, message: "Pick another program to copy from." };
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      if (!(await isProgramsDirector(q, viewer))) throw new ProgramError(programsOnly);
+      if (!(await q.query("select 1 from scenic_programs where id = $1 for update", [programId])).rowCount)
+        throw new ProgramError("That program no longer exists.");
+      const from = await q.query<{ id: string; gender: string; gradeLow: number; gradeHigh: number }>(
+        `select id::text, gender, grade_low as "gradeLow", grade_high as "gradeHigh" from scenic_divisions
+         where program_id = $1 order by gender, grade_low`,
+        [fromProgramId],
+      );
+      if (!from.rows.length) throw new ProgramError("That program has no divisions to copy.");
+      const copied: string[] = [];
+      const skipped: string[] = [];
+      for (const d of from.rows) {
+        const label = divisionLabel(d);
+        const clash = await q.query(
+          "select 1 from scenic_divisions where program_id = $1 and gender = $2 and grade_low <= $4 and grade_high >= $3 limit 1",
+          [programId, d.gender, d.gradeLow, d.gradeHigh],
+        );
+        if (clash.rowCount) {
+          skipped.push(label);
+          continue;
+        }
+        const n = await q.query<{ id: string }>(
+          "insert into scenic_divisions (program_id, gender, grade_low, grade_high) values ($1, $2, $3, $4) returning id::text",
+          [programId, d.gender, d.gradeLow, d.gradeHigh],
+        );
+        await q.query(
+          `with src as (select g.id, g.grade, g.level from scenic_grade_groups g where g.division_id = $1),
+                ng as (insert into scenic_grade_groups (division_id, grade, level) select $2, grade, level from src returning id, grade, level)
+           insert into scenic_pools (group_id, name)
+           select ng.id, p.name from ng join src on src.grade = ng.grade and src.level = ng.level join scenic_pools p on p.group_id = src.id`,
+          [d.id, n.rows[0].id],
+        );
+        copied.push(label);
+      }
+      return { copied, skipped };
     }),
   );
 }
@@ -545,7 +670,8 @@ export async function registerTeam(
   viewer: SessionUser,
   programId: unknown,
   teamId: unknown,
-): Promise<Result<{ division: string }>> {
+  choice?: unknown, // a League: what the team registers for (ALL Season, Single Day dates); can be added to later
+): Promise<Result<{ division: string | null; entry: Entry | null }>> {
   if (!isId(programId) || !isId(teamId)) return { ok: false, message: "Pick a team." };
   return run(() =>
     withTx(deps.pool, async (q) => {
@@ -559,24 +685,154 @@ export async function registerTeam(
         throw new ProgramError("Registration isn't open for this program.");
       if (!manage && !(await teamsICanManage(q, viewer)).some((x) => x.id === teamId))
         throw new ProgramError("You can only register teams you manage.");
-      const team = (
-        await q.query<{ gender: string; grade: number; level: string; name: string }>(
-          "select gender, grade, level, name from scenic_teams where id = $1 for share",
-          [teamId],
-        )
-      ).rows[0];
-      if (!team) throw new ProgramError("That team no longer exists.");
-      const pool = await poolFor(q, programId, team);
-      if (!pool) throw new ProgramError(`This program has no ${team.gender} ${ordinal(team.grade)} ${team.level}.`);
-      const ins = await q.query(
-        `insert into scenic_registrations (program_id, team_id, pool_id, registered_by, registered_at)
-         values ($1, $2, $3, $4, $5) on conflict do nothing`,
-        [programId, teamId, pool.id, by(viewer), deps.now()],
-      );
-      if (!ins.rowCount) throw new ProgramError(`${team.name} is already registered.`);
-      return { division: `${divisionLabel(pool)} · ${groupLabel(team)} · ${pool.name}` };
+      const r = await saveChoice(q, programId, teamId, choice, by(viewer), deps.now());
+      if ("error" in r) throw new ProgramError(r.error);
+      return r;
     }),
   );
+}
+
+// Put a team into a program's matching grade group, in its smallest pool. The caller has checked who may and when.
+export async function addToPool(
+  q: PoolClient,
+  programId: string,
+  teamId: string,
+  byName: string,
+  now: Date,
+): Promise<{ division: string } | { error: string }> {
+  const team = (
+    await q.query<{ gender: string; grade: number; level: string; name: string }>(
+      "select gender, grade, level, name from scenic_teams where id = $1 for share",
+      [teamId],
+    )
+  ).rows[0];
+  if (!team) return { error: "That team no longer exists." };
+  const pool = await poolFor(q, programId, team);
+  if (!pool) return { error: `This program has no ${team.gender} ${ordinal(team.grade)} ${team.level}.` };
+  const ins = await q.query(
+    `insert into scenic_registrations (program_id, team_id, pool_id, registered_by, registered_at)
+     values ($1, $2, $3, $4, $5) on conflict do nothing`,
+    [programId, teamId, pool.id, byName, now],
+  );
+  if (!ins.rowCount) return { error: `${team.name} is already registered.` };
+  return { division: `${divisionLabel(pool)} · ${groupLabel(team)} · ${pool.name}` };
+}
+
+// ---- What a team registers for in a League ----
+
+const SINGLE: readonly SingleKind[] = ["single_1", "single_2nd", "single_2"];
+export type Entry = Choice & ChoiceResult; // what it picked, and what that gives it
+
+// The choice as sent from the browser, checked: ALL Season (true/false) and Single Day options on dates.
+function parseChoice(v: unknown): Choice | null {
+  const c = v as { allSeason?: unknown; days?: unknown } | null;
+  if (!c || typeof c !== "object" || !Array.isArray(c.days) || c.days.length > 200) return null;
+  const days: Choice["days"] = [];
+  for (const d of c.days as { date?: unknown; kind?: unknown }[]) {
+    if (!d || !isDate(d.date) || !SINGLE.includes(d.kind as SingleKind)) return null;
+    days.push({ date: d.date, kind: d.kind as SingleKind });
+  }
+  return { allSeason: c.allSeason === true, days };
+}
+
+// A League's options and Game Days (regular season, not Bracket Days), soonest first.
+async function leagueTerms(q: Pick<Queryable, "query">, programId: string) {
+  const [o, d] = await Promise.all([
+    q.query<{ kind: ProgramOption["kind"]; feeCents: number | null }>(
+      'select kind, fee_cents as "feeCents" from scenic_program_options where program_id = $1',
+      [programId],
+    ),
+    q.query<{ day: string }>(
+      `select to_char(g.day, 'YYYY-MM-DD') as day from program_game_days pg join game_days g on g.id = pg.game_day_id
+       where pg.program_id = $1 and pg.kind = 'game' order by g.day`,
+      [programId],
+    ),
+  ]);
+  return { options: o.rows, gameDates: d.rows.map((r) => r.day) };
+}
+
+// Each registered team's choice in a program (teams not registered are missing).
+async function choices(q: Pick<Queryable, "query">, programId: string): Promise<Map<string, Choice>> {
+  const r = await q.query<{ team_id: string; all_season: boolean; days: Choice["days"] }>(
+    `select r.team_id::text, r.all_season,
+            coalesce((select json_agg(json_build_object('date', to_char(g.day, 'YYYY-MM-DD'), 'kind', d.kind) order by g.day, d.kind)
+                      from scenic_registration_days d join game_days g on g.id = d.game_day_id
+                      where d.program_id = r.program_id and d.team_id = r.team_id), '[]') as days
+     from scenic_registrations r where r.program_id = $1`,
+    [programId],
+  );
+  return new Map(r.rows.map((x) => [x.team_id, { allSeason: x.all_season, days: x.days }]));
+}
+
+// What a choice gives, against the League's terms today (for showing; saved choices were checked when made).
+function entryOf(c: Choice, terms: { options: ProgramOption[]; gameDates: string[] }): Entry {
+  const r = planChoice(terms.options, terms.gameDates, { allSeason: false, days: [] }, c);
+  return "error" in r ? { ...c, perDate: {}, bracket: c.allSeason, feeCents: 0 } : { ...c, ...r.result };
+}
+
+// Register a team (placed in its division's smallest pool), or add to its registration: for a League, the options and
+// dates it picked (new dates not past). The caller has checked who may and when. Circuits and Tournaments: no choice.
+export async function saveChoice(
+  q: PoolClient,
+  programId: string,
+  teamId: string,
+  choice: unknown,
+  byName: string,
+  now: Date,
+): Promise<{ error: string } | { division: string | null; entry: Entry | null }> {
+  const kind = (await q.query<{ kind: string }>("select kind from scenic_programs where id = $1", [programId])).rows[0]?.kind;
+  if (!kind) return { error: "That program no longer exists." };
+  const registered = (await choices(q, programId)).get(teamId) ?? null;
+  if (kind !== "League") {
+    if (registered) return { error: "That team is already registered." };
+    const placed = await addToPool(q, programId, teamId, byName, now);
+    return "error" in placed ? placed : { division: placed.division, entry: null };
+  }
+  const add = parseChoice(choice);
+  if (!add) return { error: "Pick ALL Season or at least one date." };
+  const today = easternDate(now);
+  if (add.days.some((d) => d.date < today)) return { error: "Past Game Days can't be picked." };
+  const terms = await leagueTerms(q, programId);
+  const plan = planChoice(terms.options, terms.gameDates, registered ?? { allSeason: false, days: [] }, add);
+  if ("error" in plan) return plan;
+  let division: string | null = null;
+  if (!registered) {
+    const placed = await addToPool(q, programId, teamId, byName, now);
+    if ("error" in placed) return placed;
+    division = placed.division;
+  }
+  await q.query("update scenic_registrations set all_season = $3 where program_id = $1 and team_id = $2", [
+    programId,
+    teamId,
+    plan.merged.allSeason,
+  ]);
+  for (const d of add.days)
+    await q.query(
+      `insert into scenic_registration_days (program_id, team_id, game_day_id, kind, registered_by, registered_at)
+       select $1, $2, g.id, $4, $5, $6 from game_days g where g.day = $3::date on conflict do nothing`,
+      [programId, teamId, d.date, d.kind, byName, now],
+    );
+  return { division, entry: { ...plan.merged, ...plan.result } };
+}
+
+// A League's terms and one team's entry, for the registration pop-up.
+export async function leagueEntry(
+  q: Pick<Queryable, "query">,
+  programId: string,
+  teamId: string | null,
+): Promise<{ options: ProgramOption[]; gameDates: string[]; entry: Entry | null }> {
+  const terms = await leagueTerms(q, programId);
+  const c = teamId ? ((await choices(q, programId)).get(teamId) ?? null) : null;
+  return { ...terms, entry: c ? entryOf(c, terms) : null };
+}
+
+// A program's registration status today (locks it so registering and closing don't cross), or null if it's gone.
+export async function programRegStatus(q: PoolClient, programId: string, now: Date): Promise<RegStatus | null> {
+  const p = await q.query<{ reg_opens: string; reg_closes: string }>(
+    "select reg_opens::text, reg_closes::text from scenic_programs where id = $1 for update",
+    [programId],
+  );
+  return p.rows[0] ? regStatus(easternDate(now), p.rows[0].reg_opens, p.rows[0].reg_closes) : null;
 }
 
 // Take a team out: whoever manages it while registration is open, or a Director of Programs any time.
@@ -597,6 +853,61 @@ export async function withdrawTeam(deps: Deps, viewer: SessionUser, programId: u
       }
       const r = await q.query("delete from scenic_registrations where program_id = $1 and team_id = $2", [programId, teamId]);
       if (!r.rowCount) throw new ProgramError("That team isn't registered.");
+      return {};
+    }),
+  );
+}
+
+// Admins and Directors of Scheduling: take a registered team out of one Game Day, the Brackets ("brackets") or the whole
+// program ("program"), or restore it (`out` false). The team stays registered and listed; who did it is recorded.
+export async function setTeamOff(
+  deps: Deps,
+  viewer: SessionUser,
+  programId: unknown,
+  teamId: unknown,
+  what: unknown,
+  out: boolean,
+): Promise<Result> {
+  if (!isId(programId) || !isId(teamId)) return { ok: false, message: "Pick a team." };
+  if (what !== "program" && what !== "brackets" && !isDate(what)) return { ok: false, message: "Pick a date." };
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      if (!(await isScheduler(q, viewer)))
+        throw new ProgramError("Only a Scenic City Admin or Director of Scheduling can do that.");
+      const reg = await q.query("select 1 from scenic_registrations where program_id = $1 and team_id = $2 for update", [
+        programId,
+        teamId,
+      ]);
+      if (!reg.rowCount) throw new ProgramError("That team isn't registered.");
+      if (what === "program") {
+        await q.query("update scenic_registrations set removed_by = $3, removed_at = $4 where program_id = $1 and team_id = $2", [
+          programId,
+          teamId,
+          out ? by(viewer) : null,
+          out ? deps.now() : null,
+        ]);
+        return {};
+      }
+      if (isDate(what)) {
+        const day = await q.query(
+          `select 1 from program_game_days pg join game_days g on g.id = pg.game_day_id
+           where pg.program_id = $1 and g.day = $2::date and pg.kind = 'game'`,
+          [programId, what],
+        );
+        if (!day.rowCount) throw new ProgramError("That isn't one of this program's Game Days.");
+      }
+      if (out)
+        await q.query(
+          `insert into scenic_team_off (program_id, team_id, off, set_by, set_at) values ($1, $2, $3, $4, $5)
+           on conflict do nothing`,
+          [programId, teamId, what, by(viewer), deps.now()],
+        );
+      else
+        await q.query("delete from scenic_team_off where program_id = $1 and team_id = $2 and off = $3", [
+          programId,
+          teamId,
+          what,
+        ]);
       return {};
     }),
   );

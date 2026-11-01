@@ -1,14 +1,16 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { currentScenic } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
+import { REG_OPTIONS, entryLine, money } from "@/lib/program-options";
 import { requireFeature } from "@/lib/features-server";
 import { formatCell } from "@/lib/phone";
-import { getProgram } from "@/lib/scenic-programs";
+import { getProgram, listPrograms } from "@/lib/scenic-programs";
 import { dayLabel } from "@/lib/time";
+import { shortDate as shortDay } from "@/lib/program-options";
 import AppHeader from "../../../AppHeader";
+import { ProgramsNav } from "../../ScenicNav";
 import { GroupCard, PhoneLink, card } from "../../../ui";
 import {
   AddDivision,
@@ -18,6 +20,7 @@ import {
   PaidButton,
   ProgramEditor,
   RegisterTeam,
+  TeamOffButton,
   RemoveDivision,
   RemovePool,
   WithdrawTeam,
@@ -44,16 +47,53 @@ async function Program({ params }: { params: PageProps<"/scenic/programs/[id]">[
   const p = await getProgram({ pool: db, now: () => new Date() }, user, (await params).id);
   if (!p) notFound();
   const manage = p.canManage && scenic.role === "Director";
+  const schedule = p.canSchedule && scenic.role === "Director";
+  // Other programs with divisions, to copy from when adding divisions.
+  const others = manage
+    ? ((await listPrograms({ pool: db, now: () => new Date() }, user))?.programs ?? [])
+        .filter((o) => o.id !== p.id && o.divisions > 0)
+        .map((o) => ({ id: o.id, name: o.name, divisions: o.divisions }))
+    : [];
   const fee = p.feeCents === null ? null : `$${(p.feeCents / 100).toFixed(2)}`;
   const shown = manage ? p.divisionList : p.divisionList.filter((d) => d.teams);
+  // A League's Game Days, each with its teams (1GG/2GG), then the Brackets as one event over its Bracket Days (teams play
+  // until they lose): the teams in the brackets.
+  const registered = p.divisionList.flatMap((d) =>
+    d.groups.flatMap((g) => g.pools.flatMap((o) => o.teams.map((t) => ({ ...t, division: `${d.label} · ${g.label}` })))),
+  );
+  const byDate =
+    p.kind === "League"
+      ? [
+          ...p.gameDates.map((date) => {
+            const teams = registered
+              .filter((t) => t.entry?.perDate[date])
+              .map((t) => ({ ...t, note: `${t.entry!.perDate[date]}GG`, out: t.off[date] ?? null }));
+            const games = teams.filter((t) => !t.removedBy && !t.out).reduce((n, t) => n + t.entry!.perDate[date], 0);
+            return { key: date, date, title: dayLabel(date), bracket: false, teams, games };
+          }),
+          ...(p.bracketDates.length
+            ? [
+                {
+                  key: "brackets",
+                  date: p.bracketDates[0],
+                  title: `Brackets · ${p.bracketDates.map(shortDay).join(", ")}`,
+                  bracket: true,
+                  teams: registered
+                    .filter((t) => t.entry?.bracket)
+                    .map((t) => ({ ...t, note: "Bracket", out: t.off.brackets ?? null })),
+                  games: 0,
+                },
+              ]
+            : []),
+        ]
+      : [];
+  const nextDate = byDate.find((d) => d.date >= p.today)?.key;
 
   return (
     <>
       <AppHeader user={user} context={scenic.key} tab="programs" />
       <main className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 py-6">
-        <Link href="/scenic/programs" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
-          ← Programs
-        </Link>
+        <ProgramsNav current={p.id} />
         <section className={`${card} p-4`}>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -71,11 +111,33 @@ async function Program({ params }: { params: PageProps<"/scenic/programs/[id]">[
             <dd>
               {dayLabel(p.regOpens)} – {dayLabel(p.regCloses)}
             </dd>
-            {fee && (
+            {p.kind === "League" && p.options.length > 0 ? (
               <>
-                <dt className="text-zinc-500">Fee</dt>
-                <dd>{fee} per team (paid outside the app for now)</dd>
+                <dt className="text-zinc-500">Options</dt>
+                <dd>
+                  <ul>
+                    {p.options.map((o) => {
+                      const def = REG_OPTIONS.find((x) => x.key === o.kind)!;
+                      return (
+                        <li key={o.kind}>
+                          {p.name} ({def.name})
+                          <span className="text-zinc-500">
+                            {o.feeCents !== null ? ` · ${money(o.feeCents)} ${def.perDate ? "per date" : "per team"}` : ""}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <span className="text-xs text-zinc-500">Paid outside the app for now</span>
+                </dd>
               </>
+            ) : (
+              fee && (
+                <>
+                  <dt className="text-zinc-500">Fee</dt>
+                  <dd>{fee} per team (paid outside the app for now)</dd>
+                </>
+              )
             )}
             <dt className="text-zinc-500">Teams</dt>
             <dd>
@@ -90,17 +152,18 @@ async function Program({ params }: { params: PageProps<"/scenic/programs/[id]">[
             <div className="mt-3 flex items-center gap-2">
               <ProgramEditor program={p} />
               <DeleteProgram id={p.id} name={p.name} teams={p.teams} />
-              <AddDivision programId={p.id} />
+              <AddDivision programId={p.id} others={others} />
             </div>
           )}
         </section>
 
-        {(manage || p.gameDates.length > 0) && (
+        {(manage || p.gameDates.length + p.bracketDates.length > 0) && (
           <details className={`${card} group overflow-hidden`} open={manage && !p.gameDates.length}>
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
-              <h2 className="font-semibold">Game dates</h2>
+              <h2 className="font-semibold">Game &amp; Bracket Days</h2>
               <span className="text-sm text-zinc-500">
-                {p.gameDates.length} date{p.gameDates.length === 1 ? "" : "s"}
+                {p.gameDates.length} game date{p.gameDates.length === 1 ? "" : "s"}
+                {p.bracketDates.length > 0 && ` · ${p.bracketDates.length} bracket day${p.bracketDates.length === 1 ? "" : "s"}`}
                 {p.gameDates.length > 0 && ` · next ${dayLabel(p.gameDates.find((d) => d >= p.today) ?? p.gameDates.at(-1)!)}`}
               </span>
             </summary>
@@ -111,6 +174,7 @@ async function Program({ params }: { params: PageProps<"/scenic/programs/[id]">[
                 starts={p.startsOn}
                 ends={p.endsOn}
                 dates={p.gameDates}
+                brackets={p.bracketDates}
                 editable={manage}
               />
             </div>
@@ -121,7 +185,11 @@ async function Program({ params }: { params: PageProps<"/scenic/programs/[id]">[
           <section className={`${card} space-y-2 p-4`}>
             <h2 className="font-semibold">Register a team</h2>
             {p.canRegister.length > 0 ? (
-              <RegisterTeam programId={p.id} teams={p.canRegister} />
+              <RegisterTeam
+                programId={p.id}
+                teams={p.canRegister}
+                league={p.kind === "League" ? { options: p.options, gameDates: p.gameDates, today: p.today } : null}
+              />
             ) : (
               <p className="text-sm text-zinc-500">None of your teams fits a division here.</p>
             )}
@@ -170,7 +238,7 @@ async function Program({ params }: { params: PageProps<"/scenic/programs/[id]">[
                                 <ul className="divide-y divide-zinc-200/70 dark:divide-white/5">
                                   {o.teams.map((t) => (
                                     <li key={t.teamId} className="flex items-start justify-between gap-3 py-2">
-                                      <div className="min-w-0 text-sm">
+                                      <div className={`min-w-0 text-sm ${t.removedBy ? "line-through opacity-50" : ""}`}>
                                         <p className="font-semibold">
                                           {t.name}{" "}
                                           <span className="font-normal text-zinc-500">
@@ -178,17 +246,40 @@ async function Program({ params }: { params: PageProps<"/scenic/programs/[id]">[
                                           </span>
                                         </p>
                                         <p className="text-zinc-600 dark:text-zinc-300">{t.from}</p>
-                                        <p>
-                                          Coach {t.coach} · <PhoneLink cell={t.coachCell} label={formatCell(t.coachCell)} />
-                                        </p>
+                                        {t.coach && t.coachCell ? (
+                                          <p>
+                                            Coach {t.coach} · <PhoneLink cell={t.coachCell} label={formatCell(t.coachCell)} />
+                                          </p>
+                                        ) : (
+                                          <p className="text-zinc-500">No coach yet</p>
+                                        )}
+                                        {t.entry && (
+                                          <p className="text-zinc-600 dark:text-zinc-300">
+                                            {entryLine(t.entry)}
+                                            {t.entry.bracket && " · Brackets"}
+                                          </p>
+                                        )}
                                         <p className="text-xs text-zinc-500">
                                           Registered by {t.registeredBy}
                                           {t.movedBy && ` · moved by ${t.movedBy}`}
                                           {manage && t.paidSetBy && ` · ${t.paid ? "paid" : "unpaid"} per ${t.paidSetBy}`}
+                                          {t.removedBy && ` · taken out of the program by ${t.removedBy}`}
                                         </p>
                                       </div>
                                       <div className="flex shrink-0 flex-col items-end gap-2">
-                                        {manage && fee ? <PaidButton programId={p.id} teamId={t.teamId} paid={t.paid} /> : null}
+                                        {manage && (fee || p.options.length > 0) ? (
+                                          <PaidButton programId={p.id} teamId={t.teamId} paid={t.paid} />
+                                        ) : null}
+                                        {schedule && (
+                                          <TeamOffButton
+                                            programId={p.id}
+                                            teamId={t.teamId}
+                                            name={t.name}
+                                            what="program"
+                                            label="the program"
+                                            out={!!t.removedBy}
+                                          />
+                                        )}
                                         {manage && g.pools.length > 1 && (
                                           <MoveTeam
                                             programId={p.id}
@@ -217,6 +308,71 @@ async function Program({ params }: { params: PageProps<"/scenic/programs/[id]">[
           );
         })}
         {!shown.length && <p className="text-zinc-500">{manage ? "No divisions yet." : "No teams registered yet."}</p>}
+
+        {byDate.length > 0 && (
+          <section className={`${card} overflow-hidden`}>
+            <h2 className="px-4 pt-4 font-semibold">Teams by date</h2>
+            <p className="px-4 pb-2 text-xs text-zinc-500">
+              Each Game Day&apos;s teams with games guaranteed (1GG/2GG), then the teams in the Brackets.
+            </p>
+            <div className="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-white/5 dark:border-white/5">
+              {byDate.map((d) => (
+                <details key={d.key} className="group" open={d.key === nextDate}>
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-2.5 [&::-webkit-details-marker]:hidden">
+                    <span className={`text-sm font-semibold ${d.bracket ? "text-violet-800 dark:text-violet-300" : ""}`}>
+                      {d.title}
+                      {d.bracket && (
+                        <span className="block text-xs font-normal text-zinc-500">One event: teams play until they lose</span>
+                      )}
+                    </span>
+                    <span className="shrink-0 text-xs text-zinc-500">
+                      {d.teams.filter((t) => !t.removedBy && !t.out).length} team
+                      {d.teams.filter((t) => !t.removedBy && !t.out).length === 1 ? "" : "s"}
+                      {d.games > 0 && ` · ${d.games} game${d.games === 1 ? "" : "s"} guaranteed`}
+                    </span>
+                  </summary>
+                  {d.teams.length ? (
+                    <ul className="space-y-1 px-4 pb-3 text-sm">
+                      {d.teams.map((t) => (
+                        <li key={t.teamId} className="flex items-center justify-between gap-3">
+                          <span className={`min-w-0 ${t.removedBy || t.out ? "text-zinc-400 line-through" : ""}`}>
+                            <span className="font-medium">{t.name}</span>{" "}
+                            <span className="text-xs text-zinc-500">
+                              {t.division} · {t.from}
+                            </span>
+                          </span>
+                          <span
+                            className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                              t.note === "2GG"
+                                ? "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+                                : t.note === "Bracket"
+                                  ? "bg-violet-100 text-violet-800 dark:bg-violet-500/15 dark:text-violet-300"
+                                  : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+                            }`}
+                          >
+                            {t.note}
+                          </span>
+                          {schedule && !t.removedBy && (
+                            <TeamOffButton
+                              programId={p.id}
+                              teamId={t.teamId}
+                              name={t.name}
+                              what={d.bracket ? "brackets" : d.date}
+                              label={d.bracket ? "the Brackets" : dayLabel(d.date)}
+                              out={!!t.out}
+                            />
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="px-4 pb-3 text-sm text-zinc-500">No teams yet.</p>
+                  )}
+                </details>
+              ))}
+            </div>
+          </section>
+        )}
       </main>
     </>
   );

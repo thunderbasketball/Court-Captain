@@ -66,7 +66,17 @@ export function AddContact({ partnerId, options }: { partnerId: string; options:
   );
 }
 
-export function RemoveContact({ partnerId, coachId, name, partnerName }: { partnerId: string; coachId: string; name: string; partnerName: string }) {
+export function RemoveContact({
+  partnerId,
+  coachId,
+  name,
+  partnerName,
+}: {
+  partnerId: string;
+  coachId: string;
+  name: string;
+  partnerName: string;
+}) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +92,7 @@ export function RemoveContact({ partnerId, coachId, name, partnerName }: { partn
           if (
             await confirm({
               title: `Remove ${name}?`,
-              message: `${name} won't be a contact for ${partnerName} any more (they keep their Partner role).`,
+              message: `${name} won't be a contact for ${partnerName} any more (and loses the Partner role if it was their only partner).`,
               confirmLabel: "Remove",
             })
           )

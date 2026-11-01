@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { orgFeatures, type Feature } from "@/lib/features";
 import { directorAreas, isOrgAdmin, type Area } from "@/lib/org-admin";
 import AppHeader from "../AppHeader";
+import OrgGear from "../OrgGear";
 import { card, PageTitle } from "../ui";
 
 export default function ScenicPage() {
@@ -22,42 +23,41 @@ export default function ScenicPage() {
 const PARTS: { title: string; about: string; who: string[]; href?: string; feature?: Feature; area?: Area; admin?: boolean }[] = [
   {
     title: "Programs",
-    about: "Circuit, League and Tournament: divisions, dates and registered teams.",
-    who: ["Director", "Partner", "Solo", "Coach"],
+    about: "League, Circuit and Tournament: divisions, game and bracket days, and registered teams.",
+    who: ["Director", "Solo", "Coach"],
     href: "/scenic/programs",
     feature: "programs",
     area: "programs",
   },
   {
+    title: "Teams",
+    about: "Every registered team: name, gender, grade, level and coach (under Programs).",
+    who: ["Director", "Solo", "Coach"],
+    href: "/scenic/teams",
+    feature: "team-registration",
+    area: "teams",
+  },
+  {
     title: "Game days",
-    about: "The dates Scenic City plays.",
-    who: ["Director", "Partner", "Solo", "Coach"],
+    about: "The dates Scenic City plays, from each program (under Facilities).",
+    who: ["Director", "Solo", "Coach"],
     href: "/scenic/game-days",
     feature: "hosting-partners",
   },
   {
-    title: "Partners",
-    about: "Schools and organizations that host games, register teams, or both: their gyms and courts.",
-    who: ["Director", "Partner"],
+    title: "Hosting Sites",
+    about: "Organizations and schools that host games: their gyms, courts and open hours (under Facilities).",
+    who: ["Director"],
     href: "/scenic/partners",
     feature: "hosting-partners",
     area: "facilities",
   },
   {
-    title: "Court availability",
-    about: "Each partner's courts and when they're open on game days (open a partner).",
-    who: ["Director", "Partner"],
-    href: "/scenic/partners",
-    feature: "hosting-partners",
-    area: "facilities",
-  },
-  {
-    title: "Teams",
-    about: "Partners' and Solo coaches' teams: name, gender, grade and coach.",
-    who: ["Director", "Partner", "Solo", "Coach"],
-    href: "/scenic/teams",
-    feature: "team-registration",
-    area: "teams",
+    title: "Members",
+    about: "Staff and join requests, hosting sites' Owners and Admins, and each program's coaches.",
+    who: ["Director"],
+    href: "/scenic/users",
+    admin: true,
   },
   {
     title: "Officials",
@@ -65,20 +65,6 @@ const PARTS: { title: string; about: string; who: string[]; href?: string; featu
     who: ["Director"],
     feature: "officials",
     area: "officials",
-  },
-  {
-    title: "Users",
-    about: "Approve Partner and Solo requests; manage Scenic City roles.",
-    who: ["Director"],
-    href: "/scenic/users",
-    admin: true,
-  },
-  {
-    title: "Features",
-    about: "Scenic City's CourtCaptain features, and upgrades you can add.",
-    who: ["Director"],
-    href: "/upgrades",
-    admin: true,
   },
 ];
 
@@ -107,7 +93,10 @@ async function Scenic() {
     <>
       <AppHeader user={user} context={scenic.key} tab="scenic-home" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <PageTitle title="Scenic City Basketball" subtitle={`Welcome, ${user.firstName} · ${scenic.role}`} />
+        <div className="flex items-start justify-between gap-3">
+          <PageTitle title="Scenic City Basketball" subtitle={`Welcome, ${user.firstName} · ${scenic.role}`} />
+          {director && <OrgGear org="scenic-city" coachId={user.coachId} />}
+        </div>
         <div className="grid gap-3 sm:grid-cols-2">
           {parts.map((p) => {
             const body = (
@@ -115,7 +104,7 @@ async function Scenic() {
                 <div className="flex items-center justify-between gap-2">
                   <h2 className="font-semibold">{p.title}</h2>
                   {p.href ? (
-                    p.title === "Users" &&
+                    p.title === "Members" &&
                     requests > 0 && (
                       <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">
                         {requests} waiting

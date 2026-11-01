@@ -2,15 +2,23 @@ import Link from "next/link";
 import type { SessionUser } from "@/lib/auth/service";
 import { hasArea, isThunderAdmin } from "@/lib/org-admin";
 
-// Members: Staff (Admins), Coaches (Directors of Coaches), Players (Directors of Players or Teams). Admins see all three.
+// Members: Staff (Admins), Coaches (Directors of Coaches), Players and Families (Directors of Players or Teams).
+// Admins see them all.
 export const memberLinks = (user: SessionUser) =>
   [
     { key: "staff", href: "/members/staff", label: "Staff", show: isThunderAdmin(user) },
     { key: "coaches", href: "/members/coaches", label: "Coaches", show: hasArea(user, "coaches") },
     { key: "players", href: "/members/players", label: "Players", show: hasArea(user, "players", "teams") },
+    { key: "families", href: "/members/families", label: "Families", show: hasArea(user, "players", "teams") },
   ].filter((l) => l.show);
 
-export default function MembersNav({ user, current }: { user: SessionUser; current: "staff" | "coaches" | "players" }) {
+export default function MembersNav({
+  user,
+  current,
+}: {
+  user: SessionUser;
+  current: "staff" | "coaches" | "players" | "families";
+}) {
   return (
     <nav aria-label="Members" className="mb-5 flex gap-1 overflow-x-auto border-b border-zinc-200 dark:border-white/10">
       {memberLinks(user).map((l) => (

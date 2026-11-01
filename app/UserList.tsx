@@ -6,7 +6,7 @@ import ChatLink from "./ChatLink";
 import { AddMenu, DirectorButtons, DirectorRole, menuItem, type Director } from "./DirectorTools";
 import { isThunderAdmin } from "@/lib/org-admin";
 import { ViewAsButton } from "./ViewAsButton";
-import { AddUserButton, EditUserButton } from "./users/UserEditor";
+import { AddUserButton, ApproveJoinButton, EditUserButton } from "./users/UserEditor";
 import { Chip, EmailLink, GroupCard, PageTitle, PersonRow, PhoneLink, Stats } from "./ui";
 
 // Members → Staff: Admins & Directors, then access requests, other logins (no team role; collapsed) and inactive Directors.
@@ -22,6 +22,7 @@ export type DirectorTeam = {
   options: { id: string; name: string }[];
   canManageAdmins: boolean;
   adminOptions: { id: string; name: string }[];
+  ownerOptions: { id: string; name: string }[];
 };
 
 export default function UserList({
@@ -55,6 +56,7 @@ export default function UserList({
         first={u.firstName}
         last={u.lastName}
         avatarTone={u.director ? "blue" : u.coach ? "green" : "zinc"}
+        href={admin ? (u.coachId === viewer.coachId ? "/me" : `/me/${u.coachId}`) : undefined}
         dim={!u.active}
         under={
           admin &&
@@ -81,6 +83,7 @@ export default function UserList({
             canManageAdmins={team.canManageAdmins}
           />
         )}
+        {u.joinReason && <p className="font-medium text-amber-800 dark:text-amber-300">{u.joinReason}</p>}
         <p>
           <PhoneLink cell={u.cell} label={formatCell(u.cell)} />
         </p>
@@ -101,6 +104,7 @@ export default function UserList({
             {u.active && u.coachId !== viewer.coachId && (u.coach || u.teams.some((t) => /(Head|Assistant) Coach$/.test(t))) && (
               <ChatLink chatKey={`coach-${u.coachId}`} label={`Chat with ${u.firstName} ${u.lastName}`} />
             )}
+            {admin && u.joinTeamListed && <ApproveJoinButton coachId={u.coachId} label="Approve onto team" />}
             {admin && <EditUserButton user={u} isSelf={u.coachId === viewer.coachId} deleteBlocker={deleteBlocker(u, viewer)} />}
           </div>
         </div>
@@ -140,6 +144,7 @@ export default function UserList({
               options={team.options}
               canManageAdmins={team.canManageAdmins}
               adminOptions={team.adminOptions}
+              ownerOptions={team.ownerOptions}
             />
           </AddMenu>
         ) : (

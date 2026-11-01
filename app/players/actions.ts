@@ -14,7 +14,8 @@ export async function loadPlayerTeam(registrantId: string) {
   if (!user) return { ok: false as const, message: "Please log in again." };
   const refused = await featureRefusal("thunder", "player-registration");
   if (refused) return refused;
-  if (!hasArea(user, "players", "teams")) return { ok: false as const, message: "Only a Director of Players or Teams can see this." };
+  if (!hasArea(user, "players", "teams"))
+    return { ok: false as const, message: "Only a Director of Players or Teams can see this." };
   try {
     return { ok: true as const, team: await playerTeam({ pool: db, now: () => new Date() }, user, String(registrantId)) };
   } catch (e) {
@@ -62,7 +63,8 @@ export async function movePlayer(registrantId: string, teamId: string | null) {
 export async function loadPlayerEvaluations(registrantId: string) {
   const user = await currentUser();
   if (!user) return { ok: false as const, message: "Please log in again." };
-  const refused = await featureRefusal("thunder", "player-registration");
+  // Evaluations are part of Player Registration when Team Management is on too.
+  const refused = (await featureRefusal("thunder", "player-registration")) ?? (await featureRefusal("thunder", "team-building"));
   if (refused) return refused;
   try {
     const teams = await playerEvaluations({ pool: db, now: () => new Date() }, user, String(registrantId));

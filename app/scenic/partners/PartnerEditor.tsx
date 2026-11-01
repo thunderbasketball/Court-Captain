@@ -75,7 +75,13 @@ export function PartnerButton({ partner }: { partner?: Partner }) {
             <span className={fieldLabel}>Type</span>
             <div className="flex gap-2">
               {(["School", "Organization"] as const).map((k) => (
-                <button key={k} type="button" aria-pressed={f.kind === k} className={pillCls(f.kind === k)} onClick={() => setF({ ...f, kind: k })}>
+                <button
+                  key={k}
+                  type="button"
+                  aria-pressed={f.kind === k}
+                  className={pillCls(f.kind === k)}
+                  onClick={() => setF({ ...f, kind: k })}
+                >
                   {k}
                 </button>
               ))}
@@ -84,7 +90,12 @@ export function PartnerButton({ partner }: { partner?: Partner }) {
           <div>
             <span className={fieldLabel}>Takes part by</span>
             <div className="flex flex-wrap gap-2">
-              <button type="button" aria-pressed={f.hostsGames} className={pillCls(f.hostsGames)} onClick={() => setF({ ...f, hostsGames: !f.hostsGames })}>
+              <button
+                type="button"
+                aria-pressed={f.hostsGames}
+                className={pillCls(f.hostsGames)}
+                onClick={() => setF({ ...f, hostsGames: !f.hostsGames })}
+              >
                 Hosting games
               </button>
               <button
@@ -98,7 +109,12 @@ export function PartnerButton({ partner }: { partner?: Partner }) {
             </div>
           </div>
           <label className="flex items-center gap-3">
-            <input type="checkbox" className="size-5 accent-scenic-navy" checked={f.approved} onChange={(e) => setF({ ...f, approved: e.target.checked })} />
+            <input
+              type="checkbox"
+              className="size-5 accent-scenic-navy"
+              checked={f.approved}
+              onChange={(e) => setF({ ...f, approved: e.target.checked })}
+            />
             <span className="text-sm font-medium">Approved</span>
           </label>
           {error && <Alert tone="red">{error}</Alert>}

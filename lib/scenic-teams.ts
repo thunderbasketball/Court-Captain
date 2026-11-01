@@ -64,7 +64,7 @@ async function isContactOf(q: Queryable, viewer: SessionUser, partnerId: string)
 }
 
 const hasRole = async (q: Queryable, coachId: string, role: ScenicRole) =>
-  (await q.query<{ ok: boolean }>("select has_role($1, 'scenic-city', $2) as ok", [coachId, role])).rows[0].ok;
+  (await q.query<{ ok: boolean }>("select acts_as($1, 'scenic-city', $2) as ok", [coachId, role])).rows[0].ok;
 
 // May this person change this team? A Director of Teams, a contact of its partner, or its Solo owner.
 async function canEdit(q: Queryable, viewer: SessionUser, t: { partner_id: string | null; owner_coach_id: string | null }) {
@@ -86,10 +86,10 @@ export type ScenicTeam = {
   partnerId: string | null;
   partnerName: string | null;
   ownerName: string | null; // Solo teams
-  coachId: string;
-  coachFirst: string;
-  coachLast: string;
-  coachCell: string;
+  coachId: string | null; // an organization's team may have no Head Coach yet
+  coachFirst: string | null;
+  coachLast: string | null;
+  coachCell: string | null;
   createdBy: string;
   updatedBy: string;
   canEdit: boolean;
@@ -110,20 +110,14 @@ export async function listScenicTeams(
   if (!(await hasRole(q, viewer.coachId, as))) return null;
   if (as === "Director" && !(await isTeamsDirector(q, viewer))) return null;
   const where =
-    as === "Director"
-      ? "true"
-      : as === "Partner"
-        ? "t.partner_id in (select partner_id from partner_contacts where coach_id = $1)"
-        : as === "Solo"
-          ? "t.owner_coach_id = $1"
-          : "t.coach_id = $1";
-  const r = await q.query<Omit<ScenicTeam, "gradeLabel" | "canEdit"> & { owner_coach_id: string | null }>(
+    as === "Director" ? "true" : as === "Solo" ? "t.owner_coach_id = $1" : "t.coach_id = $1";
+  const r = await q.query<Omit<ScenicTeam, "gradeLabel" | "canEdit"> & { owner_coach_id: string | null; org_team: boolean }>(
     `select t.id::text, t.name, t.gender, t.level, t.grade_low as "gradeLow", t.grade, t.partner_id::text as "partnerId", p.name as "partnerName",
             o.first_name || ' ' || o.last_name as "ownerName", t.owner_coach_id,
             t.coach_id as "coachId", c.first_name as "coachFirst", c.last_name as "coachLast", c.cell as "coachCell",
-            t.created_by as "createdBy", t.updated_by as "updatedBy"
+            t.created_by as "createdBy", t.updated_by as "updatedBy", t.org_team_id is not null as org_team
      from scenic_teams t
-     join users c on c.coach_id = t.coach_id
+     left join users c on c.coach_id = t.coach_id
      left join partners p on p.id = t.partner_id
      left join users o on o.coach_id = t.owner_coach_id
      where ${where}
@@ -131,18 +125,17 @@ export async function listScenicTeams(
     as === "Director" ? [] : [viewer.coachId],
   );
   const director = as === "Director";
-  const teams: ScenicTeam[] = r.rows.map(({ owner_coach_id, ...t }) => ({
+  const teams: ScenicTeam[] = r.rows.map(({ owner_coach_id, org_team, ...t }) => ({
     ...t,
     gradeLabel: gradeLabel(t.gradeLow, t.grade),
-    canEdit: director || (as === "Partner" && !!t.partnerId) || (as === "Solo" && owner_coach_id === viewer.coachId),
+    // A registered organization's team is managed there (read-only here).
+    canEdit:
+      !org_team && (director || (as === "Solo" && owner_coach_id === viewer.coachId)),
   }));
   let addFor: TeamOwnerChoice[] = [];
-  if (as === "Director" || as === "Partner") {
+  if (as === "Director") {
     const p = await q.query<{ id: string; name: string }>(
-      `select id::text, name from partners
-       where approved and registers_teams ${as === "Partner" ? "and id in (select partner_id from partner_contacts where coach_id = $1)" : ""}
-       order by lower(name)`,
-      as === "Partner" ? [viewer.coachId] : [],
+      "select id::text, name from partners where approved and registers_teams and org_slug is null order by lower(name)",
     );
     addFor = p.rows.map((x) => ({ value: x.id, label: x.name }));
   } else if (as === "Solo") addFor = [{ value: "solo", label: "My teams (Solo)" }];
@@ -221,7 +214,10 @@ export async function createScenicTeam(
         if (!(await hasRole(q, viewer.coachId, "Solo")))
           throw new TeamError("Only an approved Solo coach can add their own teams.");
       } else {
-        const p = await q.query("select 1 from partners where id = $1 and approved and registers_teams for share", [forWhom]);
+        const p = await q.query(
+          "select 1 from partners where id = $1 and approved and registers_teams and org_slug is null for share",
+          [forWhom],
+        );
         if (!p.rowCount) throw new TeamError("That partner doesn't register teams.");
         if (!(await isTeamsDirector(q, viewer)) && !(await isContactOf(q, viewer, forWhom)))
           throw new TeamError("Only this partner's contacts or a Scenic City Director of Teams can add its teams.");
@@ -258,11 +254,12 @@ export async function updateScenicTeam(
   return run(async () => {
     const f = cleanTeam(input);
     return withTx(deps.pool, async (q) => {
-      const t = await q.query<{ partner_id: string | null; owner_coach_id: string | null }>(
-        "select partner_id::text, owner_coach_id from scenic_teams where id = $1 for update",
+      const t = await q.query<{ partner_id: string | null; owner_coach_id: string | null; org_team_id: string | null }>(
+        "select partner_id::text, owner_coach_id, org_team_id::text from scenic_teams where id = $1 for update",
         [id],
       );
       if (!t.rows[0]) throw new TeamError("That team no longer exists.");
+      if (t.rows[0].org_team_id) throw new TeamError("This team is managed by its organization.");
       if (!(await canEdit(q, viewer, t.rows[0]))) throw new TeamError("You can't change this team.");
       const coach = await coachFor(q, f, viewer, deps.now());
       await q.query(
@@ -279,11 +276,12 @@ export async function deleteScenicTeam(deps: Deps, viewer: SessionUser, id: unkn
   if (!isId(id)) return { ok: false, message: "That team no longer exists." };
   return run(() =>
     withTx(deps.pool, async (q) => {
-      const t = await q.query<{ partner_id: string | null; owner_coach_id: string | null }>(
-        "select partner_id::text, owner_coach_id from scenic_teams where id = $1 for update",
+      const t = await q.query<{ partner_id: string | null; owner_coach_id: string | null; org_team_id: string | null }>(
+        "select partner_id::text, owner_coach_id, org_team_id::text from scenic_teams where id = $1 for update",
         [id],
       );
       if (!t.rows[0]) throw new TeamError("That team no longer exists.");
+      if (t.rows[0].org_team_id) throw new TeamError("This team is managed by its organization.");
       if (!(await canEdit(q, viewer, t.rows[0]))) throw new TeamError("You can't change this team.");
       await q.query("delete from scenic_teams where id = $1", [id]);
       return {};

@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { requireFeature } from "@/lib/features-server";
@@ -8,6 +7,7 @@ import { currentScenic } from "@/lib/contexts-server";
 import { contactOptions, getPartner, partnerHours } from "@/lib/scenic-partners";
 import { localParts } from "@/lib/time";
 import AppHeader from "../../../AppHeader";
+import { FacilitiesNav } from "../../ScenicNav";
 import { Chip, PageTitle, card } from "../../../ui";
 import { PartnerButton } from "../PartnerEditor";
 import { AddContact, RemoveContact } from "./ContactTools";
@@ -40,11 +40,9 @@ async function Partner({ params }: { params: PageProps<"/scenic/partners/[id]">[
 
   return (
     <>
-      <AppHeader user={user} context={scenic.key} tab="partners" />
+      <AppHeader user={user} context={scenic.key} tab="scenic-facilities" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <Link href="/scenic/partners" className="text-sm text-zinc-500 hover:underline">
-          ← Partners
-        </Link>
+        <FacilitiesNav user={user} current={p.id} />
         <div className="flex items-start justify-between gap-3">
           <PageTitle
             title={p.name}
@@ -54,29 +52,37 @@ async function Partner({ params }: { params: PageProps<"/scenic/partners/[id]">[
         </div>
         <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
           {!p.approved && <Chip tone="amber">Not approved</Chip>}
-          <span className="text-zinc-500">Contacts:</span>
-          {p.contacts.map((c) =>
-            p.canEditPartner ? (
-              <span
-                key={c.id}
-                className="inline-flex items-center gap-1 rounded-full bg-zinc-100 py-0.5 pr-1 pl-3 text-sm dark:bg-zinc-800"
-              >
-                {c.name}
-                <RemoveContact partnerId={p.id} coachId={c.id} name={c.name} partnerName={p.name} />
-              </span>
-            ) : (
-              <Chip key={c.id}>{c.name}</Chip>
-            ),
+          {p.managedBy ? (
+            <span className="text-zinc-500">
+              A hosting site on CourtCaptain: {p.managedBy}&apos;s Admins and Directors of Facilities manage it (no contacts).
+            </span>
+          ) : (
+            <>
+              <span className="text-zinc-500">Contacts:</span>
+              {p.contacts.map((c) =>
+                p.canEditPartner ? (
+                  <span
+                    key={c.id}
+                    className="inline-flex items-center gap-1 rounded-full bg-zinc-100 py-0.5 pr-1 pl-3 text-sm dark:bg-zinc-800"
+                  >
+                    {c.name}
+                    <RemoveContact partnerId={p.id} coachId={c.id} name={c.name} partnerName={p.name} />
+                  </span>
+                ) : (
+                  <Chip key={c.id}>{c.name}</Chip>
+                ),
+              )}
+              {!p.contacts.length && <span className="text-zinc-500">none yet</span>}
+              {p.canEditPartner && <AddContact partnerId={p.id} options={options} />}
+            </>
           )}
-          {!p.contacts.length && <span className="text-zinc-500">none yet</span>}
-          {p.canEditPartner && <AddContact partnerId={p.id} options={options} />}
         </div>
 
         <section className={`${card} mb-6 p-4`}>
           <h2 className="text-lg font-semibold">Gym availability</h2>
           <p className="mb-4 text-sm text-zinc-500">
             {p.managedBy
-              ? `The game days ${p.managedBy}'s gyms are open for Partner Games, set in ${p.managedBy}'s Facilities. Each gym hosts as a whole gym.`
+              ? `The game days ${p.managedBy}'s gyms are open for Scenic City games, set in ${p.managedBy}'s Facilities. Each gym hosts as a whole gym.`
               : p.canEnterHours
                 ? "Tap the game days your courts are open, pick the times (9 AM–10 PM, Eastern), then Submit."
                 : `When ${p.name}'s courts are open on game days. Only ${p.name}'s contacts can enter this.`}

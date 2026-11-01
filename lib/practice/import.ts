@@ -156,8 +156,8 @@ async function run(q: PoolClient, p: ParsedPractice, by: string): Promise<Import
   const courtId = new Map<string, string>();
   for (const c of p.courts) {
     const g = await q.query<{ id: string; created: boolean }>(
-      `with ins as (insert into gyms (name) values ($1) on conflict (name) do nothing returning id::text, true as created)
-       select * from ins union all select id::text, false from gyms where name = $1 and not exists (select 1 from ins)`,
+      `with ins as (insert into gyms (name) values ($1) on conflict (org, name) do nothing returning id::text, true as created)
+       select * from ins union all select id::text, false from gyms where org = 'thunder' and name = $1 and not exists (select 1 from ins)`,
       [c.gym],
     );
     if (g.rows[0].created) report.gyms++;
@@ -223,7 +223,7 @@ async function run(q: PoolClient, p: ParsedPractice, by: string): Promise<Import
   // The BlackOuts tab, so slots added later on those dates come in blocked.
   for (const b of p.blackouts) {
     const gymId = b.gym
-      ? ((await q.query<{ id: string }>("select id::text from gyms where lower(name) = lower($1)", [b.gym])).rows[0]?.id ?? null)
+      ? ((await q.query<{ id: string }>("select id::text from gyms where org = 'thunder' and lower(name) = lower($1)", [b.gym])).rows[0]?.id ?? null)
       : null;
     if (b.gym && !gymId) continue;
     const t = b.time?.match(/^(\d{1,2}):(\d{2})\s*([AP]M)$/i);

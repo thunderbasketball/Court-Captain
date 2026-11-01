@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
 import { createTestDb, grant, THUNDER_ROLES } from "./testing/db";
 import { hashPin } from "./auth/crypto";
-import { addUser, deleteUser, denyRequest, resetLogin, updateUser } from "./user-admin";
+import { addUser, deleteUser, denyRequest, resetLogin, updateUser, approveJoin } from "./user-admin";
 
 const director: SessionUser = {
   coachId: "9913694",
@@ -142,5 +142,25 @@ describe("user admin", () => {
     expect(await updateUser(deps(), facilities, "5550001", edit)).toEqual({ ok: false, message: "Only an Admin can manage users." });
     expect(await resetLogin(deps(), facilities, "5550001")).toEqual({ ok: false, message: "Only an Admin can manage users." });
     expect(await updateUser(deps(), { ...facilities, isAdmin: true }, "5550001", edit)).toEqual({ ok: true });
+  });
+
+  it("approves a team staff sign-up onto the team they picked; Head/Asst Coaches get the Coach role; refuses a second head coach", async () => {
+    const t = await db.pool.query<{ id: string }>(
+      "insert into teams (name, gender, grades, grade_sort, level, created_by) values ('4G Test', 'Girls', '{4}', 4, 'REC', 'x') returning id::text",
+    );
+    await db.pool.query("insert into join_reasons (coach_id, purpose, staff_role, team_id) values ('5550001', 'staff', 'AsstCoach', $1)", [t.rows[0].id]);
+    expect(await approveJoin(deps(), coach, "5550001")).toMatchObject({ ok: false }); // not an Admin
+    expect(await approveJoin(deps(), director, "5550001")).toEqual({ ok: true, message: "Pat Test added to 4G Test as Asst Coach." });
+    expect(await user("5550001")).toMatchObject({ thunder_coach: true, thunder_request: false });
+    const staff = await db.pool.query("select role, added_by from team_staff where coach_id = '5550001'");
+    expect(staff.rows).toEqual([{ role: "AsstCoach", added_by: "Earl Epps" }]);
+    expect((await db.pool.query("select count(*)::int n from join_reasons")).rows[0].n).toBe(0);
+
+    // A typed-in team can't be placed automatically; a second head coach is refused.
+    await db.pool.query("insert into join_reasons (coach_id, purpose, staff_role, team_text) values ('5550002', 'staff', 'Manager', 'Somebody')");
+    expect(await approveJoin(deps(), director, "5550002")).toMatchObject({ ok: false, message: /isn't listed/ });
+    await db.pool.query("insert into team_staff (team_id, coach_id, role, added_by) values ($1, '9913694', 'HeadCoach', 'x')", [t.rows[0].id]);
+    await db.pool.query("update join_reasons set staff_role = 'HeadCoach', team_id = $1, team_text = null where coach_id = '5550002'", [t.rows[0].id]);
+    expect(await approveJoin(deps(), director, "5550002")).toMatchObject({ ok: false, message: /already has a head coach/ });
   });
 });

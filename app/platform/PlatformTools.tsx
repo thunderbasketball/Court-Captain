@@ -2,8 +2,8 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { setOrgOwner, setOrgFeature } from "./actions";
-import { Toast, useConfirm } from "../client-ui";
+import { setOrgOwner, setOrgFeature, setPlatformAdmin } from "./actions";
+import { PopUp, Toast, useConfirm } from "../client-ui";
 import { inputCls } from "../ui";
 
 // One feature's on/off switch for an organization (turning on is free here, until upgrades are paid for).
@@ -152,6 +152,93 @@ export function RemoveOwner({ org, orgName, coachId, name }: { org: string; orgN
         <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden className="size-4">
           <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
         </svg>
+      </button>
+      {error && <Toast key={error} message={error} />}
+      {confirmDialog}
+    </>
+  );
+}
+
+// CourtCaptain Owners: "+ Add Admin" (pick a person) for CourtCaptain staff.
+export function AddStaff({ options }: { options: { id: string; name: string }[] }) {
+  const router = useRouter();
+  return (
+    <PopUp
+      label="+ Add Admin"
+      title="Add a CourtCaptain Admin"
+      className="shrink-0 rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark"
+      note="CourtCaptain Admins have Owner-level access to every organization, in the background."
+    >
+      {(close) => <StaffForm options={options} onDone={() => (close(), router.refresh())} />}
+    </PopUp>
+  );
+}
+
+function StaffForm({ options, onDone }: { options: { id: string; name: string }[]; onDone: () => void }) {
+  const [pick, setPick] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, start] = useTransition();
+  return (
+    <form
+      className="grid gap-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          const r = await setPlatformAdmin(pick, true);
+          if (!r.ok) return setError(r.message);
+          onDone();
+        });
+      }}
+    >
+      <select className={`${inputCls} py-2`} value={pick} onChange={(e) => setPick(e.target.value)} autoFocus>
+        <option value="" disabled>
+          Pick a person…
+        </option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name}
+          </option>
+        ))}
+      </select>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <button
+        type="submit"
+        disabled={busy || !pick}
+        className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
+      >
+        Make CourtCaptain Admin
+      </button>
+    </form>
+  );
+}
+
+export function RemoveStaff({ coachId, name }: { coachId: string; name: string }) {
+  const router = useRouter();
+  const [busy, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
+  return (
+    <>
+      <button
+        type="button"
+        disabled={busy}
+        className="shrink-0 text-xs font-medium text-red-600 hover:underline"
+        onClick={async () => {
+          if (
+            await confirm({
+              title: `Remove ${name} as CourtCaptain Admin?`,
+              message: "They lose access to the CourtCaptain page and their background access to every organization.",
+              confirmLabel: "Remove",
+            })
+          )
+            start(async () => {
+              const r = await setPlatformAdmin(coachId, false);
+              if (r.ok) router.refresh();
+              else setError(r.message);
+            });
+        }}
+      >
+        Remove
       </button>
       {error && <Toast key={error} message={error} />}
       {confirmDialog}

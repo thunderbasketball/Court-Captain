@@ -52,7 +52,7 @@ export function DecideHostingButtons({ id, name }: { id: string; name: string })
   const decide = (approve: boolean) =>
     start(async () => {
       const r = await decideHosting(id, approve);
-      setMsg(r.ok ? `${name} ${approve ? "approved as a hosting partner" : "declined"}.` : r.message);
+      setMsg(r.ok ? `${name} ${approve ? "approved as a hosting site" : "declined"}.` : r.message);
       if (r.ok) router.refresh();
     });
   return (

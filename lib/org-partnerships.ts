@@ -1,12 +1,16 @@
-// Organizations partnering with each other (SPEC.md section 14). An organization with "Hosting Sites Available" (e.g.
+// Organizations partnering with each other (SPEC.md section 14). An organization with "Hosting Sites Available" or
+// "Partner Tools" (e.g.
 // Thunder) asks one with "Hosting Sites Wanted" (e.g. Scenic City) to host its games. When approved, it becomes that
 // organization's hosting partner: a partners row linked to it (partners.org_slug). Each side's Admins and Directors of
 // Facilities handle it.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
+import { canHost } from "./facilities";
 import { hasFeature } from "./features";
 import { orgHasArea } from "./org-admin";
-import { ORGS, ORG_SLUGS, isOrgSlug, type OrgSlug } from "./orgs";
+import { isOrgSlug, type OrgSlug } from "./orgs";
+import { listOrgs, orgName, orgShort } from "./org-registry";
+import { dropPartnerRoleIfNone } from "./scenic-partners";
 import { withTx, type Queryable } from "./sql";
 
 type Deps = { pool: Pool; now: () => Date };
@@ -27,8 +31,7 @@ export type HostingOffer = {
 
 // For the hosting organization (e.g. Thunder): every organization that wants hosting sites, and where things stand.
 export async function hostingOffers(deps: Deps, viewer: SessionUser, hostOrg: OrgSlug): Promise<HostingOffer[] | null> {
-  if (!(await hasFeature(deps.pool, hostOrg, "hosting-available")) || !(await facilities(deps.pool, viewer, hostOrg)))
-    return null;
+  if (!(await canHost(deps.pool, hostOrg)) || !(await facilities(deps.pool, viewer, hostOrg))) return null;
   const r = await deps.pool.query<{
     for_org: OrgSlug;
     status: PartnershipStatus;
@@ -36,16 +39,10 @@ export async function hostingOffers(deps: Deps, viewer: SessionUser, hostOrg: Or
     decided_by: string | null;
   }>("select for_org, status, requested_by, decided_by from org_partnerships where host_org = $1", [hostOrg]);
   const out: HostingOffer[] = [];
-  for (const org of ORG_SLUGS) {
+  for (const { slug: org, name } of await listOrgs(deps.pool)) {
     if (org === hostOrg || !(await hasFeature(deps.pool, org, "hosting-partners"))) continue;
     const p = r.rows.find((x) => x.for_org === org);
-    out.push({
-      org,
-      name: ORGS[org].name,
-      status: p?.status ?? "none",
-      requestedBy: p?.requested_by ?? null,
-      decidedBy: p?.decided_by ?? null,
-    });
+    out.push({ org, name, status: p?.status ?? "none", requestedBy: p?.requested_by ?? null, decidedBy: p?.decided_by ?? null });
   }
   return out;
 }
@@ -55,11 +52,11 @@ export async function requestHosting(deps: Deps, viewer: SessionUser, hostOrg: u
   if (!isOrgSlug(hostOrg) || !isOrgSlug(forOrg) || hostOrg === forOrg) return { ok: false, message: "Pick an organization." };
   return withTx(deps.pool, async (q) => {
     if (!(await facilities(q, viewer, hostOrg)))
-      return { ok: false as const, message: `Only a ${ORGS[hostOrg].short} Admin or Director of Facilities can do that.` };
-    if (!(await hasFeature(q, hostOrg, "hosting-available")))
-      return { ok: false as const, message: `${ORGS[hostOrg].name} doesn't have Hosting Sites Available.` };
+      return { ok: false as const, message: `Only a ${await orgShort(q, hostOrg)} Admin or Director of Facilities can do that.` };
+    if (!(await canHost(q, hostOrg)))
+      return { ok: false as const, message: `${await orgName(q, hostOrg)} doesn't have Hosting Sites Available.` };
     if (!(await hasFeature(q, forOrg, "hosting-partners")))
-      return { ok: false as const, message: `${ORGS[forOrg].name} isn't looking for hosting sites.` };
+      return { ok: false as const, message: `${await orgName(q, forOrg)} isn't looking for hosting sites.` };
     const r = await q.query(
       `insert into org_partnerships (host_org, for_org, status, requested_by, requested_at) values ($1, $2, 'pending', $3, $4)
        on conflict (host_org, for_org) do update
@@ -67,7 +64,7 @@ export async function requestHosting(deps: Deps, viewer: SessionUser, hostOrg: u
          where org_partnerships.status = 'declined'`,
       [hostOrg, forOrg, by(viewer), deps.now()],
     );
-    if (!r.rowCount) return { ok: false as const, message: `You've already asked ${ORGS[forOrg].name}.` };
+    if (!r.rowCount) return { ok: false as const, message: `You've already asked ${await orgName(q, forOrg)}.` };
     return { ok: true as const };
   });
 }
@@ -91,7 +88,7 @@ export async function hostingRequests(deps: Deps, viewer: SessionUser, forOrg: O
      order by array_position(array['pending', 'approved', 'declined'], status), requested_at`,
     [forOrg],
   );
-  return r.rows.map((x) => ({ ...x, name: ORGS[x.hostOrg]?.name ?? x.hostOrg }));
+  return Promise.all(r.rows.map(async (x) => ({ ...x, name: await orgName(deps.pool, x.hostOrg) })));
 }
 
 // Approve (the host becomes a hosting partner, linked to its organization) or decline a waiting request.
@@ -105,11 +102,14 @@ export async function decideHosting(deps: Deps, viewer: SessionUser, id: unknown
     const p = r.rows[0];
     if (!p) return { ok: false as const, message: "That request no longer exists." };
     if (!(await facilities(q, viewer, p.for_org)))
-      return { ok: false as const, message: `Only a ${ORGS[p.for_org].short} Admin or Director of Facilities can do that.` };
+      return {
+        ok: false as const,
+        message: `Only a ${await orgShort(q, p.for_org)} Admin or Director of Facilities can do that.`,
+      };
     if (p.status !== "pending") return { ok: false as const, message: "That request was already answered." };
     let partnerId: string | null = null;
     if (approve) {
-      const name = ORGS[p.host_org].name;
+      const name = await orgName(q, p.host_org);
       // The organization's partner record: already linked, or one with its name (e.g. Thunder Basketball), or a new one.
       const found = await q.query<{ id: string }>(
         `select id::text from partners where org_slug = $1
@@ -123,6 +123,12 @@ export async function decideHosting(deps: Deps, viewer: SessionUser, id: unknown
           partnerId,
           p.host_org,
         ]);
+        // The organization runs it now, not named contacts: they come off it (and lose Partner if it was their only one).
+        const gone = await q.query<{ coach_id: string }>(
+          "delete from partner_contacts where partner_id = $1 returning coach_id",
+          [partnerId],
+        );
+        for (const c of gone.rows) await dropPartnerRoleIfNone(q, c.coach_id, by(viewer));
       } else {
         const ins = await q.query<{ id: string }>(
           `insert into partners (name, kind, hosts_games, registers_teams, approved, created_by, org_slug)

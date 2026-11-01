@@ -5,19 +5,19 @@ import type { Queryable } from "./sql";
 import type { OrgSlug } from "./orgs";
 
 export const FEATURES = [
-  { key: "player-registration", name: "Player Registration", about: "Players register; you see them by grade and gender." },
-  { key: "team-building", name: "Team Building", about: "Teams, staff, rosters and player evaluations." },
+  {
+    key: "player-registration",
+    name: "Player Registration",
+    about: "Players register; you see them by grade and gender. With Team Management: player evaluations.",
+  },
+  // Key kept from when this was Team Building.
+  { key: "team-building", name: "Team Management", about: "Add teams and their coaches, and build rosters." },
   { key: "uniforms", name: "Uniform Ordering", about: "Numbers and sizes for every rostered player." },
   { key: "practice", name: "Practice Management", about: "Gyms, practice slots, booking limits and blackouts." },
   { key: "events", name: "Event Management", about: "Open gyms, tryouts and trainings with check-in." },
   { key: "chat", name: "Chat", about: "Chats for coaches, teams, Directors and the whole organization." },
-  {
-    key: "partner-tools",
-    name: "Partner Tools",
-    about: "Work as a partner of another organization: share gym times, register teams.",
-  },
   { key: "hosting-available", name: "Hosting Sites Available", about: "Offer your gyms to host another organization's games." },
-  { key: "team-registration", name: "Team Registrations", about: "Partners and Solo coaches register teams." },
+  { key: "team-registration", name: "Team Registrations", about: "Schools, organizations and Solo coaches register teams." },
   {
     key: "hosting-partners",
     name: "Hosting Sites Wanted",
@@ -29,6 +29,10 @@ export const FEATURES = [
 ] as const;
 
 export type Feature = (typeof FEATURES)[number]["key"];
+
+// Features that work for any organization today; the rest are built for Thunder or Scenic City so far, and a new
+// organization's sign-up records them as requested (SPEC.md section 14).
+export const READY_FOR_ANY_ORG = new Set<Feature>(["hosting-available", "team-building", "alerts"]);
 
 const ALWAYS = new Set<string>(FEATURES.filter((f) => "always" in f && f.always).map((f) => f.key));
 

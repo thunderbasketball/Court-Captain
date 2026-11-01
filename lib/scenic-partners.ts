@@ -41,7 +41,7 @@ function cleanAddress(v: unknown): string | null | undefined {
 // Scenic City Director, or one of this partner's contacts.
 async function canManage(q: Queryable, viewer: SessionUser, partnerId: string): Promise<boolean> {
   const r = await q.query<{ ok: boolean }>(
-    `select has_role($1, 'scenic-city', 'Director')
+    `select acts_as($1, 'scenic-city', 'Director')
             or (has_role($1, 'scenic-city', 'Partner') and exists (select 1 from partner_contacts where partner_id = $2 and coach_id = $1)) as ok`,
     [viewer.coachId, partnerId],
   );
@@ -84,10 +84,10 @@ export async function listPartners(
             coalesce((select json_agg(json_build_object('id', u.coach_id, 'name', u.first_name || ' ' || u.last_name)
                                 order by lower(u.last_name), lower(u.first_name))
                       from partner_contacts c join users u on u.coach_id = c.coach_id where c.partner_id = p.id), '[]') as contacts,
-            -- An organization partner's gyms are its own (Thunder's Facilities); each hosts a game as a whole gym.
-            case when p.org_slug = 'thunder' then (select count(*)::int from gyms where active)
+            -- An organization partner's gyms are its own (its Facilities); each hosts a game as a whole gym.
+            case when p.org_slug is not null then (select count(*)::int from gyms where active and org = p.org_slug)
                  else (select count(*)::int from partner_gyms g where g.partner_id = p.id) end as gyms,
-            case when p.org_slug = 'thunder' then (select count(*)::int from gyms where active)
+            case when p.org_slug is not null then (select count(*)::int from gyms where active and org = p.org_slug)
                  else (select count(*)::int from partner_courts c join partner_gyms g on g.id = c.gym_id where g.partner_id = p.id) end as courts
      from partners p
      where $2 or (has_role($1, 'scenic-city', 'Partner') and exists (select 1 from partner_contacts c where c.partner_id = p.id and c.coach_id = $1))
@@ -114,10 +114,12 @@ export async function getPartner(deps: Deps, viewer: SessionUser, id: unknown, a
   const { partners, isDirector } = await listPartners(deps, viewer, asDirector);
   const p = partners.find((x) => x.id === id);
   if (!p) return null;
-  const org = p.org === "thunder";
+  // An organization partner's gyms are its own (its Facilities).
+  const org = p.org !== null;
   const g = await deps.pool.query<Gym>(
     org
-      ? `select g.id::text, g.name, null as address, '[]'::json as courts from gyms g where g.active and $1::bigint is not null order by lower(g.name)`
+      ? `select g.id::text, g.name, null as address, '[]'::json as courts from gyms g
+         where g.active and g.org = (select org_slug from partners where id = $1) order by lower(g.name)`
       : `select g.id::text, g.name, g.address,
             coalesce((select json_agg(json_build_object('id', c.id::text, 'name', c.name)
                         order by length(c.name), lower(c.name)) from partner_courts c where c.gym_id = g.id), '[]') as courts
@@ -132,7 +134,7 @@ export async function getPartner(deps: Deps, viewer: SessionUser, id: unknown, a
     canEditPartner: isDirector,
     canEditGyms: !org && (isDirector || contact),
     canEnterHours: !org && contact,
-    managedBy: org ? "Thunder Basketball" : null,
+    managedBy: org ? p.name : null,
     createdBy: extra.rows[0].created_by,
   };
 }
@@ -196,6 +198,15 @@ export async function contactOptions(
   return r.rows;
 }
 
+// The Partner role is for a partner's contacts: someone left without any partner loses it.
+export async function dropPartnerRoleIfNone(q: Queryable, coachId: string, who: string) {
+  await q.query(
+    `select set_role($1, 'scenic-city', 'Partner', false, $2)
+     where not exists (select 1 from partner_contacts where coach_id = $1)`,
+    [coachId, who],
+  );
+}
+
 // Directors: make someone a contact for this partner (they get the Partner role), or take them off.
 export async function setContact(
   deps: Deps,
@@ -209,12 +220,16 @@ export async function setContact(
   return run(() =>
     withTx(deps.pool, async (q) => {
       if (!(await isScenicFacilities(q, viewer.coachId))) throw new PartnerError(directorOnly);
-      if (!(await q.query("select 1 from partners where id = $1", [partnerId])).rows[0])
-        throw new PartnerError("That partner no longer exists.");
+      const p = await q.query<{ org: string | null }>("select org_slug as org from partners where id = $1", [partnerId]);
+      if (!p.rows[0]) throw new PartnerError("That partner no longer exists.");
       if (!on) {
         await q.query("delete from partner_contacts where partner_id = $1 and coach_id = $2", [partnerId, coachId]);
+        await dropPartnerRoleIfNone(q, coachId, by(viewer));
         return {};
       }
+      // An organization partner is run by that organization's Admins and Directors of Facilities, not contacts.
+      if (p.rows[0].org)
+        throw new PartnerError("This partner is an organization: its own Admins and Directors of Facilities manage it.");
       if (!(await q.query("select 1 from users where coach_id = $1 and active", [coachId])).rows[0])
         throw new PartnerError("Pick an active user.");
       await q.query("insert into partner_contacts (partner_id, coach_id, added_by) values ($1, $2, $3) on conflict do nothing", [
@@ -338,39 +353,6 @@ export async function listGameDays(deps: Deps, viewer: SessionUser, from?: strin
   return r.rows;
 }
 
-// Directors: the calendar's changes in one go. Adds future dates (existing ones stay); removes dates (and their court hours).
-export async function saveGameDays(
-  deps: Deps,
-  viewer: SessionUser,
-  input: { add: unknown; remove: unknown },
-): Promise<Result<{ added: number; removed: number }>> {
-  const list = (v: unknown) => (Array.isArray(v) ? [...new Set(v)] : null);
-  const add = list(input.add);
-  const remove = list(input.remove);
-  if (!add || !remove || !add.every(isDate) || !remove.every(isDate))
-    return { ok: false, message: "Those dates don't look right." };
-  if (add.length + remove.length > 400) return { ok: false, message: "Too many dates at once." };
-  if (!add.length && !remove.length) return { ok: false, message: "Tap the dates to add or remove first." };
-  return run(() =>
-    withTx(deps.pool, async (q) => {
-      if (!(await isScenicFacilities(q, viewer.coachId))) throw new PartnerError(directorOnly);
-      const today = (
-        await q.query<{ d: string }>(
-          "select to_char(($1::timestamptz at time zone 'America/New_York')::date, 'YYYY-MM-DD') as d",
-          [deps.now()],
-        )
-      ).rows[0].d;
-      if (add.some((d) => d < today)) throw new PartnerError("Game days can't be in the past.");
-      const r1 = await q.query("delete from game_days where day = any($1::date[])", [remove]);
-      const r2 = await q.query(
-        "insert into game_days (day, created_by) select d, $2 from unnest($1::date[]) d on conflict (day) do nothing",
-        [add, by(viewer)],
-      );
-      return { added: r2.rowCount ?? 0, removed: r1.rowCount ?? 0 };
-    }),
-  );
-}
-
 // ---- Open hours on game days (5b) ----
 
 export type HoursWindow = { starts: string; ends: string; setBy: string }; // "HH:MM", Eastern
@@ -384,16 +366,19 @@ export type PartnerHours = {
 export async function partnerHours(deps: Deps, viewer: SessionUser, partnerId: unknown): Promise<PartnerHours | null> {
   if (!isId(partnerId) || !(await canManage(deps.pool, viewer, partnerId))) return null;
   const days = (await listGameDays(deps, viewer)) ?? [];
-  // An organization partner (Thunder): its gyms marked Partner Games in its Facilities, each a whole gym.
-  const org = await deps.pool.query("select 1 from partners where id = $1 and org_slug = 'thunder'", [partnerId]);
-  if (org.rowCount) {
+  // An organization partner (e.g. Thunder): its gyms marked Partner Games in its Facilities, each a whole gym.
+  const org = (await deps.pool.query<{ org: string | null }>("select org_slug as org from partners where id = $1", [partnerId]))
+    .rows[0]?.org;
+  if (org) {
     const gyms = await deps.pool.query<{ id: string; gym: string; name: string }>(
-      "select id::text, name as gym, 'Whole gym' as name from gyms where active order by lower(name)",
+      "select id::text, name as gym, 'Whole gym' as name from gyms where active and org = $1 order by lower(name)",
+      [org],
     );
     const a = await deps.pool.query<HoursWindow & { key: string }>(
       `select a.gym_id || ':' || d.id as key, to_char(a.starts, 'HH24:MI') as starts, to_char(a.ends, 'HH24:MI') as ends, a.set_by as "setBy"
-       from gym_availability a join game_days d on d.day = a.day where a.use = 'partner' and d.id = any($1::bigint[])`,
-      [days.map((d) => d.id)],
+       from gym_availability a join gyms g on g.id = a.gym_id join game_days d on d.day = a.day
+       where a.use = 'partner' and g.org = $2 and d.id = any($1::bigint[])`,
+      [days.map((d) => d.id), org],
     );
     return { days, courts: gyms.rows, hours: Object.fromEntries(a.rows.map(({ key, ...w }) => [key, w])) };
   }
@@ -508,9 +493,9 @@ export async function openCourtsByDay(deps: Deps, viewer: SessionUser): Promise<
          join partner_courts c on c.id = h.court_id join partner_gyms g on g.id = c.gym_id join partners p on p.id = g.partner_id
          where p.org_slug is null and d.day >= ($1::timestamptz at time zone 'America/New_York')::date group by 1
        union all
-       -- Thunder, once approved as a hosting partner: each gym marked Partner Games that day
-       select d.id::text, count(*) from gym_availability a join game_days d on d.day = a.day
-         where a.use = 'partner' and exists (select 1 from partners p where p.org_slug = 'thunder' and p.approved and p.hosts_games)
+       -- Organization partners, once approved as hosting partners: each of their gyms marked Partner Games that day
+       select d.id::text, count(*) from gym_availability a join gyms g on g.id = a.gym_id join game_days d on d.day = a.day
+         where a.use = 'partner' and exists (select 1 from partners p where p.org_slug = g.org and p.approved and p.hosts_games)
            and d.day >= ($1::timestamptz at time zone 'America/New_York')::date group by 1
      ) x group by id`,
     [deps.now()],

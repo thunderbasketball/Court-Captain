@@ -8,6 +8,7 @@ import { listGameDays, openCourtsByDay } from "@/lib/scenic-partners";
 import { currentScenic } from "@/lib/contexts-server";
 import { dayLabel, localParts } from "@/lib/time";
 import AppHeader from "../../AppHeader";
+import { FacilitiesNav } from "../ScenicNav";
 import { PageTitle, card } from "../../ui";
 import GameDayCalendar from "./GameDayCalendar";
 
@@ -19,8 +20,8 @@ export default function GameDaysPage() {
   );
 }
 
-// Scenic City game days on a calendar. Directors tap dates to add or remove them, then Submit (no times);
-// they also see how many partner courts are open each day. Everyone else in Scenic City sees the calendar.
+// Scenic City game days on a calendar, view only: set by each program's Game & Bracket Days. Directors of Facilities also
+// see how many hosting sites' courts are open each day.
 async function GameDays() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
@@ -30,7 +31,7 @@ async function GameDays() {
   if (!days) redirect("/");
   const scenic = await currentScenic(user);
   if (!scenic) redirect("/");
-  // Shown as the chip in use: only the Director chip edits game days (Directors of Facilities and Admins).
+  // Shown as the chip in use: the Director chip (Directors of Facilities and Admins) sees open courts.
   const director = scenic.role === "Director" && (await isScenicFacilities(db, user.coachId));
   const byId = director ? ((await openCourtsByDay(deps, user)) ?? {}) : {};
   const openCourts = Object.fromEntries(days.filter((d) => byId[d.id]).map((d) => [d.day, byId[d.id]]));
@@ -39,18 +40,15 @@ async function GameDays() {
 
   return (
     <>
-      <AppHeader user={user} context={scenic.key} tab="game-days" />
+      <AppHeader user={user} context={scenic.key} tab="scenic-facilities" />
       <main className="mx-auto w-full max-w-md flex-1 px-4 py-6">
+        <FacilitiesNav user={user} current="game-days" />
         <PageTitle
           title="Game days"
-          subtitle={
-            director
-              ? `${days.length} upcoming. Tap dates to add or remove game days, then Submit.`
-              : `${days.length} upcoming, set by each program's game dates. Hosting partners give their courts' hours on these days.`
-          }
+          subtitle={`${days.length} upcoming, set by each program's Game & Bracket Days (change them on the program). Hosting sites give their courts' hours on these days.`}
         />
         <div className={`${card} p-4`}>
-          <GameDayCalendar today={today} days={days.map((d) => d.day)} openCourts={openCourts} editable={director} />
+          <GameDayCalendar today={today} days={days.map((d) => d.day)} openCourts={openCourts} />
         </div>
         {days.length > 0 && (
           <section className={`${card} mt-4 overflow-hidden`}>

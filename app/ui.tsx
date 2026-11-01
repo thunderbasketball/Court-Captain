@@ -1,5 +1,6 @@
 // Shared building blocks so every page looks the same.
 import type { ReactNode } from "react";
+import Link from "next/link";
 
 export const fieldLabel = "mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300";
 export const inputCls =
@@ -117,6 +118,7 @@ export function PersonRow({
   chips,
   dim,
   under,
+  href,
   children,
 }: {
   first?: string | null;
@@ -125,17 +127,25 @@ export function PersonRow({
   chips?: ReactNode;
   dim?: boolean;
   under?: ReactNode; // shown just under the initials circle (e.g. the 👁 View-as button)
+  href?: string; // tapping the initials opens this (e.g. the person's dashboard, for Admins)
   children?: ReactNode;
 }) {
+  const avatar = href ? (
+    <Link href={href} aria-label={`${first ?? ""} ${last ?? ""}: dashboard`} className="shrink-0 rounded-full hover:opacity-80">
+      <Avatar first={first} last={last} tone={avatarTone} />
+    </Link>
+  ) : (
+    <Avatar first={first} last={last} tone={avatarTone} />
+  );
   return (
     <li className={`flex gap-3 px-4 py-3 ${dim ? "opacity-50" : ""}`}>
       {under ? (
         <div className="flex shrink-0 flex-col items-center gap-2">
-          <Avatar first={first} last={last} tone={avatarTone} />
+          {avatar}
           {under}
         </div>
       ) : (
-        <Avatar first={first} last={last} tone={avatarTone} />
+        avatar
       )}
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">

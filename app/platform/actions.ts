@@ -24,6 +24,9 @@ async function guarded(
 export async function setOrgFeature(org: string, feature: string, on: boolean) {
   return guarded((u) => platform.setOrgFeature(deps, u, org, feature, on === true));
 }
+export async function setPlatformAdmin(coachId: string, on: boolean) {
+  return guarded((u) => platform.setPlatformAdmin(deps, u, coachId, on === true));
+}
 export async function setOrgOwner(org: string, coachId: string, on: boolean) {
   return guarded((u) => platform.setOrgOwner(deps, u, org, coachId, on === true));
 }

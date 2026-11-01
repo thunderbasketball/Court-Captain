@@ -13,7 +13,7 @@ describe("organization features", () => {
 
   it("gives Thunder and Scenic City their own features, plus Alerts for both", async () => {
     expect([...(await orgFeatures(db.pool, "thunder"))].sort()).toEqual(
-      ["alerts", "chat", "events", "hosting-available", "partner-tools", "player-registration", "practice", "team-building", "uniforms"].sort(),
+      ["alerts", "chat", "events", "hosting-available", "player-registration", "practice", "team-building", "uniforms"].sort(),
     );
     expect([...(await orgFeatures(db.pool, "scenic-city"))].sort()).toEqual(
       ["alerts", "hosting-partners", "officials", "programs", "team-registration"].sort(),

@@ -33,6 +33,7 @@ describe("org_roles", () => {
       "thunder:Admin",
       "thunder:Coach",
       "thunder:Director",
+      "thunder:Family",
       "thunder:Owner",
       "thunder:Request",
     ]);

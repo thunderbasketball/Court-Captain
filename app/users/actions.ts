@@ -26,6 +26,9 @@ export async function updateUser(coachId: string, input: EditUserInput) {
 export async function denyRequest(coachId: string) {
   return guarded((u) => admin.denyRequest(deps, u, String(coachId)));
 }
+export async function approveJoin(coachId: string) {
+  return guarded((u) => admin.approveJoin(deps, u, String(coachId)));
+}
 export async function addUser(input: AddUserInput) {
   return guarded((u) => admin.addUser(deps, u, input));
 }

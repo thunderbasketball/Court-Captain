@@ -3,7 +3,7 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { UserListItem } from "@/lib/users";
-import { addUser, deleteUser, denyRequest, resetLogin, updateUser } from "./actions";
+import { addUser, approveJoin, deleteUser, denyRequest, resetLogin, updateUser } from "./actions";
 import { Alert, CloseButton, OnPage, Toast, dialogCls, useConfirm } from "../client-ui";
 import { fieldLabel, inputCls, primaryBtn } from "../ui";
 
@@ -350,6 +350,32 @@ export function AddUserButton({ label = "+ Add user", className }: { label?: str
           </form>
         </dialog>
       </OnPage>
+    </>
+  );
+}
+
+// A team staff sign-up for a listed team: one tap puts them on that team in the role they asked for.
+export function ApproveJoinButton({ coachId, label }: { coachId: string; label: string }) {
+  const router = useRouter();
+  const [busy, start] = useTransition();
+  const [msg, setMsg] = useState<string | null>(null);
+  return (
+    <>
+      <button
+        type="button"
+        disabled={busy}
+        className="rounded-full bg-thunder-blue px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+        onClick={() =>
+          start(async () => {
+            const r = await approveJoin(coachId);
+            setMsg(r.message);
+            if (r.ok) router.refresh();
+          })
+        }
+      >
+        {label}
+      </button>
+      {msg && <Toast key={msg} message={msg} />}
     </>
   );
 }

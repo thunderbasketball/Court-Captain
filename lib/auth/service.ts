@@ -1,7 +1,7 @@
 // Login rules (SPEC.md section 1). Every function re-checks everything on the server;
 // the browser only tells us which step the person is on.
 import type { Pool, PoolClient } from "pg";
-import { withTx } from "../sql";
+import { withTx, type Queryable } from "../sql";
 import { coachIdFromCell, normalizeCell } from "../phone";
 import { STARTER_PIN, hashCode, hashPin, isStarterPin, newCode, newSessionToken, sha256, verifyPin } from "./crypto";
 import { cleanEmail, cleanName, isCode, isPin, maskEmail } from "./validate";
@@ -57,6 +57,7 @@ type UserRow = {
   verified_email: string | null;
   thunder_coach: boolean;
   thunder_director: boolean;
+  thunder_family: boolean;
   thunder_admin: boolean;
   thunder_areas: Area[]; // Director areas in Thunder (SPEC section 14)
   on_team: boolean; // holds any team staff role (HeadCoach, AsstCoach, Manager, TeamParent)
@@ -74,6 +75,8 @@ export type SessionUser = {
   thunderAreas?: Area[];
   // Thunder Admin: runs Thunder (Users, view as someone, every area). Check with isThunderAdmin() in lib/org-admin.ts.
   isAdmin?: boolean;
+  // Thunder Family (signed up as a new family): logs in to see their players from registration.
+  isFamily?: boolean;
   isCoach: boolean;
   requestPending: boolean;
   hasThunderRole: boolean;
@@ -115,8 +118,9 @@ function hasThunderRole(u: UserRow): boolean {
 // Roles (from org_roles) and team staff places, read fresh on every request.
 const ON_TEAM = `exists (select 1 from team_staff ts where ts.coach_id = u.coach_id) as on_team,
   has_role(u.coach_id, 'thunder', 'Coach') as thunder_coach,
-  has_role(u.coach_id, 'thunder', 'Director') as thunder_director,
-  has_role(u.coach_id, 'thunder', 'Admin') as thunder_admin,
+  acts_as(u.coach_id, 'thunder', 'Director') as thunder_director,
+  acts_as(u.coach_id, 'thunder', 'Admin') as thunder_admin,
+  has_role(u.coach_id, 'thunder', 'Family') as thunder_family,
   array(select a.area from director_areas a where a.coach_id = u.coach_id and a.org = 'thunder') as thunder_areas,
   exists (select 1 from org_roles r where r.coach_id = u.coach_id and r.role <> 'Request') as any_role,
   exists (select 1 from org_roles r where r.coach_id = u.coach_id and r.role = 'Request') as any_request`;
@@ -172,11 +176,10 @@ async function issueCode(
   }
 
   // Only the newest code for a purpose works.
-  await q.query("update email_codes set expires_at = $3 where cell = $1 and purpose = $2 and used_at is null and expires_at > $3", [
-    cell,
-    purpose,
-    now,
-  ]);
+  await q.query(
+    "update email_codes set expires_at = $3 where cell = $1 and purpose = $2 and used_at is null and expires_at > $3",
+    [cell, purpose, now],
+  );
 
   const code = deps.devFixedCode ?? newCode();
   await q.query(
@@ -303,6 +306,13 @@ const CAN_VIEW_AS = (admin: string, target: string) => `exists (
     and (exists (select 1 from org_roles t where t.coach_id = ${target} and t.org = a.org)
          or (a.org = 'thunder' and exists (select 1 from team_staff ts where ts.coach_id = ${target}))))`;
 
+// Can this Admin see this person (View as, their dashboard)? Anyone in an organization they're an Admin of.
+export async function adminCanSee(q: Pick<Queryable, "query">, adminId: string, targetId: string): Promise<boolean> {
+  if (!/^\d{7}$/.test(targetId)) return false;
+  const r = await q.query<{ ok: boolean }>(`select ${CAN_VIEW_AS("$1", "$2")} as ok`, [adminId, targetId]);
+  return r.rows[0].ok;
+}
+
 // Admins: view the app as another user in their organization (view only), or stop.
 export async function setActingAs(
   deps: Deps,
@@ -324,10 +334,10 @@ export async function setActingAs(
   }
   if (!me.director) return { ok: false, message: "Only an Admin can view the app as someone else." };
   if (!/^\d{7}$/.test(coachId) || coachId === me.coach_id) return { ok: false, message: "Pick someone else." };
-  const t = await deps.pool.query<{ ok: boolean }>(`select ${CAN_VIEW_AS("$2", "$1")} as ok from users where coach_id = $1 and active`, [
-    coachId,
-    me.coach_id,
-  ]);
+  const t = await deps.pool.query<{ ok: boolean }>(
+    `select ${CAN_VIEW_AS("$2", "$1")} as ok from users where coach_id = $1 and active`,
+    [coachId, me.coach_id],
+  );
   if (!t.rows[0]) return { ok: false, message: "Only active users can be viewed." };
   if (!t.rows[0].ok) return { ok: false, message: "You can only view people in your organization." };
   await deps.pool.query("update sessions set acting_as = $2 where token_hash = $1", [sha256(token), coachId]);
@@ -342,6 +352,7 @@ function toSessionUser(u: UserRow): SessionUser {
     isDirector: u.thunder_director,
     thunderAreas: !u.thunder_director ? [] : u.thunder_admin ? AREAS.map((a) => a.key) : u.thunder_areas,
     isAdmin: u.thunder_director && u.thunder_admin,
+    isFamily: u.thunder_family,
     isCoach: u.thunder_coach,
     requestPending: pending(u),
     hasThunderRole: hasThunderRole(u),
@@ -390,7 +401,13 @@ export async function sendStarterCode(deps: Deps, cellInput: unknown, emailInput
 }
 
 // Set Your PIN: code + new PIN twice. Saves the PIN and the (now verified) email, then logs in.
-export async function completeStarter(deps: Deps, cellInput: unknown, code: unknown, pin1: unknown, pin2: unknown): Promise<Step> {
+export async function completeStarter(
+  deps: Deps,
+  cellInput: unknown,
+  code: unknown,
+  pin1: unknown,
+  pin2: unknown,
+): Promise<Step> {
   const cell = typeof cellInput === "string" ? normalizeCell(cellInput) : null;
   if (!cell) return err(MSG.badPhone);
   const pinError = newPinError(pin1, pin2);
@@ -433,7 +450,8 @@ export async function submitPin(deps: Deps, cellInput: unknown, pin: unknown): P
     }
     const wrong = await checkPin(deps, q, user, pin);
     if (wrong) return wrong;
-    if (!deps.pinOnly && !isVerified(user)) return { step: "verifyChoice", maskedEmail: user.email ? maskEmail(user.email) : null };
+    if (!deps.pinOnly && !isVerified(user))
+      return { step: "verifyChoice", maskedEmail: user.email ? maskEmail(user.email) : null };
     return startSession(deps, q, user.coach_id);
   });
   return result === "starter" ? lookupPhone(deps, cell) : result;
@@ -523,12 +541,70 @@ export async function completeReset(deps: Deps, cellInput: unknown, code: unknow
 }
 
 // Organizations with a join link (SPEC.md section 13). Signing up there skips the Thunder request.
-const JOIN_ORGS = ["scenic-city"];
+// Sign-ups that log straight in, with no Thunder request: the CourtCaptain login, registering a new organization, or
+// any organization's login or join link other than Thunder's. Thunder's own login asks why they're joining instead.
+async function joinTarget(q: Pick<Queryable, "query">, join: unknown): Promise<string | null> {
+  if (join === "courtcaptain" || join === "new-org") return join;
+  if (typeof join !== "string" || join === "thunder" || !/^[a-z0-9-]{2,40}$/.test(join)) return null;
+  return (await q.query("select 1 from organizations where slug = $1", [join])).rowCount ? join : null;
+}
 
 // Create Account: check everything, then email a code. Nothing is saved until the code checks out.
+// Why someone is joining Thunder (SPEC.md section 15). New families get the Family role at once; team staff and other
+// sign-ups become a request with their reason, for an Admin to approve.
+export type JoinReason =
+  | { purpose: "family" }
+  | {
+      purpose: "staff";
+      staffRole: "HeadCoach" | "AsstCoach" | "Manager" | "TeamParent";
+      teamId: string | null;
+      teamText: string | null;
+    }
+  | { purpose: "other"; notes: string };
+export type JoinInput = { purpose?: unknown; staffRole?: unknown; teamId?: unknown; teamText?: unknown; notes?: unknown };
+
+const STAFF_ROLES = ["HeadCoach", "AsstCoach", "Manager", "TeamParent"] as const;
+// Short free text: trimmed, single-spaced, never starting like a formula.
+const cleanText = (v: unknown, max: number) => {
+  if (typeof v !== "string") return null;
+  const t = v.trim().replace(/\s+/g, " ");
+  return t.length >= 2 && t.length <= max && !/^[=+\-@]/.test(t) ? t : null;
+};
+
+async function cleanJoinReason(q: Queryable, input: JoinInput): Promise<JoinReason | string> {
+  if (input.purpose === "family") return { purpose: "family" };
+  if (input.purpose === "other") {
+    const notes = cleanText(input.notes, 300);
+    return notes ? { purpose: "other", notes } : "Tell us a little about why you're joining.";
+  }
+  if (input.purpose !== "staff") return "Choose why you're joining.";
+  const staffRole = STAFF_ROLES.find((r) => r === input.staffRole);
+  if (!staffRole) return "Choose your role on the team.";
+  if (typeof input.teamId === "string" && /^\d{1,18}$/.test(input.teamId)) {
+    const t = await q.query("select 1 from teams where id = $1", [input.teamId]);
+    if (!t.rowCount) return "Choose your team.";
+    return { purpose: "staff", staffRole, teamId: input.teamId, teamText: null };
+  }
+  const teamText = cleanText(input.teamText, 60);
+  if (!teamText) return "Choose your team, or type it in.";
+  // A typed name that is a Thunder team (any capitals) counts as picking it.
+  const named = await q.query<{ id: string }>("select id::text from teams where lower(name) = lower($1)", [teamText]);
+  return named.rows[0]
+    ? { purpose: "staff", staffRole, teamId: named.rows[0].id, teamText: null }
+    : { purpose: "staff", staffRole, teamId: null, teamText };
+}
+
 export async function startSignup(
   deps: Deps,
-  input: { cell: unknown; firstName: unknown; lastName: unknown; email: unknown; pin1: unknown; pin2: unknown; join?: unknown },
+  input: {
+    cell: unknown;
+    firstName: unknown;
+    lastName: unknown;
+    email: unknown;
+    pin1: unknown;
+    pin2: unknown;
+    join?: unknown;
+  } & JoinInput,
 ): Promise<Step> {
   const cell = typeof input.cell === "string" ? normalizeCell(input.cell) : null;
   if (!cell) return err(MSG.badPhone);
@@ -539,13 +615,16 @@ export async function startSignup(
   if (!email) return err(MSG.badEmail);
   const pinError = newPinError(input.pin1, input.pin2);
   if (pinError) return err(pinError);
-  const join = JOIN_ORGS.includes(input.join as string) ? (input.join as string) : null;
+  const join = await joinTarget(deps.pool, input.join);
+  // Thunder sign-ups say why they're joining; a join link (another organization) asks on its own page.
+  const reason = join ? null : await cleanJoinReason(deps.pool, input);
+  if (typeof reason === "string") return err(reason);
   const pinHash = await hashPin(input.pin1 as string);
   return withTx(deps.pool, async (q) => {
     await lockCell(q, cell);
     const clash = await q.query("select 1 from users where cell = $1 or coach_id = $2", [cell, coachIdFromCell(cell)]);
     if (clash.rows.length) return err(MSG.taken);
-    const fail = await issueCode(deps, q, cell, "signup", email, { firstName, lastName, pinHash, join });
+    const fail = await issueCode(deps, q, cell, "signup", email, { firstName, lastName, pinHash, join, reason });
     return fail ?? { step: "signupCode", maskedEmail: maskEmail(email) };
   });
 }
@@ -557,7 +636,13 @@ export async function completeSignup(deps: Deps, cellInput: unknown, code: unkno
     await lockCell(q, cell);
     const c = await checkCode(deps, q, cell, "signup", code);
     if (!c.ok) return c.step;
-    const { firstName, lastName, pinHash, join } = c.row.payload as { firstName: string; lastName: string; pinHash: string; join?: string | null };
+    const { firstName, lastName, pinHash, join, reason } = c.row.payload as {
+      firstName: string;
+      lastName: string;
+      pinHash: string;
+      join?: string | null;
+      reason?: JoinReason | null;
+    };
     const now = deps.now();
     const ins = await q.query(
       `insert into users (coach_id, first_name, last_name, active, pin_hash, cell, email, verified_email, created_at, updated_at)
@@ -573,7 +658,29 @@ export async function completeSignup(deps: Deps, cellInput: unknown, code: unkno
       await q.query("select set_role($1, 'thunder', 'Director', true, 'testing mode')", [coachIdFromCell(cell)]);
       return startSession(deps, q, coachIdFromCell(cell));
     }
-    await q.query("select set_role($1, 'thunder', 'Request', true, null)", [coachIdFromCell(cell)]);
+    const coachId = coachIdFromCell(cell);
+    // A new family is in at once; team staff and other sign-ups wait for an Admin, with their reason.
+    if (reason?.purpose === "family") {
+      await q.query("select set_role($1, 'thunder', 'Family', true, 'sign-up')", [coachId]);
+      return startSession(deps, q, coachId);
+    }
+    await q.query("select set_role($1, 'thunder', 'Request', true, null)", [coachId]);
+    if (reason)
+      await q.query(
+        `insert into join_reasons (coach_id, purpose, staff_role, team_id, team_text, notes, created_at)
+         values ($1, $2, $3, $4, $5, $6, $7)
+         on conflict (coach_id) do update set purpose = excluded.purpose, staff_role = excluded.staff_role, team_id = excluded.team_id,
+           team_text = excluded.team_text, notes = excluded.notes, created_at = excluded.created_at`,
+        [
+          coachId,
+          reason.purpose,
+          reason.purpose === "staff" ? reason.staffRole : null,
+          reason.purpose === "staff" ? reason.teamId : null,
+          reason.purpose === "staff" ? reason.teamText : null,
+          reason.purpose === "other" ? reason.notes : null,
+          now,
+        ],
+      );
     return { step: "done", message: MSG.requested };
   });
 }

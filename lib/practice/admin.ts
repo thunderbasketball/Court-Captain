@@ -81,7 +81,7 @@ export async function addGym(
       throw new UserError("Each court needs a different name.");
     return withTx(deps.pool, async (q) => {
       // A gym that was removed but kept for its past practices (any capitals) comes back with these courts.
-      const old = await q.query<{ id: string }>("select id::text from gyms where lower(name) = lower($1) and not active for update", [name]);
+      const old = await q.query<{ id: string }>("select id::text from gyms where org = 'thunder' and lower(name) = lower($1) and not active for update", [name]);
       if (old.rows[0]) {
         await q.query("update gyms set active = true where id = $1", [old.rows[0].id]);
         await q.query("update courts set active = (name = any($2::text[])) where gym_id = $1", [old.rows[0].id, courts]);
@@ -91,7 +91,7 @@ export async function addGym(
         ]);
         return { id: old.rows[0].id };
       }
-      const g = await q.query<{ id: string }>("insert into gyms (name) values ($1) on conflict (name) do nothing returning id::text", [
+      const g = await q.query<{ id: string }>("insert into gyms (name) values ($1) on conflict (org, name) do nothing returning id::text", [
         name,
       ]);
       if (!g.rows[0]) throw new UserError(`There's already a gym named "${name}".`);
@@ -329,7 +329,7 @@ export async function blackoutDates(
       if (gymId)
         await q.query(
           `insert into blackouts (day, gym_id, minute_of_day, reason, created_by, rule_id)
-           select b.day, g.id, b.minute_of_day, b.reason, b.created_by, b.rule_id from blackouts b cross join gyms g
+           select b.day, g.id, b.minute_of_day, b.reason, b.created_by, b.rule_id from blackouts b cross join (select id from gyms where org = 'thunder') g
            where b.gym_id is null and g.id <> $3 and b.day between $1 and $2 and ($4::int is null or b.minute_of_day = $4 or b.minute_of_day is null)
            on conflict (day, coalesce(gym_id, 0), coalesce(minute_of_day, -1)) do nothing`,
           [range.from, range.to, gymId, minute],

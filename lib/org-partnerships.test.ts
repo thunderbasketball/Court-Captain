@@ -66,9 +66,14 @@ describe("organizations partnering to host games", () => {
   });
 
   it("Scenic City approves: Thunder becomes a hosting partner linked to its organization (its old partner record reused)", async () => {
-    await db.pool.query(
-      "insert into partners (name, kind, hosts_games, registers_teams, approved, created_by) values ('Thunder Basketball', 'Organization', false, true, false, 'x')",
+    const old = await db.pool.query<{ id: string }>(
+      "insert into partners (name, kind, hosts_games, registers_teams, approved, created_by) values ('Thunder Basketball', 'Organization', false, true, false, 'x') returning id::text",
     );
+    // Earlier, someone was a named contact for it (with the Partner role).
+    await db.pool.query("insert into partner_contacts (partner_id, coach_id, added_by) values ($1, '5550002', 'x')", [
+      old.rows[0].id,
+    ]);
+    await grant(db.pool, "5550002 scenic-city Partner");
     await requestHosting(deps(), tee, "thunder", "scenic-city");
     const [req] = (await hostingRequests(deps(), sue, "scenic-city"))!;
     expect(req).toMatchObject({ hostOrg: "thunder", name: "Thunder Basketball", status: "pending", requestedBy: "Tee X" });
@@ -82,6 +87,9 @@ describe("organizations partnering to host games", () => {
       { name: "Thunder Basketball", org_slug: "thunder", hosts_games: true, registers_teams: true, approved: true },
     ]);
     expect((await hostingOffers(deps(), tee, "thunder"))![0]).toMatchObject({ status: "approved", decidedBy: "Sue X" });
+    // The organization runs it now: the old contact comes off, and loses Partner (it was their only partner).
+    expect((await db.pool.query("select count(*)::int n from partner_contacts")).rows[0].n).toBe(0);
+    expect((await db.pool.query("select has_role('5550002', 'scenic-city', 'Partner') as p")).rows[0].p).toBe(false);
   });
 
   it("a declined request can be sent again; approving with no partner record makes one", async () => {

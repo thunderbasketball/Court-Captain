@@ -53,7 +53,11 @@ export default function GymAvailability({
       const w = windows(d.id);
       if (!w.length) return { tappable: false, tone: "game", note: "Game day" };
       const same = w.every((x) => x.starts === w[0].starts && x.ends === w[0].ends);
-      return { tappable: false, tone: "open", note: same && w.length === picked.length ? `${short(w[0].starts)}–${short(w[0].ends)}` : `${w.length} open` };
+      return {
+        tappable: false,
+        tone: "open",
+        note: same && w.length === picked.length ? `${short(w[0].starts)}–${short(w[0].ends)}` : `${w.length} open`,
+      };
     }
     if (selected.includes(d.id)) return { tappable: true, tone: "selected", note: "✓" };
     const w = windows(d.id);
@@ -73,7 +77,12 @@ export default function GymAvailability({
   const send = (clear: boolean) =>
     start(async () => {
       setError(null);
-      const r = await setHours(partnerId, { courtIds: picked, dayIds: selected, starts: clear ? null : starts, ends: clear ? null : ends });
+      const r = await setHours(partnerId, {
+        courtIds: picked,
+        dayIds: selected,
+        starts: clear ? null : starts,
+        ends: clear ? null : ends,
+      });
       if (!r.ok) return setError(r.message);
       setSelected([]);
       setDone(clear ? "Hours deleted." : `Saved: ${timeLabel(starts)}–${timeLabel(ends)}.`);
@@ -125,46 +134,61 @@ export default function GymAvailability({
 
       {editable && (
         <>
-      <div className="grid grid-cols-2 gap-3">
-        <label className="block">
-          <span className={fieldLabel}>Start</span>
-          <select className={inputCls} value={starts} onChange={(e) => setStarts(e.target.value)}>
-            {TIMES.slice(0, -1).map((t) => (
-              <option key={t} value={t}>
-                {timeLabel(t)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          <span className={fieldLabel}>End</span>
-          <select className={inputCls} value={ends} onChange={(e) => setEnds(e.target.value)}>
-            {TIMES.slice(1).map((t) => (
-              <option key={t} value={t} disabled={t <= starts}>
-                {timeLabel(t)}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className={fieldLabel}>Start</span>
+              <select className={inputCls} value={starts} onChange={(e) => setStarts(e.target.value)}>
+                {TIMES.slice(0, -1).map((t) => (
+                  <option key={t} value={t}>
+                    {timeLabel(t)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className={fieldLabel}>End</span>
+              <select className={inputCls} value={ends} onChange={(e) => setEnds(e.target.value)}>
+                {TIMES.slice(1).map((t) => (
+                  <option key={t} value={t} disabled={t <= starts}>
+                    {timeLabel(t)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
 
-      {error && <Alert tone="red">{error}</Alert>}
-      <button type="button" className={primaryBtn} disabled={busy || !selected.length || !picked.length || ends <= starts} onClick={() => send(false)}>
-        {busy ? "Saving…" : selected.length ? `Submit ${selected.length} ${selected.length === 1 ? "day" : "days"}` : "Tap game days above"}
-      </button>
-      {selected.length > 0 && (
-        <button
-          type="button"
-          disabled={busy}
-          className="w-full rounded-xl px-4 py-2 text-sm font-medium text-red-600 ring-1 ring-red-600/20 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10"
-          onClick={async () => {
-            if (await confirm({ title: "Delete hours?", message: `Removes the hours on the ${selected.length} selected day(s).`, confirmLabel: "Delete" }))
-              send(true);
-          }}
-        >
-          Delete hours on selected days
-        </button>
-      )}
+          {error && <Alert tone="red">{error}</Alert>}
+          <button
+            type="button"
+            className={primaryBtn}
+            disabled={busy || !selected.length || !picked.length || ends <= starts}
+            onClick={() => send(false)}
+          >
+            {busy
+              ? "Saving…"
+              : selected.length
+                ? `Submit ${selected.length} ${selected.length === 1 ? "day" : "days"}`
+                : "Tap game days above"}
+          </button>
+          {selected.length > 0 && (
+            <button
+              type="button"
+              disabled={busy}
+              className="w-full rounded-xl px-4 py-2 text-sm font-medium text-red-600 ring-1 ring-red-600/20 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10"
+              onClick={async () => {
+                if (
+                  await confirm({
+                    title: "Delete hours?",
+                    message: `Removes the hours on the ${selected.length} selected day(s).`,
+                    confirmLabel: "Delete",
+                  })
+                )
+                  send(true);
+              }}
+            >
+              Delete hours on selected days
+            </button>
+          )}
         </>
       )}
       {done && <Toast key={done} message={done} />}

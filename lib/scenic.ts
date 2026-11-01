@@ -43,9 +43,7 @@ export function cleanPartnerName(v: unknown): string | null {
 
 // Approved partners, by name, for the join form.
 export async function partnerOptions(deps: Deps): Promise<PartnerOption[]> {
-  const r = await deps.pool.query<PartnerOption>(
-    "select id::text, name, kind from partners where approved order by lower(name)",
-  );
+  const r = await deps.pool.query<PartnerOption>("select id::text, name, kind from partners where approved order by lower(name)");
   return r.rows;
 }
 
@@ -54,10 +52,16 @@ export async function partnerOptions(deps: Deps): Promise<PartnerOption[]> {
 export type JoinStatus = "member" | "pending" | "none";
 
 export async function joinStatus(deps: Deps, viewer: SessionUser): Promise<JoinStatus> {
-  const r = await deps.pool.query<{ role: string }>("select role from org_roles where coach_id = $1 and org = $2", [viewer.coachId, ORG]);
+  const r = await deps.pool.query<{ role: string }>("select role from org_roles where coach_id = $1 and org = $2", [
+    viewer.coachId,
+    ORG,
+  ]);
   if (r.rows.some((x) => x.role !== "Request")) return "member";
   return r.rows.length ? "pending" : "none";
 }
+
+const PARTNER_RETIRED =
+  "Schools and organizations join as their own organization on CourtCaptain (logo menu → + Create a new organization).";
 
 export type JoinInput = {
   wants: unknown; // "Partner" | "Solo"
@@ -65,16 +69,21 @@ export type JoinInput = {
   newPartner?: { name: unknown; kind: unknown; hostsGames: unknown; registersTeams: unknown };
 };
 
-// Logged in, no Scenic City role yet: ask to join as a Partner (of a partner, maybe a new one) or Solo.
+// Logged in, no Scenic City role yet: ask to join as Solo. (The Partner role is retired: schools and organizations
+// create their own organization on CourtCaptain to host games or register teams.)
 export async function requestJoin(deps: Deps, viewer: SessionUser, input: JoinInput): Promise<Result> {
-  const wants = input.wants === "Partner" || input.wants === "Solo" ? input.wants : null;
-  if (!wants) return { ok: false, message: "Choose Partner or Solo." };
+  if (input.wants === "Partner") return { ok: false, message: PARTNER_RETIRED };
+  const wants = input.wants === "Solo" ? input.wants : null;
+  if (!wants) return { ok: false, message: "Choose Solo." };
   return run(() =>
     withTx(deps.pool, async (q) => {
       await q.query("select pg_advisory_xact_lock(hashtext('user:' || $1))", [viewer.coachId]);
-      const status = await q.query<{ role: string }>("select role from org_roles where coach_id = $1 and org = $2", [viewer.coachId, ORG]);
+      const status = await q.query<{ role: string }>("select role from org_roles where coach_id = $1 and org = $2", [
+        viewer.coachId,
+        ORG,
+      ]);
       if (status.rows.some((x) => x.role !== "Request")) throw new ScenicError("You're already part of Scenic City.");
-      const partnerId = wants === "Partner" ? await choosePartner(q, viewer, input) : null;
+      const partnerId = null; // Solo: no school
       await q.query(
         `insert into access_requests (coach_id, org, wants, partner_id, created_at) values ($1, $2, $3, $4, $5)
          on conflict (coach_id, org) do update set wants = excluded.wants, partner_id = excluded.partner_id, created_at = excluded.created_at`,
@@ -86,31 +95,6 @@ export async function requestJoin(deps: Deps, viewer: SessionUser, input: JoinIn
   );
 }
 
-// An approved partner by id, or a new one (waits for approval). A new name that matches an existing partner uses that one.
-async function choosePartner(q: Queryable, viewer: SessionUser, input: JoinInput): Promise<string> {
-  if (input.newPartner) {
-    const p = input.newPartner;
-    const name = cleanPartnerName(p.name);
-    if (!name) throw new ScenicError("Enter the school or organization's name (letters, numbers, spaces).");
-    if (p.kind !== "School" && p.kind !== "Organization") throw new ScenicError("Choose School or Organization.");
-    const hosts = p.hostsGames === true;
-    const registers = p.registersTeams === true;
-    if (!hosts && !registers) throw new ScenicError("Choose Hosting games, Registering teams, or both.");
-    await q.query("select pg_advisory_xact_lock(hashtext('partner:' || lower($1)))", [name]);
-    const found = await q.query<{ id: string }>("select id::text from partners where lower(name) = lower($1)", [name]);
-    if (found.rows[0]) return found.rows[0].id;
-    const r = await q.query<{ id: string }>(
-      `insert into partners (name, kind, hosts_games, registers_teams, created_by) values ($1, $2, $3, $4, $5) returning id::text`,
-      [name, p.kind, hosts, registers, by(viewer)],
-    );
-    return r.rows[0].id;
-  }
-  const id = typeof input.partnerId === "string" && /^\d{1,18}$/.test(input.partnerId) ? input.partnerId : null;
-  const ok = id && (await q.query("select 1 from partners where id = $1 and approved", [id])).rows[0];
-  if (!ok) throw new ScenicError("Pick your school or organization, or add a new one.");
-  return id;
-}
-
 // ---- Scenic City Users page (Directors) ----
 
 export type ScenicRequest = {
@@ -120,7 +104,14 @@ export type ScenicRequest = {
   cell: string;
   email: string | null;
   wants: "Partner" | "Solo";
-  partner: { id: string; name: string; kind: PartnerKind; hostsGames: boolean; registersTeams: boolean; approved: boolean } | null;
+  partner: {
+    id: string;
+    name: string;
+    kind: PartnerKind;
+    hostsGames: boolean;
+    registersTeams: boolean;
+    approved: boolean;
+  } | null;
   at: Date;
 };
 export type ScenicMember = {
@@ -136,7 +127,10 @@ export type ScenicMember = {
 };
 
 // Requests (oldest first) and everyone holding a Scenic City role (by last name).
-export async function listScenicPeople(deps: Deps, viewer: SessionUser): Promise<{ requests: ScenicRequest[]; members: ScenicMember[] } | null> {
+export async function listScenicPeople(
+  deps: Deps,
+  viewer: SessionUser,
+): Promise<{ requests: ScenicRequest[]; members: ScenicMember[] } | null> {
   if (!(await isOrgAdmin(deps.pool, viewer.coachId, ORG))) return null;
   const [requests, members] = await Promise.all([
     deps.pool.query<ScenicRequest>(
@@ -170,7 +164,9 @@ export async function listScenicPeople(deps: Deps, viewer: SessionUser): Promise
 export async function approveRequest(deps: Deps, viewer: SessionUser, coachId: unknown, as: unknown): Promise<Result> {
   if (!isCoachId(coachId)) return { ok: false, message: "That request no longer exists." };
   if (!SCENIC_ROLES.includes(as as ScenicRole)) return { ok: false, message: "Pick a role." };
-  if (as === "Director") return { ok: false, message: "Approve them as another role; Admins add Directors in the Directors section." };
+  if (as === "Director")
+    return { ok: false, message: "Approve them as another role; Admins add Directors in the Directors section." };
+  if (as === "Partner") return { ok: false, message: PARTNER_RETIRED };
   return run(() =>
     withTx(deps.pool, async (q) => {
       if (!(await isOrgAdmin(q, viewer.coachId, ORG))) throw new ScenicError(directorOnly.message);
@@ -178,18 +174,24 @@ export async function approveRequest(deps: Deps, viewer: SessionUser, coachId: u
         "select partner_id::text from access_requests where coach_id = $1 and org = $2 for update",
         [coachId, ORG],
       );
-      const pending = (await q.query("select 1 from org_roles where coach_id = $1 and org = $2 and role = 'Request'", [coachId, ORG])).rows[0];
+      const pending = (
+        await q.query("select 1 from org_roles where coach_id = $1 and org = $2 and role = 'Request'", [coachId, ORG])
+      ).rows[0];
       if (!r.rows[0] && !pending) throw new ScenicError("That request no longer exists.");
       const partnerId = r.rows[0]?.partner_id ?? null;
       if (as === "Partner" && partnerId) {
         await q.query("update partners set approved = true where id = $1", [partnerId]);
-        await q.query("insert into partner_contacts (partner_id, coach_id, added_by) values ($1, $2, $3) on conflict do nothing", [
-          partnerId,
-          coachId,
-          by(viewer),
-        ]);
+        await q.query(
+          "insert into partner_contacts (partner_id, coach_id, added_by) values ($1, $2, $3) on conflict do nothing",
+          [partnerId, coachId, by(viewer)],
+        );
       }
-      await q.query("select set_role($1, $2, $3, true, $4), set_role($1, $2, 'Request', false, $4)", [coachId, ORG, as, by(viewer)]);
+      await q.query("select set_role($1, $2, $3, true, $4), set_role($1, $2, 'Request', false, $4)", [
+        coachId,
+        ORG,
+        as,
+        by(viewer),
+      ]);
       await q.query("delete from access_requests where coach_id = $1 and org = $2", [coachId, ORG]);
       await removeOrphanPartner(q, partnerId);
       return {};
@@ -235,13 +237,15 @@ export async function setScenicRoles(deps: Deps, viewer: SessionUser, coachId: u
       if (!(await q.query("select 1 from users where coach_id = $1 for update", [coachId])).rows[0])
         throw new ScenicError("That user no longer exists.");
       // Director is left as it is: Admins choose Directors and their areas (lib/org-admin.ts).
+      // Director is Admins' (above); Partner is retired, so it's only ever taken away here.
       for (const role of SCENIC_ROLES)
-        if (role !== "Director") await q.query("select set_role($1, $2, $3, $4, $5)", [coachId, ORG, role, want.has(role), by(viewer)]);
+        if (role === "Partner") await q.query("select set_role($1, $2, 'Partner', false, $3)", [coachId, ORG, by(viewer)]);
+        else if (role !== "Director")
+          await q.query("select set_role($1, $2, $3, $4, $5)", [coachId, ORG, role, want.has(role), by(viewer)]);
       if (want.size) {
         await q.query("select set_role($1, $2, 'Request', false, $3)", [coachId, ORG, by(viewer)]);
         await q.query("delete from access_requests where coach_id = $1 and org = $2", [coachId, ORG]);
       }
-      if (!want.has("Partner")) await q.query("delete from partner_contacts where coach_id = $1", [coachId]);
       return {};
     }),
   );

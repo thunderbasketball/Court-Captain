@@ -6,8 +6,9 @@ import { useState, type ReactNode } from "react";
 // The caller says how each day looks and whether it can be tapped.
 export type DayLook = {
   tappable: boolean;
-  tone: "plain" | "game" | "open" | "selected" | "remove" | "practice" | "inhouse" | "mixed";
+  tone: "plain" | "game" | "bracket" | "open" | "selected" | "remove" | "practice" | "inhouse" | "mixed";
   note?: ReactNode;
+  dot?: boolean; // a small mark in the corner (e.g. a league's game day under another color)
 };
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -15,6 +16,7 @@ const ymd = (y: number, m: number, d: number) => `${y}-${pad(m)}-${pad(d)}`;
 const TONES: Record<DayLook["tone"], string> = {
   plain: "text-zinc-400 dark:text-zinc-600",
   game: "bg-white text-scenic-navy ring-2 ring-scenic-navy/60 dark:bg-zinc-900 dark:text-white dark:ring-white/50",
+  bracket: "bg-violet-50 text-violet-900 ring-2 ring-violet-600/60 dark:bg-violet-500/15 dark:text-violet-200",
   open: "bg-emerald-50 text-emerald-900 ring-2 ring-emerald-600/50 dark:bg-emerald-500/15 dark:text-emerald-200",
   selected: "bg-scenic-navy text-white ring-2 ring-scenic-navy dark:bg-white dark:text-scenic-navy dark:ring-white",
   remove: "bg-red-50 text-red-700 line-through ring-2 ring-red-500/60 dark:bg-red-500/15 dark:text-red-300",
@@ -82,10 +84,13 @@ export default function MonthCalendar({
               aria-pressed={l.tone === "selected" || l.tone === "remove"}
               aria-label={date}
               onClick={() => onTap(date)}
-              className={`flex min-h-12 flex-col items-center justify-start rounded-lg pt-1 text-sm tabular-nums transition-colors ${TONES[l.tone]} ${
+              className={`relative flex min-h-12 flex-col items-center justify-start rounded-lg pt-1 text-sm tabular-nums transition-colors ${TONES[l.tone]} ${
                 date === today ? "font-bold underline" : ""
               } ${l.tappable ? "cursor-pointer" : "cursor-default"}`}
             >
+              {l.dot && (
+                <span aria-hidden className="absolute top-1 right-1 size-1.5 rounded-full bg-scenic-navy dark:bg-white" />
+              )}
               {Number(date.slice(8))}
               {l.note && <span className="mt-0.5 text-[9px] leading-tight font-medium no-underline">{l.note}</span>}
             </button>

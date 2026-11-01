@@ -8,8 +8,8 @@ import { Alert, CloseButton, Toast, dialogCls, useConfirm } from "../../client-u
 import { primaryBtn } from "../../ui";
 
 const ABOUT: Record<ScenicRole, string> = {
-  Director: "Runs Scenic City: programs, partners, users",
-  Partner: "A school or organization's contact",
+  Director: "Runs Scenic City: programs, hosting sites, members",
+  Partner: "Retired",
   Solo: "Registers and manages their own teams",
   Coach: "Coaches a Scenic City team",
 };
@@ -49,7 +49,9 @@ export function RequestButtons({ coachId, name, wants }: { coachId: string; name
           disabled={busy}
           className={`${smallBtn} font-medium text-zinc-700 ring-1 ring-zinc-950/10 dark:text-zinc-200 dark:ring-white/15`}
           onClick={async () => {
-            if (await confirm({ title: "Deny request?", message: `${name} won't get access to Scenic City.`, confirmLabel: "Deny" }))
+            if (
+              await confirm({ title: "Deny request?", message: `${name} won't get access to Scenic City.`, confirmLabel: "Deny" })
+            )
               act(() => denyRequest(coachId), `${name}'s request denied.`);
           }}
         >
@@ -77,7 +79,14 @@ export function EditScenicRoles({ coachId, name, roles }: { coachId: string; nam
   const save = () =>
     start(async () => {
       setError(null);
-      if (!on.length && !(await confirm({ title: "Remove from Scenic City?", message: `${name} will have no Scenic City role.`, confirmLabel: "Remove" })))
+      if (
+        !on.length &&
+        !(await confirm({
+          title: "Remove from Scenic City?",
+          message: `${name} will have no Scenic City role.`,
+          confirmLabel: "Remove",
+        }))
+      )
         return;
       const r = await setScenicRoles(coachId, on);
       if (r.ok) {
@@ -115,7 +124,7 @@ export function EditScenicRoles({ coachId, name, roles }: { coachId: string; nam
             <CloseButton onClick={close} />
           </div>
           <div className="divide-y divide-zinc-100 dark:divide-white/5">
-            {SCENIC_ROLES.filter((r) => r !== "Director").map((r) => {
+            {SCENIC_ROLES.filter((r) => r !== "Director" && r !== "Partner").map((r) => {
               return (
                 <label key={r} className="flex items-center gap-3 py-3">
                   <input
@@ -133,9 +142,6 @@ export function EditScenicRoles({ coachId, name, roles }: { coachId: string; nam
             })}
           </div>
           <p className="text-xs text-zinc-500">Directors are added in the Directors section of this page.</p>
-          {on.includes("Partner") || !roles.includes("Partner") ? null : (
-            <p className="text-xs text-zinc-500">Removing Partner also takes them off their schools/organizations.</p>
-          )}
           {error && <Alert tone="red">{error}</Alert>}
           <button type="submit" className={primaryBtn} disabled={busy}>
             {busy ? "Saving…" : "Save"}

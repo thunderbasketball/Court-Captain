@@ -8,6 +8,7 @@ import { db } from "@/lib/db";
 import { gradesText } from "@/lib/event-names";
 import { listTeams, type TeamListItem } from "@/lib/teams";
 import AppHeader from "../AppHeader";
+import OrgGear from "../OrgGear";
 import { Chip, GroupCard, PageTitle, Stats } from "../ui";
 import { ContactChip, GroupTextButton } from "../Contacts";
 import ChatLink from "../ChatLink";
@@ -51,6 +52,8 @@ async function Teams() {
           >
             + New team
           </Link>
+          {/* Thunder's features and logo (Admins; checked inside) */}
+          <OrgGear org="thunder" coachId={user.coachId} />
         </div>
         <div className="mb-4 flex items-center gap-2">
           <GroupTextButton cells={coachCells} label="Text all coaches" />

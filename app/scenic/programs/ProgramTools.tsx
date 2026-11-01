@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   addDivision,
   addPool,
+  copyDivisions,
   deleteProgram,
   moveTeam,
   registerTeam,
@@ -12,10 +13,13 @@ import {
   removePool,
   saveProgram,
   setPaid,
+  setTeamOff,
   withdrawTeam,
 } from "../actions";
-import { Alert, CloseButton, Toast, dialogCls, useConfirm } from "../../client-ui";
+import { Alert, CloseButton, PopUp, Toast, dialogCls, useConfirm } from "../../client-ui";
 import { fieldLabel, inputCls, pillCls } from "../../ui";
+import { REG_OPTIONS, type ProgramOption } from "@/lib/program-options";
+import RegisterChoices from "./RegisterChoices";
 
 const KINDS = ["League", "Circuit", "Tournament"] as const;
 const GRADES = Array.from({ length: 13 }, (_, g) => g);
@@ -33,7 +37,19 @@ export type ProgramFields = {
   regOpens: string;
   regCloses: string;
   feeCents: number | null;
+  options: ProgramOption[];
 };
+
+const dollars = (c: number | null) => (c === null ? "" : (c / 100).toFixed(2));
+// The options form: each Registration Option on or off, with its fee (text, dollars).
+type OptionsForm = Record<string, { on: boolean; fee: string }>;
+const optionsForm = (list: ProgramOption[]): OptionsForm =>
+  Object.fromEntries(
+    REG_OPTIONS.map((o) => {
+      const have = list.find((x) => x.kind === o.key);
+      return [o.key, { on: !!have, fee: dollars(have?.feeCents ?? null) }];
+    }),
+  );
 
 // Directors of Programs: new program, or edit its details. Divisions are set up on the program page.
 export function ProgramEditor({ program }: { program?: ProgramFields }) {
@@ -42,9 +58,10 @@ export function ProgramEditor({ program }: { program?: ProgramFields }) {
   const close = () => dialog.current?.close();
   const start0 = () =>
     program
-      ? { ...program, fee: program.feeCents === null ? "" : (program.feeCents / 100).toFixed(2) }
+      ? { ...program, fee: dollars(program.feeCents) }
       : { kind: "League", name: "", startsOn: "", endsOn: "", regOpens: "", regCloses: "", fee: "" };
   const [f, setF] = useState(start0);
+  const [opts, setOpts] = useState(() => optionsForm(program?.options ?? [{ kind: "all_season", feeCents: null }]));
   const [error, setError] = useState<string | null>(null);
   const [busy, start] = useTransition();
   const set = (k: "name" | "startsOn" | "endsOn" | "regOpens" | "regCloses" | "fee") => (e: { target: { value: string } }) =>
@@ -53,7 +70,8 @@ export function ProgramEditor({ program }: { program?: ProgramFields }) {
   const save = () =>
     start(async () => {
       setError(null);
-      const r = await saveProgram(program?.id ?? null, f);
+      const options = REG_OPTIONS.filter((o) => opts[o.key].on).map((o) => ({ kind: o.key, fee: opts[o.key].fee }));
+      const r = await saveProgram(program?.id ?? null, { ...f, options });
       if (!r.ok) return setError(r.message);
       close();
       if (program) router.refresh();
@@ -66,6 +84,7 @@ export function ProgramEditor({ program }: { program?: ProgramFields }) {
         type="button"
         onClick={() => {
           setF(start0());
+          setOpts(optionsForm(program?.options ?? [{ kind: "all_season", feeCents: null }]));
           setError(null);
           dialog.current?.showModal();
         }}
@@ -124,10 +143,49 @@ export function ProgramEditor({ program }: { program?: ProgramFields }) {
               <input type="date" className={inputCls} value={f.regCloses} onChange={set("regCloses")} required />
             </label>
           </div>
-          <label className="block">
-            <span className={fieldLabel}>Fee per team (optional)</span>
-            <input className={inputCls} value={f.fee} onChange={set("fee")} inputMode="decimal" placeholder="150.00" />
-          </label>
+          {f.kind === "League" ? (
+            <fieldset>
+              <legend className={fieldLabel}>Registration Options</legend>
+              <p className="-mt-1 mb-2 text-xs text-zinc-500">
+                A team checks the ones it wants when it registers. GG = games guaranteed that day.
+              </p>
+              <div className="space-y-2">
+                {REG_OPTIONS.map((o) => (
+                  <div key={o.key} className="flex items-center gap-3 rounded-xl p-2 ring-1 ring-zinc-950/5 dark:ring-white/10">
+                    <label className="flex min-w-0 flex-1 items-start gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 size-4"
+                        checked={opts[o.key].on}
+                        onChange={(e) => setOpts({ ...opts, [o.key]: { ...opts[o.key], on: e.target.checked } })}
+                      />
+                      <span>
+                        <span className="font-medium">{o.name}</span>
+                        <span className="block text-xs text-zinc-500">{o.about}</span>
+                      </span>
+                    </label>
+                    {opts[o.key].on && (
+                      <label className="w-28 shrink-0">
+                        <span className="sr-only">{o.name} fee</span>
+                        <input
+                          className={inputCls}
+                          value={opts[o.key].fee}
+                          onChange={(e) => setOpts({ ...opts, [o.key]: { ...opts[o.key], fee: e.target.value } })}
+                          inputMode="decimal"
+                          placeholder={o.perDate ? "$ / date" : "$ / team"}
+                        />
+                      </label>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </fieldset>
+          ) : (
+            <label className="block">
+              <span className={fieldLabel}>Fee per team (optional)</span>
+              <input className={inputCls} value={f.fee} onChange={set("fee")} inputMode="decimal" placeholder="150.00" />
+            </label>
+          )}
           {error && <Alert tone="red">{error}</Alert>}
           <button type="submit" disabled={busy} className={`${navyBtn} w-full py-2.5`}>
             {program ? "Save" : "Create program"}
@@ -168,12 +226,15 @@ export function DeleteProgram({ id, name, teams }: { id: string; name: string; t
 }
 
 // Pick one of your teams and register it; it shows which division it joins.
+// Register one of your teams: pick it; for a League, then pick ALL Season and/or Single Day dates.
 export function RegisterTeam({
   programId,
   teams,
+  league,
 }: {
   programId: string;
   teams: { teamId: string; name: string; division: string }[];
+  league: { options: ProgramOption[]; gameDates: string[]; today: string } | null;
 }) {
   const router = useRouter();
   const [pick, setPick] = useState("");
@@ -181,6 +242,39 @@ export function RegisterTeam({
   const [done, setDone] = useState<string | null>(null);
   const [busy, start] = useTransition();
   const chosen = teams.find((t) => t.teamId === pick);
+  if (league)
+    return (
+      <div className="grid gap-3">
+        <select className={`${inputCls} py-2`} value={pick} onChange={(e) => setPick(e.target.value)}>
+          <option value="" disabled>
+            Pick one of your teams…
+          </option>
+          {teams.map((t) => (
+            <option key={t.teamId} value={t.teamId}>
+              {t.name} → {t.division}
+            </option>
+          ))}
+        </select>
+        {chosen && (
+          <RegisterChoices
+            key={chosen.teamId}
+            options={league.options}
+            gameDates={league.gameDates}
+            today={league.today}
+            entry={null}
+            save={async (choice) => {
+              const r = await registerTeam(programId, chosen.teamId, choice);
+              if (!r.ok) return r;
+              setDone(`${chosen.name} is in ${r.division}.`);
+              setPick("");
+              router.refresh();
+              return { ok: true as const };
+            }}
+          />
+        )}
+        {done && <Toast key={done} message={done} />}
+      </div>
+    );
   return (
     <form
       className="grid gap-2"
@@ -214,6 +308,58 @@ export function RegisterTeam({
       {error && <p className="text-sm text-red-600">{error}</p>}
       {done && <Toast key={done} message={done} />}
     </form>
+  );
+}
+
+// Admins and Directors of Scheduling: take a team out of a Game Day, the Brackets or the whole program (asks first), or
+// restore it. It stays listed, crossed out.
+export function TeamOffButton({
+  programId,
+  teamId,
+  name,
+  what,
+  label,
+  out,
+}: {
+  programId: string;
+  teamId: string;
+  name: string;
+  what: string; // a date, "brackets" or "program"
+  label: string; // "Dec 5", "the Brackets", "the program"
+  out: boolean; // taken out now
+}) {
+  const router = useRouter();
+  const [busy, start] = useTransition();
+  const [msg, setMsg] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
+  return (
+    <>
+      <button
+        type="button"
+        disabled={busy}
+        className={`${smallBtn} ${out ? "text-emerald-700 ring-emerald-600/40 dark:text-emerald-300" : "text-red-600 ring-red-600/30"}`}
+        onClick={async () => {
+          if (
+            !out &&
+            !(await confirm({
+              title: `Take ${name} out of ${label}?`,
+              message: "They stay listed (crossed out). You can restore them.",
+              confirmLabel: "Take out",
+            }))
+          )
+            return;
+          start(async () => {
+            const r = await setTeamOff(programId, teamId, what, !out);
+            setMsg(r.ok ? `${name} ${out ? "restored to" : "taken out of"} ${label}.` : r.message);
+            if (r.ok) router.refresh();
+          });
+        }}
+      >
+        {out ? "Restore" : "Remove"}
+      </button>
+      {msg && <Toast key={msg} message={msg} />}
+      {confirmDialog}
+    </>
   );
 }
 
@@ -284,11 +430,35 @@ export function WithdrawTeam({ programId, teamId, name }: { programId: string; t
 
 // Directors of Programs: add a division (gender, grades from–to, and its levels). Each grade gets a group per level
 // (e.g. K REC, 2nd COMP), each with Pool A.
-export function AddDivision({ programId }: { programId: string }) {
+// `others`: programs with divisions to copy from.
+export function AddDivision({
+  programId,
+  others,
+}: {
+  programId: string;
+  others: { id: string; name: string; divisions: number }[];
+}) {
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const close = () => dialog.current?.close();
   const [f, setF] = useState({ gender: "", from: "", to: "", levels: [] as string[] });
+  // The picker (a pop-up over this one): tap a program to copy its divisions.
+  const copy = (fromId: string, closePicker: () => void) =>
+    start(async () => {
+      setError(null);
+      closePicker();
+      const r = await copyDivisions(programId, fromId);
+      if (!r.ok) return setError(r.message);
+      setDone(
+        [
+          r.copied.length ? `Copied ${r.copied.join(", ")}.` : "Nothing copied.",
+          r.skipped.length ? `Skipped (overlaps a division here): ${r.skipped.join(", ")}.` : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
+      router.refresh();
+    });
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [busy, start] = useTransition();
@@ -329,6 +499,34 @@ export function AddDivision({ programId }: { programId: string }) {
             <h2 className="text-lg font-semibold">Add a division</h2>
             <CloseButton onClick={close} />
           </div>
+          {others.length > 0 && (
+            <PopUp
+              label="Copy from another program"
+              title="Copy divisions from…"
+              className={`${smallBtn} justify-self-start px-4 py-2 text-sm text-scenic-navy ring-scenic-navy/30 dark:text-zinc-200 dark:ring-white/20`}
+              note="Copies its divisions, grade groups and pools (no teams). Divisions that overlap ones here are skipped."
+            >
+              {(closePicker) => (
+                <ul className="divide-y divide-zinc-100 dark:divide-white/5">
+                  {others.map((o) => (
+                    <li key={o.id}>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => copy(o.id, closePicker)}
+                        className="flex w-full items-center justify-between gap-3 py-3 text-left text-sm hover:text-scenic-navy disabled:opacity-50"
+                      >
+                        <span className="font-medium">{o.name}</span>
+                        <span className="shrink-0 text-zinc-500">
+                          {o.divisions} division{o.divisions === 1 ? "" : "s"} →
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </PopUp>
+          )}
           <p className="text-sm text-zinc-500">
             A division is a gender and a group of grades (e.g. Boys K–1st). Each grade gets a group for each level you pick, each
             with Pool A. A registering team goes to the smallest pool of its grade and level (a 3rd/4th team plays as 4th).

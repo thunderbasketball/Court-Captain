@@ -1,10 +1,18 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import OrgLogo from "./OrgLogo";
 
-// The logo next to Log out, for people in more than one organization: tap it, pick an organization.
-// /switch checks on the server that they still have a role there.
-export default function OrgSwitcher({ current, orgs }: { current: string; orgs: { slug: string; name: string; logo: string }[] }) {
+// The logo next to Log out, for anyone in an organization: tap it, pick an organization (/switch checks on the server that
+// they still have a role there), open their dashboard, or create a new organization (they become its Owner).
+export default function OrgSwitcher({
+  current,
+  orgs,
+}: {
+  current: string;
+  orgs: { slug: string; name: string; logo: string | null; color?: string }[];
+}) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const here = orgs.find((o) => o.slug === current) ?? orgs[0];
@@ -32,8 +40,7 @@ export default function OrgSwitcher({ current, orgs }: { current: string; orgs: 
         aria-label={`${here.name}. Switch organization`}
         className="flex items-center gap-0.5 rounded-full p-0.5 ring-1 ring-zinc-950/10 hover:bg-zinc-100 dark:ring-white/15 dark:hover:bg-zinc-800"
       >
-        {/* eslint-disable-next-line @next/next/no-img-element -- tiny logo, already sized */}
-        <img src={here.logo} alt="" className="size-8 rounded-full object-contain" />
+        <OrgLogo src={here.logo} name={here.name} color={here.color} className="size-8 rounded-full" />
         <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden className="mr-1 size-3.5 text-zinc-500">
           <path d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" />
         </svg>
@@ -54,12 +61,25 @@ export default function OrgSwitcher({ current, orgs }: { current: string; orgs: 
                 o.slug === current ? "bg-zinc-100 dark:bg-zinc-800" : ""
               }`}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element -- tiny logo, already sized */}
-              <img src={o.logo} alt="" className="size-8 rounded-full object-contain" />
+              <OrgLogo src={o.logo} name={o.name} color={o.color} className="size-8 rounded-full" />
               <span className="flex-1">{o.name}</span>
               {o.slug === current && <span className="text-xs text-zinc-500">Here</span>}
             </a>
           ))}
+          <Link
+            href="/me"
+            role="menuitem"
+            className="mt-1 block rounded-xl border-t border-zinc-100 px-3 py-2.5 text-sm font-medium hover:bg-zinc-100 dark:border-white/5 dark:hover:bg-zinc-800"
+          >
+            My dashboard
+          </Link>
+          <Link
+            href="/register"
+            role="menuitem"
+            className="block rounded-xl px-3 py-2.5 text-sm font-semibold text-thunder-blue hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            + Create a new organization
+          </Link>
         </div>
       )}
     </div>

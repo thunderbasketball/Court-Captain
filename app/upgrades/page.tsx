@@ -5,7 +5,7 @@ import { PLATFORM } from "@/lib/contexts";
 import { currentContexts } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
 import { FEATURES } from "@/lib/features";
-import { ORGS } from "@/lib/orgs";
+import { orgName } from "@/lib/org-registry";
 import { TZ } from "@/lib/time";
 import { isOrgAdmin } from "@/lib/org-admin";
 import AppHeader from "../AppHeader";
@@ -28,23 +28,31 @@ async function Upgrades() {
   if (active?.org === PLATFORM) redirect("/platform");
   const org = active?.org ?? "thunder";
   // Upgrades are bought by the organization's Admins.
-  const onDirectorChip = org === "scenic-city" ? active?.key === "scenic:Director" : active?.key === "director";
+  const chip = org === "scenic-city" ? "scenic:Director" : org === "thunder" ? "director" : `org:${org}`;
+  const onDirectorChip = active?.key === chip;
   if (!onDirectorChip || !(await isOrgAdmin(db, user.coachId, org))) redirect("/");
 
   const r = await db.query<{ feature: string; turned_on_at: Date }>(
     `select feature, turned_on_at from org_features where org = $1`,
     [org],
   );
+  const name = await orgName(db, org);
   const since = new Map(r.rows.map((x) => [x.feature, x.turned_on_at]));
   const on = FEATURES.filter((f) => ("always" in f && f.always) || since.has(f.key));
   const off = FEATURES.filter((f) => !on.includes(f));
+  // Features a registered organization asked for that aren't ready for it yet.
+  const asked = new Set(
+    (await db.query<{ feature: string }>("select feature from org_feature_requests where org = $1", [org])).rows.map(
+      (x) => x.feature,
+    ),
+  );
   const date = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: TZ });
 
   return (
     <>
-      <AppHeader user={user} context={org === "scenic-city" ? "scenic:Director" : "director"} tab="features" />
+      <AppHeader user={user} context={chip} tab="features" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <PageTitle title="Features" subtitle={`${ORGS[org].name} on CourtCaptain: what you have, and upgrades you can add`} />
+        <PageTitle title="Features" subtitle={`${name} on CourtCaptain: what you have, and upgrades you can add`} />
 
         <h2 className="mb-2 text-sm font-semibold text-zinc-500 dark:text-zinc-400">Your features ({on.length})</h2>
         <div className="mb-6 grid gap-3 sm:grid-cols-2">
@@ -64,7 +72,7 @@ async function Upgrades() {
 
         {off.length > 0 && (
           <>
-            <h2 className="mb-2 text-sm font-semibold text-zinc-500 dark:text-zinc-400">Add to {ORGS[org].name}</h2>
+            <h2 className="mb-2 text-sm font-semibold text-zinc-500 dark:text-zinc-400">Add to {name}</h2>
             <div className="grid gap-3 sm:grid-cols-2">
               {off.map((f) => (
                 <div key={f.key} className={`${card} p-4`}>
@@ -80,6 +88,9 @@ async function Upgrades() {
                     </button>
                   </div>
                   <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">{f.about}</p>
+                  {asked.has(f.key) && (
+                    <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">Requested · coming soon</p>
+                  )}
                 </div>
               ))}
             </div>

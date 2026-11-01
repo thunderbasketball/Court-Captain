@@ -21,12 +21,12 @@ export default function FacilitiesPage() {
 
 const STATUS = {
   pending: ["Request sent, waiting for approval", "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"],
-  approved: ["Hosting partner", "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300"],
+  approved: ["Hosting site", "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300"],
   declined: ["Declined", "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"],
 } as const;
 
 // Thunder Facilities (SPEC.md section 14), Admins and Directors of Facilities: each gym's availability by date
-// (Practice Slots, Partner Games, In-House Games, as Thunder's features allow) and hosting other organizations' games.
+// (Practice Slots, league games, In-House Games, as Thunder's features allow) and hosting other organizations' games.
 async function Facilities() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
@@ -48,14 +48,15 @@ async function Facilities() {
             Tap dates, choose what the courts are for, keep the default hours or set your own, then Save.
             {view.partnerNote && ` ${view.partnerNote}`}
           </p>
-          <FacilityCalendar today={view.today} gyms={view.gyms} uses={view.uses} days={view.days} />
+          <FacilityCalendar today={view.today} gyms={view.gyms} uses={view.uses} days={view.days} gameDays={view.gameDays} />
         </section>
 
         {offers && (
           <section className={`${card} p-4`}>
             <h2 className="mb-1 font-semibold">Host games for other organizations</h2>
             <p className="mb-3 text-sm text-zinc-500">
-              Ask to host; once an organization approves, Thunder&apos;s Partner Games dates show as available on its game days.
+              Ask to host; once an organization approves, Thunder&apos;s dates marked for that league show as available on its
+              game days.
             </p>
             {!offers.length && <p className="text-sm text-zinc-500">No organization is looking for hosting sites right now.</p>}
             <ul className="divide-y divide-zinc-100 dark:divide-white/5">

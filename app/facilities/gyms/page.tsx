@@ -30,7 +30,7 @@ async function Gyms() {
             (select count(*) from slots s join courts c on c.id = s.court_id where c.gym_id = g.id and s.starts_at > now())::int as upcoming,
             (select count(*) from slots s join courts c on c.id = s.court_id
              where c.gym_id = g.id and s.starts_at > now() and s.team_id is not null)::int as booked
-     from gyms g`,
+     from gyms g where g.org = 'thunder'`,
   );
   const use = new Map(usage.rows.map((u) => [u.name, u]));
 

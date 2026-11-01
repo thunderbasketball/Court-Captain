@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 import { after } from "next/server";
 import { popupAnnouncements, unreadCount } from "@/lib/announcements";
@@ -9,8 +8,11 @@ import { currentContexts } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
 import { myEventCount } from "@/lib/events";
 import { orgFeatures, type Feature } from "@/lib/features";
-import { directorAreas, hasArea, isOrgAdmin, isThunderAdmin, type Area } from "@/lib/org-admin";
-import { ORGS, ORG_SLUGS, PLATFORM_BRAND } from "@/lib/orgs";
+import { directorAreas, hasArea, isOrgAdmin, isThunderAdmin, orgHasArea, type Area } from "@/lib/org-admin";
+import { canHost } from "@/lib/facilities";
+import { listOrgs, orgInfo } from "@/lib/org-registry";
+import { PLATFORM_BRAND } from "@/lib/orgs";
+import OrgLogo from "./OrgLogo";
 import { myPracticesToday } from "@/lib/practice-attendance";
 import { localParts, TZ, zonedTime } from "@/lib/time";
 import { syncIfStale } from "@/lib/teamsnap/scheduler";
@@ -22,8 +24,19 @@ import OrgSwitcher from "./OrgSwitcher";
 import { LogoutButton } from "./HomeActions";
 import { Avatar } from "./ui";
 
-type Tab = "teams" | "schedule" | "members" | "uniforms" | "facilities" | "features" | ScenicTab;
-type ScenicTab = "scenic-home" | "game-days" | "partners" | "scenic-teams" | "programs" | "scenic-users";
+type Tab =
+  | "teams"
+  | "schedule"
+  | "members"
+  | "uniforms"
+  | "facilities"
+  | "features"
+  | "org-home"
+  | "org-teams"
+  | "org-members"
+  | "org-facilities"
+  | ScenicTab;
+type ScenicTab = "scenic-home" | "programs" | "scenic-facilities" | "scenic-members";
 export type TeamTab = "staff" | "roster" | "uniforms" | "practices";
 
 // Events the person runs check-in for (from yesterday on), plus their teams' practices today.
@@ -56,8 +69,25 @@ export default async function AppHeader({
   const deps = { pool: db, now: () => new Date() };
   // The CourtCaptain page (admins) has the platform's own brand and no organization tools.
   const platform = context === "platform";
-  const org = context?.startsWith("scenic:") ? "scenic-city" : "thunder";
-  const brand = platform ? PLATFORM_BRAND : ORGS[org];
+  // The organization this page belongs to: Scenic City's chips, a registered organization's chip ("org:<slug>"), or Thunder.
+  const org = context?.startsWith("scenic:") ? "scenic-city" : context?.startsWith("org:") ? context.slice(4) : "thunder";
+  const [orgs, here] = await Promise.all([listOrgs(db), platform ? null : orgInfo(db, org)]);
+  // Someone in no organization yet (a CourtCaptain account): CourtCaptain's own brand, no organization's.
+  const neutral = !platform && !context && !user.hasThunderRole && !user.isFamily && !user.requestPending;
+  const brand =
+    platform || neutral
+      ? {
+          name: PLATFORM_BRAND.name,
+          logo: PLATFORM_BRAND.logo.src as string | null,
+          color: "#f97316",
+          login: PLATFORM_BRAND.login,
+        }
+      : {
+          name: here?.name ?? "CourtCaptain",
+          logo: here?.logo ?? null,
+          color: here?.color ?? "#1d4ed8",
+          login: here?.login ?? "/login",
+        };
   const thunder = !platform && org === "thunder" && user.hasThunderRole;
   const [{ contexts }, features, unread, myEvents, popups, chatUnread] = await Promise.all([
     currentContexts(user),
@@ -77,11 +107,9 @@ export default async function AppHeader({
     ...(contexts.some((c) => c.key === "platform")
       ? [{ slug: PLATFORM, name: "CourtCaptain", logo: PLATFORM_BRAND.logo.src }]
       : []),
-    ...ORG_SLUGS.filter((o) => contexts.some((c) => c.org === o) || (o === "thunder" && user.hasThunderRole)).map((o) => ({
-      slug: o,
-      name: ORGS[o].name,
-      logo: ORGS[o].logo.src,
-    })),
+    ...orgs
+      .filter((o) => contexts.some((c) => c.org === o.slug) || (o.slug === "thunder" && user.hasThunderRole))
+      .map((o) => ({ slug: o.slug, name: o.name, logo: o.logo, color: o.color })),
   ];
   // Backup for the sheet timer: after this page is sent, refresh registrations if the last check is stale.
   after(syncIfStale);
@@ -104,7 +132,6 @@ export default async function AppHeader({
       : []),
     { key: "uniforms", href: "/uniforms", label: "Uniforms", icon: ICONS.uniforms, feature: "uniforms", areas: ["players"] },
     { key: "facilities", href: "/facilities", label: "Facilities", icon: ICONS.facilities, areas: ["facilities"] },
-    { key: "features", href: "/upgrades", label: "Features", icon: ICONS.features, admin: true },
   ];
   // Scenic City: Home and Game days for everyone there, Partners for Partners and Directors of Facilities, Teams for
   // everyone but Directors without the Teams area, Users for Admins.
@@ -114,67 +141,98 @@ export default async function AppHeader({
     org === "scenic-city" && scenicRole === "Director"
       ? await Promise.all([directorAreas(db, user.coachId, "scenic-city"), isOrgAdmin(db, user.coachId, "scenic-city")])
       : [[] as Area[], false];
+  // A registered organization: Home, Teams (Team Management: Admins and Directors of Teams, or its coaches) and
+  // Facilities. Its Admins manage features from the gear on Home.
+  const registered = !platform && context?.startsWith("org:");
+  const regFacilities = registered && (await canHost(db, org)) && (await orgHasArea(db, user.coachId, org, "facilities"));
+  // Members: Staff for its Admins, Coaches for Admins and Directors of Coaches or Teams (with Team Management).
+  const regMembers =
+    registered &&
+    ((await isOrgAdmin(db, user.coachId, org)) ||
+      (features.has("team-building") && (await orgHasArea(db, user.coachId, org, "coaches", "teams"))));
+  const regTeams =
+    registered &&
+    features.has("team-building") &&
+    ((await orgHasArea(db, user.coachId, org, "teams")) ||
+      !!(
+        await db.query(
+          "select 1 from org_team_coaches c join org_teams t on t.id = c.team_id where t.org = $1 and c.coach_id = $2 limit 1",
+          [org, user.coachId],
+        )
+      ).rowCount);
+  const orgTabs: TabLink[] | null = registered
+    ? [
+        { key: "org-home", href: `/org/${org}`, label: "Home", icon: ICONS.home },
+        ...(regTeams ? [{ key: "org-teams", href: `/org/${org}/teams`, label: "Teams", icon: ICONS.teams }] : []),
+        ...(regMembers ? [{ key: "org-members", href: `/org/${org}/members`, label: "Members", icon: ICONS.users }] : []),
+        ...(regFacilities
+          ? [{ key: "org-facilities", href: `/org/${org}/facilities`, label: "Facilities", icon: ICONS.facilities }]
+          : []),
+      ]
+    : null;
   const scenicTabs: TabLink[] | null =
     org === "scenic-city" && scenicRole
       ? [
           { key: "scenic-home", href: "/scenic", label: "Home", icon: ICONS.home },
-          { key: "game-days", href: "/scenic/game-days", label: "Game days", icon: ICONS.practice, feature: "hosting-partners" },
-          ...(scenicAreas.includes("facilities") || scenicRole === "Partner"
-            ? [
-                {
-                  key: "partners",
-                  href: "/scenic/partners",
-                  label: "Partners",
-                  icon: ICONS.coaches,
-                  feature: "hosting-partners" as const,
-                },
-              ]
-            : []),
-          ...(scenicRole !== "Director" || scenicAreas.includes("teams")
-            ? [
-                {
-                  key: "scenic-teams",
-                  href: "/scenic/teams",
-                  label: "Teams",
-                  icon: ICONS.teams,
-                  feature: "team-registration" as const,
-                },
-              ]
-            : []),
-          ...(scenicRole !== "Director" || scenicAreas.includes("programs")
+          // Programs (with Teams under it), Facilities (Game days and hosting sites), Members (Staff, hosting sites'
+          // Owners and Admins, Coaches). A Director sees the ones their areas cover; everyone else sees Programs and
+          // Facilities (Game days).
+          ...(scenicRole !== "Director" || scenicAreas.some((a) => a === "programs" || a === "teams")
             ? [{ key: "programs", href: "/scenic/programs", label: "Programs", icon: ICONS.events, feature: "programs" as const }]
             : []),
-          ...(scenicAdmin ? [{ key: "features", href: "/upgrades", label: "Features", icon: ICONS.features }] : []),
-          ...(scenicAdmin ? [{ key: "scenic-users", href: "/scenic/users", label: "Users", icon: ICONS.users }] : []),
+          {
+            key: "scenic-facilities",
+            href: "/scenic/game-days",
+            label: "Facilities",
+            icon: ICONS.facilities,
+            feature: "hosting-partners" as const,
+          },
+          ...(scenicRole === "Director" &&
+          (scenicAdmin || scenicAreas.some((a) => ["facilities", "coaches", "teams", "programs"].includes(a)))
+            ? [
+                {
+                  key: "scenic-members",
+                  href: scenicAdmin
+                    ? "/scenic/users"
+                    : scenicAreas.includes("facilities")
+                      ? "/scenic/members/hosting-sites"
+                      : "/scenic/members/coaches",
+                  label: "Members",
+                  icon: ICONS.users,
+                },
+              ]
+            : []),
         ]
       : null;
   const tabs = (
-    scenicTabs
-      ? scenicTabs
-      : teamTab
-        ? ([
-            { key: "staff", href: `/teams/${teamTab.teamId}`, label: "Staff", icon: ICONS.teams },
-            { key: "roster", href: `/teams/${teamTab.teamId}?tab=roster`, label: "Roster", icon: ICONS.roster },
-            {
-              key: "uniforms",
-              href: `/teams/${teamTab.teamId}?tab=uniforms`,
-              label: "Uniforms",
-              icon: ICONS.uniforms,
-              feature: "uniforms",
-            },
-            {
-              key: "practices",
-              href: `/teams/${teamTab.teamId}?tab=practices`,
-              label: "Practices",
-              icon: ICONS.practice,
-              feature: "practice",
-            },
-          ] satisfies TabLink[])
-        : directorTabs.filter((t) => (!t.areas || hasArea(user, ...t.areas)) && (!t.admin || isThunderAdmin(user)))
+    orgTabs
+      ? orgTabs
+      : scenicTabs
+        ? scenicTabs
+        : teamTab
+          ? ([
+              { key: "staff", href: `/teams/${teamTab.teamId}`, label: "Staff", icon: ICONS.teams },
+              { key: "roster", href: `/teams/${teamTab.teamId}?tab=roster`, label: "Roster", icon: ICONS.roster },
+              {
+                key: "uniforms",
+                href: `/teams/${teamTab.teamId}?tab=uniforms`,
+                label: "Uniforms",
+                icon: ICONS.uniforms,
+                feature: "uniforms",
+              },
+              {
+                key: "practices",
+                href: `/teams/${teamTab.teamId}?tab=practices`,
+                label: "Practices",
+                icon: ICONS.practice,
+                feature: "practice",
+              },
+            ] satisfies TabLink[])
+          : directorTabs.filter((t) => (!t.areas || hasArea(user, ...t.areas)) && (!t.admin || isThunderAdmin(user)))
   ).filter(has);
   const activeTab: string | undefined = teamTab ? teamTab.tab : tab;
   const alerting = (key: string) => !!teamTab?.alert?.includes(key as TeamTab);
-  const showTabs = !!scenicTabs || !!teamTab || (user.isDirector && context === "director");
+  const showTabs = !!orgTabs || !!scenicTabs || !!teamTab || (user.isDirector && context === "director");
   const activeBg = scenicTabs ? "bg-scenic-navy" : "bg-thunder-blue";
   return (
     <>
@@ -196,19 +254,14 @@ export default async function AppHeader({
         )}
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
           <Link href="/" className="flex min-w-0 items-center gap-2">
-            <Image
-              src={brand.logo.src}
-              alt={brand.name}
-              width={brand.logo.width}
-              height={brand.logo.height}
-              priority
-              className="h-9 w-auto shrink-0 rounded-md"
-            />
+            <OrgLogo src={brand.logo} name={brand.name} color={brand.color} className="h-9 w-auto min-w-9 rounded-md" />
             <span className="min-w-0 leading-tight">
               <span className="block truncate font-semibold tracking-tight">{brand.name}</span>
-              <span className="block text-xs font-medium text-thunder-orange">
-                {platform ? "Platform admin" : "CourtCaptain"}
-              </span>
+              {!neutral && (
+                <span className="block text-xs font-medium text-thunder-orange">
+                  {platform ? "Platform admin" : "CourtCaptain"}
+                </span>
+              )}
             </span>
           </Link>
           <div className="flex min-w-0 items-center gap-3">
@@ -248,13 +301,15 @@ export default async function AppHeader({
                   <HeaderIcon d={ICONS.bell} badge={unread} />
                 </Link>
               ))}
-            <p className="hidden truncate text-sm font-medium sm:block">
+            <Link href="/me" className="hidden truncate text-sm font-medium hover:underline sm:block">
               {user.firstName} {user.lastName}
-            </p>
+            </Link>
             <span className={switchTo.length > 1 ? "hidden sm:block" : undefined}>
-              <Avatar first={user.firstName} last={user.lastName} tone="orange" />
+              <Link href="/me" aria-label="My dashboard" title="My dashboard">
+                <Avatar first={user.firstName} last={user.lastName} tone="orange" />
+              </Link>
             </span>
-            {switchTo.length > 1 && <OrgSwitcher current={platform ? PLATFORM : org} orgs={switchTo} />}
+            {switchTo.length > 0 && <OrgSwitcher current={platform ? PLATFORM : org} orgs={switchTo} />}
             <LogoutButton to={brand.login} />
           </div>
         </div>

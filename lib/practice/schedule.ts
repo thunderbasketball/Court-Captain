@@ -190,7 +190,7 @@ export async function listGyms(deps: Pick<Deps, "pool">): Promise<GymWithCourts[
   const r = await deps.pool.query<GymWithCourts>(
     `select g.id::text, g.name, g.active,
             coalesce(json_agg(json_build_object('id', c.id::text, 'name', c.name, 'active', c.active) order by c.name) filter (where c.id is not null), '[]') as courts
-     from gyms g left join courts c on c.gym_id = g.id group by g.id order by g.name`,
+     from gyms g left join courts c on c.gym_id = g.id where g.org = 'thunder' group by g.id order by g.name`,
   );
   return r.rows;
 }

@@ -134,3 +134,63 @@ export function OnPage({ children }: { children: ReactNode }) {
   );
   return ready ? createPortal(children, document.body) : null;
 }
+
+// A button that opens a pop-up; the form inside gets `close` to call after saving. `note`: a small line at the bottom.
+export function PopUp({
+  label,
+  ariaLabel,
+  title,
+  link,
+  className,
+  note,
+  children,
+}: {
+  label: ReactNode;
+  ariaLabel?: string; // when the label is an icon
+  title: string;
+  link?: boolean;
+  className?: string;
+  note?: string;
+  children: (close: () => void) => ReactNode;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [open, setOpen] = useState(false);
+  // The pop-up follows `open`, so a form can close it after saving.
+  useEffect(() => {
+    if (open && !dialog.current?.open) dialog.current?.showModal();
+    if (!open && dialog.current?.open) dialog.current.close();
+  }, [open]);
+  const close = () => setOpen(false);
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        onClick={() => setOpen(true)}
+        className={className ?? (link ? "text-xs font-medium text-thunder-blue hover:underline" : pill)}
+      >
+        {label}
+      </button>
+      <OnPage>
+        <dialog
+          ref={dialog}
+          className={dialogCls}
+          onClick={(e) => e.target === dialog.current && close()}
+          onClose={() => setOpen(false)}
+        >
+          <div className="space-y-3 p-5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">{title}</h2>
+              <CloseButton onClick={close} />
+            </div>
+            {open && children(close)}
+            {note && <p className="text-xs text-zinc-500">{note}</p>}
+          </div>
+        </dialog>
+      </OnPage>
+    </>
+  );
+}
+
+const pill =
+  "rounded-full px-3 py-2 text-sm font-medium text-zinc-700 ring-1 ring-zinc-950/15 hover:bg-zinc-50 dark:text-zinc-200 dark:ring-white/20";

@@ -38,7 +38,10 @@ function cleanFields(input: { first: unknown; last: unknown; email: unknown }) {
 // Sets Thunder Coach. Granting it clears a pending request.
 async function setThunderCoach(q: Queryable, coachId: string, coach: boolean, who: string) {
   await q.query("select set_role($1, 'thunder', 'Coach', $2, $3)", [coachId, coach, who]);
-  if (coach) await q.query("select set_role($1, 'thunder', 'Request', false, $2)", [coachId, who]);
+  if (coach) {
+    await q.query("select set_role($1, 'thunder', 'Request', false, $2)", [coachId, who]);
+    await q.query("delete from join_reasons where coach_id = $1", [coachId]);
+  }
 }
 
 export type EditUserInput = { first: unknown; last: unknown; email: unknown; active: unknown; coach: unknown };
@@ -71,8 +74,44 @@ export async function denyRequest(deps: Deps, viewer: SessionUser, coachId: stri
   await withTx(deps.pool, async (q) => {
     const r = await q.query("update users set updated_at = $2, updated_by = $3 where coach_id = $1", [coachId, deps.now(), by(viewer)]);
     if (r.rowCount) await q.query("select set_role($1, 'thunder', 'Request', false, $2)", [coachId, by(viewer)]);
+    await q.query("delete from join_reasons where coach_id = $1", [coachId]);
   });
   return { ok: true };
+}
+
+const STAFF_LABEL: Record<string, string> = { HeadCoach: "Head Coach", AsstCoach: "Asst Coach", Manager: "Team Manager", TeamParent: "Team Parent" };
+
+// Approve a team staff sign-up as asked: on the team they picked, in that role (Head and Asst Coaches also get the Coach
+// role). Clears the request. A team typed in (not listed) is placed from the team's page instead.
+export async function approveJoin(deps: Deps, viewer: SessionUser, coachId: string): Promise<Result<{ message: string }>> {
+  if (!isThunderAdmin(viewer)) return directorOnly;
+  if (!/^\d{7}$/.test(coachId)) return { ok: false, message: "That user no longer exists." };
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      const r = await q.query<{ staff_role: string | null; team_id: string | null; team: string | null; who: string }>(
+        `select j.staff_role, j.team_id::text, t.name as team, u.first_name || ' ' || u.last_name as who
+         from join_reasons j join users u on u.coach_id = j.coach_id left join teams t on t.id = j.team_id
+         where j.coach_id = $1 and j.purpose = 'staff' for update of j`,
+        [coachId],
+      );
+      const j = r.rows[0];
+      if (!j?.staff_role || !j.team_id) throw new UserError("Their team isn't listed. Approve them, then add them on the team's page.");
+      if (j.staff_role === "HeadCoach") {
+        const head = await q.query("select 1 from team_staff where team_id = $1 and role = 'HeadCoach' and coach_id <> $2", [j.team_id, coachId]);
+        if (head.rowCount) throw new UserError(`${j.team} already has a head coach. Change it on the team's page.`);
+      }
+      await q.query(
+        "insert into team_staff (team_id, coach_id, role, added_at, added_by) values ($1, $2, $3, $4, $5) on conflict do nothing",
+        [j.team_id, coachId, j.staff_role, deps.now(), by(viewer)],
+      );
+      if (j.staff_role === "HeadCoach" || j.staff_role === "AsstCoach")
+        await q.query("select set_role($1, 'thunder', 'Coach', true, $2)", [coachId, by(viewer)]);
+      await q.query("select set_role($1, 'thunder', 'Request', false, $2)", [coachId, by(viewer)]);
+      await q.query("delete from join_reasons where coach_id = $1", [coachId]);
+      await q.query("update users set updated_at = $2, updated_by = $3 where coach_id = $1", [coachId, deps.now(), by(viewer)]);
+      return { message: `${j.who} added to ${j.team} as ${STAFF_LABEL[j.staff_role]}.` };
+    }),
+  );
 }
 
 export type AddUserInput = { first: unknown; last: unknown; cell: unknown; email: unknown; coach: unknown };

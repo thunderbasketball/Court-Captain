@@ -3,6 +3,7 @@
 import { useRef, useState, useTransition, type ReactNode } from "react";
 import * as act from "./actions";
 import type { ClientStep } from "./actions";
+import { pillCls } from "../ui";
 
 type Screen = Exclude<ClientStep, { step: "error" } | { step: "loggedIn" }> | { step: "phone" } | { step: "verifyEmail" };
 
@@ -29,6 +30,28 @@ export default function LoginFlow({ join, next = "/" }: { join?: string; next?: 
   const [email, setEmail] = useState("");
   const [first, setFirst] = useState("");
   const [last, setLast] = useState("");
+  // Why they're joining Thunder (not on another organization's join link).
+  const [purpose, setPurpose] = useState<"" | "family" | "staff" | "other">("");
+  const [staffRole, setStaffRole] = useState("");
+  const [teamId, setTeamId] = useState("");
+  const [teamText, setTeamText] = useState("");
+  const [notes, setNotes] = useState("");
+  const [teams, setTeams] = useState<{ id: string; name: string }[] | null>(null);
+  const signup = () =>
+    act.startSignup({
+      cell,
+      firstName: first,
+      lastName: last,
+      email,
+      pin1,
+      pin2,
+      join,
+      purpose: purpose || undefined,
+      staffRole: staffRole || undefined,
+      teamId: teamId && teamId !== "other" ? teamId : undefined,
+      teamText: teamId === "other" ? teamText : undefined,
+      notes: purpose === "other" ? notes : undefined,
+    });
   const pinRef = useRef<HTMLInputElement>(null);
 
   function go(call: () => Promise<ClientStep>, opts: { resent?: boolean } = {}) {
@@ -155,12 +178,16 @@ export default function LoginFlow({ join, next = "/" }: { join?: string; next?: 
         <Form
           title="Create account"
           intro="We don't have that number yet. Fill this in and we'll email you a code."
-          onSubmit={() =>
-            go(() => act.startSignup({ cell, firstName: first, lastName: last, email, pin1, pin2, join }))
-          }
+          onSubmit={() => go(signup)}
         >
           <Field label="First name">
-            <input className={input} autoComplete="given-name" value={first} onChange={(e) => setFirst(e.target.value)} autoFocus />
+            <input
+              className={input}
+              autoComplete="given-name"
+              value={first}
+              onChange={(e) => setFirst(e.target.value)}
+              autoFocus
+            />
           </Field>
           <Field label="Last name">
             <input className={input} autoComplete="family-name" value={last} onChange={(e) => setLast(e.target.value)} />
@@ -174,6 +201,76 @@ export default function LoginFlow({ join, next = "/" }: { join?: string; next?: 
           <Field label="Type it again">
             <PinInput value={pin2} onChange={setPin2} autoComplete="new-password" />
           </Field>
+          {!join && (
+            <fieldset className="space-y-3">
+              <legend className="mb-2 text-sm font-medium">What brings you to Thunder?</legend>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    ["family", "New family"],
+                    ["staff", "New team staff"],
+                    ["other", "Other"],
+                  ] as const
+                ).map(([k, label]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    className={pillCls(purpose === k)}
+                    onClick={async () => {
+                      setPurpose(k);
+                      if (k === "staff" && !teams) setTeams(await act.signupTeams());
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {purpose === "family" && (
+                <p className="text-sm text-zinc-500">
+                  Your account is ready right away. We find your players from registration by your cell number.
+                </p>
+              )}
+              {purpose === "staff" && (
+                <>
+                  <Field label="Your role">
+                    <select className={input} value={staffRole} onChange={(e) => setStaffRole(e.target.value)}>
+                      <option value="" disabled>
+                        Choose…
+                      </option>
+                      <option value="HeadCoach">Head Coach</option>
+                      <option value="AsstCoach">Asst Coach</option>
+                      <option value="Manager">Team Manager</option>
+                      <option value="TeamParent">Team Parent</option>
+                    </select>
+                  </Field>
+                  <Field label="Which team?">
+                    <select className={input} value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+                      <option value="" disabled>
+                        {teams ? "Choose…" : "Loading teams…"}
+                      </option>
+                      {(teams ?? []).map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                      <option value="other">Other (not listed)</option>
+                    </select>
+                  </Field>
+                  {teamId === "other" && (
+                    <Field label="Team or coach name">
+                      <input className={input} value={teamText} maxLength={60} onChange={(e) => setTeamText(e.target.value)} />
+                    </Field>
+                  )}
+                  <p className="text-sm text-zinc-500">An Admin approves team staff before you can log in.</p>
+                </>
+              )}
+              {purpose === "other" && (
+                <Field label="Tell us why you're joining">
+                  <textarea className={input} rows={3} maxLength={300} value={notes} onChange={(e) => setNotes(e.target.value)} />
+                </Field>
+              )}
+            </fieldset>
+          )}
           <Submit busy={busy}>Email me a code</Submit>
         </Form>
       );
@@ -188,7 +285,7 @@ export default function LoginFlow({ join, next = "/" }: { join?: string; next?: 
         >
           {codeField}
           <Submit busy={busy}>Create account</Submit>
-          {resend(() => act.startSignup({ cell, firstName: first, lastName: last, email, pin1, pin2, join }))}
+          {resend(signup)}
         </Form>
       );
       break;
@@ -201,7 +298,14 @@ export default function LoginFlow({ join, next = "/" }: { join?: string; next?: 
           onSubmit={() => go(() => act.sendStarterCode(cell, email))}
         >
           <Field label="Email">
-            <input className={input} type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
+            <input
+              className={input}
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoFocus
+            />
           </Field>
           <Submit busy={busy}>Email me a code</Submit>
         </Form>
@@ -247,7 +351,14 @@ export default function LoginFlow({ join, next = "/" }: { join?: string; next?: 
       body = (
         <Form title="Your email" onSubmit={() => go(() => act.sendVerifyCode(cell, pin, email))}>
           <Field label="Email">
-            <input className={input} type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
+            <input
+              className={input}
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoFocus
+            />
           </Field>
           <Submit busy={busy}>Email me a code</Submit>
         </Form>
@@ -300,12 +411,18 @@ export default function LoginFlow({ join, next = "/" }: { join?: string; next?: 
   return (
     <div className="space-y-4">
       {error && (
-        <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20 dark:bg-red-500/10 dark:text-red-300">
+        <p
+          role="alert"
+          className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20 dark:bg-red-500/10 dark:text-red-300"
+        >
           {error}
         </p>
       )}
       {notice && !error && (
-        <p role="status" className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700 ring-1 ring-inset ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-300">
+        <p
+          role="status"
+          className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700 ring-1 ring-inset ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-300"
+        >
           {notice}
         </p>
       )}

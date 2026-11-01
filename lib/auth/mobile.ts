@@ -34,6 +34,10 @@ export async function mobileLoginStep(deps: Deps, body: unknown): Promise<Step> 
         email: b.email,
         pin1: b.pin1,
         pin2: b.pin2,
+        purpose: b.purpose,
+        staffRole: b.staffRole,
+        teamText: b.teamText,
+        notes: b.notes,
       });
     case "completeSignup":
       return auth.completeSignup(deps, b.cell, b.code);

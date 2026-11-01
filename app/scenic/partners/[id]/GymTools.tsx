@@ -67,7 +67,13 @@ export function GymButton({ partnerId, gym }: { partnerId: string; gym?: Gym }) 
           </label>
           <label className="block">
             <span className={fieldLabel}>Address (optional)</span>
-            <input className={inputCls} value={address} maxLength={200} autoComplete="street-address" onChange={(e) => setAddress(e.target.value)} />
+            <input
+              className={inputCls}
+              value={address}
+              maxLength={200}
+              autoComplete="street-address"
+              onChange={(e) => setAddress(e.target.value)}
+            />
           </label>
           {error && <Alert tone="red">{error}</Alert>}
           <button type="submit" className={primaryBtn} disabled={busy}>
@@ -133,8 +139,18 @@ export function AddCourt({ gymId, suggestion }: { gymId: string; suggestion: str
         });
       }}
     >
-      <input className={`${inputCls} max-w-40 py-2`} value={name} maxLength={60} autoFocus onChange={(e) => setName(e.target.value)} />
-      <button type="submit" disabled={busy} className="rounded-full bg-scenic-navy px-4 py-2 text-sm font-semibold text-white dark:bg-white dark:text-scenic-navy">
+      <input
+        className={`${inputCls} max-w-40 py-2`}
+        value={name}
+        maxLength={60}
+        autoFocus
+        onChange={(e) => setName(e.target.value)}
+      />
+      <button
+        type="submit"
+        disabled={busy}
+        className="rounded-full bg-scenic-navy px-4 py-2 text-sm font-semibold text-white dark:bg-white dark:text-scenic-navy"
+      >
         Add
       </button>
       <button type="button" onClick={() => setOpen(false)} className="text-sm text-zinc-500">

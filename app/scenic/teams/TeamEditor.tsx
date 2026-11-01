@@ -14,9 +14,9 @@ export type TeamFields = {
   level: "COMP" | "REC";
   gradeLow: number;
   grade: number;
-  coachFirst: string;
-  coachLast: string;
-  coachCell: string;
+  coachFirst: string | null; // null: an organization's team with no coach yet (not editable here)
+  coachLast: string | null;
+  coachCell: string | null;
 };
 
 const blank = { for: "", name: "", gender: "", level: "", grade: "", coachFirst: "", coachLast: "", coachCell: "" };
@@ -34,9 +34,9 @@ export function TeamEditor({ addFor, grades, team }: { addFor?: Choice[]; grades
     gender: t.gender,
     level: t.level,
     grade: t.gradeLow === t.grade ? String(t.grade) : `${t.gradeLow}-${t.grade}`,
-    coachFirst: t.coachFirst,
-    coachLast: t.coachLast,
-    coachCell: t.coachCell,
+    coachFirst: t.coachFirst ?? "",
+    coachLast: t.coachLast ?? "",
+    coachCell: t.coachCell ?? "",
   });
   const [f, setF] = useState(team ? fromTeam(team) : blank);
   const [error, setError] = useState<string | null>(null);

@@ -1,7 +1,9 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
+import { hasFeature } from "@/lib/features";
 import { requireFeature } from "@/lib/features-server";
+import { db } from "@/lib/db";
 import { gradeLabel } from "@/lib/grades";
 import { hasArea } from "@/lib/org-admin";
 import { formatCell } from "@/lib/phone";
@@ -34,6 +36,7 @@ async function Players() {
   await requireFeature("thunder", "player-registration");
   if (!hasArea(user, "players", "teams")) redirect("/");
   const { groups, total, boys, girls, importedAt, importedBy, sync } = await listPlayersByGrade(user);
+  const evaluations = await hasFeature(db, "thunder", "team-building"); // with Team Management only
 
   const row = (p: MemberPlayer, rostered: boolean) => (
     <PersonRow
@@ -71,7 +74,7 @@ async function Players() {
       {(p.coachRequest || !rostered) && (
         <div className="flex items-end justify-between gap-2">
           <span>{p.coachRequest && <>Coach request: {p.coachRequest}</>}</span>
-          {!rostered && <PlayerEvalButton registrantId={p.registrantId} name={`${p.firstName} ${p.lastName}`} />}
+          {!rostered && evaluations && <PlayerEvalButton registrantId={p.registrantId} name={`${p.firstName} ${p.lastName}`} />}
         </div>
       )}
     </PersonRow>
