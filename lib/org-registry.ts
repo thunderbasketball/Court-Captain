@@ -12,12 +12,14 @@ export type Org = {
   logo: string | null;
   bigLogo: string | null;
   login: string;
+  abbr: string; // before its team names in leagues ("ER 5B Harris")
 };
 
 type Row = {
   slug: string;
   name: string;
   short_name: string;
+  abbr: string | null;
   kind: Org["kind"];
   color: string;
   logo_path: string | null;
@@ -26,7 +28,7 @@ type Row = {
   v: string | null;
 };
 
-const SELECT = `select slug, name, short_name, kind, color, logo_path, big_logo_path, logo is not null as has_logo,
+const SELECT = `select slug, name, short_name, abbr, kind, color, logo_path, big_logo_path, logo is not null as has_logo,
   extract(epoch from logo_updated_at)::bigint::text as v from organizations`;
 
 const toOrg = (r: Row): Org => {
@@ -41,6 +43,7 @@ const toOrg = (r: Row): Org => {
     logo: uploaded ?? r.logo_path,
     bigLogo: uploaded ?? r.big_logo_path,
     login: `/login/${r.slug}`,
+    abbr: r.abbr ?? r.slug.slice(0, 4).toUpperCase(),
   };
 };
 

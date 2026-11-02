@@ -67,7 +67,7 @@ describe("an organization's teams in Scenic City programs", () => {
     ).id;
     await addDivision(deps(), dee, pid, { gender: "Boys", from: 3, to: 4, levels: ["REC"] });
     const tid = (
-      (await createOrgTeam(deps(), jo, org, { name: "Bolts", gender: "Boys", grade: "4", level: "REC" })) as { id: string }
+      (await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: ["4"], level: "REC" })) as { id: string }
     ).id;
 
     // No approval needed, and no coach yet: it shows "no coach" in Scenic City until one is added.
@@ -77,7 +77,7 @@ describe("an organization's teams in Scenic City programs", () => {
       programs: [{ name: "Winter League 2027", status: "open", fits: true, registered: null }],
     });
     expect(await registerOrgTeam(deps(), jo, org, tid, pid, ALL)).toMatchObject({ ok: true });
-    expect((await listScenicTeams(deps(), dee, "Director"))!.teams[0]).toMatchObject({ name: "Bolts", coachId: null });
+    expect((await listScenicTeams(deps(), dee, "Director"))!.teams[0]).toMatchObject({ name: "ER 4B TBD", coachId: null }); // the league name: Abbreviation first
     await addOrgTeamCoach(deps(), jo, org, tid, { first: "Cy", last: "Coach", cell: "4235550003", role: "HeadCoach" });
     expect((await listScenicTeams(deps(), dee, "Director"))!.teams[0]).toMatchObject({ coachFirst: "Cy", coachLast: "Coach" });
     expect(await registerOrgTeam(deps(), jo, org, tid, pid, ALL)).toMatchObject({
@@ -93,7 +93,7 @@ describe("an organization's teams in Scenic City programs", () => {
 
     // Scenic City sees it under East Ridge, read-only, in the program.
     const scenic = (await listScenicTeams(deps(), dee, "Director"))!;
-    expect(scenic.teams.map((t) => `${t.name} ${t.partnerName} ${t.canEdit}`)).toEqual(["Bolts East Ridge Parks & Rec false"]);
+    expect(scenic.teams.map((t) => `${t.name} ${t.partnerName} ${t.canEdit}`)).toEqual(["ER 4B Coach East Ridge Parks & Rec false"]); // renamed with its Head Coach
     expect(scenic.addFor.map((a) => a.label)).not.toContain("East Ridge Parks & Rec");
     const copy = scenic.teams[0].id;
     expect(
@@ -107,7 +107,7 @@ describe("an organization's teams in Scenic City programs", () => {
         coachCell: "4235550003",
       }),
     ).toEqual({ ok: false, message: "This team is managed by its organization." });
-    expect(JSON.stringify(await getProgram(deps(), dee, pid))).toContain("Bolts");
+    expect(JSON.stringify(await getProgram(deps(), dee, pid))).toContain("ER 4B Coach");
 
     // Withdraw while open; not after it closes.
     expect(await withdrawOrgTeam(deps(), jo, org, tid, pid)).toEqual({ ok: true });
@@ -136,9 +136,9 @@ describe("an organization's teams in Scenic City programs", () => {
     await addDivision(deps(), dee, pid, { gender: "Boys", from: 3, to: 4, levels: ["REC", "COMP"] });
     await addDivision(deps(), dee, pid, { gender: "Girls", from: 5, to: 6, levels: ["REC"] });
     const team = async (name: string, gender: string, grade: string, level: string, cell: string | null) => {
-      const id = ((await createOrgTeam(deps(), jo, org, { name, gender, grade, level })) as { id: string }).id;
-      if (cell) await addOrgTeamCoach(deps(), jo, org, id, { first: "Cy", last: name, cell, role: "HeadCoach" });
-      return id;
+      // Named from its Head Coach (Cy <name>): "4B Bolts"; with none yet, "4B TBD".
+      const headCoach = cell ? { first: "Cy", last: name, cell } : "none";
+      return ((await createOrgTeam(deps(), jo, org, { gender, grades: [grade], level, headCoach })) as { id: string }).id;
     };
     const bolts = await team("Bolts", "Boys", "4", "REC", "4235550003");
     await team("Comets", "Boys", "3", "COMP", "4235550004");
@@ -154,11 +154,11 @@ describe("an organization's teams in Scenic City programs", () => {
     expect(await registerAllOrgTeams(deps(), jo, org, pid)).toEqual({
       ok: true,
       registered: [
-        "Comets: Boys 3rd–4th · 3rd COMP · Pool A",
-        "Suns: Boys 3rd–4th · 4th REC · Pool A",
-        "Rockets: Girls 5th–6th · 5th REC · Pool A",
+        "3B Comets: Boys 3rd–4th · 3rd COMP · Pool A",
+        "4B TBD: Boys 3rd–4th · 4th REC · Pool A",
+        "5G Rockets: Girls 5th–6th · 5th REC · Pool A",
       ],
-      skipped: ["Stars: This program has no Girls 7th REC."],
+      skipped: ["7G Stars: This program has no Girls 7th REC."],
     });
     expect((await orgPrograms(deps(), jo, org))!.programs).toMatchObject([{ registered: 4, unregistered: 1 }]);
 
@@ -194,7 +194,7 @@ describe("an organization's teams in Scenic City programs", () => {
     });
     await addDivision(deps(), dee, pid, { gender: "Boys", from: 2, to: 3, levels: ["REC"] });
     const tid = (
-      (await createOrgTeam(deps(), jo, org, { name: "2B", gender: "Boys", grade: "2", level: "REC" })) as { id: string }
+      (await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: ["2"], level: "REC" })) as { id: string }
     ).id;
 
     expect(await registerOrgTeam(deps(), jo, org, tid, pid)).toMatchObject({ ok: false }); // must pick something
@@ -227,7 +227,7 @@ describe("an organization's teams in Scenic City programs", () => {
     const shown = (await teamPrograms(deps(), jo, org, tid))!.programs[0];
     expect(shown.entry).toMatchObject({ perDate: { "2026-12-05": 2, "2026-12-12": 2 }, bracket: true });
     const team = (await getProgram(deps(), dee, pid))!.divisionList[0].groups[0].pools[0].teams[0];
-    expect(team).toMatchObject({ name: "2B", entry: { bracket: true, feeCents: 11500 } });
+    expect(team).toMatchObject({ name: "ER 2B TBD", entry: { bracket: true, feeCents: 11500 } });
 
     // The team withdraws from a date and re-enters it; a date Scenic City took it out of only Scenic City restores.
     const dayOff = (what: string, out: boolean) => setOrgTeamDayOff(deps(), jo, org, tid, pid, what, out);

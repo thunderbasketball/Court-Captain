@@ -32,7 +32,7 @@ describe("userContexts", () => {
   it("Director first, then one chip per team (highest role), in team order", async () => {
     const c = await userContexts(db.pool, { ...base, isDirector: true });
     expect(c.map((x) => x.label)).toEqual(["Director", "2B Other · Asst Coach", "4G Test · Head Coach", "10B Other · Team Parent"]);
-    expect(c[0].href).toBe("/teams");
+    expect(c[0].href).toBe("/thunder"); // Thunder's Home, like every organization's
     expect(c[1].href).toMatch(/^\/teams\/\d+$/);
   });
 

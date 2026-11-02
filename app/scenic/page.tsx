@@ -7,8 +7,7 @@ import { db } from "@/lib/db";
 import { orgFeatures, type Feature } from "@/lib/features";
 import { directorAreas, isOrgAdmin, type Area } from "@/lib/org-admin";
 import AppHeader from "../AppHeader";
-import OrgGear from "../OrgGear";
-import { card, PageTitle } from "../ui";
+import { card } from "../ui";
 
 export default function ScenicPage() {
   return (
@@ -93,10 +92,9 @@ async function Scenic() {
     <>
       <AppHeader user={user} context={scenic.key} tab="scenic-home" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <div className="flex items-start justify-between gap-3">
-          <PageTitle title="Scenic City Basketball" subtitle={`Welcome, ${user.firstName} · ${scenic.role}`} />
-          {director && <OrgGear org="scenic-city" coachId={user.coachId} />}
-        </div>
+        <p className="mb-4 text-sm text-zinc-500 dark:text-zinc-400">
+          Welcome, {user.firstName} · {scenic.role}
+        </p>
         <div className="grid gap-3 sm:grid-cols-2">
           {parts.map((p) => {
             const body = (

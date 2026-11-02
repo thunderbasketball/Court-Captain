@@ -34,7 +34,7 @@ export default function UserList({
   users: UserListItem[];
   viewer: SessionUser;
   team?: DirectorTeam | null;
-  view?: "staff" | "coaches" | "inactive-coaches";
+  view?: "staff" | "requests" | "coaches" | "inactive-coaches";
 }) {
   const admin = isThunderAdmin(viewer);
   const roleOf = (coachId: string) => team?.directors.find((d) => d.id === coachId);
@@ -134,7 +134,14 @@ export default function UserList({
   return (
     <section>
       <div className="flex items-start justify-between gap-3">
-        <PageTitle title="Staff" subtitle="Admins and Directors, then other sign-ins (coaches are under Coaches), by last name" />
+        {view === "requests" ? (
+          <PageTitle title="Requests" subtitle="People asking to join Thunder: approve or deny" />
+        ) : (
+          <PageTitle
+            title="Staff"
+            subtitle="Admins and Directors, then other sign-ins (coaches are under Coaches), by last name"
+          />
+        )}
         {team ? (
           <AddMenu>
             <AddUserButton label="New user (login)" className={menuItem} />
@@ -151,19 +158,7 @@ export default function UserList({
           <AddUserButton />
         )}
       </div>
-      <Stats
-        items={[
-          { label: "Users", value: users.length },
-          { label: "Active", value: active.length },
-          { label: "Requests", value: requests.length, tone: requests.length ? "text-amber-600 dark:text-amber-400" : "" },
-        ]}
-      />
-      <div className="space-y-3">
-        {directors.length > 0 && (
-          <GroupCard title="Admins & Directors" count={directors.length}>
-            {rows(directors)}
-          </GroupCard>
-        )}
+      {view === "requests" ? (
         <GroupCard title="Access requests" count={requests.length}>
           {requests.length ? (
             rows(requests)
@@ -171,17 +166,33 @@ export default function UserList({
             <li className="px-4 py-3 text-sm text-zinc-500 italic">No pending access requests.</li>
           )}
         </GroupCard>
-        {others.length > 0 && (
-          <GroupCard title="Other logins" count={others.length} defaultOpen={false}>
-            {rows(others)}
-          </GroupCard>
-        )}
-        {inactive.length > 0 && (
-          <GroupCard title="Inactive Directors" count={inactive.length} defaultOpen={false}>
-            {rows(inactive)}
-          </GroupCard>
-        )}
-      </div>
+      ) : (
+        <>
+          <Stats
+            items={[
+              { label: "Users", value: users.length },
+              { label: "Active", value: active.length },
+            ]}
+          />
+          <div className="space-y-3">
+            {directors.length > 0 && (
+              <GroupCard title="Admins & Directors" count={directors.length}>
+                {rows(directors)}
+              </GroupCard>
+            )}
+            {others.length > 0 && (
+              <GroupCard title="Other logins" count={others.length} defaultOpen={false}>
+                {rows(others)}
+              </GroupCard>
+            )}
+            {inactive.length > 0 && (
+              <GroupCard title="Inactive Directors" count={inactive.length} defaultOpen={false}>
+                {rows(inactive)}
+              </GroupCard>
+            )}
+          </div>
+        </>
+      )}
     </section>
   );
 }

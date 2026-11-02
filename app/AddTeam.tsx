@@ -1,0 +1,159 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { GRADES, LEVELS, gradeSort, teamName } from "@/lib/team-names";
+import { Alert, PopUp } from "./client-ui";
+import { fieldLabel, inputCls, pillCls, primaryBtn } from "./ui";
+
+type Person = { value: string; firstName: string; lastName: string; detail?: string };
+type Input = { gender: string; grades: string[]; level: string; headCoach: unknown; altName: string };
+type Create = (input: Input) => Promise<{ ok: true; id: string; name: string } | { ok: false; message: string }>;
+
+// "+ Add" on every organization's Teams page (Thunder's too): a pop-up like Thunder's New team page. The name is made
+// for you: top grade + gender + Head Coach's last name ("4G Epps"; "4G TBD" until a coach). Grades: one, or two next to
+// each other. `create` is the server's (it checks everything again); `href` + id opens the new team.
+export default function AddTeamButton({ people, create, href }: { people: Person[]; create: Create; href: string }) {
+  const router = useRouter();
+  return (
+    <PopUp
+      label="+ Add"
+      title="Add a team"
+      className="shrink-0 rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark"
+    >
+      {() => <AddTeamForm people={people} create={create} onAdded={(id) => router.push(`${href}${id}`)} />}
+    </PopUp>
+  );
+}
+
+const NEW = "new";
+
+function AddTeamForm({ people, create, onAdded }: { people: Person[]; create: Create; onAdded: (id: string) => void }) {
+  const [gender, setGender] = useState<"Boys" | "Girls" | "">("");
+  const [grades, setGrades] = useState<string[]>([]);
+  const [level, setLevel] = useState<string>("REC");
+  const [coach, setCoach] = useState("");
+  const [person, setPerson] = useState({ first: "", last: "", cell: "" });
+  const [alt, setAlt] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, start] = useTransition();
+
+  // One grade, or two next to each other: tapping a grade that doesn't fit starts over from it.
+  const tapGrade = (g: string) =>
+    setGrades((cur) => {
+      if (cur.includes(g)) return cur.filter((x) => x !== g);
+      if (cur.length === 1 && Math.abs(gradeSort(cur[0]) - gradeSort(g)) === 1) return [...cur, g];
+      return [g];
+    });
+  const last =
+    coach === NEW ? person.last.trim() : coach === "none" ? "TBD" : (people.find((p) => p.value === coach)?.lastName ?? "");
+  const preview = gender && grades.length && last ? teamName(gender, grades, last) : "—";
+  const ready = gender && grades.length && coach && (coach !== NEW || (person.first && person.last && person.cell));
+
+  return (
+    <form
+      className="space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          setError(null);
+          const r = await create({ gender, grades, level, headCoach: coach === NEW ? person : coach, altName: alt });
+          if (!r.ok) return setError(r.message);
+          onAdded(r.id);
+        });
+      }}
+    >
+      <div>
+        <span className={fieldLabel}>Gender</span>
+        <div className="flex gap-2">
+          {(["Boys", "Girls"] as const).map((g) => (
+            <button key={g} type="button" className={pillCls(gender === g)} onClick={() => setGender(g)}>
+              {g}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <span className={fieldLabel}>Grade (one, or two next to each other)</span>
+        <div className="grid grid-cols-7 gap-1.5">
+          {GRADES.map((g) => (
+            <button key={g} type="button" className={pillCls(grades.includes(g))} onClick={() => tapGrade(g)}>
+              {g}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <span className={fieldLabel}>Level</span>
+        <div className="flex gap-2">
+          {LEVELS.map((l) => (
+            <button key={l} type="button" className={pillCls(level === l)} onClick={() => setLevel(l)}>
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+      <label className="block">
+        <span className={fieldLabel}>Head coach</span>
+        <select className={inputCls} value={coach} onChange={(e) => setCoach(e.target.value)}>
+          <option value="" disabled>
+            Choose…
+          </option>
+          <option value="none">No coach yet (named TBD until one is added)</option>
+          <option value={NEW}>New person…</option>
+          {people.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.lastName}, {p.firstName}
+              {p.detail ? ` · ${p.detail}` : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      {coach === NEW && (
+        <div className="grid grid-cols-2 gap-2">
+          <input
+            className={inputCls}
+            placeholder="First name"
+            value={person.first}
+            onChange={(e) => setPerson({ ...person, first: e.target.value })}
+          />
+          <input
+            className={inputCls}
+            placeholder="Last name"
+            value={person.last}
+            onChange={(e) => setPerson({ ...person, last: e.target.value })}
+          />
+          <input
+            className={`${inputCls} col-span-2`}
+            type="tel"
+            inputMode="tel"
+            placeholder="Cell (423) 555-0123"
+            value={person.cell}
+            onChange={(e) => setPerson({ ...person, cell: e.target.value })}
+          />
+        </div>
+      )}
+      <label className="block">
+        <span className={fieldLabel}>Alternate name (optional)</span>
+        <input
+          className={inputCls}
+          maxLength={60}
+          placeholder="e.g. Bolts"
+          value={alt}
+          onChange={(e) => setAlt(e.target.value)}
+        />
+      </label>
+      <div className="rounded-xl bg-zinc-50 px-4 py-3 dark:bg-zinc-800/50">
+        <p className="text-xs text-zinc-500">Team name</p>
+        <p className="text-lg font-semibold">
+          {preview}
+          {alt.trim() && <span className="text-sm font-normal text-zinc-500"> · {alt.trim()}</span>}
+        </p>
+      </div>
+      {error && <Alert tone="red">{error}</Alert>}
+      <button type="submit" disabled={busy || !ready} className={`${primaryBtn} w-full`}>
+        {busy ? "Adding…" : "Add team"}
+      </button>
+    </form>
+  );
+}

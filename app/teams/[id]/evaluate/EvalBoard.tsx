@@ -20,7 +20,8 @@ export default function EvalBoard({ teamId, teamName, cards }: { teamId: string;
   const [error, setError] = useState<string | null>(null);
 
   const fieldsOf = (c: EvalCard) => live[c.registrantId] ?? c;
-  const count = (f: Filter) => cards.filter((c) => f === "all" || (f === "unrated" ? !rated(fieldsOf(c)) : fieldsOf(c).interested)).length;
+  const count = (f: Filter) =>
+    cards.filter((c) => f === "all" || (f === "unrated" ? !rated(fieldsOf(c)) : fieldsOf(c).interested)).length;
   const q = search.trim().toLowerCase();
   const shown = cards.filter(
     (c) =>
@@ -45,7 +46,9 @@ export default function EvalBoard({ teamId, teamName, cards }: { teamId: string;
             type="button"
             onClick={() => setFilter(f)}
             className={`shrink-0 rounded-full px-3 py-1.5 text-sm font-medium whitespace-nowrap ${
-              filter === f ? "bg-thunder-blue text-white shadow-sm" : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+              filter === f
+                ? "bg-thunder-blue text-white shadow-sm"
+                : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
             }`}
           >
             {label} ({count(f)})
@@ -156,7 +159,9 @@ export function Card({
           aria-pressed={f.interested}
           onClick={() => save({ interested: !f.interested })}
           className={`shrink-0 rounded-full px-3 py-1.5 text-sm font-semibold whitespace-nowrap ring-1 ${
-            f.interested ? "bg-orange-500 text-white ring-orange-500" : "text-zinc-600 ring-zinc-300 dark:text-zinc-300 dark:ring-zinc-600"
+            f.interested
+              ? "bg-orange-500 text-white ring-orange-500"
+              : "text-zinc-600 ring-zinc-300 dark:text-zinc-300 dark:ring-zinc-600"
           }`}
         >
           {f.interested ? "★ Interested" : "☆ Interested"}
@@ -211,7 +216,9 @@ function Choices<T extends string | number>({
             aria-pressed={value === o}
             onClick={() => onPick(o)}
             className={`min-w-0 flex-1 rounded-full py-1.5 text-sm font-medium ${
-              value === o ? "bg-thunder-blue text-white shadow-sm" : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+              value === o
+                ? "bg-thunder-blue text-white shadow-sm"
+                : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
             }`}
           >
             {o}

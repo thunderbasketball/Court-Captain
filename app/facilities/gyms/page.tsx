@@ -8,6 +8,7 @@ import { Chip, PageTitle, card } from "../../ui";
 import FacilitiesNav from "../FacilitiesNav";
 import { DeleteGymButton } from "./DeleteGymButton";
 import { AddGymButton } from "../../practice/PracticeTools";
+import ImportGymsButton from "../../ImportGyms";
 import { hasArea } from "@/lib/org-admin";
 
 export default function GymsPage() {
@@ -40,7 +41,10 @@ async function Gyms() {
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <PageTitle title="Gyms" subtitle="Thunder's gyms and their courts" />
-          <AddGymButton />
+          <div className="flex shrink-0 gap-2">
+            <ImportGymsButton org="thunder" />
+            <AddGymButton />
+          </div>
         </div>
         <FacilitiesNav current="gyms" />
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

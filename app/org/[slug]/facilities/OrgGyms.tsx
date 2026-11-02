@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { addOrgGym, removeOrgGym } from "../../../facilities/actions";
 import { Alert, PopUp, Toast, useConfirm } from "../../../client-ui";
 import { fieldLabel, inputCls, primaryBtn } from "../../../ui";
+import ImportGymsButton from "../../../ImportGyms";
 
 type Gym = { id: string; name: string; short: string | null; courts: string[] };
 
@@ -25,22 +26,25 @@ export default function OrgGyms({ org, gyms }: { org: string; gyms: Gym[] }) {
             The gyms where you can host games. The short name shows where space is tight, like on a phone schedule.
           </p>
         </div>
-        <PopUp
-          label="+ Add"
-          title="Add a gym"
-          className="shrink-0 rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark"
-        >
-          {(close) => (
-            <AddGymForm
-              org={org}
-              onAdded={(name) => {
-                close();
-                setMsg(`${name} added.`);
-                router.refresh();
-              }}
-            />
-          )}
-        </PopUp>
+        <div className="flex shrink-0 gap-2">
+          <ImportGymsButton org={org} />
+          <PopUp
+            label="+ Add"
+            title="Add a gym"
+            className="shrink-0 rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark"
+          >
+            {(close) => (
+              <AddGymForm
+                org={org}
+                onAdded={(name) => {
+                  close();
+                  setMsg(`${name} added.`);
+                  router.refresh();
+                }}
+              />
+            )}
+          </PopUp>
+        </div>
       </div>
       <ul className="space-y-2">
         {gyms.map((g) => (

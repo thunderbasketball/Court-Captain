@@ -1,127 +1,141 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import { orgPrograms } from "@/lib/org-leagues";
-import { listOrgTeams, type OrgTeam } from "@/lib/org-teams";
+import { listOrgCoaches, listOrgTeams, listTeamImports } from "@/lib/org-teams";
+import { TZ } from "@/lib/time";
 import { orgInfo } from "@/lib/org-registry";
-import { GRADE_CHOICES } from "@/lib/scenic-teams";
 import AppHeader from "../../../AppHeader";
 import { PageTitle, card } from "../../../ui";
-import { NeedsCoach } from "./NeedsCoach";
-import { RegisterAllButton } from "../../../leagues/LeagueButtons";
-import { AddTeamButton } from "./TeamTools";
+import TeamRow, { TeamsTabs, teamTabs } from "../../../TeamRow";
+import { ContactChip, GroupTextButton } from "../../../Contacts";
+import RegisterPrograms from "../../../RegisterPrograms";
+import AddTeamButton from "../../../AddTeam";
+import { ImportTeamsButton, UndoImportButton } from "../../../TeamImport";
+import { addTeam, importTeams, previewImport, undoImport } from "./actions";
 
-export default function OrgTeamsPage({ params }: PageProps<"/org/[slug]/teams">) {
+export default function OrgTeamsPage({ params, searchParams }: PageProps<"/org/[slug]/teams">) {
   return (
     <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
-      <OrgTeams params={params} />
+      <OrgTeams params={params} searchParams={searchParams} />
     </Suspense>
   );
 }
 
-const GROUP = {
-  Boys: "bg-sky-50 ring-sky-200 dark:bg-sky-500/10 dark:ring-sky-500/20",
-  Girls: "bg-pink-50 ring-pink-200 dark:bg-pink-500/10 dark:ring-pink-500/20",
-} as const;
-
 // A registered organization's teams (Team Management): Boys then Girls, by grade. Admins and Directors of Teams see all
 // and add teams; a coach sees their own.
-async function OrgTeams({ params }: { params: PageProps<"/org/[slug]/teams">["params"] }) {
+async function OrgTeams({
+  params,
+  searchParams,
+}: {
+  params: PageProps<"/org/[slug]/teams">["params"];
+  searchParams: PageProps<"/org/[slug]/teams">["searchParams"];
+}) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   const { slug } = await params;
   const [o, list] = await Promise.all([orgInfo(db, slug), listOrgTeams({ pool: db, now: () => new Date() }, user, slug)]);
   if (!o || !list) notFound();
+  // Who can be a Head Coach here: the organization's coaches (or a new person typed in).
+  const coaches = list.canManage ? await listOrgCoaches({ pool: db, now: () => new Date() }, user, slug) : null;
+  const imports = list.canManage ? ((await listTeamImports({ pool: db, now: () => new Date() }, user, slug)) ?? []) : [];
+  const when = (d: Date) =>
+    d.toLocaleString("en-US", { timeZone: TZ, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   const progs = await orgPrograms({ pool: db, now: () => new Date() }, user, slug);
-  const day = (d: string) =>
-    new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-  const groups = (["Boys", "Girls"] as const)
-    .map((g) => ({ gender: g, teams: list.teams.filter((t) => t.gender === g) }))
-    .filter((g) => g.teams.length);
+  // Tabs: one per level and gender it has teams for (youngest grade first), then Register (league programs).
+  const register = !!progs && progs.programs.length > 0 && list.canManage;
+  const tabs = teamTabs(list.teams, (await searchParams).view, register);
+  const coachCells = list.teams.flatMap((t) => t.coaches.map((c) => c.cell));
 
   return (
     <>
       <AppHeader user={user} context={`org:${slug}`} tab="org-teams" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
         <div className="flex items-start justify-between gap-3">
-          <PageTitle title="Teams" subtitle={list.canManage ? `${o.name}'s teams and coaches` : "Your teams"} />
-          {list.canManage && <AddTeamButton org={slug} grades={GRADE_CHOICES} />}
+          <PageTitle
+            title={`Teams (${list.teams.length})`}
+            subtitle={list.canManage ? `${o.name}'s teams and coaches` : "Your teams"}
+          />
+          {list.canManage && (
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+              {/* All coaches: text (Chat and Notify come when those features work for organizations) */}
+              <GroupTextButton cells={coachCells} label="Text all coaches" />
+              <ImportTeamsButton
+                preview={previewImport.bind(null, slug)}
+                add={importTeams.bind(null, slug)}
+                example={
+                  "Gender,Grade,Level,Coach First,Coach Last,Coach Cell,Alternate Name\nBoys,3rd/4th,REC,Sam,Lee,423-555-0101,Bolts\nGirls,5th,COMP,,,,"
+                }
+                help="One team per row: Gender, Grade, Level, then optionally the Head Coach's first name, last name and cell, and an Alternate name. Each team is named from its Head Coach (like 4G Epps; 4G TBD until a coach is added). Paste from a spreadsheet or choose a CSV file."
+              />
+              <AddTeamButton
+                people={(coaches ?? []).map((c) => {
+                  const [firstName, ...rest] = c.name.split(" ");
+                  return { value: `user:${c.id}`, firstName, lastName: rest.join(" "), detail: "Coach" };
+                })}
+                create={addTeam.bind(null, slug)}
+                href={`/org/${slug}/teams/`}
+              />
+            </div>
+          )}
         </div>
-        {progs && progs.programs.length > 0 && (
-          <section className={`${card} mb-4 p-4`}>
-            <h2 className="font-semibold">{progs.league} programs</h2>
-            <p className="mb-2 text-sm text-zinc-500">
-              Register your teams: each goes into its division (gender, grade and level). Coaches can be added later.
-            </p>
+        <TeamsTabs base={`/org/${slug}/teams`} current={tabs.current} groups={tabs.groups} register={register} />
+        {!list.teams.length && <p className="text-sm text-zinc-500">No teams yet. Tap “+ Add” (or Import) to create some.</p>}
+        {tabs.group && (
+          <section className={`${card} overflow-hidden`}>
             <ul className="divide-y divide-zinc-100 dark:divide-white/5">
-              {progs.programs.map((p) => (
-                <li key={p.id} className="flex flex-wrap items-start justify-between gap-3 py-2.5">
-                  <div className="min-w-0 text-sm">
-                    <p className="font-semibold">
-                      {p.name} <span className="font-normal text-zinc-500">· {p.kind}</span>
-                    </p>
-                    <p className="text-zinc-500">
-                      {day(p.startsOn)}–{day(p.endsOn)}
-                      {p.feeCents !== null && ` · $${(p.feeCents / 100).toFixed(0)} per team, paid later`}
-                    </p>
-                    <p className="text-zinc-500">
-                      {p.registered} of {p.registered + p.unregistered} teams registered
-                      {p.status === "open" ? ` · open until ${day(p.regCloses)}` : " · registration opens soon"}
-                    </p>
-                  </div>
-                  {p.status === "open" && p.unregistered > 0 && (
-                    <RegisterAllButton org={slug} programId={p.id} program={p.name} count={p.unregistered} />
+              {tabs.group.teams.map((t) => (
+                <TeamRow
+                  key={t.id}
+                  href={`/org/${slug}/teams/${t.id}`}
+                  name={t.name}
+                  altName={t.altName}
+                  gender={t.gender}
+                  level={t.level}
+                  sub={`${t.grade} grade`}
+                  hasCoach={t.coaches.some((c) => c.role === "HeadCoach")}
+                  players={t.players}
+                  people={t.coaches.map((c) => {
+                    const [first, ...rest] = c.name.split(" ");
+                    return (
+                      <ContactChip
+                        key={c.id}
+                        person={{ role: c.role, email: null, first, last: rest.join(" "), cell: c.cell }}
+                        about={t.name}
+                      />
+                    );
+                  })}
+                />
+              ))}
+            </ul>
+          </section>
+        )}
+        {tabs.current === "register" && progs && <RegisterPrograms org={slug} progs={progs} />}
+        {imports.length > 0 && (
+          <section className={`${card} mt-4 p-4`}>
+            <h2 className="font-semibold">Recent imports</h2>
+            <ul className="divide-y divide-zinc-100 dark:divide-white/5">
+              {imports.map((i) => (
+                <li key={i.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+                  <span className={i.undoneBy || !i.left ? "text-zinc-400" : ""}>
+                    {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"} · by {i.importedBy}
+                    {i.undoneBy ? ` · undone by ${i.undoneBy}` : i.left < i.teams ? ` · ${i.left} still here` : ""}
+                  </span>
+                  {!i.undoneBy && i.left > 0 && (
+                    <UndoImportButton
+                      undo={undoImport.bind(null, slug, i.id)}
+                      teams={i.left}
+                      when={when(i.importedAt)}
+                      note="Teams registered in a program are kept (withdraw them first)."
+                    />
                   )}
                 </li>
               ))}
             </ul>
           </section>
         )}
-        {!list.teams.length && <p className="text-sm text-zinc-500">No teams yet. Tap + Add.</p>}
-        <div className="space-y-4">
-          {groups.map((g) => (
-            <section key={g.gender} className={`rounded-2xl p-3 ring-1 ${GROUP[g.gender]}`}>
-              <h2 className="mb-2 px-1 text-sm font-semibold">
-                {g.gender} ({g.teams.length})
-              </h2>
-              <ul className="space-y-2">
-                {g.teams.map((t) => (
-                  <li key={t.id}>
-                    <TeamRow slug={slug} t={t} />
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
       </main>
     </>
-  );
-}
-
-function TeamRow({ slug, t }: { slug: string; t: OrgTeam }) {
-  const head = t.coaches.find((c) => c.role === "HeadCoach");
-  return (
-    <Link
-      href={`/org/${slug}/teams/${t.id}`}
-      className={`${card} flex items-center justify-between gap-3 p-3 hover:ring-thunder-blue/40`}
-    >
-      <span className="min-w-0">
-        <span className="block font-semibold">{t.name}</span>
-        {t.coaches.length ? (
-          <span className="block text-sm text-zinc-500">
-            {head ? `Head Coach: ${head.name}` : "No Head Coach yet"}
-            {t.coaches.length > (head ? 1 : 0) && ` · ${t.coaches.length - (head ? 1 : 0)} asst.`}
-          </span>
-        ) : (
-          <NeedsCoach />
-        )}
-      </span>
-      <span className="shrink-0 text-right text-xs font-medium text-zinc-500">
-        {t.grade} · {t.level}
-      </span>
-    </Link>
   );
 }

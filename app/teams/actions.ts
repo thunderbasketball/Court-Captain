@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import * as evaluations from "@/lib/evaluations";
 import * as rosters from "@/lib/rosters";
 import * as teams from "@/lib/teams";
+import * as thunderImport from "@/lib/thunder-team-import";
 import * as uniforms from "@/lib/uniforms";
 import type { CreateTeamInput, CreateTeamResult, UpdateTeamInput } from "@/lib/teams";
 
@@ -33,6 +34,17 @@ async function guarded<T extends Result>(
 
 export async function createTeam(input: CreateTeamInput): Promise<CreateTeamResult> {
   return guarded((u) => teams.createTeam(deps, u, input));
+}
+
+// Import teams (pasted or a CSV): preview, add the new ones, undo an import.
+export async function previewThunderImport(text: string) {
+  return guarded((u) => thunderImport.previewThunderImport(deps, u, text));
+}
+export async function importThunderTeams(text: string) {
+  return guarded((u) => thunderImport.importThunderTeams(deps, u, text));
+}
+export async function undoThunderImport(importId: string) {
+  return guarded((u) => thunderImport.undoThunderImport(deps, u, importId));
 }
 
 export async function deleteTeam(id: string) {
@@ -62,7 +74,11 @@ export async function saveEvaluation(teamId: string, registrantId: string, chang
   return guarded((u) => evaluations.saveEvaluation(deps, u, String(teamId), String(registrantId), changes));
 }
 
-export async function saveUniform(teamId: string, registrantId: string, changes: { number?: string | null; size?: string | null }) {
+export async function saveUniform(
+  teamId: string,
+  registrantId: string,
+  changes: { number?: string | null; size?: string | null },
+) {
   const clean = changes && typeof changes === "object" ? changes : {};
   return guarded((u) => uniforms.saveUniform(deps, u, String(teamId), String(registrantId), clean), "uniforms");
 }

@@ -21,7 +21,9 @@ export function AddPlayersButton({ teamId, candidates }: { teamId: string; candi
   const [busy, start] = useTransition();
 
   const q = search.trim().toLowerCase();
-  const list = candidates.filter((c) => (showAll || c.fits || q) && (!q || `${c.firstName} ${c.lastName}`.toLowerCase().includes(q)));
+  const list = candidates.filter(
+    (c) => (showAll || c.fits || q) && (!q || `${c.firstName} ${c.lastName}`.toLowerCase().includes(q)),
+  );
   const fitting = candidates.filter((c) => c.fits).length;
 
   return (
@@ -73,7 +75,11 @@ export function AddPlayersButton({ teamId, candidates }: { teamId: string; candi
                     className="size-5 accent-thunder-blue"
                     checked={picked.includes(c.registrantId)}
                     onChange={() =>
-                      setPicked(picked.includes(c.registrantId) ? picked.filter((x) => x !== c.registrantId) : [...picked, c.registrantId])
+                      setPicked(
+                        picked.includes(c.registrantId)
+                          ? picked.filter((x) => x !== c.registrantId)
+                          : [...picked, c.registrantId],
+                      )
                     }
                   />
                   <span className="min-w-0 flex-1">

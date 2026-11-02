@@ -28,10 +28,10 @@ const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
 export const SLOT_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]; // 8 AM – 9 PM starts
 const MAX_DAYS = 400;
 
-// Gym and court names: start with a letter or digit; letters, digits, spaces, . ' & - after.
+// Gym and court names: start with a letter or digit (never a formula); letters, digits, spaces, . ' & - # after.
 function cleanPlaceName(v: unknown, what: string): string {
   const s = typeof v === "string" ? v.trim().replace(/\s+/g, " ") : "";
-  if (!/^[\p{L}\d][\p{L}\d .'&-]{0,59}$/u.test(s)) throw new UserError(`Enter a valid ${what} (letters and numbers).`);
+  if (!/^[\p{L}\d][\p{L}\d .'&#-]{0,59}$/u.test(s)) throw new UserError(`Enter a valid ${what} (letters and numbers).`);
   return s;
 }
 
@@ -81,7 +81,10 @@ export async function addGym(
       throw new UserError("Each court needs a different name.");
     return withTx(deps.pool, async (q) => {
       // A gym that was removed but kept for its past practices (any capitals) comes back with these courts.
-      const old = await q.query<{ id: string }>("select id::text from gyms where org = 'thunder' and lower(name) = lower($1) and not active for update", [name]);
+      const old = await q.query<{ id: string }>(
+        "select id::text from gyms where org = 'thunder' and lower(name) = lower($1) and not active for update",
+        [name],
+      );
       if (old.rows[0]) {
         await q.query("update gyms set active = true where id = $1", [old.rows[0].id]);
         await q.query("update courts set active = (name = any($2::text[])) where gym_id = $1", [old.rows[0].id, courts]);
@@ -91,9 +94,10 @@ export async function addGym(
         ]);
         return { id: old.rows[0].id };
       }
-      const g = await q.query<{ id: string }>("insert into gyms (name) values ($1) on conflict (org, name) do nothing returning id::text", [
-        name,
-      ]);
+      const g = await q.query<{ id: string }>(
+        "insert into gyms (name) values ($1) on conflict (org, name) do nothing returning id::text",
+        [name],
+      );
       if (!g.rows[0]) throw new UserError(`There's already a gym named "${name}".`);
       await q.query("insert into courts (gym_id, name) select $1, unnest($2::text[])", [g.rows[0].id, courts]);
       return { id: g.rows[0].id };
@@ -219,7 +223,9 @@ export async function syncPracticeSlots(
   now: Date,
 ): Promise<{ added: number; removed: number } | { error: string }> {
   const mins = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
-  const courts = (await q.query<{ id: string }>("select id::text from courts where gym_id = $1 and active order by name", [gymId])).rows;
+  const courts = (
+    await q.query<{ id: string }>("select id::text from courts where gym_id = $1 and active order by name", [gymId])
+  ).rows;
   const existing = await q.query<{ id: string; court_id: string; day: string; minute: number; team_id: string | null }>(
     `select s.id::text, s.court_id::text, to_char((s.starts_at at time zone 'America/New_York')::date, 'YYYY-MM-DD') as day,
             (extract(hour from s.starts_at at time zone 'America/New_York') * 60
@@ -249,7 +255,13 @@ export async function syncPracticeSlots(
   for (const [day, list] of wanted)
     for (const m of list) {
       const reason = await blackoutFor(q, gymId, day, m);
-      const startsAt = zonedTime(Number(day.slice(0, 4)), Number(day.slice(5, 7)), Number(day.slice(8, 10)), Math.floor(m / 60), m % 60);
+      const startsAt = zonedTime(
+        Number(day.slice(0, 4)),
+        Number(day.slice(5, 7)),
+        Number(day.slice(8, 10)),
+        Math.floor(m / 60),
+        m % 60,
+      );
       for (const c of courts) {
         if (have.has(`${c.id}|${day}|${m}`)) continue;
         const r = await q.query(

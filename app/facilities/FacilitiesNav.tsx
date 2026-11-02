@@ -6,11 +6,18 @@ const LINKS = [
   { key: "blackouts", href: "/facilities/blackouts", label: "Blackouts" },
 ] as const;
 
-// The links inside Facilities (Admins and Directors of Facilities).
-export default function FacilitiesNav({ current }: { current: (typeof LINKS)[number]["key"] }) {
+// The links inside Facilities (Admins and Directors of Facilities): Thunder's, or (`links`) another organization's
+// (Availability and Gyms; blackouts belong to Thunder's practice slots).
+export default function FacilitiesNav({
+  current,
+  links = LINKS,
+}: {
+  current: string;
+  links?: readonly { key: string; href: string; label: string }[];
+}) {
   return (
     <nav aria-label="Facilities" className="mb-5 flex gap-1 overflow-x-auto border-b border-zinc-200 dark:border-white/10">
-      {LINKS.map((l) => (
+      {links.map((l) => (
         <Link
           key={l.key}
           href={l.href}

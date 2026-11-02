@@ -5,7 +5,7 @@ import { hasFeature } from "./features";
 import { listOrgs, orgInfo } from "./org-registry";
 import { addOrgGym, availableUses, facilitiesView, removeOrgGym, setAvailability } from "./facilities";
 import { decideHosting, hostingOffers, hostingRequests, requestHosting } from "./org-partnerships";
-import { createOrganization, logoType, setOrgLogo, slugFor } from "./org-signup";
+import { createOrganization, logoType, setOrgColor, setOrgLogo, slugFor } from "./org-signup";
 import { openCourtsByDay, partnerHours } from "./scenic-partners";
 import { createTestDb, grant } from "./testing/db";
 
@@ -122,6 +122,11 @@ describe("registering an organization", () => {
     expect(await setOrgLogo(deps(), other, "baylor-school", { bytes: png, type: "image/png" })).toMatchObject({ ok: false });
     expect(await setOrgLogo(deps(), jo, "baylor-school", { bytes: png, type: "image/png" })).toEqual({ ok: true });
     expect((await orgInfo(db.pool, "baylor-school"))!.logo).toMatch(/^\/org-logo\//);
+    // Color: Admins pick one of the colors.
+    expect(await setOrgColor(deps(), other, "baylor-school", "#b91c1c")).toMatchObject({ ok: false });
+    expect(await setOrgColor(deps(), jo, "baylor-school", "#123456")).toEqual({ ok: false, message: "Pick one of the colors." });
+    expect(await setOrgColor(deps(), jo, "baylor-school", "#b91c1c")).toEqual({ ok: true });
+    expect((await orgInfo(db.pool, "baylor-school"))!.color).toBe("#b91c1c");
   });
 
   it("hosting for a registered organization: its own gyms, ask Scenic City, then its game days are open courts there", async () => {

@@ -5,8 +5,9 @@ import type { SessionUser } from "./auth/service";
 import { cleanEmail, cleanName } from "./auth/validate";
 import { normalizeCell } from "./phone";
 import { withTx } from "./sql";
-import { GRADES, LEVELS, gradeSort, teamName } from "./team-names";
+import { GRADES, LEVELS, gradeSort, gradesOk, tbdName, teamName } from "./team-names";
 import { hasArea } from "./org-admin";
+import { syncThunderCopy } from "./thunder-leagues";
 import { matchOrCreateUser } from "./user-match";
 
 export { GRADES, LEVELS, teamName } from "./team-names";
@@ -40,6 +41,7 @@ export type TeamListItem = {
   gender: "Boys" | "Girls";
   grades: string[];
   level: string;
+  altName: string | null; // e.g. "Bolts"
   createdBy: string;
   practiceLocations: string[];
   headCoach: { first: string; last: string; cell: string } | null;
@@ -55,7 +57,7 @@ const roleOrder = `array_position(array['HeadCoach','AsstCoach','Manager','TeamP
 export async function listTeams(deps: Deps, viewer: SessionUser): Promise<TeamListItem[]> {
   if (!hasArea(viewer, "teams")) throw new Error("Director only");
   const r = await deps.pool.query<Omit<TeamListItem, "headCoach">>(
-    `select t.id::text, t.name, t.gender, t.grades, t.level, t.created_by as "createdBy", t.practice_locations as "practiceLocations",
+    `select t.id::text, t.name, t.gender, t.grades, t.level, t.alt_name as "altName", t.created_by as "createdBy", t.practice_locations as "practiceLocations",
             coalesce((select json_agg(json_build_object('coachId', u.coach_id, 'role', s.role, 'first', u.first_name, 'last', u.last_name,
                                                         'cell', u.cell, 'email', u.email) order by ${roleOrder})
                       from team_staff s join users u on u.coach_id = s.coach_id where s.team_id = t.id), '[]') as staff,
@@ -95,7 +97,7 @@ export type TeamDetail = Omit<TeamListItem, "headCoach" | "staff"> & {
 export async function getTeam(deps: Deps, viewer: SessionUser, id: string): Promise<TeamDetail | null> {
   if (!/^\d{1,18}$/.test(id)) return null;
   const t = await deps.pool.query<Omit<TeamListItem, "headCoach" | "staff">>(
-    `select id::text, name, gender, grades, level, created_by as "createdBy", practice_locations as "practiceLocations"
+    `select id::text, name, gender, grades, level, alt_name as "altName", created_by as "createdBy", practice_locations as "practiceLocations"
      from teams where id = $1`,
     [id],
   );
@@ -132,7 +134,10 @@ export type PersonOption = {
 };
 
 // Director only. Active app users, plus registration volunteers who don't have a login yet (matched by cell).
-export async function personOptions(deps: Deps, viewer: SessionUser): Promise<{ users: PersonOption[]; volunteers: PersonOption[] }> {
+export async function personOptions(
+  deps: Deps,
+  viewer: SessionUser,
+): Promise<{ users: PersonOption[]; volunteers: PersonOption[] }> {
   if (!hasArea(viewer, "teams")) throw new Error("Director only");
   const users = await deps.pool.query<PersonOption>(
     `select 'user:' || coach_id as value, first_name as "firstName", last_name as "lastName",
@@ -207,12 +212,19 @@ async function resolvePerson(
   }
 
   // Head and Assistant Coaches get the Thunder Coach role.
-  if (isCoach) await q.query("select set_role($1, 'thunder', 'Coach', true, null), set_role($1, 'thunder', 'Request', false, null)", [found.coachId]);
+  if (isCoach)
+    await q.query("select set_role($1, 'thunder', 'Coach', true, null), set_role($1, 'thunder', 'Request', false, null)", [
+      found.coachId,
+    ]);
   return found;
 }
 
 // Uses the existing user with this cell, or creates one (lib/user-match.ts).
-async function createOrMatchUser(q: PoolClient, p: { first: string; last: string; cell: string; email: string | null }, now: Date) {
+async function createOrMatchUser(
+  q: PoolClient,
+  p: { first: string; last: string; cell: string; email: string | null },
+  now: Date,
+) {
   const r = await matchOrCreateUser(q, p, now);
   if ("error" in r) throw new UserError(r.error);
   return r;
@@ -220,11 +232,31 @@ async function createOrMatchUser(q: PoolClient, p: { first: string; last: string
 
 // ---- Team fields ----
 
+// An optional Alternate name ("Bolts"): letters, numbers and simple punctuation, never a formula. Blank: none.
+function cleanAltName(v: unknown): string | null {
+  if (typeof v !== "string" || !v.trim()) return null;
+  const s = v.trim().replace(/\s+/g, " ");
+  if (!/^[\p{L}\d][\p{L}\d .'&#,()/-]{0,59}$/u.test(s))
+    throw new UserError("Alternate name: letters, numbers and simple punctuation.");
+  return s;
+}
+
+// Directors of Teams: change a team's Alternate name (blank removes it).
+export async function setTeamAltName(deps: Deps, viewer: SessionUser, id: string, alt: unknown): Promise<Result> {
+  if (!hasArea(viewer, "teams")) return { ok: false, message: "Only a Director of Teams can do that." };
+  return run(async () => {
+    const r = await deps.pool.query("update teams set alt_name = $2 where id = $1", [id, cleanAltName(alt)]);
+    if (!r.rowCount) throw new UserError("That team no longer exists.");
+    return {};
+  });
+}
+
 function cleanTeamFields(input: { gender: unknown; grades: unknown; level: unknown }) {
   const gender: "Boys" | "Girls" | null = input.gender === "Boys" || input.gender === "Girls" ? input.gender : null;
   if (!gender) throw new UserError("Pick Boys or Girls.");
   const grades = Array.isArray(input.grades) ? [...new Set(input.grades)] : [];
-  if (!grades.length || !grades.every((g) => (GRADES as readonly unknown[]).includes(g))) throw new UserError("Pick at least one grade.");
+  if (!grades.length || !grades.every((g) => (GRADES as readonly unknown[]).includes(g)))
+    throw new UserError("Pick at least one grade.");
   const level = (LEVELS as readonly unknown[]).includes(input.level) ? (input.level as string) : null;
   if (!level) throw new UserError("Pick REC or COMP.");
   return { gender, grades: grades as string[], level, gradeSort: Math.max(...(grades as string[]).map(gradeSort)) };
@@ -257,14 +289,18 @@ async function rename(q: PoolClient, teamId: string): Promise<string> {
   );
   const r = t.rows[0];
   const name = teamName(r.gender, r.grades, r.head_last ?? (r.name.replace(/^\S+\s*/, "") || "Team"));
+  await syncThunderCopy(q, teamId); // its copy in a league follows (Head Coach now; the name below)
   if (name === r.name) return name;
   const clash = await q.query("select 1 from teams where lower(name) = lower($1) and id <> $2", [name, teamId]);
   if (clash.rows[0]) throw new UserError(`That would rename the team to "${name}", but that name is taken.`);
   await q.query("update teams set name = $2 where id = $1", [teamId, name]);
+  await syncThunderCopy(q, teamId);
   return name;
 }
 
-export type CreateTeamInput = { gender: unknown; grades: unknown; level: unknown; headCoach: unknown };
+// headCoach: "user:<id>", "volunteer:<registrant>", a new person { first, last, cell, email }, or "none" ("4G TBD" until
+// one is added). altName: optional ("Bolts"). Grades: one, or two next to each other (what leagues place by).
+export type CreateTeamInput = { gender: unknown; grades: unknown; level: unknown; headCoach: unknown; altName?: unknown };
 export type CreateTeamResult = Result<{ id: string; name: string }>;
 
 export async function createTeam(deps: Deps, viewer: SessionUser, input: CreateTeamInput): Promise<CreateTeamResult> {
@@ -273,40 +309,49 @@ export async function createTeam(deps: Deps, viewer: SessionUser, input: CreateT
   const by = byOf(viewer);
   return run(async () => {
     const f = cleanTeamFields(input);
-    if (typeof input.headCoach !== "string" || !input.headCoach) throw new UserError("Pick a head coach.");
-    if (!/^(user|volunteer):\d{1,20}$/.test(input.headCoach)) throw new UserError("Pick a head coach.");
+    if (!gradesOk(f.grades)) throw new UserError("Pick one grade, or two next to each other.");
+    const none = input.headCoach === "none";
+    if (!none && !input.headCoach) throw new UserError("Pick a head coach (or No coach yet).");
+    const alt = cleanAltName(input.altName);
     return withTx(deps.pool, async (q) => {
-      const head = await resolvePerson(q, input.headCoach, true, now);
-      const name = teamName(f.gender, f.grades, head.lastName);
+      await q.query("select pg_advisory_xact_lock(hashtext('org-teams:thunder'))");
+      const head = none ? null : await resolvePerson(q, input.headCoach, true, now);
+      const taken = new Set((await q.query<{ name: string }>("select lower(name) as name from teams")).rows.map((r) => r.name));
+      const name = head ? teamName(f.gender, f.grades, head.lastName) : tbdName(f.gender, f.grades, taken);
       const t = await q.query<{ id: string }>(
-        `insert into teams (name, gender, grades, grade_sort, level, created_at, created_by)
-         values ($1, $2, $3, $4, $5, $6, $7) on conflict (name) do nothing returning id::text`,
-        [name, f.gender, f.grades, f.gradeSort, f.level, now, by],
+        `insert into teams (name, gender, grades, grade_sort, level, created_at, created_by, alt_name)
+         values ($1, $2, $3, $4, $5, $6, $7, $8) on conflict (name) do nothing returning id::text`,
+        [name, f.gender, f.grades, f.gradeSort, f.level, now, by, alt],
       );
       if (!t.rows[0]) throw new UserError(`There's already a team named "${name}".`);
-      await q.query("insert into team_staff (team_id, coach_id, role, added_at, added_by) values ($1, $2, 'HeadCoach', $3, $4)", [
-        t.rows[0].id,
-        head.coachId,
-        now,
-        by,
-      ]);
+      if (head)
+        await q.query(
+          "insert into team_staff (team_id, coach_id, role, added_at, added_by) values ($1, $2, 'HeadCoach', $3, $4)",
+          [t.rows[0].id, head.coachId, now, by],
+        );
       return { id: t.rows[0].id, name };
     });
   });
 }
 
-export type UpdateTeamInput = { gender: unknown; grades: unknown; level: unknown; practiceLocations: unknown };
+export type UpdateTeamInput = { gender: unknown; grades: unknown; level: unknown; practiceLocations: unknown; altName?: unknown };
 
 // Director only. The name follows the new grades/gender.
-export async function updateTeam(deps: Deps, viewer: SessionUser, id: string, input: UpdateTeamInput): Promise<Result<{ name: string }>> {
+export async function updateTeam(
+  deps: Deps,
+  viewer: SessionUser,
+  id: string,
+  input: UpdateTeamInput,
+): Promise<Result<{ name: string }>> {
   if (!hasArea(viewer, "teams")) return { ok: false, message: "Only a Director of Teams can edit a team." };
   return run(async () => {
     const f = cleanTeamFields(input);
     const locations = cleanLocations(input.practiceLocations);
     return withTx(deps.pool, async (q) => {
       const r = await q.query(
-        "update teams set gender = $2, grades = $3, grade_sort = $4, level = $5, practice_locations = $6 where id = $1",
-        [id, f.gender, f.grades, f.gradeSort, f.level, locations],
+        `update teams set gender = $2, grades = $3, grade_sort = $4, level = $5, practice_locations = $6,
+                alt_name = case when $8 then $7 else alt_name end where id = $1`,
+        [id, f.gender, f.grades, f.gradeSort, f.level, locations, cleanAltName(input.altName), input.altName !== undefined],
       );
       if (!r.rowCount) throw new UserError("That team no longer exists.");
       return { name: await rename(q, id) };
@@ -369,7 +414,8 @@ export async function addStaff(
            where s.team_id = $1 and s.role = $2`,
           [teamId, role],
         );
-        if (held.rows[0]) throw new UserError(`This team already has a ${roleLabel(role)} (${held.rows[0].who}). Remove them first.`);
+        if (held.rows[0])
+          throw new UserError(`This team already has a ${roleLabel(role)} (${held.rows[0].who}). Remove them first.`);
       }
       const p = await resolvePerson(q, input.person, COACH_ROLES.includes(role), now);
       if (role === "HeadCoach") await q.query("delete from team_staff where team_id = $1 and role = 'HeadCoach'", [teamId]);
@@ -390,7 +436,8 @@ export async function removeStaff(
   input: { coachId: unknown; role: unknown },
 ): Promise<Result> {
   const role = (ROLES as readonly unknown[]).includes(input.role) ? (input.role as Role) : null;
-  if (!role || typeof input.coachId !== "string" || !/^\d{7}$/.test(input.coachId)) return { ok: false, message: "Pick a staff member." };
+  if (!role || typeof input.coachId !== "string" || !/^\d{7}$/.test(input.coachId))
+    return { ok: false, message: "Pick a staff member." };
   if (!/^\d{1,18}$/.test(teamId)) return { ok: false, message: "That team no longer exists." };
   return run(() =>
     withTx(deps.pool, async (q) => {

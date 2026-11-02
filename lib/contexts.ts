@@ -4,7 +4,6 @@
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { BUILT_IN, SCENIC_ROLES, type OrgSlug, type ScenicRole } from "./orgs";
-import { hasArea, isThunderAdmin } from "./org-admin";
 import { isPlatformAdmin } from "./platform";
 import type { Role } from "./teams";
 
@@ -43,21 +42,8 @@ export async function userContexts(pool: Pick<Pool, "query">, viewer: SessionUse
       : admins.rows.some((r) => r.org === org)
         ? "Admin"
         : "Director";
-  // The Director chip opens their first area's page (with no area yet: Users for Admins, else Announcements).
-  const home = hasArea(viewer, "teams")
-    ? "/teams"
-    : hasArea(viewer, "facilities")
-      ? "/practice"
-      : hasArea(viewer, "programs")
-        ? "/events"
-        : hasArea(viewer, "players")
-          ? "/members/players"
-          : hasArea(viewer, "coaches")
-            ? "/members/coaches"
-            : isThunderAdmin(viewer)
-              ? "/members/staff"
-              : "/inbox";
-  if (viewer.isDirector) out.push({ key: "director", org: "thunder", label: top("thunder"), href: home });
+  // The Director chip opens Thunder's Home (a card for each part they can open), like every organization's.
+  if (viewer.isDirector) out.push({ key: "director", org: "thunder", label: top("thunder"), href: "/thunder" });
   // One chip per team, showing the person's highest role there.
   const r = await pool.query<{ id: string; name: string; role: Role }>(
     `select distinct on (t.id) t.id::text, t.name, s.role

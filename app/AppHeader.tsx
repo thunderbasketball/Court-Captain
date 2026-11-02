@@ -21,6 +21,7 @@ import AnnouncementPopup from "./AnnouncementPopup";
 import ChatPopup from "./ChatPopup";
 import NotifyButton from "./NotifyButton";
 import OrgSwitcher from "./OrgSwitcher";
+import OrgGear from "./OrgGear";
 import { LogoutButton } from "./HomeActions";
 import { Avatar } from "./ui";
 
@@ -30,8 +31,8 @@ type Tab =
   | "members"
   | "uniforms"
   | "facilities"
-  | "features"
   | "org-home"
+  | "thunder-home"
   | "org-teams"
   | "org-members"
   | "org-facilities"
@@ -122,16 +123,19 @@ export default async function AppHeader({
         ? "/events"
         : null;
   type TabLink = { key: string; href: string; label: string; icon: string; feature?: Feature; areas?: Area[]; admin?: boolean };
+  // Every organization's tabs, in one order: Home · Teams · Programs · Schedule · Uniforms · Facilities · Members (each
+  // shown only when its features and the person's role allow), then the gear for Admins.
   const directorTabs: TabLink[] = [
+    { key: "thunder-home", href: "/thunder", label: "Home", icon: ICONS.home },
     { key: "teams", href: "/teams", label: "Teams", icon: ICONS.teams, feature: "team-building", areas: ["teams"] },
     // Schedule: Practice and Season (Facilities, Practice Management), Events (Programs, Event Management); opens the first.
     ...(scheduleHref ? [{ key: "schedule", href: scheduleHref, label: "Schedule", icon: ICONS.practice }] : []),
+    { key: "uniforms", href: "/uniforms", label: "Uniforms", icon: ICONS.uniforms, feature: "uniforms", areas: ["players"] },
+    { key: "facilities", href: "/facilities", label: "Facilities", icon: ICONS.facilities, areas: ["facilities"] },
     // Members: Staff (Admins), Coaches (Coaches area), Players (Players or Teams areas); opens the first one they can see.
     ...(isThunderAdmin(user) || hasArea(user, "coaches", "players", "teams")
       ? [{ key: "members", href: "/members", label: "Members", icon: ICONS.users }]
       : []),
-    { key: "uniforms", href: "/uniforms", label: "Uniforms", icon: ICONS.uniforms, feature: "uniforms", areas: ["players"] },
-    { key: "facilities", href: "/facilities", label: "Facilities", icon: ICONS.facilities, areas: ["facilities"] },
   ];
   // Scenic City: Home and Game days for everyone there, Partners for Partners and Directors of Facilities, Teams for
   // everyone but Directors without the Teams area, Users for Admins.
@@ -164,10 +168,10 @@ export default async function AppHeader({
     ? [
         { key: "org-home", href: `/org/${org}`, label: "Home", icon: ICONS.home },
         ...(regTeams ? [{ key: "org-teams", href: `/org/${org}/teams`, label: "Teams", icon: ICONS.teams }] : []),
-        ...(regMembers ? [{ key: "org-members", href: `/org/${org}/members`, label: "Members", icon: ICONS.users }] : []),
         ...(regFacilities
           ? [{ key: "org-facilities", href: `/org/${org}/facilities`, label: "Facilities", icon: ICONS.facilities }]
           : []),
+        ...(regMembers ? [{ key: "org-members", href: `/org/${org}/members`, label: "Members", icon: ICONS.users }] : []),
       ]
     : null;
   const scenicTabs: TabLink[] | null =
@@ -234,10 +238,49 @@ export default async function AppHeader({
   const alerting = (key: string) => !!teamTab?.alert?.includes(key as TeamTab);
   const showTabs = !!orgTabs || !!scenicTabs || !!teamTab || (user.isDirector && context === "director");
   const activeBg = scenicTabs ? "bg-scenic-navy" : "bg-thunder-blue";
+  // A registered organization's own color (set in its gear) marks the tab in use; Thunder and Scenic City keep theirs.
+  const tabColor = registered ? brand.color : null;
+  // The gear (features, logo, color, login link) after the last tab, for the organization's Admins.
+  const gear = showTabs && !teamTab && !platform && (await isOrgAdmin(db, user.coachId, org));
+  // Thunder's Chat and Alerts icons (the organization's chat and announcements).
+  const orgIcons = (
+    <>
+      {thunder &&
+        chatOn &&
+        // Directors: the bubble chats with every Head Coach (the full list is linked inside).
+        (user.isDirector ? (
+          <ChatPopup chatKey={`heads-${user.coachId}`} label="Chat with all Head Coaches" className={headerBtn} allChats>
+            <HeaderIcon d={ICONS.chat} badge={chatUnread} />
+          </ChatPopup>
+        ) : (
+          <Link href="/chat" aria-label={chatUnread ? `Chat, ${chatUnread} unread` : "Chat"} className={headerBtn}>
+            <HeaderIcon d={ICONS.chat} badge={chatUnread} />
+          </Link>
+        ))}
+      {thunder &&
+        // Directors: the bell notifies all team staff (their own announcements are linked inside).
+        (user.isDirector ? (
+          <NotifyButton audience={{ roles: ALL_STAFF }} to="all team staff" className={headerBtn} inbox>
+            <HeaderIcon d={ICONS.bell} badge={unread} />
+          </NotifyButton>
+        ) : (
+          <Link
+            href="/inbox"
+            prefetch={false}
+            aria-label={unread ? `Announcements, ${unread} unread` : "Announcements"}
+            className={headerBtn}
+          >
+            <HeaderIcon d={ICONS.bell} badge={unread} />
+          </Link>
+        ))}
+    </>
+  );
+
   return (
     <>
       <header
-        className={`sticky top-0 z-10 border-t-[3px] ${org === "thunder" ? "border-t-thunder-orange" : "border-t-scenic-navy"} border-b border-zinc-950/5 bg-white/80 backdrop-blur-xl dark:border-white/10 dark:bg-zinc-950/80`}
+        style={{ borderTopColor: brand.color }}
+        className={`sticky top-0 z-10 border-t-[3px] border-b border-zinc-950/5 bg-white/80 backdrop-blur-xl dark:border-white/10 dark:bg-zinc-950/80`}
       >
         {user.actingBy && (
           <form
@@ -273,34 +316,8 @@ export default async function AppHeader({
                 ✓ Check-in
               </Link>
             )}
-            {thunder &&
-              chatOn &&
-              // Directors: the bubble chats with every Head Coach (the full list is linked inside).
-              (user.isDirector ? (
-                <ChatPopup chatKey={`heads-${user.coachId}`} label="Chat with all Head Coaches" className={headerBtn} allChats>
-                  <HeaderIcon d={ICONS.chat} badge={chatUnread} />
-                </ChatPopup>
-              ) : (
-                <Link href="/chat" aria-label={chatUnread ? `Chat, ${chatUnread} unread` : "Chat"} className={headerBtn}>
-                  <HeaderIcon d={ICONS.chat} badge={chatUnread} />
-                </Link>
-              ))}
-            {thunder &&
-              // Directors: the bell notifies all team staff (their own announcements are linked inside).
-              (user.isDirector ? (
-                <NotifyButton audience={{ roles: ALL_STAFF }} to="all team staff" className={headerBtn} inbox>
-                  <HeaderIcon d={ICONS.bell} badge={unread} />
-                </NotifyButton>
-              ) : (
-                <Link
-                  href="/inbox"
-                  prefetch={false}
-                  aria-label={unread ? `Announcements, ${unread} unread` : "Announcements"}
-                  className={headerBtn}
-                >
-                  <HeaderIcon d={ICONS.bell} badge={unread} />
-                </Link>
-              ))}
+            {/* With tabs, Chat and Alerts sit by the gear on the tab row (computers); on phones they stay up here. */}
+            {showTabs ? <span className="flex items-center gap-1 sm:hidden">{orgIcons}</span> : orgIcons}
             <Link href="/me" className="hidden truncate text-sm font-medium hover:underline sm:block">
               {user.firstName} {user.lastName}
             </Link>
@@ -346,24 +363,32 @@ export default async function AppHeader({
             aria-label={scenicTabs ? "Scenic City" : teamTab ? "Team" : "Director"}
             className="mx-auto hidden max-w-3xl px-4 pb-3 sm:block"
           >
-            <div className="inline-flex rounded-full bg-zinc-100 p-1 dark:bg-zinc-900">
-              {tabs.map((t) => (
-                <Link
-                  key={t.key}
-                  href={t.href}
-                  aria-current={activeTab === t.key ? "page" : undefined}
-                  className={`rounded-full px-5 py-1.5 text-center text-sm font-medium whitespace-nowrap transition-colors ${
-                    alerting(t.key)
-                      ? "flash-red"
-                      : activeTab === t.key
-                        ? `${activeBg} text-white shadow-sm`
-                        : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-                  }`}
-                >
-                  {t.label}
-                  {alerting(t.key) && <span className="sr-only"> (info missing)</span>}
-                </Link>
-              ))}
+            <div className="flex items-center justify-between gap-2">
+              <div className="inline-flex rounded-full bg-zinc-100 p-1 dark:bg-zinc-900">
+                {tabs.map((t) => (
+                  <Link
+                    key={t.key}
+                    href={t.href}
+                    aria-current={activeTab === t.key ? "page" : undefined}
+                    style={activeTab === t.key && tabColor && !alerting(t.key) ? { backgroundColor: tabColor } : undefined}
+                    className={`rounded-full px-5 py-1.5 text-center text-sm font-medium whitespace-nowrap transition-colors ${
+                      alerting(t.key)
+                        ? "flash-red"
+                        : activeTab === t.key
+                          ? `${tabColor ? "" : activeBg} text-white shadow-sm`
+                          : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+                    }`}
+                  >
+                    {t.label}
+                    {alerting(t.key) && <span className="sr-only"> (info missing)</span>}
+                  </Link>
+                ))}
+              </div>
+              {/* Far right: Chat and Alerts, then the gear. */}
+              <div className="flex shrink-0 items-center gap-1">
+                {orgIcons}
+                {gear && <OrgGear org={org} coachId={user.coachId} />}
+              </div>
             </div>
           </nav>
         )}
@@ -378,7 +403,7 @@ export default async function AppHeader({
           aria-label={scenicTabs ? "Scenic City" : teamTab ? "Team" : "Director"}
           className="fixed inset-x-0 bottom-0 z-20 border-t border-zinc-950/10 bg-white/95 backdrop-blur-xl sm:hidden dark:border-white/10 dark:bg-zinc-950/95"
         >
-          <div className="grid" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
+          <div className="grid" style={{ gridTemplateColumns: `repeat(${tabs.length + (gear ? 1 : 0)}, minmax(0, 1fr))` }}>
             {tabs.map((t) => {
               const on = activeTab === t.key;
               return (
@@ -396,7 +421,12 @@ export default async function AppHeader({
                         : "text-zinc-500 dark:text-zinc-400"
                   }`}
                 >
-                  {on && <span className={`absolute inset-x-3 top-0 h-0.5 rounded-full ${activeBg}`} />}
+                  {on && (
+                    <span
+                      className={`absolute inset-x-3 top-0 h-0.5 rounded-full ${tabColor ? "" : activeBg}`}
+                      style={tabColor ? { backgroundColor: tabColor } : undefined}
+                    />
+                  )}
                   <svg
                     viewBox="0 0 24 24"
                     fill="none"
@@ -412,6 +442,11 @@ export default async function AppHeader({
                 </Link>
               );
             })}
+            {gear && (
+              <div className="flex items-center justify-center">
+                <OrgGear org={org} coachId={user.coachId} />
+              </div>
+            )}
           </div>
           {/* A strip under the tabs for the host's "Powered by" badge (bottom right), so it never covers a tab.
             Also clears the iPhone home bar. Today's date fills the free left side. */}

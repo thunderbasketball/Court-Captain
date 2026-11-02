@@ -57,7 +57,13 @@ export default function NewTeamForm({ users, volunteers }: { users: PersonOption
         <span className={label}>Grades (one or more)</span>
         <div className="grid grid-cols-7 gap-2">
           {GRADES.map((g) => (
-            <button key={g} type="button" aria-pressed={grades.includes(g)} className={`${pill(grades.includes(g))} px-0`} onClick={() => toggleGrade(g)}>
+            <button
+              key={g}
+              type="button"
+              aria-pressed={grades.includes(g)}
+              className={`${pill(grades.includes(g))} px-0`}
+              onClick={() => toggleGrade(g)}
+            >
               {g}
             </button>
           ))}
@@ -77,11 +83,7 @@ export default function NewTeamForm({ users, volunteers }: { users: PersonOption
 
       <label className="block">
         <span className={label}>Head coach</span>
-        <select
-          value={headCoach}
-          onChange={(e) => setHeadCoach(e.target.value)}
-          className={inputCls}
-        >
+        <select value={headCoach} onChange={(e) => setHeadCoach(e.target.value)} className={inputCls}>
           <option value="">Choose…</option>
           {forThisTeam.length > 0 && <optgroup label="Volunteers for this team">{forThisTeam.map(option)}</optgroup>}
           {otherVolunteers.length > 0 && <optgroup label="Other volunteers">{otherVolunteers.map(option)}</optgroup>}
@@ -100,16 +102,15 @@ export default function NewTeamForm({ users, volunteers }: { users: PersonOption
       </div>
 
       {error && (
-        <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20 dark:bg-red-500/10 dark:text-red-300">
+        <p
+          role="alert"
+          className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-inset ring-red-600/20 dark:bg-red-500/10 dark:text-red-300"
+        >
           {error}
         </p>
       )}
 
-      <button
-        type="submit"
-        disabled={busy || !preview}
-        className={primaryBtn}
-      >
+      <button type="submit" disabled={busy || !preview} className={primaryBtn}>
         {busy ? "Creating…" : "Create team"}
       </button>
     </form>

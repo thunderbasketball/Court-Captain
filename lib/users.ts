@@ -42,6 +42,10 @@ export async function listUsers(viewer: SessionUser): Promise<UserListItem[]> {
              from join_reasons j left join teams t on t.id = j.team_id where j.coach_id = users.coach_id) as "joinReason",
             exists (select 1 from join_reasons j where j.coach_id = users.coach_id and j.purpose = 'staff' and j.team_id is not null) as "joinTeamListed"
      from users
+     -- Thunder's people only: a Thunder role (a request too) or a place on a Thunder team; not people who only belong
+     -- to another organization.
+     where exists (select 1 from org_roles o where o.coach_id = users.coach_id and o.org = 'thunder')
+        or exists (select 1 from team_staff s where s.coach_id = users.coach_id)
      order by lower(last_name), lower(first_name)`,
   );
   return r.rows;

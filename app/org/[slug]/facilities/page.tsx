@@ -10,7 +10,9 @@ import AppHeader from "../../../AppHeader";
 import FacilityCalendar from "../../../facilities/FacilityCalendar";
 import { RequestHostingButton } from "../../../hosting/HostingButtons";
 import { PageTitle, card } from "../../../ui";
-import OrgGyms from "./OrgGyms";
+import Link from "next/link";
+import FacilitiesNav from "../../../facilities/FacilitiesNav";
+import { orgFacilityLinks } from "./links";
 
 export default function OrgFacilitiesPage({ params }: PageProps<"/org/[slug]/facilities">) {
   return (
@@ -44,17 +46,42 @@ async function OrgFacilities({ params }: { params: PageProps<"/org/[slug]/facili
     <>
       <AppHeader user={user} context={`org:${slug}`} tab="org-facilities" />
       <main className="mx-auto w-full max-w-3xl flex-1 space-y-5 px-4 py-6">
-        <PageTitle title="Facilities" subtitle={`${o.name}'s gyms, their availability, and hosting leagues' games`} />
+        <PageTitle title="Facilities" subtitle="Gyms, availability by date, and hosting other organizations' games" />
+        <FacilitiesNav current="availability" links={orgFacilityLinks(slug)} />
 
         <section className={`${card} p-4`}>
-          <OrgGyms org={slug} gyms={view.gyms} />
+          <h2 className="mb-1 font-semibold">Gym availability</h2>
+          {!view.gyms.length ? (
+            <p className="text-sm text-zinc-500">
+              No gyms yet.{" "}
+              <Link href={`/org/${slug}/facilities/gyms`} className="font-medium text-thunder-blue hover:underline">
+                Add one under Gyms
+              </Link>
+              .
+            </p>
+          ) : !view.uses.length ? (
+            <p className="text-sm text-zinc-500">{view.partnerNote ?? "Nothing to mark yet."}</p>
+          ) : (
+            <>
+              <p className="mb-4 text-sm text-zinc-500">
+                Tap dates, choose what each is for, keep the default hours or set your own, then Save.
+              </p>
+              <FacilityCalendar
+                org={slug}
+                today={view.today}
+                gyms={view.gyms}
+                uses={view.uses}
+                days={view.days}
+                gameDays={view.gameDays}
+              />
+            </>
+          )}
         </section>
 
         <section className={`${card} p-4`}>
           <h2 className="mb-1 font-semibold">Host games for other organizations</h2>
           <p className="mb-3 text-sm text-zinc-500">
             Ask to host; once a league approves, your gyms marked for that league show as available on its game days.
-            {view.partnerNote && ` ${view.partnerNote}`}
           </p>
           {!offers.length && <p className="text-sm text-zinc-500">No organization is looking for hosting sites right now.</p>}
           <ul className="divide-y divide-zinc-100 dark:divide-white/5">
@@ -79,24 +106,6 @@ async function OrgFacilities({ params }: { params: PageProps<"/org/[slug]/facili
             ))}
           </ul>
         </section>
-
-        {view.uses.length > 0 && (
-          <section className={`${card} p-4`}>
-            <h2 className="mb-1 font-semibold">Gym availability</h2>
-            <p className="mb-4 text-sm text-zinc-500">
-              Tap dates, choose what each is for ({view.uses.map((u) => u.name).join(" or ")}), keep the default hours or set your
-              own, then Save.
-            </p>
-            <FacilityCalendar
-              org={slug}
-              today={view.today}
-              gyms={view.gyms}
-              uses={view.uses}
-              days={view.days}
-              gameDays={view.gameDays}
-            />
-          </section>
-        )}
       </main>
     </>
   );

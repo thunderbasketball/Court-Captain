@@ -4,114 +4,10 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, PopUp, Toast, useConfirm } from "../../../client-ui";
 import { fieldLabel, inputCls, pillCls, primaryBtn } from "../../../ui";
-import { addCoach, addTeam, removeCoach, removeTeam } from "./actions";
+import { addCoach, removeCoach, removeTeam, setAltName } from "./actions";
 
 const addBtn =
   "shrink-0 rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark";
-
-// + Add on the Teams page: a pop-up for the team's name, Boys or Girls, grade (one, or two in a row) and COMP or REC.
-export function AddTeamButton({ org, grades }: { org: string; grades: { value: string; label: string }[] }) {
-  const router = useRouter();
-  const [msg, setMsg] = useState<string | null>(null);
-  return (
-    <>
-      <PopUp label="+ Add" title="Add a team" className={addBtn}>
-        {(close) => (
-          <TeamForm
-            org={org}
-            grades={grades}
-            onAdded={(id, name) => {
-              close();
-              setMsg(`${name} added.`);
-              router.push(`/org/${org}/teams/${id}`);
-            }}
-          />
-        )}
-      </PopUp>
-      {msg && <Toast key={msg} message={msg} />}
-    </>
-  );
-}
-
-function TeamForm({
-  org,
-  grades,
-  onAdded,
-}: {
-  org: string;
-  grades: { value: string; label: string }[];
-  onAdded: (id: string, name: string) => void;
-}) {
-  const [name, setName] = useState("");
-  const [gender, setGender] = useState<"Boys" | "Girls" | "">("");
-  const [grade, setGrade] = useState("");
-  const [level, setLevel] = useState<"COMP" | "REC" | "">("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, start] = useTransition();
-  return (
-    <form
-      className="space-y-3"
-      onSubmit={(e) => {
-        e.preventDefault();
-        start(async () => {
-          setError(null);
-          const r = await addTeam(org, { name, gender, grade, level });
-          if (!r.ok) return setError(r.message);
-          onAdded(r.id, name);
-        });
-      }}
-    >
-      <label className="block">
-        <span className={fieldLabel}>Team name</span>
-        <input
-          className={inputCls}
-          maxLength={60}
-          placeholder="e.g. Bolts"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          required
-        />
-      </label>
-      <div>
-        <span className={fieldLabel}>Boys or Girls</span>
-        <div className="flex gap-2">
-          {(["Boys", "Girls"] as const).map((g) => (
-            <button key={g} type="button" className={pillCls(gender === g)} onClick={() => setGender(g)}>
-              {g}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <label className="block">
-          <span className={fieldLabel}>Grade</span>
-          <select className={inputCls} value={grade} onChange={(e) => setGrade(e.target.value)} required>
-            <option value="">Pick…</option>
-            {grades.map((g) => (
-              <option key={g.value} value={g.value}>
-                {g.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div>
-          <span className={fieldLabel}>Level</span>
-          <div className="flex gap-2">
-            {(["COMP", "REC"] as const).map((l) => (
-              <button key={l} type="button" className={pillCls(level === l)} onClick={() => setLevel(l)}>
-                {l}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-      {error && <Alert tone="red">{error}</Alert>}
-      <button type="submit" disabled={busy} className={`${primaryBtn} w-full`}>
-        {busy ? "Adding…" : "Add team"}
-      </button>
-    </form>
-  );
-}
 
 // Delete a team (asks first). Its coaches come off it.
 export function DeleteTeamButton({ org, id, name }: { org: string; id: string; name: string }) {
@@ -287,5 +183,47 @@ export function RemoveCoachButton({
       {msg && <Toast key={msg} message={msg} />}
       {dialog}
     </>
+  );
+}
+
+// The team's Alternate name ("Bolts"): change or clear it (Admins and Directors of Teams).
+export function AltNameButton({ org, id, alt }: { org: string; id: string; alt: string | null }) {
+  const router = useRouter();
+  return (
+    <PopUp label={alt ? "Edit alternate name" : "+ Alternate name"} title="Alternate name" link>
+      {(close) => <AltNameForm org={org} id={id} alt={alt} onDone={() => (close(), router.refresh())} />}
+    </PopUp>
+  );
+}
+
+function AltNameForm({ org, id, alt, onDone }: { org: string; id: string; alt: string | null; onDone: () => void }) {
+  const [value, setValue] = useState(alt ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, start] = useTransition();
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          const r = await setAltName(org, id, value);
+          if (!r.ok) return setError(r.message);
+          onDone();
+        });
+      }}
+    >
+      <p className="text-sm text-zinc-500">Shown after the team&apos;s name. Leave blank for none.</p>
+      <input
+        className={inputCls}
+        maxLength={60}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="e.g. Bolts"
+      />
+      {error && <Alert tone="red">{error}</Alert>}
+      <button type="submit" disabled={busy} className={`${primaryBtn} w-full`}>
+        {busy ? "Saving…" : "Save"}
+      </button>
+    </form>
   );
 }

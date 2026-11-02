@@ -1,46 +1,85 @@
-import Link from "next/link";
 import { db } from "@/lib/db";
 import { FEATURES } from "@/lib/features";
 import { isOrgAdmin } from "@/lib/org-admin";
 import { orgInfo } from "@/lib/org-registry";
+import { ORG_COLORS } from "@/lib/org-signup";
+import { TZ } from "@/lib/time";
 import OrgLogo from "./OrgLogo";
 import OrgSettings from "./OrgSettings";
-import { Chip } from "./ui";
 
-// The gear by an organization's name, for its Admins only (checked here on the server): its features (link to manage
-// them) and its logo.
+// The gear after an organization's last tab, for its Admins only (checked here on the server): its login link, every
+// feature (what it has, since when, and what it can add: buying upgrades in the app is coming soon), its color and logo.
 export default async function OrgGear({ org, coachId }: { org: string; coachId: string }) {
   const [admin, o, on, asked] = await Promise.all([
     isOrgAdmin(db, coachId, org),
     orgInfo(db, org),
-    db.query<{ feature: string }>("select feature from org_features where org = $1", [org]),
+    db.query<{ feature: string; turned_on_at: Date }>("select feature, turned_on_at from org_features where org = $1", [org]),
     db.query<{ feature: string }>("select feature from org_feature_requests where org = $1", [org]),
   ]);
   if (!admin || !o) return null;
-  const name = (k: string) => FEATURES.find((f) => f.key === k)?.name ?? k;
+  const since = new Map(on.rows.map((f) => [f.feature, f.turned_on_at]));
+  const requested = new Set(asked.rows.map((f) => f.feature));
+  const date = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: TZ });
+  const always = (f: (typeof FEATURES)[number]) => "always" in f && f.always;
+  const have = FEATURES.filter((f) => always(f) || since.has(f.key));
+  const add = FEATURES.filter((f) => !have.includes(f));
   return (
     <OrgSettings
       org={org}
+      color={o.color}
+      colors={o.color && !(ORG_COLORS as readonly string[]).includes(o.color) ? [o.color, ...ORG_COLORS] : ORG_COLORS}
+      login={o.login}
+      abbr={o.abbr}
+      featuresOn={have.length}
       logo={<OrgLogo src={o.logo} name={o.name} color={o.color} className="size-14 rounded-xl text-xl" />}
       features={
-        <>
-          <div className="flex flex-wrap gap-2">
-            {on.rows.map((f) => (
-              <Chip key={f.feature} tone="green">
-                {name(f.feature)}
-              </Chip>
+        <div className="space-y-3">
+          <ul className="divide-y divide-zinc-100 rounded-xl ring-1 ring-zinc-950/10 dark:divide-white/5 dark:ring-white/10">
+            {have.map((f) => (
+              <li key={f.key} className="flex items-start justify-between gap-3 px-3 py-2">
+                <span className="min-w-0 text-sm">
+                  <span className="font-medium">{f.name}</span>
+                  <span className="block text-xs text-zinc-500">
+                    {f.about}
+                    {since.has(f.key) && ` · since ${date(since.get(f.key)!)}`}
+                  </span>
+                </span>
+                <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">
+                  {always(f) ? "Included" : "On"}
+                </span>
+              </li>
             ))}
-            <Chip tone="green">Alerts</Chip>
-            {asked.rows.map((f) => (
-              <Chip key={f.feature} tone="zinc">
-                {name(f.feature)} · coming soon
-              </Chip>
-            ))}
-          </div>
-          <Link href="/upgrades" className="mt-3 inline-block text-sm font-semibold text-thunder-blue hover:underline">
-            Manage features →
-          </Link>
-        </>
+          </ul>
+          {add.length > 0 && (
+            <>
+              <h4 className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Add to {o.short ?? o.name}</h4>
+              <ul className="divide-y divide-zinc-100 rounded-xl ring-1 ring-zinc-950/10 dark:divide-white/5 dark:ring-white/10">
+                {add.map((f) => (
+                  <li key={f.key} className="flex items-start justify-between gap-3 px-3 py-2">
+                    <span className="min-w-0 text-sm">
+                      <span className="font-medium">{f.name}</span>
+                      <span className="block text-xs text-zinc-500">{f.about}</span>
+                      {requested.has(f.key) && (
+                        <span className="block text-xs font-medium text-amber-700 dark:text-amber-300">
+                          Requested · coming soon
+                        </span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      disabled
+                      title="Buying upgrades in the app is coming soon"
+                      className="shrink-0 rounded-full bg-zinc-200 px-2.5 py-0.5 text-[11px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                    >
+                      Upgrade
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-zinc-500">Buying upgrades in the app is coming soon.</p>
+            </>
+          )}
+        </div>
       }
     />
   );

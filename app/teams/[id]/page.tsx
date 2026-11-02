@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { hasFeature } from "@/lib/features";
+import { MustBeEntered } from "../../TeamRow";
 import { requireFeature } from "@/lib/features-server";
 import { db } from "@/lib/db";
 import { gradesText } from "@/lib/event-names";
@@ -82,7 +83,7 @@ async function Team({
   ]);
   const tabs: { key: TeamTab; label: string; alert?: boolean }[] = [
     { key: "staff", label: "Staff" },
-    { key: "roster", label: "Roster" },
+    { key: "roster", label: "Roster", alert: !players.length },
     ...(uniformsOn ? [{ key: "uniforms" as const, label: "Uniforms", alert: missingUniforms > 0 }] : []),
     { key: "practices", label: "Practices" },
   ];
@@ -93,7 +94,15 @@ async function Team({
         user={user}
         tab="teams"
         context={asDirector ? "director" : `team:${team.id}`}
-        teamTab={asDirector ? undefined : { teamId: team.id, tab: teamTab, alert: missingUniforms ? ["uniforms"] : [] }}
+        teamTab={
+          asDirector
+            ? undefined
+            : {
+                teamId: team.id,
+                tab: teamTab,
+                alert: [...(missingUniforms ? ["uniforms" as const] : []), ...(players.length ? [] : ["roster" as const])],
+              }
+        }
       />
       <main className="mx-auto w-full max-w-xl flex-1 space-y-4 px-4 py-6">
         {asDirector && (
@@ -135,7 +144,10 @@ async function Team({
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-start justify-between gap-2">
-                  <h1 className="text-2xl font-semibold tracking-tight">{team.name}</h1>
+                  <h1 className="text-2xl font-semibold tracking-tight">
+                    {team.name}
+                    {team.altName && <span className="font-normal text-zinc-500"> · {team.altName}</span>}
+                  </h1>
                   <Chip tone={team.level === "COMP" ? "orange" : "zinc"}>{team.level}</Chip>
                 </div>
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -145,6 +157,8 @@ async function Team({
                   <p className="text-sm text-zinc-500 dark:text-zinc-400">Practices: {team.practiceLocations.join(", ")}</p>
                 )}
                 <p className="mt-1 text-xs text-zinc-400">Created by {team.createdBy}</p>
+                {!team.staff.some((x) => x.role === "HeadCoach") && <MustBeEntered what="COACH INFO" />}
+                {!players.length && <MustBeEntered what="ROSTER" />}
               </div>
             </div>
             {canEditTeam && (
@@ -155,6 +169,7 @@ async function Team({
                   grades: team.grades,
                   level: team.level,
                   practiceLocations: team.practiceLocations.join(", "),
+                  altName: team.altName ?? "",
                 }}
               />
             )}

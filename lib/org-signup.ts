@@ -84,8 +84,8 @@ export async function createOrganization(
     let slug = base;
     for (let n = 2; (await q.query("select 1 from organizations where slug = $1", [slug])).rowCount; n++) slug = `${base}-${n}`;
     await q.query(
-      `insert into organizations (slug, name, short_name, kind, color, logo, logo_type, logo_updated_at, created_by, created_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      `insert into organizations (slug, name, short_name, kind, color, logo, logo_type, logo_updated_at, created_by, created_at, abbr)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         slug,
         name,
@@ -97,6 +97,7 @@ export async function createOrganization(
         logo ? deps.now() : null,
         by(viewer),
         deps.now(),
+        abbrFor(short ?? name),
       ],
     );
     await q.query(
@@ -137,5 +138,40 @@ export async function setOrgLogo(deps: Deps, viewer: SessionUser, org: string, l
     type,
     deps.now(),
   ]);
+  return { ok: true };
+}
+
+// Admins (and CourtCaptain staff): the organization's color, one of ORG_COLORS (its tabs, header line and letter badge).
+export async function setOrgColor(deps: Deps, viewer: SessionUser, org: string, color: unknown): Promise<Result> {
+  if (!(ORG_COLORS as readonly unknown[]).includes(color)) return { ok: false, message: "Pick one of the colors." };
+  const admin = await deps.pool.query<{ ok: boolean }>("select acts_as($1, $2, 'Admin') as ok", [viewer.coachId, org]);
+  if (!admin.rows[0].ok) return { ok: false, message: "Only an Admin of this organization can change its color." };
+  await deps.pool.query("update organizations set color = $2 where slug = $1", [org, color]);
+  return { ok: true };
+}
+
+// A starting Abbreviation (shown before team names in leagues, "ER 5B Harris"): the initials of the name's words, or
+// its first letters when it's one word; Admins change it in the gear.
+export function abbrFor(name: string): string {
+  const words = name
+    .replace(/[^A-Za-z0-9 ]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  const a = words.length > 1 ? words.map((w) => w[0]).join("") : (words[0] ?? "ORG").slice(0, 5);
+  return (a.toUpperCase() === a ? a : a[0].toUpperCase() + a.slice(1)).slice(0, 6) || "ORG";
+}
+
+// Admins (and CourtCaptain staff): the Abbreviation, 1–6 letters or numbers.
+export async function setOrgAbbr(deps: Deps, viewer: SessionUser, org: string, abbr: unknown): Promise<Result> {
+  const a = typeof abbr === "string" ? abbr.trim() : "";
+  if (!/^[A-Za-z0-9]{1,6}$/.test(a)) return { ok: false, message: "Abbreviation: 1 to 6 letters or numbers." };
+  const admin = await deps.pool.query<{ ok: boolean }>("select acts_as($1, $2, 'Admin') as ok", [viewer.coachId, org]);
+  if (!admin.rows[0].ok) return { ok: false, message: "Only an Admin of this organization can change its abbreviation." };
+  await deps.pool.query("update organizations set abbr = $2 where slug = $1", [org, a]);
+  // Its teams' names in leagues follow.
+  await deps.pool.query(
+    `update scenic_teams st set name = $2 || ' ' || t.name from org_teams t where st.org_team_id = t.id and t.org = $1`,
+    [org, a],
+  );
   return { ok: true };
 }

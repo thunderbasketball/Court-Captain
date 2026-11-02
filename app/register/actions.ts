@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
 import { CONTEXT_COOKIE } from "@/lib/contexts";
 import { db } from "@/lib/db";
-import { createOrganization, setOrgLogo, type Logo } from "@/lib/org-signup";
+import { createOrganization, setOrgAbbr, setOrgColor, setOrgLogo, type Logo } from "@/lib/org-signup";
 
 const deps = { pool: db, now: () => new Date() };
 
@@ -44,6 +44,30 @@ export async function registerOrganization(form: FormData) {
     return r;
   } catch (e) {
     console.error("Register organization failed:", e);
+    return { ok: false as const, message: "Something went wrong. Please try again." };
+  }
+}
+
+export async function changeOrgAbbr(org: string, abbr: string) {
+  const user = await currentUser();
+  if (!user) return { ok: false as const, message: "Please log in again." };
+  if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  try {
+    return await setOrgAbbr(deps, user, String(org), abbr);
+  } catch (e) {
+    console.error("Abbreviation change failed:", e);
+    return { ok: false as const, message: "Something went wrong. Please try again." };
+  }
+}
+
+export async function changeOrgColor(org: string, color: string) {
+  const user = await currentUser();
+  if (!user) return { ok: false as const, message: "Please log in again." };
+  if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  try {
+    return await setOrgColor(deps, user, String(org), color);
+  } catch (e) {
+    console.error("Color change failed:", e);
     return { ok: false as const, message: "Something went wrong. Please try again." };
   }
 }

@@ -2,13 +2,31 @@
 
 import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { changeOrgLogo } from "./register/actions";
+import { changeOrgAbbr, changeOrgColor, changeOrgLogo } from "./register/actions";
 import { Alert, PopUp, Toast } from "./client-ui";
-import { fieldLabel, primaryBtn } from "./ui";
+import { fieldLabel, inputCls, primaryBtn } from "./ui";
 
-// Admins: the gear by the organization's name opens its settings: its features (and the ones it asked for), and a new
-// logo (PNG, JPEG or WebP, up to 512 KB).
-export default function OrgSettings({ org, logo, features }: { org: string; logo: ReactNode; features: ReactNode }) {
+// Admins: the gear after the last tab opens the organization's settings: its login link, features (and the ones it asked
+// for), color (tabs, header line, letter badge) and logo (PNG, JPEG or WebP, up to 512 KB).
+export default function OrgSettings({
+  org,
+  logo,
+  features,
+  featuresOn,
+  color,
+  colors,
+  login,
+  abbr,
+}: {
+  org: string;
+  logo: ReactNode;
+  features: ReactNode;
+  featuresOn: number; // shown while the list is collapsed
+  color: string;
+  colors: readonly string[];
+  login: string;
+  abbr: string;
+}) {
   const router = useRouter();
   const [msg, setMsg] = useState<string | null>(null);
   return (
@@ -21,10 +39,43 @@ export default function OrgSettings({ org, logo, features }: { org: string; logo
       >
         {(close) => (
           <div className="space-y-5">
-            <div>
-              <h3 className="mb-2 text-sm font-semibold">Features</h3>
-              {features}
-            </div>
+            <p className="text-sm text-zinc-500">
+              Login link: <span className="font-mono text-zinc-800 dark:text-zinc-200">{login}</span>
+            </p>
+            {/* Collapsed until tapped: the full list is long. */}
+            <details className="group">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-sm font-semibold [&::-webkit-details-marker]:hidden">
+                <span>
+                  Features <span className="font-normal text-zinc-500">· {featuresOn} on</span>
+                </span>
+                <svg
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  aria-hidden
+                  className="size-4 text-zinc-400 transition-transform group-open:rotate-180"
+                >
+                  <path d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" />
+                </svg>
+              </summary>
+              <div className="mt-2">{features}</div>
+            </details>
+            <AbbrForm
+              org={org}
+              abbr={abbr}
+              onSaved={() => {
+                setMsg("Abbreviation saved.");
+                router.refresh();
+              }}
+            />
+            <ColorPicker
+              org={org}
+              color={color}
+              colors={colors}
+              onSaved={() => {
+                setMsg("Color saved.");
+                router.refresh();
+              }}
+            />
             <LogoForm
               org={org}
               logo={logo}
@@ -39,6 +90,83 @@ export default function OrgSettings({ org, logo, features }: { org: string; logo
       </PopUp>
       {msg && <Toast key={msg} message={msg} />}
     </>
+  );
+}
+
+// The Abbreviation, shown before the organization's team names in leagues ("ER 5B Harris").
+function AbbrForm({ org, abbr, onSaved }: { org: string; abbr: string; onSaved: () => void }) {
+  const [value, setValue] = useState(abbr);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, start] = useTransition();
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          setError(null);
+          const r = await changeOrgAbbr(org, value);
+          if (!r.ok) return setError(r.message);
+          onSaved();
+        });
+      }}
+    >
+      <h3 className="mb-2 text-sm font-semibold">Abbreviation</h3>
+      <div className="flex gap-2">
+        <input className={`${inputCls} w-28`} maxLength={6} value={value} onChange={(e) => setValue(e.target.value)} />
+        <button type="submit" disabled={busy || value.trim() === abbr} className={primaryBtn}>
+          Save
+        </button>
+      </div>
+      <p className="mt-1 text-xs text-zinc-500">
+        Up to 6 letters or numbers. Shown before your team names in leagues, like &quot;{value.trim() || abbr} 5B Harris&quot;.
+      </p>
+      {error && <Alert tone="red">{error}</Alert>}
+    </form>
+  );
+}
+
+function ColorPicker({
+  org,
+  color,
+  colors,
+  onSaved,
+}: {
+  org: string;
+  color: string;
+  colors: readonly string[];
+  onSaved: () => void;
+}) {
+  const [busy, start] = useTransition();
+  const [picked, setPicked] = useState(color);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div>
+      <h3 className="mb-2 text-sm font-semibold">Color</h3>
+      <div className="flex flex-wrap gap-2">
+        {colors.map((c) => (
+          <button
+            key={c}
+            type="button"
+            disabled={busy}
+            aria-label={`Color ${c}`}
+            aria-pressed={picked === c}
+            onClick={() =>
+              start(async () => {
+                setError(null);
+                const r = await changeOrgColor(org, c);
+                if (!r.ok) return setError(r.message);
+                setPicked(c);
+                onSaved();
+              })
+            }
+            className={`size-9 rounded-full ring-offset-2 dark:ring-offset-zinc-900 ${picked === c ? "ring-2 ring-zinc-900 dark:ring-white" : ""}`}
+            style={{ backgroundColor: c }}
+          />
+        ))}
+      </div>
+      <p className="mt-1 text-xs text-zinc-500">The tab in use, the line along the top, and the letter badge.</p>
+      {error && <Alert tone="red">{error}</Alert>}
+    </div>
   );
 }
 

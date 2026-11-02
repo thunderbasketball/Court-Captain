@@ -53,7 +53,9 @@ export default function AvailablePlayers({ teamId, teamName, cards }: { teamId: 
             type="button"
             onClick={() => setFilter(f)}
             className={`shrink-0 rounded-full px-3 py-1.5 text-sm font-medium whitespace-nowrap ${
-              filter === f ? "bg-thunder-blue text-white shadow-sm" : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+              filter === f
+                ? "bg-thunder-blue text-white shadow-sm"
+                : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
             }`}
           >
             {label} ({cards.filter((c) => matches(c, f)).length})
@@ -88,7 +90,9 @@ export default function AvailablePlayers({ teamId, teamName, cards }: { teamId: 
                       type="button"
                       aria-pressed={f.interested}
                       aria-label={
-                        f.interested ? `Interested in ${c.firstName} ${c.lastName}` : `Mark interest in ${c.firstName} ${c.lastName}`
+                        f.interested
+                          ? `Interested in ${c.firstName} ${c.lastName}`
+                          : `Mark interest in ${c.firstName} ${c.lastName}`
                       }
                       title={f.interested ? "Interested (tap to clear)" : "Mark interested"}
                       onClick={() => star(c)}
@@ -104,7 +108,9 @@ export default function AvailablePlayers({ teamId, teamName, cards }: { teamId: 
                         {rated(f)
                           ? [f.position, f.height, f.speed, f.score && `${f.score}/5`].filter(Boolean).join(" · ") || "Notes"
                           : "Not rated"}
-                        {others.length > 0 && <span className="text-orange-700 dark:text-orange-300"> · ★ {others.join(", ")}</span>}
+                        {others.length > 0 && (
+                          <span className="text-orange-700 dark:text-orange-300"> · ★ {others.join(", ")}</span>
+                        )}
                       </span>
                     </span>
                     <button

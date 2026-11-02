@@ -20,7 +20,7 @@ export function TeamEditForm({
   initial,
 }: {
   teamId: string;
-  initial: { gender: "Boys" | "Girls"; grades: string[]; level: string; practiceLocations: string };
+  initial: { gender: "Boys" | "Girls"; grades: string[]; level: string; practiceLocations: string; altName: string };
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -28,6 +28,7 @@ export function TeamEditForm({
   const [grades, setGrades] = useState(initial.grades);
   const [level, setLevel] = useState(initial.level);
   const [locations, setLocations] = useState(initial.practiceLocations);
+  const [alt, setAlt] = useState(initial.altName);
   const [error, setError] = useState<string | null>(null);
   const [busy, start] = useTransition();
 
@@ -50,7 +51,7 @@ export function TeamEditForm({
         e.preventDefault();
         setError(null);
         start(async () => {
-          const r = await updateTeam(teamId, { gender, grades, level, practiceLocations: locations });
+          const r = await updateTeam(teamId, { gender, grades, level, practiceLocations: locations, altName: alt });
           if (!r.ok) return setError(r.message);
           if ("name" in r && r.name) router.replace(`/teams/${teamId}`);
           setOpen(false);
@@ -103,6 +104,16 @@ export function TeamEditForm({
           placeholder="Action Church, East Ridge MS"
         />
       </label>
+      <label className="block">
+        <span className={fieldLabel}>Alternate name (optional)</span>
+        <input
+          className={inputCls}
+          maxLength={60}
+          value={alt}
+          onChange={(e) => setAlt(e.target.value)}
+          placeholder="e.g. Bolts"
+        />
+      </label>
       <p className="text-xs text-zinc-500">The team name updates to match the grades, gender and head coach.</p>
       {error && <Alert tone="red">{error}</Alert>}
       <div className="flex gap-2">
@@ -121,7 +132,17 @@ export function TeamEditForm({
   );
 }
 
-export function RemoveStaffButton({ teamId, coachId, role, label }: { teamId: string; coachId: string; role: Role; label: string }) {
+export function RemoveStaffButton({
+  teamId,
+  coachId,
+  role,
+  label,
+}: {
+  teamId: string;
+  coachId: string;
+  role: Role;
+  label: string;
+}) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [confirm, confirmDialog] = useConfirm();
@@ -181,7 +202,8 @@ export function AddStaffButton({
   const hasHead = filledRoles.includes("HeadCoach");
   const roles = ROLE_CHOICES.filter((r) => (r.role === "HeadCoach" ? canSetHead : !filledRoles.includes(r.role)));
   const [picked, setRole] = useState<Role | null>(null);
-  const role = picked && roles.some((r) => r.role === picked) ? picked : (roles.find((r) => r.role !== "HeadCoach") ?? roles[0])?.role;
+  const role =
+    picked && roles.some((r) => r.role === picked) ? picked : (roles.find((r) => r.role !== "HeadCoach") ?? roles[0])?.role;
   const pickList = users.length + volunteers.length > 0;
   const [person, setPerson] = useState(pickList ? "" : NEW);
   const [p, setP] = useState({ first: "", last: "", cell: "", email: "" });
@@ -273,7 +295,9 @@ export function AddStaffButton({
             <select className={inputCls} value={person} onChange={(e) => setPerson(e.target.value)}>
               {pickList && <option value="">Choose…</option>}
               <option value={NEW}>+ New person (not in the app yet)</option>
-              {volunteers.some(matches) && <optgroup label="Volunteers for this team">{volunteers.filter(matches).map(option)}</optgroup>}
+              {volunteers.some(matches) && (
+                <optgroup label="Volunteers for this team">{volunteers.filter(matches).map(option)}</optgroup>
+              )}
               {volunteers.some((v) => !matches(v)) && (
                 <optgroup label="Other volunteers">{volunteers.filter((v) => !matches(v)).map(option)}</optgroup>
               )}
@@ -286,11 +310,21 @@ export function AddStaffButton({
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <span className={fieldLabel}>First name</span>
-                  <input className={inputCls} autoComplete="off" value={p.first} onChange={(e) => setP({ ...p, first: e.target.value })} />
+                  <input
+                    className={inputCls}
+                    autoComplete="off"
+                    value={p.first}
+                    onChange={(e) => setP({ ...p, first: e.target.value })}
+                  />
                 </label>
                 <label className="block">
                   <span className={fieldLabel}>Last name</span>
-                  <input className={inputCls} autoComplete="off" value={p.last} onChange={(e) => setP({ ...p, last: e.target.value })} />
+                  <input
+                    className={inputCls}
+                    autoComplete="off"
+                    value={p.last}
+                    onChange={(e) => setP({ ...p, last: e.target.value })}
+                  />
                 </label>
               </div>
               <label className="block">
@@ -321,7 +355,9 @@ export function AddStaffButton({
             </div>
           )}
           {person.startsWith("volunteer:") && (
-            <p className="text-xs text-zinc-500">This volunteer will get a login (PIN 1234) from their registration cell and email.</p>
+            <p className="text-xs text-zinc-500">
+              This volunteer will get a login (PIN 1234) from their registration cell and email.
+            </p>
           )}
 
           {error && <Alert tone="red">{error}</Alert>}
@@ -335,7 +371,17 @@ export function AddStaffButton({
 }
 
 // Directors of Teams: delete this team, after an "Are you sure?" that says what goes with it.
-export function DeleteTeamButton({ teamId, name, players, practices }: { teamId: string; name: string; players: number; practices: number }) {
+export function DeleteTeamButton({
+  teamId,
+  name,
+  players,
+  practices,
+}: {
+  teamId: string;
+  name: string;
+  players: number;
+  practices: number;
+}) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -352,7 +398,13 @@ export function DeleteTeamButton({ teamId, name, players, practices }: { teamId:
             "evaluations and uniforms",
             `${practices} upcoming practice${practices === 1 ? "" : "s"} (those times open up)`,
           ].join(", ");
-          if (!(await confirm({ title: `Delete ${name}?`, message: `Are you sure? This removes ${what}. It can't be undone.`, confirmLabel: "Delete team" })))
+          if (
+            !(await confirm({
+              title: `Delete ${name}?`,
+              message: `Are you sure? This removes ${what}. It can't be undone.`,
+              confirmLabel: "Delete team",
+            }))
+          )
             return;
           start(async () => {
             const r = await deleteTeam(teamId);

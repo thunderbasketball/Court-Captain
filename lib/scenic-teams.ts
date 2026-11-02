@@ -115,7 +115,7 @@ export async function listScenicTeams(
     `select t.id::text, t.name, t.gender, t.level, t.grade_low as "gradeLow", t.grade, t.partner_id::text as "partnerId", p.name as "partnerName",
             o.first_name || ' ' || o.last_name as "ownerName", t.owner_coach_id,
             t.coach_id as "coachId", c.first_name as "coachFirst", c.last_name as "coachLast", c.cell as "coachCell",
-            t.created_by as "createdBy", t.updated_by as "updatedBy", t.org_team_id is not null as org_team
+            t.created_by as "createdBy", t.updated_by as "updatedBy", (t.org_team_id is not null or t.thunder_team_id is not null) as org_team
      from scenic_teams t
      left join users c on c.coach_id = t.coach_id
      left join partners p on p.id = t.partner_id
@@ -255,7 +255,7 @@ export async function updateScenicTeam(
     const f = cleanTeam(input);
     return withTx(deps.pool, async (q) => {
       const t = await q.query<{ partner_id: string | null; owner_coach_id: string | null; org_team_id: string | null }>(
-        "select partner_id::text, owner_coach_id, org_team_id::text from scenic_teams where id = $1 for update",
+        "select partner_id::text, owner_coach_id, coalesce(org_team_id, thunder_team_id)::text as org_team_id from scenic_teams where id = $1 for update",
         [id],
       );
       if (!t.rows[0]) throw new TeamError("That team no longer exists.");
@@ -277,7 +277,7 @@ export async function deleteScenicTeam(deps: Deps, viewer: SessionUser, id: unkn
   return run(() =>
     withTx(deps.pool, async (q) => {
       const t = await q.query<{ partner_id: string | null; owner_coach_id: string | null; org_team_id: string | null }>(
-        "select partner_id::text, owner_coach_id, org_team_id::text from scenic_teams where id = $1 for update",
+        "select partner_id::text, owner_coach_id, coalesce(org_team_id, thunder_team_id)::text as org_team_id from scenic_teams where id = $1 for update",
         [id],
       );
       if (!t.rows[0]) throw new TeamError("That team no longer exists.");

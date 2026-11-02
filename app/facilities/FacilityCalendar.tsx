@@ -50,6 +50,8 @@ export default function FacilityCalendar({
   const [busy, start] = useTransition();
   const league = uses.find((u) => u.key === "partner")?.name ?? "League";
   const SHORT: Record<Use, string> = { practice: "Practice", partner: league, "in-house": "In-House" };
+  // The key shows only the uses this organization has (or that are already marked on a date).
+  const shown = (u: Use) => uses.some((x) => x.key === u) || Object.values(days).some((d) => d.use === u);
   if (!gym) return <p className="text-sm text-zinc-500">No gyms yet. Add one first.</p>;
 
   const look = (date: string): DayLook => {
@@ -108,7 +110,7 @@ export default function FacilityCalendar({
           ))}
         </div>
       )}
-      {gym.courts.length > 0 && (
+      {gym.courts.length > 0 && shown("practice") && (
         <p className="text-xs text-zinc-500">
           Practice Slots here split into {gym.courts.join(" and ")}. Games use the whole gym.
         </p>
@@ -127,18 +129,24 @@ export default function FacilityCalendar({
             League game day (dot when already marked)
           </span>
         )}
-        <span>
-          <span className="mr-1 inline-block size-2.5 rounded-sm bg-sky-100 ring-2 ring-sky-600/50" />
-          Practice Slots
-        </span>
-        <span>
-          <span className="mr-1 inline-block size-2.5 rounded-sm bg-emerald-100 ring-2 ring-emerald-600/50" />
-          {league === "League" ? "League Games" : league}
-        </span>
-        <span>
-          <span className="mr-1 inline-block size-2.5 rounded-sm bg-amber-100 ring-2 ring-amber-600/50" />
-          In-House Games
-        </span>
+        {shown("practice") && (
+          <span>
+            <span className="mr-1 inline-block size-2.5 rounded-sm bg-sky-100 ring-2 ring-sky-600/50" />
+            Practice Slots
+          </span>
+        )}
+        {shown("partner") && (
+          <span>
+            <span className="mr-1 inline-block size-2.5 rounded-sm bg-emerald-100 ring-2 ring-emerald-600/50" />
+            {league === "League" ? "League Games" : league}
+          </span>
+        )}
+        {shown("in-house") && (
+          <span>
+            <span className="mr-1 inline-block size-2.5 rounded-sm bg-amber-100 ring-2 ring-amber-600/50" />
+            In-House Games
+          </span>
+        )}
       </p>
 
       {picked.length > 0 && (

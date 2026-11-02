@@ -118,7 +118,8 @@ export default function UniformsBoard({ teamId, rows: initial }: { teamId: strin
                     onClick={() => {
                       const patch: { number?: string; size?: string } = {};
                       if (r.askedNumber && /^\d{1,2}$/.test(r.askedNumber)) patch.number = r.askedNumber;
-                      if (r.ordered && r.askedSize && (SIZES as readonly string[]).includes(r.askedSize)) patch.size = r.askedSize;
+                      if (r.ordered && r.askedSize && (SIZES as readonly string[]).includes(r.askedSize))
+                        patch.size = r.askedSize;
                       if (!Object.keys(patch).length)
                         return setError(`${r.firstName}: the parent's request "${hint}" can't be used. Set it by hand.`);
                       if (patch.number) setDrafts((d) => ({ ...d, [r.registrantId]: patch.number! }));
