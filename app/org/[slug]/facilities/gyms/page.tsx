@@ -6,7 +6,7 @@ import { canHost, facilitiesView } from "@/lib/facilities";
 import { orgInfo } from "@/lib/org-registry";
 import { isOrgSlug } from "@/lib/orgs";
 import AppHeader from "../../../../AppHeader";
-import FacilitiesNav from "../../../../facilities/FacilitiesNav";
+import FacilitiesNav from "../../../thunder/facilities/FacilitiesNav";
 import { PageTitle, card } from "../../../../ui";
 import OrgGyms from "../OrgGyms";
 import { orgFacilityLinks } from "../links";

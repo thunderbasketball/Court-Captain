@@ -8,9 +8,12 @@ import { orgFeatures, type Feature } from "./features";
 import { isOrgSlug, type OrgSlug } from "./orgs";
 import { orgShort } from "./org-registry";
 import { withTx, type Queryable } from "./sql";
+import { cleanName } from "./auth/validate";
+import { normalizeCell } from "./phone";
+import { matchOrCreateUser } from "./user-match";
 
 type Deps = { pool: Pool; now: () => Date };
-type Result = { ok: true } | { ok: false; message: string };
+type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
 
 export const AREAS = [
   { key: "players", name: "Players", covers: "Player Registration & Uniforms", features: ["player-registration", "uniforms"] },
@@ -109,6 +112,11 @@ export async function directorsPanel(deps: Deps, viewer: SessionUser, org: OrgSl
       `select coach_id as id, first_name || ' ' || last_name as name from users
        where active and not has_role(coach_id, $1, 'Director') and not has_role(coach_id, $1, 'Admin')
          and not exists (select 1 from platform_admins p where p.coach_id = users.coach_id)
+         -- Only this organization's people: a role there (a request too), or a place on one of its teams.
+         and (exists (select 1 from org_roles r where r.coach_id = users.coach_id and r.org = $1)
+              or ($1 = 'thunder' and exists (select 1 from team_staff s where s.coach_id = users.coach_id))
+              or exists (select 1 from org_team_coaches c join org_teams t on t.id = c.team_id
+                         where c.coach_id = users.coach_id and t.org = $1))
        order by lower(last_name), lower(first_name)`,
       [org],
     ),
@@ -218,5 +226,27 @@ export async function setAdmin(deps: Deps, viewer: SessionUser, org: unknown, co
       );
     else await q.query("select set_role($1, $2, 'Admin', false, $3)", [coachId, org, by(viewer)]);
     return { ok: true as const };
+  });
+}
+
+// Admins: a new person to make an Owner, Admin or Director (first, last, cell): their login is found by cell or made
+// (starter PIN 1234). The role itself is then given with setOwner, setAdmin or setDirectorAreas.
+export async function addPersonFor(
+  deps: Deps,
+  viewer: SessionUser,
+  org: unknown,
+  input: { first: unknown; last: unknown; cell: unknown },
+): Promise<Result<{ coachId: string; name: string; newLogin: boolean }>> {
+  if (!isOrgSlug(org) || !(await isOrgAdmin(deps.pool, viewer.coachId, org)))
+    return { ok: false, message: "Only an Admin of this organization can add people." };
+  const first = cleanName(input.first);
+  const last = cleanName(input.last);
+  const cell = typeof input.cell === "string" ? normalizeCell(input.cell) : null;
+  if (!first || !last) return { ok: false, message: "Enter a first and last name (letters only)." };
+  if (!cell) return { ok: false, message: "Enter a 10-digit cell number." };
+  return withTx(deps.pool, async (q) => {
+    const m = await matchOrCreateUser(q, { first, last, cell, email: null }, deps.now());
+    if ("error" in m) return { ok: false as const, message: m.error };
+    return { ok: true as const, coachId: m.coachId, name: m.who, newLogin: m.newLogin };
   });
 }

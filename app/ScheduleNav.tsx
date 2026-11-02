@@ -11,8 +11,8 @@ export async function scheduleLinks(user: SessionUser) {
   const facilities = practice && hasArea(user, "facilities");
   const programs = events && hasArea(user, "programs");
   return [
-    { key: "practice", href: "/practice", label: "Practice", show: facilities },
-    { key: "season", href: "/practice/season", label: "Season", show: facilities },
+    { key: "practice", href: "/org/thunder/practice", label: "Practice", show: facilities },
+    { key: "season", href: "/org/thunder/practice/season", label: "Season", show: facilities },
     { key: "events", href: "/events", label: "Events", show: programs },
   ].filter((l) => l.show);
 }

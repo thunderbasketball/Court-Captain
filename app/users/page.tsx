@@ -2,5 +2,5 @@ import { redirect } from "next/navigation";
 
 // Moved under Members.
 export default function Moved() {
-  redirect("/members/staff");
+  redirect("/org/thunder/members/staff");
 }

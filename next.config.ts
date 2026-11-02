@@ -18,15 +18,20 @@ const nextConfig: NextConfig = {
       },
     ];
   },
-  partialPrefetching: true,
-  turbopack: {
-    rules: {
-      "*.css": {
-        loaders: ["@tailwindcss/turbopack"],
-        as: "*.css",
-      },
-    },
+  // Thunder's and Scenic City's pages moved under /org/<slug> like every organization's; old links and bookmarks still work.
+  async redirects() {
+    return [
+      { source: "/thunder", destination: "/org/thunder", permanent: false },
+      ...["teams", "uniforms", "facilities", "practice", "members", "players"].map((p) => ({
+        source: `/${p}/:path*`,
+        destination: `/org/thunder/${p}/:path*`,
+        permanent: false,
+      })),
+      { source: "/scenic/:path*", destination: "/org/scenic-city/:path*", permanent: false },
+    ];
   },
+  partialPrefetching: true,
+  turbopack: { rules: { "*.css": { loaders: ["@tailwindcss/turbopack"], as: "*.css" } } },
 };
 
 export default nextConfig;

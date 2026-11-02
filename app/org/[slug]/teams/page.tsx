@@ -9,7 +9,7 @@ import { orgInfo } from "@/lib/org-registry";
 import AppHeader from "../../../AppHeader";
 import { PageTitle, card } from "../../../ui";
 import TeamRow, { TeamsTabs, teamTabs } from "../../../TeamRow";
-import { ContactChip, GroupTextButton } from "../../../Contacts";
+import { ContactChip, TextTeamsButton } from "../../../Contacts";
 import RegisterPrograms from "../../../RegisterPrograms";
 import AddTeamButton from "../../../AddTeam";
 import { ImportTeamsButton, UndoImportButton } from "../../../TeamImport";
@@ -46,7 +46,6 @@ async function OrgTeams({
   // Tabs: one per level and gender it has teams for (youngest grade first), then Register (league programs).
   const register = !!progs && progs.programs.length > 0 && list.canManage;
   const tabs = teamTabs(list.teams, (await searchParams).view, register);
-  const coachCells = list.teams.flatMap((t) => t.coaches.map((c) => c.cell));
 
   return (
     <>
@@ -60,7 +59,16 @@ async function OrgTeams({
           {list.canManage && (
             <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
               {/* All coaches: text (Chat and Notify come when those features work for organizations) */}
-              <GroupTextButton cells={coachCells} label="Text all coaches" />
+              <TextTeamsButton
+                teams={list.teams.map((t, i) => ({
+                  id: t.id,
+                  name: t.name,
+                  gender: t.gender,
+                  level: t.level,
+                  grade: i, // already youngest grade first
+                  headCells: t.coaches.filter((c) => c.role === "HeadCoach").map((c) => c.cell),
+                }))}
+              />
               <ImportTeamsButton
                 preview={previewImport.bind(null, slug)}
                 add={importTeams.bind(null, slug)}

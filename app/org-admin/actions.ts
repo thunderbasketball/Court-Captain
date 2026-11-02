@@ -42,3 +42,16 @@ export async function setAdmin(org: string, coachId: string, on: boolean) {
     return { ok: false as const, message: "Something went wrong. Please try again." };
   }
 }
+
+// Admins: a new person (first, last, cell) to give a role to; checked again in lib/org-admin.
+export async function addPerson(org: string, input: { first: string; last: string; cell: string }) {
+  const user = await currentUser();
+  if (!user) return { ok: false as const, message: "Please log in again." };
+  if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  try {
+    return await orgAdmin.addPersonFor({ pool: db, now: () => new Date() }, user, org, input);
+  } catch (e) {
+    console.error("Add person failed:", e);
+    return { ok: false as const, message: "Something went wrong. Please try again." };
+  }
+}

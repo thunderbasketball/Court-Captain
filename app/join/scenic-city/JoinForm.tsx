@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { requestJoin } from "../../scenic/actions";
+import { requestJoin } from "../../org/scenic-city/actions";
 import { Alert } from "../../client-ui";
 import { card, primaryBtn } from "../../ui";
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { setAdmin, setDirectorAreas, setOwner } from "./org-admin/actions";
+import { addPerson, setAdmin, setDirectorAreas, setOwner } from "./org-admin/actions";
 import { PopUp, Toast, useConfirm } from "./client-ui";
 import { inputCls } from "./ui";
 
@@ -129,6 +129,7 @@ export function DirectorRole({
 function AdminForm({ org, options, onDone, owner }: { org: string; options: Person[]; onDone: () => void; owner?: boolean }) {
   const router = useRouter();
   const [pick, setPick] = useState("");
+  const [person, setPerson] = useState({ first: "", last: "", cell: "" });
   const [error, setError] = useState<string | null>(null);
   const [busy, start] = useTransition();
   return (
@@ -137,23 +138,24 @@ function AdminForm({ org, options, onDone, owner }: { org: string; options: Pers
       onSubmit={(e) => {
         e.preventDefault();
         start(async () => {
-          const r = owner ? await setOwner(org, pick, true) : await setAdmin(org, pick, true);
+          setError(null);
+          const id = await chosenId(org, pick, person, setError);
+          if (!id) return;
+          const r = owner ? await setOwner(org, id, true) : await setAdmin(org, id, true);
           if (!r.ok) return setError(r.message);
           onDone();
           router.refresh();
         });
       }}
     >
-      <select className={`${inputCls} py-2`} value={pick} onChange={(e) => setPick(e.target.value)} autoFocus>
-        <option value="" disabled>
-          Pick a person to make {owner ? "an Owner" : "an Admin"}…
-        </option>
-        {options.map((o) => (
-          <option key={o.id} value={o.id}>
-            {o.name}
-          </option>
-        ))}
-      </select>
+      <PersonPicker
+        options={options}
+        pick={pick}
+        setPick={setPick}
+        person={person}
+        setPerson={setPerson}
+        prompt={`Pick a person to make ${owner ? "an Owner" : "an Admin"}…`}
+      />
       {error && <p className="text-sm text-red-600">{error}</p>}
       <div className="flex items-center gap-3">
         <button
@@ -258,6 +260,7 @@ function DirectorForm({
 }) {
   const router = useRouter();
   const [pick, setPick] = useState(person?.id ?? "");
+  const [newPerson, setNewPerson] = useState({ first: "", last: "", cell: "" });
   const [chosen, setChosen] = useState<string[]>(person?.areas ?? []);
   const [error, setError] = useState<string | null>(null);
   const [busy, start] = useTransition();
@@ -265,7 +268,10 @@ function DirectorForm({
 
   const save = (list: string[]) =>
     start(async () => {
-      const r = await setDirectorAreas(org, pick, list);
+      setError(null);
+      const id = await chosenId(org, pick, newPerson, setError);
+      if (!id) return;
+      const r = await setDirectorAreas(org, id, list);
       if (!r.ok) return setError(r.message);
       onDone();
       router.refresh();
@@ -280,16 +286,14 @@ function DirectorForm({
       }}
     >
       {options && (
-        <select className={`${inputCls} py-2`} value={pick} onChange={(e) => setPick(e.target.value)} autoFocus>
-          <option value="" disabled>
-            Pick a person…
-          </option>
-          {options.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.name}
-            </option>
-          ))}
-        </select>
+        <PersonPicker
+          options={options}
+          pick={pick}
+          setPick={setPick}
+          person={newPerson}
+          setPerson={setNewPerson}
+          prompt="Pick a person…"
+        />
       )}
       <fieldset className="grid gap-1.5">
         <legend className="mb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Director of</legend>
@@ -342,4 +346,75 @@ function DirectorForm({
       {confirmDialog}
     </form>
   );
+}
+
+const NEW_PERSON = "new";
+type NewPerson = { first: string; last: string; cell: string };
+
+// Pick someone from the list, or New person… (first, last, cell; their login is found by cell or made).
+function PersonPicker({
+  options,
+  pick,
+  setPick,
+  person,
+  setPerson,
+  prompt,
+}: {
+  options: Person[];
+  pick: string;
+  setPick: (v: string) => void;
+  person: NewPerson;
+  setPerson: (p: NewPerson) => void;
+  prompt: string;
+}) {
+  return (
+    <>
+      <select className={`${inputCls} py-2`} value={pick} onChange={(e) => setPick(e.target.value)} autoFocus>
+        <option value="" disabled>
+          {prompt}
+        </option>
+        <option value={NEW_PERSON}>New person…</option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name}
+          </option>
+        ))}
+      </select>
+      {pick === NEW_PERSON && (
+        <div className="grid grid-cols-2 gap-2">
+          <input
+            className={inputCls}
+            placeholder="First name"
+            value={person.first}
+            onChange={(e) => setPerson({ ...person, first: e.target.value })}
+          />
+          <input
+            className={inputCls}
+            placeholder="Last name"
+            value={person.last}
+            onChange={(e) => setPerson({ ...person, last: e.target.value })}
+          />
+          <input
+            className={`${inputCls} col-span-2`}
+            type="tel"
+            inputMode="tel"
+            placeholder="Cell (423) 555-0123"
+            value={person.cell}
+            onChange={(e) => setPerson({ ...person, cell: e.target.value })}
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+// The person to give the role to: the one picked, or the new person (made first on the server).
+async function chosenId(org: string, pick: string, person: NewPerson, onError: (m: string) => void): Promise<string | null> {
+  if (pick !== NEW_PERSON) return pick;
+  const r = await addPerson(org, person);
+  if (!r.ok) {
+    onError(r.message);
+    return null;
+  }
+  return r.coachId;
 }

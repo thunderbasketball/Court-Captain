@@ -99,7 +99,7 @@ export default async function Dashboard({ user, coachId }: { user: SessionUser; 
               {d.teams.map((t) => (
                 <li key={t.id + t.role}>
                   <Link
-                    href={`/teams/${t.id}`}
+                    href={`/org/thunder/teams/${t.id}`}
                     className={`${card} flex items-center justify-between gap-3 p-4 hover:ring-thunder-blue/40`}
                   >
                     <div>

@@ -5,7 +5,17 @@ import { getSessionUser } from "./auth/service";
 import { sha256 } from "./auth/crypto";
 import { addGym } from "./practice/admin";
 import { addPlayers } from "./rosters";
-import { directorAreas, directorsPanel, hasArea, isOrgAdmin, orgAreas, setAdmin, setDirectorAreas, setOwner } from "./org-admin";
+import {
+  directorAreas,
+  directorsPanel,
+  hasArea,
+  isOrgAdmin,
+  orgAreas,
+  setAdmin,
+  setDirectorAreas,
+  setOwner,
+  addPersonFor,
+} from "./org-admin";
 import { createTestDb, grant } from "./testing/db";
 
 const person = (coachId: string, firstName: string, isDirector = false): SessionUser => ({
@@ -217,5 +227,24 @@ describe("Admins and Director areas", () => {
       ok: false,
       message: "Thunder needs at least one Owner.",
     });
+  });
+
+  it("Admins add a new person (found by cell, or a login made) to give a role", async () => {
+    expect(await addPersonFor(deps(), bo, "thunder", { first: "Nia", last: "New", cell: "4235550055" })).toMatchObject({
+      ok: false,
+    });
+    expect(await addPersonFor(deps(), ada, "thunder", { first: "Nia", last: "", cell: "4235550055" })).toMatchObject({
+      ok: false,
+    });
+    expect(await addPersonFor(deps(), ada, "thunder", { first: "Nia", last: "New", cell: "(423) 555-0055" })).toEqual({
+      ok: true,
+      coachId: "5550055",
+      name: "Nia New",
+      newLogin: true,
+    });
+    expect(await addPersonFor(deps(), ada, "thunder", { first: "Nia", last: "New", cell: "4235550055" })).toMatchObject({
+      newLogin: false,
+    });
+    expect(await setDirectorAreas(deps(), ada, "thunder", "5550055", ["teams"])).toEqual({ ok: true });
   });
 });

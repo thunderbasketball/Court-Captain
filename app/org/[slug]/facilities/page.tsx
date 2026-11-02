@@ -7,11 +7,11 @@ import { hostingOffers } from "@/lib/org-partnerships";
 import { orgInfo } from "@/lib/org-registry";
 import { isOrgSlug } from "@/lib/orgs";
 import AppHeader from "../../../AppHeader";
-import FacilityCalendar from "../../../facilities/FacilityCalendar";
+import FacilityCalendar from "../../thunder/facilities/FacilityCalendar";
 import { RequestHostingButton } from "../../../hosting/HostingButtons";
 import { PageTitle, card } from "../../../ui";
 import Link from "next/link";
-import FacilitiesNav from "../../../facilities/FacilitiesNav";
+import FacilitiesNav from "../../thunder/facilities/FacilitiesNav";
 import { orgFacilityLinks } from "./links";
 
 export default function OrgFacilitiesPage({ params }: PageProps<"/org/[slug]/facilities">) {

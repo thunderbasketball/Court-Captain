@@ -41,7 +41,7 @@ async function PracticeCheckIn({ params }: { params: PageProps<"/events/practice
           {eventWhen(practice.startsAt)} · {practice.gym} {practice.court}
         </p>
         <p className="mt-0.5 text-xs text-zinc-400">
-          <Link href={`/teams/${practice.teamId}`} className="underline underline-offset-2">
+          <Link href={`/org/thunder/teams/${practice.teamId}`} className="underline underline-offset-2">
             Team page
           </Link>{" "}
           · the team&apos;s roster

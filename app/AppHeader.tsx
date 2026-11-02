@@ -14,7 +14,7 @@ import { listOrgs, orgInfo } from "@/lib/org-registry";
 import { PLATFORM_BRAND } from "@/lib/orgs";
 import OrgLogo from "./OrgLogo";
 import { myPracticesToday } from "@/lib/practice-attendance";
-import { localParts, TZ, zonedTime } from "@/lib/time";
+import { localParts, zonedTime } from "@/lib/time";
 import { syncIfStale } from "@/lib/teamsnap/scheduler";
 import { stopActing } from "./act-as/actions";
 import AnnouncementPopup from "./AnnouncementPopup";
@@ -22,6 +22,8 @@ import ChatPopup from "./ChatPopup";
 import NotifyButton from "./NotifyButton";
 import OrgSwitcher from "./OrgSwitcher";
 import OrgGear from "./OrgGear";
+import SupportButton from "./support/SupportButton";
+import { listArticles, supportChats } from "@/lib/support";
 import { LogoutButton } from "./HomeActions";
 import { Avatar } from "./ui";
 
@@ -90,7 +92,7 @@ export default async function AppHeader({
           login: here?.login ?? "/login",
         };
   const thunder = !platform && org === "thunder" && user.hasThunderRole;
-  const [{ contexts }, features, unread, myEvents, popups, chatUnread] = await Promise.all([
+  const [{ contexts }, features, unread, myEvents, popups, chatUnread, articles, chats] = await Promise.all([
     currentContexts(user),
     orgFeatures(db, org),
     thunder ? unreadCount(deps, user) : 0,
@@ -98,10 +100,15 @@ export default async function AppHeader({
     // Not while a Director is viewing as this person.
     user.actingBy || !thunder ? [] : popupAnnouncements(deps, user),
     thunder ? chatUnreadCount(deps, user) : 0,
+    // Support (the same everywhere): its questions and guides, this person's chats, and the chats they answer
+    // (CourtCaptain staff: all; an organization's Owners and Admins: the ones started there).
+    listArticles(db),
+    supportChats(db, user, platform ? null : org),
   ]);
   // Only the features this organization has (SPEC section 14); tabs with no feature are always there.
   const has = (t: { feature?: Feature }) => !t.feature || features.has(t.feature);
   const chatOn = features.has("chat");
+  const supportStaff = contexts.some((c) => c.key === "platform");
   // Chips for this organization only; the logo next to Log out switches organizations (SPEC section 14).
   const orgChips = platform ? [] : contexts.filter((c) => c.org === org);
   const switchTo = [
@@ -118,7 +125,7 @@ export default async function AppHeader({
   // `admin`: Admins only.
   const scheduleHref =
     features.has("practice") && hasArea(user, "facilities")
-      ? "/practice"
+      ? "/org/thunder/practice"
       : features.has("events") && hasArea(user, "programs")
         ? "/events"
         : null;
@@ -126,15 +133,15 @@ export default async function AppHeader({
   // Every organization's tabs, in one order: Home · Teams · Programs · Schedule · Uniforms · Facilities · Members (each
   // shown only when its features and the person's role allow), then the gear for Admins.
   const directorTabs: TabLink[] = [
-    { key: "thunder-home", href: "/thunder", label: "Home", icon: ICONS.home },
-    { key: "teams", href: "/teams", label: "Teams", icon: ICONS.teams, feature: "team-building", areas: ["teams"] },
+    { key: "thunder-home", href: "/org/thunder", label: "Home", icon: ICONS.home },
+    { key: "teams", href: "/org/thunder/teams", label: "Teams", icon: ICONS.teams, feature: "team-building", areas: ["teams"] },
     // Schedule: Practice and Season (Facilities, Practice Management), Events (Programs, Event Management); opens the first.
     ...(scheduleHref ? [{ key: "schedule", href: scheduleHref, label: "Schedule", icon: ICONS.practice }] : []),
-    { key: "uniforms", href: "/uniforms", label: "Uniforms", icon: ICONS.uniforms, feature: "uniforms", areas: ["players"] },
-    { key: "facilities", href: "/facilities", label: "Facilities", icon: ICONS.facilities, areas: ["facilities"] },
+    { key: "uniforms", href: "/org/thunder/uniforms", label: "Uniforms", icon: ICONS.uniforms, feature: "uniforms", areas: ["players"] },
+    { key: "facilities", href: "/org/thunder/facilities", label: "Facilities", icon: ICONS.facilities, areas: ["facilities"] },
     // Members: Staff (Admins), Coaches (Coaches area), Players (Players or Teams areas); opens the first one they can see.
     ...(isThunderAdmin(user) || hasArea(user, "coaches", "players", "teams")
-      ? [{ key: "members", href: "/members", label: "Members", icon: ICONS.users }]
+      ? [{ key: "members", href: "/org/thunder/members", label: "Members", icon: ICONS.users }]
       : []),
   ];
   // Scenic City: Home and Game days for everyone there, Partners for Partners and Directors of Facilities, Teams for
@@ -177,16 +184,16 @@ export default async function AppHeader({
   const scenicTabs: TabLink[] | null =
     org === "scenic-city" && scenicRole
       ? [
-          { key: "scenic-home", href: "/scenic", label: "Home", icon: ICONS.home },
+          { key: "scenic-home", href: "/org/scenic-city", label: "Home", icon: ICONS.home },
           // Programs (with Teams under it), Facilities (Game days and hosting sites), Members (Staff, hosting sites'
           // Owners and Admins, Coaches). A Director sees the ones their areas cover; everyone else sees Programs and
           // Facilities (Game days).
           ...(scenicRole !== "Director" || scenicAreas.some((a) => a === "programs" || a === "teams")
-            ? [{ key: "programs", href: "/scenic/programs", label: "Programs", icon: ICONS.events, feature: "programs" as const }]
+            ? [{ key: "programs", href: "/org/scenic-city/programs", label: "Programs", icon: ICONS.events, feature: "programs" as const }]
             : []),
           {
             key: "scenic-facilities",
-            href: "/scenic/game-days",
+            href: "/org/scenic-city/game-days",
             label: "Facilities",
             icon: ICONS.facilities,
             feature: "hosting-partners" as const,
@@ -197,10 +204,10 @@ export default async function AppHeader({
                 {
                   key: "scenic-members",
                   href: scenicAdmin
-                    ? "/scenic/users"
+                    ? "/org/scenic-city/users"
                     : scenicAreas.includes("facilities")
-                      ? "/scenic/members/hosting-sites"
-                      : "/scenic/members/coaches",
+                      ? "/org/scenic-city/members/hosting-sites"
+                      : "/org/scenic-city/members/coaches",
                   label: "Members",
                   icon: ICONS.users,
                 },
@@ -215,18 +222,18 @@ export default async function AppHeader({
         ? scenicTabs
         : teamTab
           ? ([
-              { key: "staff", href: `/teams/${teamTab.teamId}`, label: "Staff", icon: ICONS.teams },
-              { key: "roster", href: `/teams/${teamTab.teamId}?tab=roster`, label: "Roster", icon: ICONS.roster },
+              { key: "staff", href: `/org/thunder/teams/${teamTab.teamId}`, label: "Staff", icon: ICONS.teams },
+              { key: "roster", href: `/org/thunder/teams/${teamTab.teamId}?tab=roster`, label: "Roster", icon: ICONS.roster },
               {
                 key: "uniforms",
-                href: `/teams/${teamTab.teamId}?tab=uniforms`,
+                href: `/org/thunder/teams/${teamTab.teamId}?tab=uniforms`,
                 label: "Uniforms",
                 icon: ICONS.uniforms,
                 feature: "uniforms",
               },
               {
                 key: "practices",
-                href: `/teams/${teamTab.teamId}?tab=practices`,
+                href: `/org/thunder/teams/${teamTab.teamId}?tab=practices`,
                 label: "Practices",
                 icon: ICONS.practice,
                 feature: "practice",
@@ -318,6 +325,16 @@ export default async function AppHeader({
             )}
             {/* With tabs, Chat and Alerts sit by the gear on the tab row (computers); on phones they stay up here. */}
             {showTabs ? <span className="flex items-center gap-1 sm:hidden">{orgIcons}</span> : orgIcons}
+            {!showTabs && (
+              <SupportButton
+                org={org}
+                articles={articles}
+                mine={chats.mine}
+                inbox={chats.inbox}
+                staff={supportStaff}
+                className="rounded-full px-3 py-1.5 text-sm font-medium text-zinc-600 ring-1 ring-zinc-950/10 hover:bg-zinc-100 dark:text-zinc-300 dark:ring-white/15"
+              />
+            )}
             <Link href="/me" className="hidden truncate text-sm font-medium hover:underline sm:block">
               {user.firstName} {user.lastName}
             </Link>
@@ -383,6 +400,15 @@ export default async function AppHeader({
                     {alerting(t.key) && <span className="sr-only"> (info missing)</span>}
                   </Link>
                 ))}
+                {/* Support, the same everywhere, last in the tab menu. */}
+                <SupportButton
+                  org={org}
+                  articles={articles}
+                  mine={chats.mine}
+                  inbox={chats.inbox}
+                  staff={supportStaff}
+                  className="rounded-full px-5 py-1.5 text-center text-sm font-medium whitespace-nowrap text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+                />
               </div>
               {/* Far right: Chat and Alerts, then the gear. */}
               <div className="flex shrink-0 items-center gap-1">
@@ -449,9 +475,16 @@ export default async function AppHeader({
             )}
           </div>
           {/* A strip under the tabs for the host's "Powered by" badge (bottom right), so it never covers a tab.
-            Also clears the iPhone home bar. Today's date fills the free left side. */}
-          <div className="flex h-[max(3.75rem,env(safe-area-inset-bottom))] items-center px-4 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-            {new Date().toLocaleDateString("en-US", { timeZone: TZ, weekday: "short", month: "short", day: "numeric" })}
+            Also clears the iPhone home bar. Support fills the free left side. */}
+          <div className="flex h-[max(3.75rem,env(safe-area-inset-bottom))] items-center px-4">
+            <SupportButton
+              org={org}
+              articles={articles}
+              mine={chats.mine}
+              inbox={chats.inbox}
+              staff={supportStaff}
+              className="rounded-full px-3 py-1.5 text-xs font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 dark:text-blue-400"
+            />
           </div>
         </nav>
       )}

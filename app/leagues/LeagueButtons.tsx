@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { registerAll, registerTeam, setDayOff, withdrawTeam } from "./actions";
 import { PopUp, Toast, useConfirm } from "../client-ui";
-import RegisterChoices from "../scenic/programs/RegisterChoices";
+import RegisterChoices from "../org/scenic-city/programs/RegisterChoices";
 import { shortDate, type Choice, type ChoiceResult, type ProgramOption } from "@/lib/program-options";
 
 const btn = "shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold disabled:opacity-50";

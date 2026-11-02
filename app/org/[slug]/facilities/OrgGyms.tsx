@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { addOrgGym, removeOrgGym } from "../../../facilities/actions";
+import { addOrgGym, removeOrgGym } from "../../thunder/facilities/actions";
 import { Alert, PopUp, Toast, useConfirm } from "../../../client-ui";
 import { fieldLabel, inputCls, primaryBtn } from "../../../ui";
 import ImportGymsButton from "../../../ImportGyms";
@@ -30,7 +30,7 @@ export default function OrgGyms({ org, gyms }: { org: string; gyms: Gym[] }) {
           <ImportGymsButton org={org} />
           <PopUp
             label="+ Add"
-            title="Add a gym"
+            title="Add gym"
             className="shrink-0 rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark"
           >
             {(close) => (
@@ -114,52 +114,50 @@ function AddGymForm({ org, onAdded }: { org: string; onAdded: (name: string) => 
         });
       }}
     >
+      {/* Laid out like Thunder's Add gym: name and how many courts, then the courts' names. */}
+      <div className="grid grid-cols-[1fr_auto] gap-3">
+        <label className="block">
+          <span className={fieldLabel}>Gym name</span>
+          <input
+            className={inputCls}
+            placeholder="e.g. East Ridge Community Center"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+          />
+        </label>
+        <label className="block">
+          <span className={fieldLabel}>Courts</span>
+          <select className={inputCls} value={courts.length} onChange={(e) => setCount(Number(e.target.value))}>
+            {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
+              <option key={n}>{n}</option>
+            ))}
+          </select>
+        </label>
+      </div>
       <label className="block">
-        <span className={fieldLabel}>Gym name</span>
+        <span className={fieldLabel}>Short name</span>
         <input
           className={inputCls}
-          placeholder="e.g. East Ridge Community Center"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. ERCC (up to 8 letters or numbers)"
+          maxLength={8}
+          value={short}
+          onChange={(e) => setShort(e.target.value)}
           required
         />
       </label>
-      <div className="grid grid-cols-2 gap-2">
-        <label className="block">
-          <span className={fieldLabel}>Short name</span>
-          <input
-            className={inputCls}
-            placeholder="e.g. ERCC"
-            maxLength={8}
-            value={short}
-            onChange={(e) => setShort(e.target.value)}
-            required
-          />
-        </label>
-        <label className="block">
-          <span className={fieldLabel}>Number of courts</span>
-          <input
-            className={inputCls}
-            type="number"
-            inputMode="numeric"
-            min={1}
-            max={12}
-            value={courts.length}
-            onChange={(e) => setCount(Number(e.target.value))}
-            required
-          />
-        </label>
+      <div className="space-y-2">
+        <span className={fieldLabel}>Court names</span>
         {courts.map((c, i) => (
-          <label key={i} className="block">
-            <span className={fieldLabel}>Court {i + 1} name</span>
-            <input
-              className={inputCls}
-              maxLength={60}
-              value={c}
-              onChange={(e) => setCourts((all) => all.map((x, j) => (j === i ? e.target.value : x)))}
-              required
-            />
-          </label>
+          <input
+            key={i}
+            className={inputCls}
+            maxLength={60}
+            value={c}
+            aria-label={`Court ${i + 1} name`}
+            onChange={(e) => setCourts((all) => all.map((x, j) => (j === i ? e.target.value : x)))}
+            required
+          />
         ))}
       </div>
       {error && <Alert tone="red">{error}</Alert>}

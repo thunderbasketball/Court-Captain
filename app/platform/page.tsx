@@ -11,6 +11,8 @@ import { card, PageTitle, PhoneLink } from "../ui";
 import Link from "next/link";
 import { formatCell } from "@/lib/phone";
 import { AddOwner, AddStaff, FeatureSwitch, RemoveOwner, RemoveStaff } from "./PlatformTools";
+import SupportAdmin from "./SupportAdmin";
+import { listArticles } from "@/lib/support";
 
 const AREA_NAMES = Object.fromEntries(AREAS.map((a) => [a.key, a.name])) as Record<string, string>;
 
@@ -25,7 +27,8 @@ export default function PlatformPage({ searchParams }: PageProps<"/platform">) {
 // CourtCaptain's own page (SPEC.md section 14): CourtCaptain staff only. Tabs: Staff (CourtCaptain Owners and Admins;
 // Owners add and remove Admins) and Organizations (each collapsed: open it for its Owners, Admins, Directors, features).
 async function Platform({ searchParams }: { searchParams: PageProps<"/platform">["searchParams"] }) {
-  const tab = (await searchParams).tab === "staff" ? "staff" : "orgs";
+  const asked = (await searchParams).tab;
+  const tab = asked === "staff" || asked === "support" ? asked : "orgs";
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   const data = await platformOverview({ pool: db, now: () => new Date() }, user);
@@ -43,11 +46,12 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
             [
               ["staff", "Staff"],
               ["orgs", "Organizations"],
+              ["support", "Support"],
             ] as const
           ).map(([key, label]) => (
             <Link
               key={key}
-              href={key === "orgs" ? "/platform" : "/platform?tab=staff"}
+              href={key === "orgs" ? "/platform" : `/platform?tab=${key}`}
               aria-current={tab === key ? "page" : undefined}
               className={`-mb-px border-b-2 px-3 py-2 text-sm font-semibold ${
                 tab === key
@@ -59,6 +63,8 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
             </Link>
           ))}
         </nav>
+
+        {tab === "support" && <SupportAdmin articles={await listArticles(db)} />}
 
         {tab === "staff" && (
           <section className={`${card} p-4`}>
@@ -94,7 +100,15 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
             {data.orgs.map((o) => (
               <details key={o.slug} className={`${card} group overflow-hidden`}>
                 <summary className="flex cursor-pointer list-none items-center gap-3 p-4 [&::-webkit-details-marker]:hidden">
-                  <OrgLogo src={o.logo} name={o.name} color={o.color} className="size-10 rounded-lg" />
+                  {/* The logo opens the organization (like the logo menu); the rest of the card opens or closes it. */}
+                  <a
+                    href={`/switch?org=${o.slug}`}
+                    aria-label={`Open ${o.name}`}
+                    title={`Open ${o.name}`}
+                    className="shrink-0 rounded-lg ring-offset-2 hover:ring-2 hover:ring-thunder-blue"
+                  >
+                    <OrgLogo src={o.logo} name={o.name} color={o.color} className="size-10 rounded-lg" />
+                  </a>
                   <div className="min-w-0 flex-1">
                     <h2 className="font-semibold">{o.name}</h2>
                     <p className="text-xs text-zinc-500">

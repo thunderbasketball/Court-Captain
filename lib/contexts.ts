@@ -43,7 +43,7 @@ export async function userContexts(pool: Pick<Pool, "query">, viewer: SessionUse
         ? "Admin"
         : "Director";
   // The Director chip opens Thunder's Home (a card for each part they can open), like every organization's.
-  if (viewer.isDirector) out.push({ key: "director", org: "thunder", label: top("thunder"), href: "/thunder" });
+  if (viewer.isDirector) out.push({ key: "director", org: "thunder", label: top("thunder"), href: "/org/thunder" });
   // One chip per team, showing the person's highest role there.
   const r = await pool.query<{ id: string; name: string; role: Role }>(
     `select distinct on (t.id) t.id::text, t.name, s.role
@@ -58,7 +58,7 @@ export async function userContexts(pool: Pick<Pool, "query">, viewer: SessionUse
       key: `team:${t.id}`,
       org: "thunder",
       label: `${t.name} · ${ROLE_LABEL[t.role]}`,
-      href: `/teams/${t.id}`,
+      href: `/org/thunder/teams/${t.id}`,
       teamId: t.id,
       teamName: t.name,
       role: t.role,
@@ -76,7 +76,7 @@ export async function userContexts(pool: Pick<Pool, "query">, viewer: SessionUse
       key: `scenic:${role}`,
       org: "scenic-city",
       label: role === "Director" ? top("scenic-city") : role,
-      href: "/scenic",
+      href: "/org/scenic-city",
       role,
     });
   // Registered organizations: one chip each, with the person's top role (Owner, Admin, Director, Coach).

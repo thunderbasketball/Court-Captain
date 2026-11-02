@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { GymImportRow } from "@/lib/gym-import";
-import { importGyms, previewGyms } from "./facilities/actions";
+import { importGyms, previewGyms } from "./org/thunder/facilities/actions";
 import { Alert, PopUp, Toast } from "./client-ui";
 import { inputCls, primaryBtn } from "./ui";
 

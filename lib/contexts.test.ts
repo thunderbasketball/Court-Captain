@@ -32,8 +32,8 @@ describe("userContexts", () => {
   it("Director first, then one chip per team (highest role), in team order", async () => {
     const c = await userContexts(db.pool, { ...base, isDirector: true });
     expect(c.map((x) => x.label)).toEqual(["Director", "2B Other · Asst Coach", "4G Test · Head Coach", "10B Other · Team Parent"]);
-    expect(c[0].href).toBe("/thunder"); // Thunder's Home, like every organization's
-    expect(c[1].href).toMatch(/^\/teams\/\d+$/);
+    expect(c[0].href).toBe("/org/thunder"); // Thunder's Home, like every organization's
+    expect(c[1].href).toMatch(/^\/org\/thunder\/teams\/\d+$/);
   });
 
   it("no Director chip for non-Directors; none at all with no roles", async () => {
@@ -55,7 +55,7 @@ describe("userContexts", () => {
       "scenic-city:Partner",
       "scenic-city:Coach",
     ]);
-    expect(c.at(-2)).toMatchObject({ key: "scenic:Partner", href: "/scenic", role: "Partner" });
+    expect(c.at(-2)).toMatchObject({ key: "scenic:Partner", href: "/org/scenic-city", role: "Partner" });
   });
 
   it("remembers the last context only while the person still holds it", async () => {

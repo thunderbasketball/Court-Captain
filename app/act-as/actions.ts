@@ -35,5 +35,5 @@ export async function stopActing() {
   if (back) jar.set(CONTEXT_COOKIE, back, { ...cookieOpts, maxAge: 60 * 60 * 24 * 365 });
   else jar.delete(CONTEXT_COOKIE);
   // The chip is only a preference: pages still check the real roles, and /switch-style checks pick another if it's gone.
-  redirect(back?.startsWith("scenic:") ? "/scenic/users" : "/members/staff");
+  redirect(back?.startsWith("scenic:") ? "/org/scenic-city/users" : "/org/thunder/members/staff");
 }

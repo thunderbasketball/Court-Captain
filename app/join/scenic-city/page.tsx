@@ -53,7 +53,7 @@ async function Join() {
     return (
       <Notice tone="green">
         You&apos;re part of Scenic City.{" "}
-        <Link href="/scenic" className="font-semibold underline">
+        <Link href="/org/scenic-city" className="font-semibold underline">
           Go to Scenic City →
         </Link>
       </Notice>

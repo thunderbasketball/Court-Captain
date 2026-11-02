@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { Contact } from "@/lib/teams";
 import ChatPopup from "./ChatPopup";
-import { CloseButton, dialogCls } from "./client-ui";
+import { CloseButton, PopUp, dialogCls } from "./client-ui";
 
 type Role = Contact["role"];
 
@@ -28,11 +28,7 @@ export function RoleDot({ role }: { role: Role }) {
   );
 }
 
-type Person = Pick<Contact, "role" | "email"> & {
-  first: string | null;
-  last: string | null;
-  cell: string | null;
-};
+type Person = Pick<Contact, "role" | "email"> & { first: string | null; last: string | null; cell: string | null };
 
 // A role circle and the person's name; tapping the name opens their contact card.
 // `about` is the line under their name on the card (team, or the player they registered).
@@ -116,5 +112,98 @@ export function GroupTextButton({ cells, label }: { cells: (string | null)[]; la
     >
       💬 {label} ({numbers.length})
     </button>
+  );
+}
+
+// Text coach group: tick teams (Boys, then Girls; youngest grade first, in the order given) and text their Head Coaches.
+export function TextTeamsButton({
+  teams,
+}: {
+  teams: { id: string; name: string; gender: string; level: string; grade: number; headCells: (string | null)[] }[];
+}) {
+  return (
+    <PopUp
+      label="💬 Text coach group"
+      title="Text coach group"
+      className="shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
+    >
+      {() => <TeamPicker teams={teams} />}
+    </PopUp>
+  );
+}
+
+function TeamPicker({
+  teams,
+}: {
+  teams: { id: string; name: string; gender: string; level: string; grade: number; headCells: (string | null)[] }[];
+}) {
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const genders = ["Boys", "Girls"]
+    .map((g) => ({
+      gender: g,
+      teams: teams.filter((t) => t.gender === g).sort((a, b) => a.grade - b.grade || a.name.localeCompare(b.name)),
+    }))
+    .filter((g) => g.teams.length);
+  const toggle = (ids: string[], on: boolean) =>
+    setPicked((p) => {
+      const n = new Set(p);
+      for (const id of ids)
+        if (on) n.add(id);
+        else n.delete(id);
+      return n;
+    });
+  const cells = teams.filter((t) => picked.has(t.id)).flatMap((t) => t.headCells);
+  if (!teams.length) return <p className="text-sm text-zinc-500">No teams yet.</p>;
+  return (
+    <div className="space-y-3">
+      <label className="flex items-center gap-2 px-1 text-sm font-semibold">
+        <input
+          type="checkbox"
+          className="size-4"
+          checked={picked.size === teams.length}
+          onChange={(e) =>
+            toggle(
+              teams.map((t) => t.id),
+              e.target.checked,
+            )
+          }
+        />
+        All teams ({teams.length})
+      </label>
+      <div className="max-h-[55vh] space-y-3 overflow-y-auto">
+        {genders.map((g) => {
+          const ids = g.teams.map((t) => t.id);
+          const all = ids.every((id) => picked.has(id));
+          return (
+            <section key={g.gender} className="rounded-xl ring-1 ring-zinc-950/10 dark:ring-white/10">
+              <label className="flex items-center gap-2 border-b border-zinc-100 px-3 py-2 text-sm font-semibold dark:border-white/5">
+                <input type="checkbox" className="size-4" checked={all} onChange={(e) => toggle(ids, e.target.checked)} />
+                {g.gender} ({g.teams.length})
+              </label>
+              <ul className="divide-y divide-zinc-100 dark:divide-white/5">
+                {g.teams.map((t) => (
+                  <li key={t.id}>
+                    <label className="flex items-center gap-2 px-3 py-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="size-4"
+                        checked={picked.has(t.id)}
+                        onChange={(e) => toggle([t.id], e.target.checked)}
+                      />
+                      <span className="min-w-0 flex-1 truncate">{t.name}</span>
+                      <span className="text-xs text-zinc-500">{t.level}</span>
+                      {!t.headCells.some(Boolean) && (
+                        <span className="text-xs text-red-600 dark:text-red-400">no Head Coach cell</span>
+                      )}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          );
+        })}
+      </div>
+      <GroupTextButton cells={cells} label="Text Head Coaches" />
+    </div>
   );
 }
