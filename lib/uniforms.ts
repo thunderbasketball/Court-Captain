@@ -24,6 +24,8 @@ export async function listUniforms(deps: Deps, viewer: SessionUser, teamId: stri
   const r = await deps.pool.query<UniformRow>(
     `select p.registrant_id as "registrantId", p.first_name as "firstName", p.last_name as "lastName", p.grade,
             (coalesce(g.uniform_needed, false) or u.needs_uniform_at is not null) as ordered,
+            (u.needs_uniform_at is not null
+             or (coalesce(g.uniform_needed, false) and upper(trim(coalesce(g.raw->>'Uniform Needed?', ''))) = 'NO')) as late,
             coalesce(g.uniform_needed, false) as registered, u.needs_uniform_by as "neededBy", u.order_added_by as "addedBy",
             g.uniform_size as "askedSize", g.uniform_number as "askedNumber",
             u.number, u.size, u.updated_by as "updatedBy", u.updated_at as "updatedAt"
@@ -107,13 +109,16 @@ export type UniformOrder = {
   lastName: string;
   number: string | null;
   size: string | null;
+  late: boolean; // ✱ added after registration (see UniformRow)
 };
 
 // Director only: every rostered player who needs a uniform (ordered, or ticked by their coach), by team (same order as the Teams page), then last name.
 export async function listUniformOrders(deps: Deps, viewer: SessionUser): Promise<UniformOrder[]> {
   if (!hasArea(viewer, "uniforms")) throw new Error("Director only");
   const r = await deps.pool.query<UniformOrder>(
-    `select t.id::text as "teamId", t.name as team, p.registrant_id as "registrantId", p.last_name as "lastName", u.number, u.size
+    `select t.id::text as "teamId", t.name as team, p.registrant_id as "registrantId", p.last_name as "lastName", u.number, u.size,
+            (u.needs_uniform_at is not null
+             or (coalesce(g.uniform_needed, false) and upper(trim(coalesce(g.raw->>'Uniform Needed?', ''))) = 'NO')) as late
      from team_players p
      join teams t on t.id = p.team_id
      left join registrations g on g.registrant_id = p.registrant_id

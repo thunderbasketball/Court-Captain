@@ -107,7 +107,13 @@ export default function UniformsBoard({ teamId, rows: initial }: { teamId: strin
                   return (
                     // The chip, and under it (when their family didn't order one) the Needs a uniform box.
                     <span className="flex shrink-0 flex-col items-end gap-1.5">
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}>{text}</span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}
+                        title={r.late ? "✱ Added after registration" : undefined}
+                      >
+                        {text}
+                        {r.late && " ✱"}
+                      </span>
                       {!r.registered && (
                         <label className="flex items-center gap-2 text-sm">
                           Needs a uniform

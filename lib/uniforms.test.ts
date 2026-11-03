@@ -130,7 +130,15 @@ describe("uniforms", () => {
     });
     expect(await setNeedsUniform(deps(), parent, team, "r2", true)).toEqual({ ok: true, by: "Tess X" });
     const bea = async () => (await listUniforms(deps(), parent, team))!.find((r) => r.registrantId === "r2")!;
-    expect(await bea()).toMatchObject({ ordered: true, registered: false, neededBy: "Tess X", addedBy: null, number: "12" });
+    expect(await bea()).toMatchObject({
+      ordered: true,
+      registered: false,
+      neededBy: "Tess X",
+      addedBy: null,
+      number: "12",
+      late: true,
+    });
+    expect((await listUniforms(deps(), parent, team))!.find((r) => r.registrantId === "r1")!.late).toBe(false); // ordered at registration
     expect(await uniformsMissing(deps(), team)).toBe(3); // now Bea needs a size too
     expect((await listUniformOrders(deps(), director)).map((o) => o.lastName)).toContain("Young");
 
@@ -158,5 +166,12 @@ describe("uniforms", () => {
     await setNeedsUniform(deps(), parent, team, "r2", true);
     await db.pool.query("update registrations set uniform_needed = true where registrant_id = 'r2'");
     expect(await uniformRequests(deps(), director)).toEqual([]);
+    // The Uniform Fee added to a family that answered NO: ordered, marked ✱ (added after registration).
+    await db.pool.query(`update team_uniforms set needs_uniform_at = null, needs_uniform_by = null where registrant_id = 'r2'`);
+    await db.pool.query(
+      `update registrations set raw = '{"Uniform Needed?": "NO", "NEW Uniform Fee": "Uniform Fee"}' where registrant_id = 'r2'`,
+    );
+    expect((await listUniformOrders(deps(), director)).map((o) => [o.lastName, o.late])).toContainEqual(["Young", true]);
+    expect((await listUniformOrders(deps(), director)).map((o) => [o.lastName, o.late])).toContainEqual(["Zed", false]);
   });
 });

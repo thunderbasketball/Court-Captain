@@ -10,6 +10,7 @@ export type UniformRow = {
   registered: boolean; // the family ordered one at registration (TeamSnap)
   neededBy: string | null; // the coach who said they need one (when they didn't order at registration)
   addedBy: string | null; // the Director who added it to the TeamSnap order
+  late: boolean; // ✱ added after registration: their coach ticked Needs a uniform, or the Uniform Fee was added to a NO
   askedSize: string | null; // what the parent asked for at registration
   askedNumber: string | null;
   number: string | null;

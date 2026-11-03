@@ -44,6 +44,12 @@ async function Uniforms() {
               </span>
             ))}
             {noSize > 0 && <span className="font-medium text-red-600 dark:text-red-400">No size yet {noSize}</span>}
+            {rows.some((r) => r.late) && (
+              <span className="text-zinc-500">
+                <span className="text-amber-600 dark:text-amber-400">✱</span> added after registration{" "}
+                {rows.filter((r) => r.late).length}
+              </span>
+            )}
           </p>
         )}
         {!rows.length && <p className="text-sm text-zinc-500">No rostered player has ordered a uniform yet.</p>}
@@ -52,7 +58,14 @@ async function Uniforms() {
             <GroupCard key={teamId} title={list[0].team} count={list.length}>
               {list.map((r) => (
                 <li key={r.registrantId} className="grid grid-cols-[1fr_3rem_3rem] items-center gap-2 px-4 py-2 text-sm">
-                  <span className="truncate font-semibold tracking-wide">{jerseyName(r.lastName)}</span>
+                  <span className="truncate font-semibold tracking-wide">
+                    {jerseyName(r.lastName)}
+                    {r.late && (
+                      <span title="Added after registration" className="ml-1 font-normal text-amber-600 dark:text-amber-400">
+                        ✱
+                      </span>
+                    )}
+                  </span>
                   <span className="text-right tabular-nums">{r.number ? `#${r.number}` : missing}</span>
                   <span className="text-right">{r.size ?? missing}</span>
                 </li>

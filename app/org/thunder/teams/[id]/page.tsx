@@ -290,6 +290,7 @@ async function Team({
               <h2 className="font-semibold">Uniforms ({uniforms.length})</h2>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
                 A number for every player (unique on the team), and a size for players who ordered a uniform.
+                {uniforms.some((u) => u.late) && " ✱ Uniform added after registration."}
               </p>
             </div>
             <UniformsBoard teamId={team.id} rows={uniforms} />
