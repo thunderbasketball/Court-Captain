@@ -237,7 +237,14 @@ async function Team({
           <section className={`${card} overflow-hidden`}>
             <div className="flex items-center justify-between gap-3 px-4 pt-4 pb-3">
               <h2 className="font-semibold">Players ({players.length})</h2>
-              {asDirector && <AddPlayersButton teamId={team.id} candidates={candidates} />}
+              {asDirector && (
+                <AddPlayersButton
+                  teamId={team.id}
+                  teamName={team.name}
+                  candidates={candidates}
+                  canSecond={hasArea(user, "players")}
+                />
+              )}
             </div>
             {!players.length && (
               <p className="px-4 pb-4 text-sm text-zinc-500">

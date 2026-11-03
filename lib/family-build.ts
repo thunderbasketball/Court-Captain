@@ -20,6 +20,8 @@ export type RegRow = {
   totalFees: number | null;
   amountPaid: number | null;
   amountRemaining: number | null;
+  addedBy: string | null; // added in the app (not from TeamSnap)
+  feesWaivedBy: string | null;
 };
 
 export type Guardian = { name: string; cell: string | null; email: string | null; login: string | null };
@@ -31,6 +33,8 @@ export type Child = {
   team: string | null;
   uniformSize: string | null;
   uniformNumber: string | null;
+  addedInApp: boolean;
+  feesWaivedBy: string | null;
 };
 export type Family = {
   key: string;
@@ -113,6 +117,8 @@ export function buildFamilies(rows: RegRow[], logins: Map<string, string>): Fami
         team: r.team,
         uniformSize: r.uniformSize,
         uniformNumber: r.uniformNumber,
+        addedInApp: r.addedBy !== null,
+        feesWaivedBy: r.feesWaivedBy,
       });
     }
     const money = regs.filter((r) => r.totalFees !== null);

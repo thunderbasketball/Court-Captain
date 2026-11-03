@@ -2,7 +2,7 @@ import type { Pool } from "pg";
 import { withTx, type Queryable } from "../sql";
 import type { ParseResult } from "./parse";
 
-// Replaces all registrations in one transaction. Refuses if the file had errors,
+// Replaces TeamSnap's registrations in one transaction (players added in the app stay). Refuses if the file had errors,
 // so a bad file never clears the old data.
 export async function importRegistrations(
   pool: Pool,
@@ -23,7 +23,7 @@ export async function replaceRegistrations(
   if (parsed.errors.length) throw new Error(`File has ${parsed.errors.length} error(s); nothing was changed.`);
   if (!parsed.players.length) throw new Error("No players in the file; nothing was changed.");
   const rows = parsed.players.map((p) => ({ ...p, imported_at: now.toISOString(), imported_by: importedBy }));
-  await q.query("delete from registrations");
+  await q.query("delete from registrations where added_by is null"); // players added in the app stay
   const r = await q.query("insert into registrations select * from jsonb_populate_recordset(null::registrations, $1)", [
     JSON.stringify(rows),
   ]);

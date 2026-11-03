@@ -32,9 +32,6 @@ export async function approveJoin(coachId: string) {
 export async function addUser(input: AddUserInput) {
   return guarded((u) => admin.addUser(deps, u, input));
 }
-export async function resetLogin(coachId: string) {
-  return guarded((u) => admin.resetLogin(deps, u, String(coachId)));
-}
 export async function deleteUser(coachId: string) {
   return guarded((u) => admin.deleteUser(deps, u, String(coachId)));
 }

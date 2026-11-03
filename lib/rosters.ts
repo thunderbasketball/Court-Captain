@@ -80,8 +80,15 @@ async function leaveTeams(q: Pick<Pool, "query">, registrantId: string, keep: st
   await q.query("delete from team_uniforms where registrant_id = $1 and team_id::text is distinct from $2", [registrantId, keep]);
 }
 
-// A player can be on only one team: anyone already on another team is refused (move them on the roster board instead).
-export async function addPlayers(deps: Deps, viewer: SessionUser, teamId: unknown, ids: unknown): Promise<Result<{ added: number }>> {
+// A player is on one team. Owners, Admins and Directors of Players may also put them on a 2nd team (`second`: they
+// confirmed it), never a 3rd. Anyone else adding a player who's already on a team is refused.
+export async function addPlayers(
+  deps: Deps,
+  viewer: SessionUser,
+  teamId: unknown,
+  ids: unknown,
+  second?: unknown,
+): Promise<Result<{ added: number }>> {
   if (!hasArea(viewer, "teams")) return directorOnly;
   if (!isId(teamId)) return { ok: false, message: "That team no longer exists." };
   const list = Array.isArray(ids) ? [...new Set(ids.filter(isRegistrant))].slice(0, 200) : [];
@@ -90,16 +97,24 @@ export async function addPlayers(deps: Deps, viewer: SessionUser, teamId: unknow
     await lockPlayers(q, list);
     const t = await q.query("select 1 from teams where id = $1", [teamId]);
     if (!t.rows[0]) return { ok: false as const, message: "That team no longer exists." };
-    const taken = await q.query<{ name: string; team: string }>(
-      `select p.first_name || ' ' || p.last_name as name, t.name as team from team_players p join teams t on t.id = p.team_id
-       where p.registrant_id = any($1) and p.team_id <> $2 order by lower(p.last_name)`,
+    const taken = await q.query<{ name: string; teams: string[] }>(
+      `select min(p.first_name || ' ' || p.last_name) as name, array_agg(t.name order by t.name) as teams
+       from team_players p join teams t on t.id = p.team_id
+       where p.registrant_id = any($1) and p.team_id <> $2
+       group by p.registrant_id order by min(lower(p.last_name))`,
       [list, teamId],
     );
-    if (taken.rows.length)
+    const named = (rows: { name: string; teams: string[] }[]) => rows.map((x) => `${x.name} (${x.teams.join(", ")})`).join(", ");
+    const third = taken.rows.filter((x) => x.teams.length >= 2);
+    if (third.length)
+      return { ok: false as const, message: `Already on two teams: ${named(third)}. A player can be on two teams at most.` };
+    if (taken.rows.length && !hasArea(viewer, "players"))
       return {
         ok: false as const,
-        message: `Already on another team: ${taken.rows.map((x) => `${x.name} (${x.team})`).join(", ")}. Move them on Players → Roster players.`,
+        message: `Already on another team: ${named(taken.rows)}. Only an Owner, Admin or Director of Players can put a player on a 2nd team.`,
       };
+    if (taken.rows.length && second !== true)
+      return { ok: false as const, message: `Already on another team: ${named(taken.rows)}. Confirm to put them on a 2nd team.` };
     const r = await q.query(
       `insert into team_players (team_id, registrant_id, first_name, last_name, gender, grade, grade_sort, rostered_by, rostered_at)
        select $1, registrant_id, first_name, last_name, gender, grade, grade_sort, $3, $4 from registrations where registrant_id = any($2)
@@ -124,7 +139,13 @@ export async function removePlayer(deps: Deps, viewer: SessionUser, teamId: unkn
 // ---- Roster board (Director, Players page): one gender and grade at a time ----
 
 // coachRequest: the parent's coach request from registration, if any.
-export type BoardPlayer = { registrantId: string; firstName: string; lastName: string; grade: string; coachRequest: string | null };
+export type BoardPlayer = {
+  registrantId: string;
+  firstName: string;
+  lastName: string;
+  grade: string;
+  coachRequest: string | null;
+};
 export type BoardTeam = { id: string; name: string; level: string; players: BoardPlayer[] };
 export type RosterBoard = { unrostered: BoardPlayer[]; teams: BoardTeam[] };
 
@@ -174,22 +195,37 @@ export async function rosterBoard(deps: Deps, viewer: SessionUser, gender: unkno
   };
 }
 
-// Puts a player on one team (taking them off any other), or takes them off every team (teamId null).
-export async function movePlayer(deps: Deps, viewer: SessionUser, registrantId: unknown, teamId: unknown): Promise<Result> {
+// Puts a player on a team, or takes them off (teamId null). With `from` (the roster board: the team they were dragged
+// from, or null from "Not on a team"), only that team is left, so a 2nd team stays; without it, every other team is.
+export async function movePlayer(
+  deps: Deps,
+  viewer: SessionUser,
+  registrantId: unknown,
+  teamId: unknown,
+  from?: unknown,
+): Promise<Result> {
   if (!hasArea(viewer, "teams")) return directorOnly;
   if (!isRegistrant(registrantId)) return { ok: false, message: "That player isn't registered." };
   if (teamId !== null && !isId(teamId)) return { ok: false, message: "That team no longer exists." };
+  if (from !== undefined && from !== null && !isId(from)) return { ok: false, message: "That team no longer exists." };
+  // Leaves the team they came from (board), or every team but `keep`.
+  const leave = async (q: Pick<Pool, "query">, keep: string | null) => {
+    if (from === undefined) return leaveTeams(q, registrantId, keep);
+    if (from === null || from === keep) return;
+    await q.query("delete from team_players where registrant_id = $1 and team_id = $2", [registrantId, from]);
+    await q.query("delete from team_uniforms where registrant_id = $1 and team_id = $2", [registrantId, from]);
+  };
   return withTx(deps.pool, async (q) => {
     await lockPlayers(q, [registrantId]);
     if (teamId === null) {
-      await leaveTeams(q, registrantId, null);
+      await leave(q, null);
       return { ok: true as const };
     }
     const t = await q.query("select 1 from teams where id = $1", [teamId]);
     if (!t.rows[0]) return { ok: false as const, message: "That team no longer exists." };
     const g = await q.query("select 1 from registrations where registrant_id = $1", [registrantId]);
     if (!g.rows[0]) return { ok: false as const, message: "That player isn't registered." };
-    await leaveTeams(q, registrantId, teamId);
+    await leave(q, teamId);
     await q.query(
       `insert into team_players (team_id, registrant_id, first_name, last_name, gender, grade, grade_sort, rostered_by, rostered_at)
        select $1, registrant_id, first_name, last_name, gender, grade, grade_sort, $3, $4 from registrations where registrant_id = $2

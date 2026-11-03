@@ -11,10 +11,7 @@ export const SYNC_NAME = "registrations";
 export const AUTO_IMPORTED_BY = "Google Sheet (auto)";
 
 export type SyncResult =
-  | { status: "updated"; imported: number }
-  | { status: "unchanged" }
-  | { status: "busy" }
-  | { status: "failed"; message: string };
+  { status: "updated"; imported: number } | { status: "unchanged" } | { status: "busy" } | { status: "failed"; message: string };
 
 type Deps = { pool: Pool; readRows: () => Promise<string[][]>; now: () => Date };
 
@@ -33,7 +30,9 @@ export async function syncRegistrations(deps: Deps): Promise<SyncResult> {
     const lock = await q.query<{ ok: boolean }>("select pg_try_advisory_xact_lock(hashtext('sync:registrations')) as ok");
     if (!lock.rows[0].ok) return { status: "busy" };
 
-    const prev = await q.query<{ source_hash: string | null }>("select source_hash from sync_status where name = $1", [SYNC_NAME]);
+    const prev = await q.query<{ source_hash: string | null }>("select source_hash from sync_status where name = $1", [
+      SYNC_NAME,
+    ]);
     if (prev.rows[0]?.source_hash === hash) {
       await q.query("update sync_status set checked_at = $2, ok = true, message = null where name = $1", [SYNC_NAME, now]);
       return { status: "unchanged" };
@@ -47,7 +46,8 @@ export async function syncRegistrations(deps: Deps): Promise<SyncResult> {
         message: `The sheet has ${parsed.errors.length} error(s), so the player list was not changed. First: row ${first.row}${first.name ? ` (${first.name})` : ""}: ${first.message}`,
       };
     }
-    const current = (await q.query<{ n: number }>("select count(*)::int as n from registrations")).rows[0].n;
+    const current = (await q.query<{ n: number }>("select count(*)::int as n from registrations where added_by is null")).rows[0]
+      .n;
     if (parsed.players.length < current / 2) {
       return {
         status: "failed",

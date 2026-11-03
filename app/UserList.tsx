@@ -5,6 +5,9 @@ import type { UserListItem } from "@/lib/users";
 import ChatLink from "./ChatLink";
 import { AddMenu, DirectorButtons, DirectorRole, menuItem, type Director } from "./DirectorTools";
 import { isThunderAdmin } from "@/lib/org-admin";
+import { db } from "@/lib/db";
+import { resettable } from "@/lib/login-reset";
+import { ResetLoginButton } from "./ResetLoginButton";
 import { ViewAsButton } from "./ViewAsButton";
 import { AddUserButton, ApproveJoinButton, EditUserButton } from "./users/UserEditor";
 import { Chip, EmailLink, GroupCard, PageTitle, PersonRow, PhoneLink, Stats } from "./ui";
@@ -13,7 +16,7 @@ import { Chip, EmailLink, GroupCard, PageTitle, PersonRow, PhoneLink, Stats } fr
 // Members → Coaches: `view="coaches"` Active Coaches and Team Managers & Parents; `view="inactive-coaches"` every other
 // inactive login. Each group sorted by last name.
 // Edit and View as are for Admins only. `orgAdmin` (another organization's list): View as for its Owners and Admins;
-// Edit, Approve and Chat stay Thunder's.
+// Edit, Approve and Chat stay Thunder's. 🔑 Reset login under 👁 for whoever the viewer may reset (lib/login-reset.ts).
 // `team` (Admins only): each Director's role and area tools in their row, and + Add Admin / + Add Director by the title.
 export type DirectorTeam = {
   org: string;
@@ -26,21 +29,33 @@ export type DirectorTeam = {
   ownerOptions: { id: string; name: string }[];
 };
 
-export default function UserList({
+export default async function UserList({
   users,
   viewer,
   team,
   view = "staff",
   orgAdmin,
+  org,
 }: {
   users: UserListItem[];
   viewer: SessionUser;
   team?: DirectorTeam | null;
   view?: "staff" | "requests" | "coaches" | "inactive-coaches";
   orgAdmin?: boolean;
+  org?: string; // another organization's list without `team`
 }) {
   const thunder = orgAdmin === undefined;
   const admin = thunder ? isThunderAdmin(viewer) : orgAdmin;
+  const slug = thunder ? "thunder" : (org ?? team?.org);
+  const canReset =
+    admin && slug
+      ? await resettable(
+          db,
+          viewer.coachId,
+          slug,
+          users.map((u) => u.coachId),
+        )
+      : new Set<string>();
   const roleOf = (coachId: string) => team?.directors.find((d) => d.id === coachId);
   const active = users.filter((u) => u.active);
   const requests = active.filter((u) => u.request && !u.coach && !u.director && !u.teams.length);
@@ -64,8 +79,14 @@ export default function UserList({
         dim={!u.active}
         under={
           admin &&
-          u.active &&
-          u.coachId !== viewer.coachId && <ViewAsButton coachId={u.coachId} name={`${u.firstName} ${u.lastName}`} />
+          u.coachId !== viewer.coachId && (
+            <>
+              {u.active && <ViewAsButton coachId={u.coachId} name={`${u.firstName} ${u.lastName}`} />}
+              {slug && canReset.has(u.coachId) && (
+                <ResetLoginButton org={slug} coachId={u.coachId} name={`${u.firstName} ${u.lastName}`} />
+              )}
+            </>
+          )
         }
         chips={
           <>

@@ -17,6 +17,8 @@ export type PlayerListItem = {
   coachRequest: string | null;
   coachingInterest: string | null;
   team: string | null; // the team they're rostered on
+  addedBy: string | null; // added in the app (not from TeamSnap) by
+  feesWaivedBy: string | null;
 };
 
 export type MemberPlayer = PlayerListItem & {
@@ -53,6 +55,7 @@ export async function listPlayersByGrade(
             nullif(trim(coalesce(r.parent1_first, '') || ' ' || coalesce(r.parent1_last, '')), '') as "parentName",
             r.parent1_cell as "parentCell", r.parent1_email as "parentEmail",
             r.coach_request as "coachRequest", r.coaching_interest as "coachingInterest",
+            r.added_by as "addedBy", r.fees_waived_by as "feesWaivedBy",
             t.id::text as "teamId", t.name as team, t.grade_sort as "teamGrade",
             array(select t2.name from evaluations e join teams t2 on t2.id = e.team_id
                   where e.registrant_id = r.registrant_id and e.interested order by t2.name) as "interestedTeams"
@@ -81,7 +84,7 @@ export async function listPlayersByGrade(
     .map(([, g]) => ({ gender: g.gender, grade: g.grade, unrostered: g.unrostered, teams: g.teams }));
   for (const g of list) g.teams.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   const imported = await db.query<{ at: Date; by: string }>(
-    "select imported_at as at, imported_by as by from registrations limit 1",
+    "select imported_at as at, imported_by as by from registrations where added_by is null limit 1",
   );
   return {
     groups: list,
@@ -93,4 +96,3 @@ export async function listPlayersByGrade(
     sync: await getSyncStatus(db),
   };
 }
-

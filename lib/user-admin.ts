@@ -1,4 +1,4 @@
-// Director tools for users: add, edit (name, email, Active, Coach), approve/deny requests, reset login, delete.
+// Director tools for users: add, edit (name, email, Active, Coach), approve/deny requests, delete (reset login: lib/login-reset.ts).
 // Directors (and Admins) aren't set here: Admins choose Directors and their areas (lib/org-admin.ts).
 // Thunder roles live in org_roles (SPEC.md section 13).
 import type { Pool } from "pg";
@@ -72,14 +72,23 @@ export async function denyRequest(deps: Deps, viewer: SessionUser, coachId: stri
   if (!isThunderAdmin(viewer)) return directorOnly;
   if (!/^\d{7}$/.test(coachId)) return { ok: false, message: "That user no longer exists." };
   await withTx(deps.pool, async (q) => {
-    const r = await q.query("update users set updated_at = $2, updated_by = $3 where coach_id = $1", [coachId, deps.now(), by(viewer)]);
+    const r = await q.query("update users set updated_at = $2, updated_by = $3 where coach_id = $1", [
+      coachId,
+      deps.now(),
+      by(viewer),
+    ]);
     if (r.rowCount) await q.query("select set_role($1, 'thunder', 'Request', false, $2)", [coachId, by(viewer)]);
     await q.query("delete from join_reasons where coach_id = $1", [coachId]);
   });
   return { ok: true };
 }
 
-const STAFF_LABEL: Record<string, string> = { HeadCoach: "Head Coach", AsstCoach: "Asst Coach", Manager: "Team Manager", TeamParent: "Team Parent" };
+const STAFF_LABEL: Record<string, string> = {
+  HeadCoach: "Head Coach",
+  AsstCoach: "Asst Coach",
+  Manager: "Team Manager",
+  TeamParent: "Team Parent",
+};
 
 // Approve a team staff sign-up as asked: on the team they picked, in that role (Head and Asst Coaches also get the Coach
 // role). Clears the request. A team typed in (not listed) is placed from the team's page instead.
@@ -95,9 +104,13 @@ export async function approveJoin(deps: Deps, viewer: SessionUser, coachId: stri
         [coachId],
       );
       const j = r.rows[0];
-      if (!j?.staff_role || !j.team_id) throw new UserError("Their team isn't listed. Approve them, then add them on the team's page.");
+      if (!j?.staff_role || !j.team_id)
+        throw new UserError("Their team isn't listed. Approve them, then add them on the team's page.");
       if (j.staff_role === "HeadCoach") {
-        const head = await q.query("select 1 from team_staff where team_id = $1 and role = 'HeadCoach' and coach_id <> $2", [j.team_id, coachId]);
+        const head = await q.query("select 1 from team_staff where team_id = $1 and role = 'HeadCoach' and coach_id <> $2", [
+          j.team_id,
+          coachId,
+        ]);
         if (head.rowCount) throw new UserError(`${j.team} already has a head coach. Change it on the team's page.`);
       }
       await q.query(
@@ -126,9 +139,10 @@ export async function addUser(deps: Deps, viewer: SessionUser, input: AddUserInp
     const coachId = coachIdFromCell(cell);
     return withTx(deps.pool, async (q) => {
       await q.query("select pg_advisory_xact_lock(hashtext('user:' || $1))", [coachId]);
-      const e = await q.query<{ cell: string; who: string }>("select cell, first_name || ' ' || last_name as who from users where coach_id = $1", [
-        coachId,
-      ]);
+      const e = await q.query<{ cell: string; who: string }>(
+        "select cell, first_name || ' ' || last_name as who from users where coach_id = $1",
+        [coachId],
+      );
       if (e.rows[0]?.cell === cell) throw new UserError(`${e.rows[0].who} already has that cell number.`);
       if (e.rows[0]) throw new UserError(`That cell ends in the same 7 digits as ${e.rows[0].who}'s. Please contact support.`);
       await q.query(
@@ -140,28 +154,6 @@ export async function addUser(deps: Deps, viewer: SessionUser, input: AddUserInp
       return { coachId };
     });
   });
-}
-
-// Reset login: back to starter PIN 1234 with no email, logged out everywhere, PIN lockout cleared.
-// At their next login they give an email, confirm it with a code, and choose a new PIN.
-export async function resetLogin(deps: Deps, viewer: SessionUser, coachId: string): Promise<Result> {
-  if (!isThunderAdmin(viewer)) return directorOnly;
-  if (!/^\d{7}$/.test(coachId)) return { ok: false, message: "That user no longer exists." };
-  if (coachId === viewer.coachId) return { ok: false, message: "You can't reset your own login." };
-  return run(() =>
-    withTx(deps.pool, async (q) => {
-      const r = await q.query<{ cell: string }>(
-        `update users set pin_hash = null, email = null, verified_email = null, updated_at = $2, updated_by = $3
-         where coach_id = $1 returning cell`,
-        [coachId, deps.now(), by(viewer)],
-      );
-      if (!r.rows[0]) throw new UserError("That user no longer exists.");
-      await q.query("delete from sessions where coach_id = $1", [coachId]);
-      await q.query("delete from pin_lockouts where cell = $1", [r.rows[0].cell]);
-      await q.query("delete from email_codes where cell = $1", [r.rows[0].cell]);
-      return {};
-    }),
-  );
 }
 
 // Why a user can't be deleted, or null if they can. Deactivate is the safe alternative.

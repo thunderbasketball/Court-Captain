@@ -11,6 +11,9 @@ import { isOrgSlug } from "@/lib/orgs";
 import AppHeader from "../../AppHeader";
 import { card } from "../../ui";
 import { followRename } from "@/lib/org-rename";
+import { orgMetrics } from "@/lib/org-metrics";
+import { visitStats } from "@/lib/site-visits";
+import OrgMetrics from "../../OrgMetrics";
 
 export default function OrgHomePage({ params }: PageProps<"/org/[slug]">) {
   return (
@@ -20,7 +23,8 @@ export default function OrgHomePage({ params }: PageProps<"/org/[slug]">) {
   );
 }
 
-// A registered organization's Home (SPEC.md section 14), the same layout as every organization's: a card for each part
+// A registered organization's Home (SPEC.md section 14), the same layout as every organization's: the metrics for Owners
+// and Admins, then a card for each part
 // this person can open (the same parts as the tabs). Its name and logo are in the header; its settings in the gear.
 async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] }) {
   const user = await currentUser();
@@ -48,6 +52,14 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
     ),
   ]);
   const role = admin ? "Admin" : teamsArea || coachesArea || facilities ? "Director" : "Coach";
+  // Owners and Admins: the organization's metrics above the cards.
+  const now = new Date();
+  const [metrics, visits] = admin
+    ? await Promise.all([
+        orgMetrics({ pool: db, now: () => now }, user, slug),
+        visitStats({ pool: db, now: () => now }, user, slug),
+      ])
+    : [null, null];
   const parts = [
     ...(teams && (teamsArea || coaching.rowCount)
       ? [
@@ -79,6 +91,7 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
         <p className="mb-4 text-sm text-zinc-500 dark:text-zinc-400">
           Welcome, {user.firstName} · {role}
         </p>
+        {metrics && <OrgMetrics m={metrics} visits={visits} base={`/org/${slug}`} thunder={false} now={now} />}
         {!parts.length && <p className="text-sm text-zinc-500">Nothing to show here yet.</p>}
         <div className="grid gap-3 sm:grid-cols-2">
           {parts.map((p) => (

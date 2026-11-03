@@ -71,7 +71,13 @@ async function OrgCoaches({
             </Link>
           ))}
         </nav>
-        <UserList users={users} viewer={user} orgAdmin={admin} view={tab === "active" ? "coaches" : "inactive-coaches"} />
+        <UserList
+          users={users}
+          viewer={user}
+          orgAdmin={admin}
+          org={slug}
+          view={tab === "active" ? "coaches" : "inactive-coaches"}
+        />
       </main>
     </>
   );

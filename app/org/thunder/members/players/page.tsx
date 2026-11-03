@@ -9,6 +9,7 @@ import { hasArea } from "@/lib/org-admin";
 import { formatCell } from "@/lib/phone";
 import { listPlayersByGrade, type MemberPlayer } from "@/lib/players";
 import AppHeader from "../../../../AppHeader";
+import { AddPlayerButton, RemoveAddedPlayer } from "../../players/AddPlayerButton";
 import PlayerEvalButton from "../../players/PlayerEvalButton";
 import RosterBoardButton from "../../players/RosterBoardButton";
 import { Chip, GroupCard, Notice, PageTitle, PersonRow, PhoneLink, Stats } from "../../../../ui";
@@ -37,6 +38,7 @@ async function Players() {
   if (!hasArea(user, "players", "teams")) redirect("/");
   const { groups, total, boys, girls, importedAt, importedBy, sync } = await listPlayersByGrade(user);
   const evaluations = await hasFeature(db, "thunder", "team-building"); // with Team Management only
+  const canAdd = hasArea(user, "players"); // Owners, Admins and Directors of Players add players (fees can be waived)
 
   const row = (p: MemberPlayer, rostered: boolean) => (
     <PersonRow
@@ -48,6 +50,8 @@ async function Players() {
       chips={
         <>
           {p.playsUp && <Chip tone="amber">{p.playsUp}</Chip>}
+          {p.addedBy && <Chip tone="zinc">Added in app</Chip>}
+          {p.feesWaivedBy && <Chip tone="green">Fees waived</Chip>}
           {p.coachingInterest && <Chip tone="green">Parent: {p.coachingInterest}</Chip>}
         </>
       }
@@ -71,6 +75,15 @@ async function Players() {
           ))}
         </div>
       )}
+      {p.addedBy && (
+        <div className="flex items-end justify-between gap-2 text-xs text-zinc-500">
+          <span>
+            Added by {p.addedBy}
+            {p.feesWaivedBy && ` · fees waived by ${p.feesWaivedBy}`}
+          </span>
+          {canAdd && !rostered && <RemoveAddedPlayer registrantId={p.registrantId} name={`${p.firstName} ${p.lastName}`} />}
+        </div>
+      )}
       {(p.coachRequest || !rostered) && (
         <div className="flex items-end justify-between gap-2">
           <span>{p.coachRequest && <>Coach request: {p.coachRequest}</>}</span>
@@ -85,17 +98,20 @@ async function Players() {
       <AppHeader user={user} tab="members" context="director" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
         <MembersNav user={user} current="players" />
-        <PageTitle
-          title="Players"
-          subtitle={
-            importedAt && (
-              <>
-                From TeamSnap, updated {when(importedAt)} by {importedBy}
-                {sync?.checkedAt && sync.ok && <> · sheet checked {when(sync.checkedAt)}</>}
-              </>
-            )
-          }
-        />
+        <div className="flex items-start justify-between gap-3">
+          <PageTitle
+            title="Players"
+            subtitle={
+              importedAt && (
+                <>
+                  From TeamSnap (and added in the app), updated {when(importedAt)} by {importedBy}
+                  {sync?.checkedAt && sync.ok && <> · sheet checked {when(sync.checkedAt)}</>}
+                </>
+              )
+            }
+          />
+          {canAdd && <AddPlayerButton />}
+        </div>
         <Stats
           items={[
             { label: "Players", value: total },

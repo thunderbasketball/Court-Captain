@@ -8,6 +8,7 @@ import { platformOverview } from "@/lib/platform";
 import { TZ } from "@/lib/time";
 import AppHeader from "../AppHeader";
 import { card, EmailLink, PageTitle, PhoneLink } from "../ui";
+import { ResetLoginButton } from "../ResetLoginButton";
 import { ViewAsButton } from "../ViewAsButton";
 import Link from "next/link";
 import { formatCell } from "@/lib/phone";
@@ -133,7 +134,7 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
                 </summary>
                 <div className="border-t border-zinc-100 p-4 dark:border-white/5">
                   <h3 className="mb-1.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Owners</h3>
-                  {/* Each Owner's contact info, and View as (view only) for support. */}
+                  {/* Each Owner's contact info, View as (view only) for support, and 🔑 Reset login (PIN 1234, email cleared). */}
                   <ul className="mb-2 divide-y divide-zinc-100 rounded-xl ring-1 ring-zinc-950/10 dark:divide-white/5 dark:ring-white/10">
                     {o.owners.map((d) => (
                       <li key={d.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
@@ -148,6 +149,7 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
                         </span>
                         <span className="flex shrink-0 items-center gap-2">
                           {d.id !== user.coachId && <ViewAsButton coachId={d.id} name={d.name} />}
+                          {d.id !== user.coachId && <ResetLoginButton org={o.slug} coachId={d.id} name={d.name} />}
                           <RemoveOwner org={o.slug} orgName={o.name} coachId={d.id} name={d.name} />
                         </span>
                       </li>

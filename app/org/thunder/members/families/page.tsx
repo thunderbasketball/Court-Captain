@@ -63,6 +63,8 @@ async function Families() {
             {c.team && ` · ${c.team}`}
             {(c.uniformSize || c.uniformNumber) &&
               ` · ${[c.uniformSize, c.uniformNumber && `#${c.uniformNumber}`].filter(Boolean).join(" ")}`}
+            {c.addedInApp && " · added in app"}
+            {c.feesWaivedBy && ` · fees waived by ${c.feesWaivedBy}`}
           </Chip>
         ))}
       </div>

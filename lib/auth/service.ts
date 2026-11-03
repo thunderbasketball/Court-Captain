@@ -268,6 +268,7 @@ export async function startSession(deps: Deps, q: PoolClient | Pool, coachId: st
   const token = newSessionToken();
   const expiresAt = new Date(now.getTime() + SESSION_HOURS * 60 * MINUTE);
   await q.query("delete from sessions where coach_id = $1 and expires_at <= $2", [coachId, now]);
+  await q.query("update users set last_login_at = $2 where coach_id = $1", [coachId, now]); // for the Home metrics
   await q.query("insert into sessions (token_hash, coach_id, created_at, expires_at) values ($1, $2, $3, $4)", [
     sha256(token),
     coachId,

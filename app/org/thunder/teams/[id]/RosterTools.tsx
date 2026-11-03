@@ -9,7 +9,19 @@ import { primaryBtn } from "../../../../ui";
 import { addPlayers, removePlayer } from "../actions";
 
 // Director: pick registered players to put on the team. Players who fit the team (gender + grade) show first.
-export function AddPlayersButton({ teamId, candidates }: { teamId: string; candidates: RosterCandidate[] }) {
+// `canSecond` (Owners, Admins, Directors of Players): picking a player already on a team asks first, then puts them on a
+// 2nd team. The server checks again.
+export function AddPlayersButton({
+  teamId,
+  teamName,
+  candidates,
+  canSecond,
+}: {
+  teamId: string;
+  teamName: string;
+  candidates: RosterCandidate[];
+  canSecond: boolean;
+}) {
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const close = () => dialog.current?.close();
@@ -19,6 +31,7 @@ export function AddPlayersButton({ teamId, candidates }: { teamId: string; candi
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [busy, start] = useTransition();
+  const [confirm, confirmDialog] = useConfirm();
 
   const q = search.trim().toLowerCase();
   const list = candidates.filter(
@@ -106,19 +119,47 @@ export function AddPlayersButton({ teamId, candidates }: { teamId: string; candi
             type="button"
             disabled={busy || !picked.length}
             className={`${primaryBtn} mt-3`}
-            onClick={() =>
+            onClick={async () => {
+              const onTeams = candidates.filter((c) => picked.includes(c.registrantId) && c.otherTeams.length > 0);
+              const second =
+                canSecond &&
+                onTeams.length > 0 &&
+                (await confirm({
+                  title: onTeams.length === 1 ? "Put this player on a 2nd team?" : `Put ${onTeams.length} players on a 2nd team?`,
+                  message: (
+                    <>
+                      <ul className="space-y-1">
+                        {onTeams.map((c) => (
+                          <li key={c.registrantId}>
+                            <strong className="font-semibold">
+                              {c.firstName} {c.lastName}
+                            </strong>{" "}
+                            is already on {c.otherTeams.join(", ")}.
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="mt-2">
+                        They stay on that team and also join <strong className="font-semibold">{teamName}</strong>.
+                      </p>
+                    </>
+                  ),
+                  confirmLabel: "Yes, add to a 2nd team",
+                  tone: "warning",
+                }));
+              if (canSecond && onTeams.length > 0 && !second) return;
               start(async () => {
-                const r = await addPlayers(teamId, picked);
+                const r = await addPlayers(teamId, picked, second === true);
                 if (!r.ok) return setError(r.message);
                 close();
                 setDone(`Added ${r.added} player${r.added === 1 ? "" : "s"}.`);
                 router.refresh();
-              })
-            }
+              });
+            }}
           >
             {busy ? "Adding…" : `Add ${picked.length || ""} player${picked.length === 1 ? "" : "s"}`}
           </button>
         </div>
+        {confirmDialog}
       </dialog>
     </>
   );

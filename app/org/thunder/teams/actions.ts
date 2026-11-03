@@ -62,8 +62,8 @@ export async function removeStaff(teamId: string, input: { coachId: unknown; rol
   return guarded((u) => teams.removeStaff(deps, u, String(teamId), input));
 }
 
-export async function addPlayers(teamId: string, ids: string[]) {
-  return guarded((u) => rosters.addPlayers(deps, u, String(teamId), ids));
+export async function addPlayers(teamId: string, ids: string[], second = false) {
+  return guarded((u) => rosters.addPlayers(deps, u, String(teamId), ids, second === true));
 }
 export async function removePlayer(teamId: string, registrantId: string) {
   return guarded((u) => rosters.removePlayer(deps, u, String(teamId), String(registrantId)));

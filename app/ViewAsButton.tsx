@@ -9,7 +9,7 @@ import { Alert, CloseButton, Toast, dialogCls } from "./client-ui";
 import { RoleDot } from "./Contacts";
 import { loadPlayerTeam } from "./org/thunder/players/actions";
 
-const eyeBtn =
+export const eyeBtn =
   "inline-flex size-7 shrink-0 items-center justify-center rounded-full text-zinc-500 ring-1 ring-zinc-950/15 hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-50 dark:text-zinc-400 dark:ring-white/20 dark:hover:bg-white/10 dark:hover:text-white";
 
 function Eye() {

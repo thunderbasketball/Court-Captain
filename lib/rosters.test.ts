@@ -43,7 +43,9 @@ describe("rosters", () => {
       `insert into teams (name, gender, grades, grade_sort, level, created_by) values ('4G A', 'Girls', '{4}', 4, 'REC', 'x'), ('4G B', 'Girls', '{4}', 4, 'COMP', 'x') returning id::text`,
     );
     [team, other] = t.rows.map((r) => r.id);
-    await db.pool.query(`insert into team_staff (team_id, coach_id, role, added_by) values ($1, '5550001', 'HeadCoach', 'x')`, [team]);
+    await db.pool.query(`insert into team_staff (team_id, coach_id, role, added_by) values ($1, '5550001', 'HeadCoach', 'x')`, [
+      team,
+    ]);
     await reg("r1", "Ava", "Zed", "Girls", "4");
     await reg("r2", "Bea", "Young", "Girls", "4");
     await reg("r3", "Cy", "Ames", "Boys", "4");
@@ -68,19 +70,56 @@ describe("rosters", () => {
     await addPlayers(deps(), director, other, ["r4"]);
     expect((await rosterCandidates(deps(), director, other)).find((c) => c.firstName === "Ava")?.otherTeams).toEqual(["4G A"]);
     expect((await rosterCandidates(deps(), director, team)).map((c) => c.firstName)).toEqual(["Cy", "Dee"]);
-    // …but can't be put on a second team.
+    // A 2nd team: a Director of Teams alone can't; Owners, Admins and Directors of Players can, once they confirm.
+    const teamsOnly = { ...director, thunderAreas: ["teams" as const], isAdmin: false };
+    expect(await addPlayers(deps(), teamsOnly, other, ["r1", "r3"], true)).toEqual({
+      ok: false,
+      message:
+        "Already on another team: Ava Zed (4G A). Only an Owner, Admin or Director of Players can put a player on a 2nd team.",
+    });
     expect(await addPlayers(deps(), director, other, ["r1", "r3"])).toEqual({
       ok: false,
-      message: "Already on another team: Ava Zed (4G A). Move them on Players → Roster players.",
+      message: "Already on another team: Ava Zed (4G A). Confirm to put them on a 2nd team.",
     });
     expect(await listRoster(deps(), director, other)).toMatchObject([{ firstName: "Dee" }]); // nothing added
+    const players = { ...director, thunderAreas: ["teams" as const, "players" as const], isAdmin: false };
+    expect(await addPlayers(deps(), players, other, ["r1", "r3"], true)).toEqual({ ok: true, added: 2 });
+    expect((await listRoster(deps(), director, team))!.map((p) => p.firstName)).toEqual(["Bea", "Ava"]); // still on the first
+    // Never a 3rd team.
+    const third = (
+      await db.pool.query<{ id: string }>(
+        "insert into teams (name, gender, grades, grade_sort, level, created_by) values ('4G C', 'Girls', '{4}', 4, 'REC', 'x') returning id::text",
+      )
+    ).rows[0].id;
+    expect(await addPlayers(deps(), director, third, ["r1"], true)).toEqual({
+      ok: false,
+      message: "Already on two teams: Ava Zed (4G A, 4G B). A player can be on two teams at most.",
+    });
+    // The roster board moves them off only the team they're dragged from, so their 2nd team stays.
+    expect(await movePlayer(deps(), director, "r1", third, team)).toEqual({ ok: true });
+    expect(
+      (
+        await db.pool.query(
+          "select t.name from team_players p join teams t on t.id = p.team_id where registrant_id = 'r1' order by t.name",
+        )
+      ).rows.map((r) => r.name),
+    ).toEqual(["4G B", "4G C"]);
+    expect(await movePlayer(deps(), director, "r1", null, third)).toEqual({ ok: true });
+    expect(
+      (
+        await db.pool.query("select t.name from team_players p join teams t on t.id = p.team_id where registrant_id = 'r1'")
+      ).rows.map((r) => r.name),
+    ).toEqual(["4G B"]);
   });
 
   it("staff can see their roster but not change it; others can't see it", async () => {
     await addPlayers(deps(), director, team, ["r1"]);
     expect((await listRoster(deps(), head, team))?.length).toBe(1);
     expect(await listRoster(deps(), stranger, team)).toBeNull();
-    expect(await addPlayers(deps(), head, team, ["r2"])).toEqual({ ok: false, message: "Only a Director of Teams can change rosters." });
+    expect(await addPlayers(deps(), head, team, ["r2"])).toEqual({
+      ok: false,
+      message: "Only a Director of Teams can change rosters.",
+    });
     expect(await removePlayer(deps(), head, team, "r1")).toMatchObject({ ok: false });
     expect(await rosterCandidates(deps(), head, team)).toEqual([]);
   });
@@ -98,7 +137,10 @@ describe("rosters", () => {
       free: b!.unrostered.map((p) => p.firstName),
       teams: b!.teams.map((t) => `${t.name}: ${t.players.map((p) => p.firstName).join(",")}`),
     });
-    expect(names(await rosterBoard(deps(), director, "Girls", "4"))).toEqual({ free: ["Bea", "Ava"], teams: ["4G B: ", "4G A: "] }); // COMP first
+    expect(names(await rosterBoard(deps(), director, "Girls", "4"))).toEqual({
+      free: ["Bea", "Ava"],
+      teams: ["4G B: ", "4G A: "],
+    }); // COMP first
     expect(await movePlayer(deps(), director, "r1", team)).toEqual({ ok: true });
     expect(await movePlayer(deps(), director, "r1", other)).toEqual({ ok: true });
     expect(names(await rosterBoard(deps(), director, "Girls", "4"))).toEqual({ free: ["Bea"], teams: ["4G B: Ava", "4G A: "] });
@@ -121,7 +163,10 @@ describe("rosters", () => {
     // Only teams named for the grade; their free players are that grade and one below (a 3rd grader shows on the 4th grade board).
     await reg("r5", "Eve", "Cole", "Girls", "3");
     await reg("r6", "Fay", "Dunn", "Girls", "2");
-    expect(names(await rosterBoard(deps(), director, "Girls", "4"))).toEqual({ free: ["Bea", "Ava", "Eve"], teams: ["4G B: ", "4G A: "] });
+    expect(names(await rosterBoard(deps(), director, "Girls", "4"))).toEqual({
+      free: ["Bea", "Ava", "Eve"],
+      teams: ["4G B: ", "4G A: "],
+    });
     expect((await rosterBoard(deps(), director, "Girls", "3"))!.teams).toHaveLength(0);
     expect(names(await rosterBoard(deps(), director, "Girls", "5")).free).toEqual(["Dee", "Bea", "Ava"]);
   });

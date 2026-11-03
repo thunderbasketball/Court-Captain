@@ -36,21 +36,26 @@ export default function RosterBoardButton({ gender, grade }: { gender: "Boys" | 
   async function move(id: string, to: string) {
     setPicked(null);
     setOver(null);
-    if (!board || whereIs(board, id) === to) return;
+    const fromZone = board && whereIs(board, id);
+    if (!board || fromZone === to) return;
     const player = [...board.unrostered, ...board.teams.flatMap((t) => t.players)].find((p) => p.registrantId === id);
     if (!player) return;
     // Show the move at once; the server confirms it.
-    const byName = (a: BoardPlayer, b: BoardPlayer) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName);
+    const byName = (a: BoardPlayer, b: BoardPlayer) =>
+      a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName);
     const byGrade = (a: BoardPlayer, b: BoardPlayer) => gradeSort(b.grade) - gradeSort(a.grade) || byName(a, b);
     const without = (list: BoardPlayer[]) => list.filter((p) => p.registrantId !== id);
     const freeNow = without(board.unrostered);
     setBoard({
       // The free list holds this grade and one below; anyone else only appears on their team.
       unrostered: to === FREE && fitsBoard(player.grade) ? [...freeNow, player].sort(byGrade) : freeNow,
-      teams: board.teams.map((t) => ({ ...t, players: t.id === to ? [...without(t.players), player].sort(byName) : without(t.players) })),
+      teams: board.teams.map((t) => ({
+        ...t,
+        players: t.id === to ? [...without(t.players), player].sort(byName) : without(t.players),
+      })),
     });
     changed.current = true;
-    const r = await movePlayer(id, to === FREE ? null : to);
+    const r = await movePlayer(id, to === FREE ? null : to, !fromZone || fromZone === FREE ? null : fromZone);
     if (!r.ok) {
       setToast(`${player.firstName} ${player.lastName}: ${r.message}`);
       await load();
@@ -89,7 +94,9 @@ export default function RosterBoardButton({ gender, grade }: { gender: "Boys" | 
           {sub && <span className="text-xs text-zinc-500">{sub}</span>}
           {target && <span className="text-xs font-semibold text-thunder-blue dark:text-blue-400">Tap to move here</span>}
         </div>
-        {!players.length && <p className="text-xs text-zinc-400">{id === FREE ? "Everyone here is on a team." : "Drop players here."}</p>}
+        {!players.length && (
+          <p className="text-xs text-zinc-400">{id === FREE ? "Everyone here is on a team." : "Drop players here."}</p>
+        )}
         <div className="flex flex-wrap gap-1.5">
           {players.map((p) => {
             const on = picked === p.registrantId;

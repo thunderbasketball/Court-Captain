@@ -21,7 +21,8 @@ async function allFamilies(): Promise<Family[]> {
             nullif(concat_ws(', ', nullif(trim(r.address), ''), nullif(trim(r.city), ''),
                              nullif(trim(concat_ws(' ', nullif(trim(r.state), ''), nullif(trim(r.zip), ''))), '')), '') as address,
             r.registered_at::text as "registeredAt",
-            r.total_fees::float8 as "totalFees", r.amount_paid::float8 as "amountPaid", r.amount_remaining::float8 as "amountRemaining"
+            r.total_fees::float8 as "totalFees", r.amount_paid::float8 as "amountPaid", r.amount_remaining::float8 as "amountRemaining",
+            r.added_by as "addedBy", r.fees_waived_by as "feesWaivedBy"
      from registrations r`,
   );
   const logins = await db.query<{ cell: string; name: string }>(

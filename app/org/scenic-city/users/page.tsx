@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
+import { resettable } from "@/lib/login-reset";
 import { directorsPanel } from "@/lib/org-admin";
 import { formatCell } from "@/lib/phone";
 import { currentScenic } from "@/lib/contexts-server";
@@ -9,6 +10,7 @@ import { listScenicPeople } from "@/lib/scenic";
 import AppHeader from "../../../AppHeader";
 import { MembersNav } from "../ScenicNav";
 import { AddMenu, DirectorButtons, DirectorRole } from "../../../DirectorTools";
+import { ResetLoginButton } from "../../../ResetLoginButton";
 import { ViewAsButton } from "../../../ViewAsButton";
 import { Chip, EmailLink, GroupCard, PageTitle, PersonRow, PhoneLink, Stats } from "../../../ui";
 import { EditScenicRoles, RequestButtons } from "./ScenicUserButtons";
@@ -36,6 +38,12 @@ async function ScenicUsers() {
   const panel = await directorsPanel({ pool: db, now: () => new Date() }, user, "scenic-city");
   const active = members.filter((m) => m.active);
   const inactive = members.filter((m) => !m.active);
+  const canReset = await resettable(
+    db,
+    user.coachId,
+    "scenic-city",
+    members.map((m) => m.coachId),
+  );
 
   const contact = (p: { cell: string; email: string | null }) => (
     <>
@@ -114,7 +122,16 @@ async function ScenicUsers() {
                 last={m.lastName}
                 avatarTone={m.roles.includes("Director") ? "blue" : "zinc"}
                 href={panel ? (m.coachId === user.coachId ? "/me" : `/me/${m.coachId}`) : undefined}
-                under={m.coachId !== user.coachId && <ViewAsButton coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} />}
+                under={
+                  m.coachId !== user.coachId && (
+                    <>
+                      <ViewAsButton coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} />
+                      {canReset.has(m.coachId) && (
+                        <ResetLoginButton org="scenic-city" coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} />
+                      )}
+                    </>
+                  )
+                }
                 chips={m.roles.map((r) => {
                   const d = r === "Director" ? panel?.directors.find((x) => x.id === m.coachId) : undefined;
                   return (
@@ -147,7 +164,18 @@ async function ScenicUsers() {
           {inactive.length > 0 && (
             <GroupCard title="Non-active" count={inactive.length} defaultOpen={false}>
               {inactive.map((m) => (
-                <PersonRow key={m.coachId} first={m.firstName} last={m.lastName} dim chips={<Chip tone="red">Inactive</Chip>}>
+                <PersonRow
+                  key={m.coachId}
+                  first={m.firstName}
+                  last={m.lastName}
+                  dim
+                  chips={<Chip tone="red">Inactive</Chip>}
+                  under={
+                    canReset.has(m.coachId) && (
+                      <ResetLoginButton org="scenic-city" coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} />
+                    )
+                  }
+                >
                   {contact(m)}
                 </PersonRow>
               ))}

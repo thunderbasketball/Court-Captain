@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
 import { createTestDb, grant, THUNDER_ROLES } from "./testing/db";
-import { hashPin } from "./auth/crypto";
-import { addUser, deleteUser, denyRequest, resetLogin, updateUser, approveJoin } from "./user-admin";
+import { addUser, deleteUser, denyRequest, updateUser, approveJoin } from "./user-admin";
 
 const director: SessionUser = {
   coachId: "9913694",
@@ -46,9 +45,15 @@ describe("user admin", () => {
   });
 
   it("edits name, email, Active and Coach, records who did it, and leaves Director and Scenic City roles alone", async () => {
-    expect(await updateUser(deps(), director, "5550002", { first: "Samuel", last: "Scenic", email: "Sam@Example.com", active: false, coach: true })).toEqual({
-      ok: true,
-    });
+    expect(
+      await updateUser(deps(), director, "5550002", {
+        first: "Samuel",
+        last: "Scenic",
+        email: "Sam@Example.com",
+        active: false,
+        coach: true,
+      }),
+    ).toEqual({ ok: true });
     expect(await user("5550002")).toMatchObject({
       first_name: "Samuel",
       email: "sam@example.com",
@@ -81,49 +86,47 @@ describe("user admin", () => {
     const me = { first: "Earl", last: "Epps", email: "", active: true, coach: false };
     expect(await updateUser(deps(), director, "9913694", me)).toEqual({ ok: true });
     expect(await user("9913694")).toMatchObject({ thunder_director: true });
-    expect(await updateUser(deps(), director, "9913694", { ...me, active: false })).toEqual({ ok: false, message: "You can't deactivate yourself." });
+    expect(await updateUser(deps(), director, "9913694", { ...me, active: false })).toEqual({
+      ok: false,
+      message: "You can't deactivate yourself.",
+    });
     expect(await updateUser(deps(), director, "9913694", { ...me, coach: true })).toEqual({ ok: true });
   });
 
   it("checks names and email", async () => {
     expect(await updateUser(deps(), director, "5550001", { ...edit, first: "=HYPERLINK()" })).toMatchObject({ ok: false });
-    expect(await updateUser(deps(), director, "5550001", { ...edit, email: "nope" })).toMatchObject({ ok: false, message: "That email doesn't look right." });
+    expect(await updateUser(deps(), director, "5550001", { ...edit, email: "nope" })).toMatchObject({
+      ok: false,
+      message: "That email doesn't look right.",
+    });
   });
 
   it("adds a user with the starter PIN; refuses a taken cell or matching last 7 digits", async () => {
     const r = await addUser(deps(), director, { first: "New", last: "Coach", cell: "(423) 555-9999", email: "", coach: true });
     expect(r).toEqual({ ok: true, coachId: "5559999" });
     expect(await user("5559999")).toMatchObject({ pin_hash: null, thunder_coach: true, email: null, updated_by: "Earl Epps" });
-    expect(await addUser(deps(), director, { first: "A", last: "B", cell: "4235559999", email: "", coach: false })).toMatchObject({
-      ok: false,
-      message: "New Coach already has that cell number.",
-    });
-    expect(await addUser(deps(), director, { first: "A", last: "B", cell: "6155559999", email: "", coach: false })).toMatchObject({
-      ok: false,
-      message: expect.stringMatching(/same 7 digits as New Coach/),
-    });
-  });
-
-  it("reset login: PIN back to 1234, email cleared, logged out, lockout cleared", async () => {
-    await db.pool.query("update users set pin_hash = $1 where coach_id = '5550001'", [await hashPin("2468")]);
-    await db.pool.query("insert into sessions (token_hash, coach_id, created_at, expires_at) values ('x', '5550001', $1, $1)", [now]);
-    await db.pool.query("insert into pin_lockouts (cell, failed_count) values ('4235550001', 3)");
-    expect(await resetLogin(deps(), director, "5550001")).toEqual({ ok: true });
-    expect(await user("5550001")).toMatchObject({ pin_hash: null, email: null, verified_email: null, updated_by: "Earl Epps", first_name: "Pat" });
-    expect((await db.pool.query("select count(*)::int n from sessions where coach_id = '5550001'")).rows[0].n).toBe(0);
-    expect((await db.pool.query("select count(*)::int n from pin_lockouts where cell = '4235550001'")).rows[0].n).toBe(0);
-    expect(await resetLogin(deps(), director, "9913694")).toEqual({ ok: false, message: "You can't reset your own login." });
-    expect((await resetLogin(deps(), coach, "5550002")).ok).toBe(false);
+    expect(await addUser(deps(), director, { first: "A", last: "B", cell: "4235559999", email: "", coach: false })).toMatchObject(
+      { ok: false, message: "New Coach already has that cell number." },
+    );
+    expect(await addUser(deps(), director, { first: "A", last: "B", cell: "6155559999", email: "", coach: false })).toMatchObject(
+      { ok: false, message: expect.stringMatching(/same 7 digits as New Coach/) },
+    );
   });
 
   it("deletes only where appropriate", async () => {
     expect(await deleteUser(deps(), director, "9913694")).toEqual({ ok: false, message: "You can't delete yourself." });
     expect(await deleteUser(deps(), director, "5550002")).toMatchObject({ ok: false, message: /Scenic City/ });
-    const t = await db.pool.query<{ id: string }>("insert into teams (name, gender, grades, grade_sort, level, created_by) values ('4G Test', 'Girls', '{4}', 4, 'REC', 'x') returning id");
-    await db.pool.query("insert into team_staff (team_id, coach_id, role, added_by) values ($1, '5550001', 'Manager', 'x')", [t.rows[0].id]);
+    const t = await db.pool.query<{ id: string }>(
+      "insert into teams (name, gender, grades, grade_sort, level, created_by) values ('4G Test', 'Girls', '{4}', 4, 'REC', 'x') returning id",
+    );
+    await db.pool.query("insert into team_staff (team_id, coach_id, role, added_by) values ($1, '5550001', 'Manager', 'x')", [
+      t.rows[0].id,
+    ]);
     expect(await deleteUser(deps(), director, "5550001")).toMatchObject({ ok: false, message: /on a team/ });
     await db.pool.query("delete from team_staff");
-    await db.pool.query("insert into sessions (token_hash, coach_id, created_at, expires_at) values ('x', '5550001', now(), now() + interval '1 hour')");
+    await db.pool.query(
+      "insert into sessions (token_hash, coach_id, created_at, expires_at) values ('x', '5550001', now(), now() + interval '1 hour')",
+    );
     expect(await deleteUser(deps(), director, "5550001")).toEqual({ ok: true });
     expect(await user("5550001")).toBeUndefined();
     expect((await db.pool.query("select count(*)::int n from sessions")).rows[0].n).toBe(0);
@@ -131,7 +134,9 @@ describe("user admin", () => {
 
   it("only the Director can manage users", async () => {
     expect(await updateUser(deps(), coach, "5550002", edit)).toMatchObject({ ok: false });
-    expect(await addUser(deps(), coach, { first: "A", last: "B", cell: "4235558888", email: "", coach: true })).toMatchObject({ ok: false });
+    expect(await addUser(deps(), coach, { first: "A", last: "B", cell: "4235558888", email: "", coach: true })).toMatchObject({
+      ok: false,
+    });
     expect(await deleteUser(deps(), coach, "5550002")).toMatchObject({ ok: false });
     expect(await denyRequest(deps(), coach, "5550001")).toMatchObject({ ok: false });
     expect(await user("5550001")).toMatchObject({ thunder_request: true });
@@ -139,8 +144,10 @@ describe("user admin", () => {
 
   it("only an Admin manages users: a Director with areas but not Admin is refused", async () => {
     const facilities = { ...director, thunderAreas: ["facilities" as const], isAdmin: false };
-    expect(await updateUser(deps(), facilities, "5550001", edit)).toEqual({ ok: false, message: "Only an Admin can manage users." });
-    expect(await resetLogin(deps(), facilities, "5550001")).toEqual({ ok: false, message: "Only an Admin can manage users." });
+    expect(await updateUser(deps(), facilities, "5550001", edit)).toEqual({
+      ok: false,
+      message: "Only an Admin can manage users.",
+    });
     expect(await updateUser(deps(), { ...facilities, isAdmin: true }, "5550001", edit)).toEqual({ ok: true });
   });
 
@@ -148,19 +155,32 @@ describe("user admin", () => {
     const t = await db.pool.query<{ id: string }>(
       "insert into teams (name, gender, grades, grade_sort, level, created_by) values ('4G Test', 'Girls', '{4}', 4, 'REC', 'x') returning id::text",
     );
-    await db.pool.query("insert into join_reasons (coach_id, purpose, staff_role, team_id) values ('5550001', 'staff', 'AsstCoach', $1)", [t.rows[0].id]);
+    await db.pool.query(
+      "insert into join_reasons (coach_id, purpose, staff_role, team_id) values ('5550001', 'staff', 'AsstCoach', $1)",
+      [t.rows[0].id],
+    );
     expect(await approveJoin(deps(), coach, "5550001")).toMatchObject({ ok: false }); // not an Admin
-    expect(await approveJoin(deps(), director, "5550001")).toEqual({ ok: true, message: "Pat Test added to 4G Test as Asst Coach." });
+    expect(await approveJoin(deps(), director, "5550001")).toEqual({
+      ok: true,
+      message: "Pat Test added to 4G Test as Asst Coach.",
+    });
     expect(await user("5550001")).toMatchObject({ thunder_coach: true, thunder_request: false });
     const staff = await db.pool.query("select role, added_by from team_staff where coach_id = '5550001'");
     expect(staff.rows).toEqual([{ role: "AsstCoach", added_by: "Earl Epps" }]);
     expect((await db.pool.query("select count(*)::int n from join_reasons")).rows[0].n).toBe(0);
 
     // A typed-in team can't be placed automatically; a second head coach is refused.
-    await db.pool.query("insert into join_reasons (coach_id, purpose, staff_role, team_text) values ('5550002', 'staff', 'Manager', 'Somebody')");
+    await db.pool.query(
+      "insert into join_reasons (coach_id, purpose, staff_role, team_text) values ('5550002', 'staff', 'Manager', 'Somebody')",
+    );
     expect(await approveJoin(deps(), director, "5550002")).toMatchObject({ ok: false, message: /isn't listed/ });
-    await db.pool.query("insert into team_staff (team_id, coach_id, role, added_by) values ($1, '9913694', 'HeadCoach', 'x')", [t.rows[0].id]);
-    await db.pool.query("update join_reasons set staff_role = 'HeadCoach', team_id = $1, team_text = null where coach_id = '5550002'", [t.rows[0].id]);
+    await db.pool.query("insert into team_staff (team_id, coach_id, role, added_by) values ($1, '9913694', 'HeadCoach', 'x')", [
+      t.rows[0].id,
+    ]);
+    await db.pool.query(
+      "update join_reasons set staff_role = 'HeadCoach', team_id = $1, team_text = null where coach_id = '5550002'",
+      [t.rows[0].id],
+    );
     expect(await approveJoin(deps(), director, "5550002")).toMatchObject({ ok: false, message: /already has a head coach/ });
   });
 });

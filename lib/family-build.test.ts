@@ -15,6 +15,8 @@ const reg = (o: Partial<RegRow> & Pick<RegRow, "registrantId" | "registrationId"
   totalFees: null,
   amountPaid: null,
   amountRemaining: null,
+  addedBy: null,
+  feesWaivedBy: null,
   ...o,
 });
 const mom = { first: "Cindy", last: "Clemons", cell: "8654669640", email: "cindy@example.com" };

@@ -5,7 +5,10 @@ import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import { orgFeatures } from "@/lib/features";
 import { hasArea, isThunderAdmin } from "@/lib/org-admin";
+import { orgMetrics } from "@/lib/org-metrics";
+import { visitStats } from "@/lib/site-visits";
 import AppHeader from "../../AppHeader";
+import OrgMetrics from "../../OrgMetrics";
 import { card } from "../../ui";
 
 export default function ThunderHomePage() {
@@ -16,7 +19,8 @@ export default function ThunderHomePage() {
   );
 }
 
-// Thunder's Home (SPEC.md section 14), the same layout as every organization's: "Welcome, name · role", then a card for
+// Thunder's Home (SPEC.md section 14), the same layout as every organization's: "Welcome, name · role", the metrics for
+// Owners and Admins, then a card for
 // each part this Director can open (the same parts as the tabs, in the same order). Name and logo are in the header.
 async function ThunderHome() {
   const user = await currentUser();
@@ -25,6 +29,14 @@ async function ThunderHome() {
   const features = await orgFeatures(db, "thunder");
   const admin = isThunderAdmin(user);
   const owner = admin && (await db.query("select acts_as($1, 'thunder', 'Owner') as ok", [user.coachId])).rows[0].ok;
+  // Owners and Admins: the organization's metrics above the cards.
+  const now = new Date();
+  const [metrics, visits] = admin
+    ? await Promise.all([
+        orgMetrics({ pool: db, now: () => now }, user, "thunder"),
+        visitStats({ pool: db, now: () => now }, user, "thunder"),
+      ])
+    : [null, null];
   const schedule =
     features.has("practice") && hasArea(user, "practices")
       ? "/org/thunder/practice"
@@ -66,6 +78,7 @@ async function ThunderHome() {
         <p className="mb-4 text-sm text-zinc-500 dark:text-zinc-400">
           Welcome, {user.firstName} · {owner ? "Owner" : admin ? "Admin" : "Director"}
         </p>
+        {metrics && <OrgMetrics m={metrics} visits={visits} base="/org/thunder" thunder now={now} />}
         {!parts.length && <p className="text-sm text-zinc-500">No areas yet. An Admin gives Directors their areas.</p>}
         <div className="grid gap-3 sm:grid-cols-2">
           {parts.map((p) => (

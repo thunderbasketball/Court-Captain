@@ -3,7 +3,7 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { UserListItem } from "@/lib/users";
-import { addUser, approveJoin, deleteUser, denyRequest, resetLogin, updateUser } from "./actions";
+import { addUser, approveJoin, deleteUser, denyRequest, updateUser } from "./actions";
 import { Alert, CloseButton, OnPage, Toast, dialogCls, useConfirm } from "../client-ui";
 import { fieldLabel, inputCls, primaryBtn } from "../ui";
 
@@ -184,36 +184,6 @@ export function EditUserButton({
           </button>
 
           <div className="space-y-3 border-t border-zinc-100 pt-4 dark:border-white/5">
-            {!isSelf && (
-              <div>
-                <button
-                  type="button"
-                  disabled={busy}
-                  className="text-sm font-medium text-amber-700 hover:underline dark:text-amber-400"
-                  onClick={async () => {
-                    const ok = await confirm({
-                      title: `Reset ${user.firstName} ${user.lastName}'s login?`,
-                      message: (
-                        <>
-                          <p>
-                            Their PIN goes back to <strong className="font-semibold">1234</strong>, their email is cleared, and
-                            they&apos;re logged out everywhere.
-                          </p>
-                          <p className="mt-2">
-                            At their next login they enter an email, confirm it with a code, and choose a new PIN.
-                          </p>
-                        </>
-                      ),
-                      confirmLabel: "Reset login",
-                      tone: "warning",
-                    });
-                    if (ok) act(() => resetLogin(user.coachId), `${user.firstName} ${user.lastName}'s login was reset.`);
-                  }}
-                >
-                  Reset login (PIN 1234, clear email)
-                </button>
-              </div>
-            )}
             {deleteBlocker ? (
               <p className="text-xs text-zinc-500">Can&apos;t delete: {deleteBlocker}</p>
             ) : (

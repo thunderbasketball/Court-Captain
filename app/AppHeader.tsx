@@ -15,6 +15,7 @@ import { PLATFORM_BRAND } from "@/lib/orgs";
 import OrgLogo from "./OrgLogo";
 import { myPracticesToday } from "@/lib/practice-attendance";
 import { localParts, zonedTime } from "@/lib/time";
+import { recordVisit } from "@/lib/site-visits";
 import { syncIfStale } from "@/lib/teamsnap/scheduler";
 import { stopActing } from "./act-as/actions";
 import AnnouncementPopup from "./AnnouncementPopup";
@@ -122,6 +123,9 @@ export default async function AppHeader({
   ];
   // Backup for the sheet timer: after this page is sent, refresh registrations if the last check is stale.
   after(syncIfStale);
+  // One page view for this organization (Home metrics), after the page is sent.
+  if (!platform && !neutral)
+    after(() => recordVisit(deps, user, org).catch((e) => console.error("Recording a visit failed:", e)));
   // `areas`: Director tabs show only for a Director with one of these areas (Admins have all; SPEC section 14).
   // `admin`: Admins only.
   const scheduleHref =
