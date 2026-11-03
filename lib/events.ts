@@ -39,7 +39,7 @@ const matching = (g: string, gr: string) => `
   where gender = any(${g}::text[]) and grade = any(${gr}::text[])`;
 
 export async function countMatching(deps: Deps, viewer: SessionUser, f: PlayerFilter): Promise<number> {
-  if (!hasArea(viewer, "programs")) return 0;
+  if (!hasArea(viewer, "events")) return 0;
   const r = await deps.pool.query<{ n: number }>(`select count(*)::int as n from (${matching("$1", "$2")}) m`, [
     pick(f.genders, GENDERS),
     pick(f.grades, GRADES),
@@ -98,7 +98,7 @@ function cleanInput(input: EventInput) {
 }
 
 export async function createEvent(deps: Deps, viewer: SessionUser, input: EventInput): Promise<Result<{ id: string; players: number }>> {
-  if (!hasArea(viewer, "programs")) return directorOnly;
+  if (!hasArea(viewer, "events")) return directorOnly;
   return run(async () => {
     const e = cleanInput(input);
     return withTx(deps.pool, async (q) => {
@@ -133,7 +133,7 @@ async function addMatching(q: Pick<Pool, "query">, eventId: string, genders: str
 
 // Director: add players who registered (or changed grade) since the list was made. Never removes anyone.
 export async function refreshPlayers(deps: Deps, viewer: SessionUser, eventId: unknown): Promise<Result<{ added: number }>> {
-  if (!hasArea(viewer, "programs")) return directorOnly;
+  if (!hasArea(viewer, "events")) return directorOnly;
   if (!isId(eventId)) return { ok: false, message: "That event no longer exists." };
   return run(() =>
     withTx(deps.pool, async (q) => {
@@ -147,7 +147,7 @@ export async function refreshPlayers(deps: Deps, viewer: SessionUser, eventId: u
 }
 
 export async function deleteEvent(deps: Deps, viewer: SessionUser, eventId: unknown): Promise<Result> {
-  if (!hasArea(viewer, "programs")) return directorOnly;
+  if (!hasArea(viewer, "events")) return directorOnly;
   if (!isId(eventId)) return { ok: false, message: "That event no longer exists." };
   const r = await deps.pool.query("delete from events where id = $1", [eventId]);
   return r.rowCount ? { ok: true } : { ok: false, message: "That event no longer exists." };
@@ -175,7 +175,7 @@ const SUMMARY = `
 
 // The Director sees every event; anyone else, the events they run check-in for. Soonest first.
 export async function listEvents(deps: Deps, viewer: SessionUser): Promise<EventSummary[]> {
-  const r = hasArea(viewer, "programs")
+  const r = hasArea(viewer, "events")
     ? await deps.pool.query<EventSummary>(`${SUMMARY} order by e.starts_at, e.id`)
     : await deps.pool.query<EventSummary>(
         `${SUMMARY} where exists (select 1 from event_staff s where s.event_id = e.id and s.coach_id = $1) order by e.starts_at, e.id`,
@@ -213,7 +213,7 @@ export type EventDetail = EventSummary & {
 };
 
 async function canRun(q: Pick<Pool, "query">, viewer: SessionUser, eventId: string): Promise<boolean> {
-  if (hasArea(viewer, "programs")) return true;
+  if (hasArea(viewer, "events")) return true;
   const r = await q.query("select 1 from event_staff where event_id = $1 and coach_id = $2", [eventId, viewer.coachId]);
   return r.rows.length > 0;
 }
@@ -260,7 +260,7 @@ export async function setStatus(
 
 // People the Director can put in charge of check-in: active users with a Thunder role.
 export async function staffChoices(deps: Deps, viewer: SessionUser): Promise<{ id: string; name: string }[]> {
-  if (!hasArea(viewer, "programs")) return [];
+  if (!hasArea(viewer, "events")) return [];
   const r = await deps.pool.query<{ id: string; name: string }>(
     `select u.coach_id as id, u.first_name || ' ' || u.last_name as name from users u
      where u.active and (has_role(u.coach_id, 'thunder', 'Coach') or has_role(u.coach_id, 'thunder', 'Director') or exists (select 1 from team_staff s where s.coach_id = u.coach_id))
@@ -277,7 +277,7 @@ export async function listEventTypes(deps: Deps): Promise<string[]> {
 }
 
 export async function addEventType(deps: Deps, viewer: SessionUser, nameInput: unknown): Promise<Result<{ name: string }>> {
-  if (!hasArea(viewer, "programs")) return directorOnly;
+  if (!hasArea(viewer, "events")) return directorOnly;
   const name = typeof nameInput === "string" ? nameInput.trim().replace(/\s+/g, " ") : "";
   if (!name) return { ok: false, message: "Type a name for the new event type." };
   if (name.length > 40) return { ok: false, message: "Keep it to 40 characters." };
@@ -292,7 +292,7 @@ export async function addEventType(deps: Deps, viewer: SessionUser, nameInput: u
 
 // Removing a type only takes it off the quick list; events already made from it keep their name.
 export async function removeEventType(deps: Deps, viewer: SessionUser, nameInput: unknown): Promise<Result> {
-  if (!hasArea(viewer, "programs")) return directorOnly;
+  if (!hasArea(viewer, "events")) return directorOnly;
   if (typeof nameInput !== "string") return { ok: false, message: "That event type no longer exists." };
   const r = await deps.pool.query("delete from event_types where name = $1", [nameInput]);
   return r.rowCount ? { ok: true } : { ok: false, message: "That event type no longer exists." };

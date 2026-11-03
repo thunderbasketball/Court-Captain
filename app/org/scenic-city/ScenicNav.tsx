@@ -1,7 +1,6 @@
 import Link from "next/link";
 import type { SessionUser } from "@/lib/auth/service";
 import { db } from "@/lib/db";
-import { hasFeature } from "@/lib/features";
 import { orgHasArea } from "@/lib/org-admin";
 import { easternDate } from "@/lib/time";
 
@@ -39,19 +38,14 @@ function SubNav({
   );
 }
 
-// Programs: one tab per active program (not finished), then Teams, then All programs. `current`: a program id, "teams"
-// or "all".
+// Programs: one tab per active program (not finished), then All programs. `current`: a program id or "all".
 export async function ProgramsNav({ current }: { current: string }) {
-  const [active, teams] = await Promise.all([
-    db.query<{ id: string; name: string }>(
-      "select id::text, name from scenic_programs where ends_on >= $1::date order by starts_on, lower(name)",
-      [easternDate(new Date())],
-    ),
-    hasFeature(db, ORG, "team-registration"),
-  ]);
+  const active = await db.query<{ id: string; name: string }>(
+    "select id::text, name from scenic_programs where ends_on >= $1::date order by starts_on, lower(name)",
+    [easternDate(new Date())],
+  );
   const links = [
     ...active.rows.map((p) => ({ key: p.id, href: `/org/scenic-city/programs/${p.id}`, label: p.name })),
-    ...(teams ? [{ key: "teams", href: "/org/scenic-city/teams", label: "Teams" }] : []),
     { key: "all", href: "/org/scenic-city/programs", label: "All programs" },
   ];
   return <SubNav label="Programs" links={links} current={current} />;
@@ -82,7 +76,7 @@ export async function membersLinks(user: SessionUser) {
   const [staff, sites, coaches] = await Promise.all([
     orgHasArea(db, user.coachId, ORG), // no area: Admins only
     orgHasArea(db, user.coachId, ORG, "facilities"),
-    orgHasArea(db, user.coachId, ORG, "coaches", "teams", "programs"),
+    orgHasArea(db, user.coachId, ORG, "teams", "programs"),
   ]);
   return [
     ...(staff ? [{ key: "staff", href: "/org/scenic-city/users", label: "Staff" }] : []),

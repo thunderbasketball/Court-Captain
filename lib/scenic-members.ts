@@ -49,7 +49,7 @@ export async function programCoaches(
   coaches: (Person & { teams: { name: string; from: string }[] })[];
   noCoach: { name: string; from: string }[]; // registered teams with no coach yet
 } | null> {
-  if (!(await orgHasArea(deps.pool, viewer.coachId, ORG, "coaches", "teams", "programs"))) return null;
+  if (!(await orgHasArea(deps.pool, viewer.coachId, ORG, "teams", "programs"))) return null;
   const programs = (
     await deps.pool.query<{ id: string; name: string }>(
       "select id::text, name from scenic_programs where ends_on >= $1::date order by starts_on, lower(name)",

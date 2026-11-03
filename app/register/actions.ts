@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
 import { CONTEXT_COOKIE } from "@/lib/contexts";
 import { db } from "@/lib/db";
-import { createOrganization, setOrgAbbr, setOrgColor, setOrgLogo, type Logo } from "@/lib/org-signup";
+import { createOrganization, renameOrg, setOrgAbbr, setOrgColor, setOrgLogo, type Logo } from "@/lib/org-signup";
 
 const deps = { pool: db, now: () => new Date() };
 
@@ -80,6 +80,32 @@ export async function changeOrgLogo(org: string, form: FormData) {
     return await setOrgLogo(deps, user, String(org), await logoFrom(form));
   } catch (e) {
     console.error("Logo change failed:", e);
+    return { ok: false as const, message: "Something went wrong. Please try again." };
+  }
+}
+
+// Owners: change the name and short name; the web address follows the name (the page moves there).
+export async function renameOrganization(org: string, name: string, short: string) {
+  const user = await currentUser();
+  if (!user) return { ok: false as const, message: "Please log in again." };
+  if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  try {
+    const r = await renameOrg(deps, user, String(org), { name, short });
+    if (r.ok && r.slug !== org) {
+      // The remembered role chip follows the organization to its new address.
+      const jar = await cookies();
+      if (jar.get(CONTEXT_COOKIE)?.value === `org:${org}`)
+        jar.set(CONTEXT_COOKIE, `org:${r.slug}`, {
+          httpOnly: true,
+          sameSite: "lax",
+          secure: process.env.NODE_ENV === "production",
+          path: "/",
+          maxAge: 60 * 60 * 24 * 365,
+        });
+    }
+    return r;
+  } catch (e) {
+    console.error("Organization rename failed:", e);
     return { ok: false as const, message: "Something went wrong. Please try again." };
   }
 }

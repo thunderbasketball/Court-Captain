@@ -10,6 +10,7 @@ import FacilitiesNav from "../../../thunder/facilities/FacilitiesNav";
 import { PageTitle, card } from "../../../../ui";
 import OrgGyms from "../OrgGyms";
 import { orgFacilityLinks } from "../links";
+import { followRename } from "@/lib/org-rename";
 
 export default function OrgGymsPage({ params }: PageProps<"/org/[slug]/facilities/gyms">) {
   return (
@@ -25,6 +26,7 @@ async function OrgGymsTab({ params }: { params: PageProps<"/org/[slug]/facilitie
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   const { slug } = await params;
+  await followRename(slug, (s) => `/org/${s}/facilities/gyms`);
   const o = isOrgSlug(slug) && slug !== "thunder" ? await orgInfo(db, slug) : null;
   if (!o || !(await canHost(db, slug))) notFound();
   const view = await facilitiesView({ pool: db, now: () => new Date() }, user, slug);

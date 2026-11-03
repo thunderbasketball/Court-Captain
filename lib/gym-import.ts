@@ -80,7 +80,7 @@ export function parseGymRows(text: string, thunder: boolean): { rows: Omit<GymIm
 
 // Who may: Thunder's Directors of Facilities; another organization's Admins and Directors of Facilities.
 const mayImport = async (deps: Deps, viewer: SessionUser, org: string) =>
-  org === "thunder" ? hasArea(viewer, "facilities") : orgHasArea(deps.pool, viewer.coachId, org, "facilities");
+  org === "thunder" ? hasArea(viewer, "facilities", "practices") : orgHasArea(deps.pool, viewer.coachId, org, "facilities");
 
 async function previewRows(deps: Deps, org: string, text: string) {
   const thunder = org === "thunder";

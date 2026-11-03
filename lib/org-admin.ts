@@ -15,19 +15,23 @@ import { matchOrCreateUser } from "./user-match";
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
 
+// One area per feature: a Director of Teams, of Practices, … (no features: every organization has it).
 export const AREAS = [
-  { key: "players", name: "Players", covers: "Player Registration & Uniforms", features: ["player-registration", "uniforms"] },
-  { key: "teams", name: "Teams", covers: "Team Registrations & Rosters", features: ["team-registration", "team-building"] },
+  { key: "teams", name: "Teams", covers: "Teams, coaches & rosters", features: ["team-building", "team-registration"] },
+  { key: "players", name: "Players", covers: "Player registrations & families", features: ["player-registration"] },
+  { key: "uniforms", name: "Uniforms", covers: "Uniform numbers, sizes & orders", features: ["uniforms"] },
   {
-    key: "coaches",
-    name: "Coaches",
-    covers: "Coach contacts & volunteer coaches",
-    features: ["team-building", "team-registration"],
+    key: "facilities",
+    name: "Facilities",
+    covers: "Gyms, courts & hosting sites",
+    features: ["practice", "hosting-available", "hosting-partners"],
   },
-  { key: "facilities", name: "Facilities", covers: "Practice & game locations", features: ["practice", "hosting-partners"] },
-  { key: "programs", name: "Programs", covers: "Events, Leagues, Circuits & Tournaments", features: ["events", "programs"] },
-  { key: "officials", name: "Officials", covers: "Officials for games", features: ["officials"] },
+  { key: "practices", name: "Practices", covers: "Practice slots, booking limits & blackouts", features: ["practice"] },
+  { key: "events", name: "Events", covers: "Open gyms, tryouts & trainings", features: ["events"] },
+  { key: "programs", name: "Programs", covers: "Leagues, circuits & tournaments", features: ["programs"] },
   { key: "scheduling", name: "Scheduling", covers: "Game days: who plays when", features: ["programs"] },
+  { key: "officials", name: "Officials", covers: "Officials for games", features: ["officials"] },
+  { key: "support", name: "Support", covers: "Answer Support chats", features: [] },
 ] as const satisfies readonly { key: string; name: string; covers: string; features: readonly Feature[] }[];
 
 export type Area = (typeof AREAS)[number]["key"];
@@ -61,7 +65,7 @@ export async function isOrgAdmin(pool: Pick<Queryable, "query">, coachId: string
 // The areas this organization offers: those whose features it has.
 export async function orgAreas(pool: Pick<Queryable, "query">, org: OrgSlug) {
   const has = await orgFeatures(pool, org);
-  return AREAS.filter((a) => a.features.some((f) => has.has(f)));
+  return AREAS.filter((a) => !a.features.length || a.features.some((f) => has.has(f)));
 }
 
 // Does this person manage any of these areas in an organization (read from the database; used for Scenic City)?
@@ -122,8 +126,10 @@ export async function directorsPanel(deps: Deps, viewer: SessionUser, org: OrgSl
     ),
     isOrgOwner(deps.pool, viewer.coachId, org),
   ]);
+  // Only areas this organization offers (an old area that moved to a new one isn't shown).
+  const offered = new Set<string>(areas.map((a) => a.key));
   return {
-    directors,
+    directors: directors.map((d) => ({ ...d, areas: d.areas.filter((a) => offered.has(a)) })),
     areas: areas.map((a) => ({ key: a.key, name: a.name, covers: a.covers })),
     options: people.rows,
     // Owners also choose Admins (anyone active who isn't one yet, Directors included) and other Owners (Admins too).

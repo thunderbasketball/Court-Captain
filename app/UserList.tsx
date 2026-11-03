@@ -12,7 +12,8 @@ import { Chip, EmailLink, GroupCard, PageTitle, PersonRow, PhoneLink, Stats } fr
 // Members → Staff: Admins & Directors, then access requests, other logins (no team role; collapsed) and inactive Directors.
 // Members → Coaches: `view="coaches"` Active Coaches and Team Managers & Parents; `view="inactive-coaches"` every other
 // inactive login. Each group sorted by last name.
-// Edit and View as are for Admins only.
+// Edit and View as are for Admins only. `orgAdmin` (another organization's list): View as for its Owners and Admins;
+// Edit, Approve and Chat stay Thunder's.
 // `team` (Admins only): each Director's role and area tools in their row, and + Add Admin / + Add Director by the title.
 export type DirectorTeam = {
   org: string;
@@ -30,13 +31,16 @@ export default function UserList({
   viewer,
   team,
   view = "staff",
+  orgAdmin,
 }: {
   users: UserListItem[];
   viewer: SessionUser;
   team?: DirectorTeam | null;
   view?: "staff" | "requests" | "coaches" | "inactive-coaches";
+  orgAdmin?: boolean;
 }) {
-  const admin = isThunderAdmin(viewer);
+  const thunder = orgAdmin === undefined;
+  const admin = thunder ? isThunderAdmin(viewer) : orgAdmin;
   const roleOf = (coachId: string) => team?.directors.find((d) => d.id === coachId);
   const active = users.filter((u) => u.active);
   const requests = active.filter((u) => u.request && !u.coach && !u.director && !u.teams.length);
@@ -101,11 +105,16 @@ export default function UserList({
             ))}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {u.active && u.coachId !== viewer.coachId && (u.coach || u.teams.some((t) => /(Head|Assistant) Coach$/.test(t))) && (
-              <ChatLink chatKey={`coach-${u.coachId}`} label={`Chat with ${u.firstName} ${u.lastName}`} />
+            {thunder &&
+              u.active &&
+              u.coachId !== viewer.coachId &&
+              (u.coach || u.teams.some((t) => /(Head|Assistant) Coach$/.test(t))) && (
+                <ChatLink chatKey={`coach-${u.coachId}`} label={`Chat with ${u.firstName} ${u.lastName}`} />
+              )}
+            {thunder && admin && u.joinTeamListed && <ApproveJoinButton coachId={u.coachId} label="Approve onto team" />}
+            {thunder && admin && (
+              <EditUserButton user={u} isSelf={u.coachId === viewer.coachId} deleteBlocker={deleteBlocker(u, viewer)} />
             )}
-            {admin && u.joinTeamListed && <ApproveJoinButton coachId={u.coachId} label="Approve onto team" />}
-            {admin && <EditUserButton user={u} isSelf={u.coachId === viewer.coachId} deleteBlocker={deleteBlocker(u, viewer)} />}
           </div>
         </div>
       </PersonRow>
@@ -144,7 +153,7 @@ export default function UserList({
         )}
         {team ? (
           <AddMenu>
-            <AddUserButton label="New user (login)" className={menuItem} />
+            {thunder && <AddUserButton label="New user (login)" className={menuItem} />}
             <DirectorButtons
               org={team.org}
               areas={team.areas}
@@ -155,7 +164,7 @@ export default function UserList({
             />
           </AddMenu>
         ) : (
-          <AddUserButton />
+          thunder && <AddUserButton />
         )}
       </div>
       {view === "requests" ? (

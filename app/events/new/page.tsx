@@ -23,7 +23,7 @@ async function NewEvent() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   await requireFeature("thunder", "events");
-  if (!hasArea(user, "programs")) redirect("/events");
+  if (!hasArea(user, "events")) redirect("/events");
   const deps = { pool: db, now: () => new Date() };
   const [people, gyms, types] = await Promise.all([staffChoices(deps, user), listGyms(deps), listEventTypes(deps)]);
   return (

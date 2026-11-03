@@ -8,6 +8,7 @@ import { isOrgSlug } from "@/lib/orgs";
 import OrgLogo from "../../OrgLogo";
 import LoginFlow from "../LoginFlow";
 import { card } from "../../ui";
+import { followRename } from "@/lib/org-rename";
 
 export default function OrgLoginPage({ params }: PageProps<"/login/[org]">) {
   return (
@@ -23,6 +24,7 @@ export default function OrgLoginPage({ params }: PageProps<"/login/[org]">) {
 // Logged in → straight into that organization.
 async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"] }) {
   const { org } = await params;
+  await followRename(org, (s) => `/login/${s}`);
   const o = isOrgSlug(org) ? await orgInfo(db, org) : null;
   if (!o) notFound();
   const into = `/switch?org=${org}`;

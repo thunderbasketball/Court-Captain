@@ -39,7 +39,14 @@ async function addUser(o: {
   await db.pool.query(
     `insert into users (coach_id, first_name, last_name, active, pin_hash, cell, email, verified_email)
      values ($1, 'Earl', 'Epps', $2, $3, $4, $5, $6)`,
-    [cell.slice(-7), o.active ?? true, o.pin === null ? null : await hashPin(o.pin ?? "5678"), cell, email, o.verified === false ? null : email],
+    [
+      cell.slice(-7),
+      o.active ?? true,
+      o.pin === null ? null : await hashPin(o.pin ?? "5678"),
+      cell,
+      email,
+      o.verified === false ? null : email,
+    ],
   );
   const id = cell.slice(-7);
   if (o.request) await grant(db.pool, `${id} thunder Request`);
@@ -137,8 +144,14 @@ describe("create account", () => {
     expectError(await auth.startSignup(deps, { ...form, purpose: undefined }), "Choose why you're joining.");
     expectError(await auth.startSignup(deps, { ...form, notes: "=cmd" }), "Tell us a little about why you're joining.");
     expectError(await auth.startSignup(deps, { ...form, purpose: "staff" }), "Choose your role on the team.");
-    expectError(await auth.startSignup(deps, { ...form, purpose: "staff", staffRole: "AsstCoach" }), "Choose your team, or type it in.");
-    expectError(await auth.startSignup(deps, { ...form, purpose: "staff", staffRole: "AsstCoach", teamId: "999999" }), "Choose your team.");
+    expectError(
+      await auth.startSignup(deps, { ...form, purpose: "staff", staffRole: "AsstCoach" }),
+      "Choose your team, or type it in.",
+    );
+    expectError(
+      await auth.startSignup(deps, { ...form, purpose: "staff", staffRole: "AsstCoach", teamId: "999999" }),
+      "Choose your team.",
+    );
     expect(mail.sent).toHaveLength(0);
 
     await auth.startSignup(deps, { ...form, purpose: "family" });
@@ -148,11 +161,25 @@ describe("create account", () => {
     const team = await db.pool.query<{ id: string }>(
       "insert into teams (name, gender, grades, grade_sort, level, created_by) values ('4G Test', 'Girls', '{4}', 4, 'REC', 'x') returning id::text",
     );
-    await auth.startSignup(deps, { ...form, cell: "4235550002", purpose: "staff", staffRole: "AsstCoach", teamId: team.rows[0].id });
+    await auth.startSignup(deps, {
+      ...form,
+      cell: "4235550002",
+      purpose: "staff",
+      staffRole: "AsstCoach",
+      teamId: team.rows[0].id,
+    });
     expect(await auth.completeSignup(deps, "4235550002", mail.lastCode())).toEqual({ step: "done", message: MSG.requested });
-    await auth.startSignup(deps, { ...form, cell: "4235550003", purpose: "staff", staffRole: "Manager", teamText: "Coach Bob's 5th" });
+    await auth.startSignup(deps, {
+      ...form,
+      cell: "4235550003",
+      purpose: "staff",
+      staffRole: "Manager",
+      teamText: "Coach Bob's 5th",
+    });
     await auth.completeSignup(deps, "4235550003", mail.lastCode());
-    const why = await db.pool.query("select coach_id, purpose, staff_role, team_id::text, team_text from join_reasons order by coach_id");
+    const why = await db.pool.query(
+      "select coach_id, purpose, staff_role, team_id::text, team_text from join_reasons order by coach_id",
+    );
     expect(why.rows).toEqual([
       { coach_id: "5550002", purpose: "staff", staff_role: "AsstCoach", team_id: team.rows[0].id, team_text: null },
       { coach_id: "5550003", purpose: "staff", staff_role: "Manager", team_id: null, team_text: "Coach Bob's 5th" },
@@ -173,7 +200,16 @@ describe("create account", () => {
 });
 
 describe("email codes", () => {
-  const form = { cell: CELL, firstName: "Earl", lastName: "Epps", email: "earl@example.com", pin1: "2468", pin2: "2468", purpose: "other", notes: "Helping out" };
+  const form = {
+    cell: CELL,
+    firstName: "Earl",
+    lastName: "Epps",
+    email: "earl@example.com",
+    pin1: "2468",
+    pin2: "2468",
+    purpose: "other",
+    notes: "Helping out",
+  };
 
   it("expire after 15 minutes", async () => {
     await auth.startSignup(deps, form);
@@ -290,7 +326,15 @@ describe("local testing bypass", () => {
   it("when on: Create Account + 123456 makes a Director and logs in", async () => {
     deps.devStarterBypass = true;
     deps.devFixedCode = "123456";
-    await auth.startSignup(deps, { cell: CELL, firstName: "Earl", lastName: "Epps", email: "e@example.com", pin1: "2468", pin2: "2468", purpose: "family" });
+    await auth.startSignup(deps, {
+      cell: CELL,
+      firstName: "Earl",
+      lastName: "Epps",
+      email: "e@example.com",
+      pin1: "2468",
+      pin2: "2468",
+      purpose: "family",
+    });
     token(await auth.completeSignup(deps, CELL, "123456"));
     expect(await userRow()).toMatchObject({ thunder_director: true, thunder_request: false });
   });
@@ -522,14 +566,36 @@ describe("team staff", () => {
 
 describe("Scenic City roles", () => {
   it("Create Account from the join link logs straight in, with no Thunder request", async () => {
-    await auth.startSignup(deps, { cell: CELL, firstName: "Earl", lastName: "Epps", email: "e@example.com", pin1: "1357", pin2: "1357", join: "scenic-city" });
+    await auth.startSignup(deps, {
+      cell: CELL,
+      firstName: "Earl",
+      lastName: "Epps",
+      email: "e@example.com",
+      pin1: "1357",
+      pin2: "1357",
+      join: "scenic-city",
+    });
     const t = token(await auth.completeSignup(deps, CELL, mail.lastCode()));
-    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5551234", hasThunderRole: false, requestPending: false });
+    expect(await auth.getSessionUser(deps, t)).toMatchObject({
+      coachId: "5551234",
+      hasThunderRole: false,
+      requestPending: false,
+    });
     expect((await db.pool.query("select count(*)::int n from org_roles")).rows[0].n).toBe(0);
   });
 
   it("an unknown join value is ignored (normal Thunder request)", async () => {
-    await auth.startSignup(deps, { cell: CELL, firstName: "Earl", lastName: "Epps", email: "e@example.com", pin1: "1357", pin2: "1357", join: "nope", purpose: "other", notes: "Helping out" });
+    await auth.startSignup(deps, {
+      cell: CELL,
+      firstName: "Earl",
+      lastName: "Epps",
+      email: "e@example.com",
+      pin1: "1357",
+      pin2: "1357",
+      join: "nope",
+      purpose: "other",
+      notes: "Helping out",
+    });
     expect(await auth.completeSignup(deps, CELL, mail.lastCode())).toEqual({ step: "done", message: MSG.requested });
     expect(await userRow()).toMatchObject({ thunder_request: true });
   });
@@ -616,11 +682,38 @@ describe("sessions", () => {
     expect(await auth.setActingAs(deps, t, "9999999")).toEqual({ ok: false, message: "Only active users can be viewed." });
   });
 
+  it("act as: CourtCaptain staff view as anyone in any organization (only active people); losing staff ends it", async () => {
+    await addUser({}); // Earl: no organization role
+    await db.pool.query("insert into platform_admins (coach_id, granted_by, role) values ('5551234', 'test', 'Admin')");
+    await addUser({ cell: "4235550002", email: "pat@example.com" });
+    await grant(db.pool, "5550002 scenic-city Director");
+    const t = token(await auth.submitPin(deps, CELL, "5678"));
+    expect(await auth.setActingAs(deps, t, "5550002")).toEqual({ ok: true });
+    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5550002", actingBy: { coachId: "5551234" } });
+
+    // Deactivated: back to yourself (staff don't get past the active check).
+    await db.pool.query("update users set active = false where coach_id = '5550002'");
+    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5551234" });
+    await db.pool.query("update users set active = true where coach_id = '5550002'");
+    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5550002" });
+
+    // No longer CourtCaptain staff: back to yourself at once, and can't start again.
+    await db.pool.query("delete from platform_admins");
+    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5551234" });
+    expect(await auth.setActingAs(deps, t, "5550002")).toEqual({
+      ok: false,
+      message: "Only an Admin can view the app as someone else.",
+    });
+  });
+
   it("act as: only an Admin can start it (a Director isn't enough)", async () => {
     await addUser({ director: true });
     await addUser({ cell: "4235550002", email: "pat@example.com" });
     const t = token(await auth.submitPin(deps, CELL, "5678"));
-    expect(await auth.setActingAs(deps, t, "5550002")).toEqual({ ok: false, message: "Only an Admin can view the app as someone else." });
+    expect(await auth.setActingAs(deps, t, "5550002")).toEqual({
+      ok: false,
+      message: "Only an Admin can view the app as someone else.",
+    });
     expect(await auth.setActingAs(deps, "junk", "5550002")).toEqual({ ok: false, message: "Please log in again." });
   });
 
@@ -632,7 +725,10 @@ describe("sessions", () => {
     await addUser({ cell: "4235550003", email: "cy@example.com", coach: true }); // Thunder only
     const t = token(await auth.submitPin(deps, CELL, "5678"));
 
-    expect(await auth.setActingAs(deps, t, "5550003")).toEqual({ ok: false, message: "You can only view people in your organization." });
+    expect(await auth.setActingAs(deps, t, "5550003")).toEqual({
+      ok: false,
+      message: "You can only view people in your organization.",
+    });
     expect(await auth.setActingAs(deps, t, "5550002")).toEqual({ ok: true });
     expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5550002", actingBy: { coachId: "5551234" } });
 
@@ -664,4 +760,3 @@ describe("sessions", () => {
     expect(await auth.getSessionUser(deps, undefined)).toBeNull();
   });
 });
-

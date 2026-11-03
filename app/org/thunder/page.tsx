@@ -26,23 +26,35 @@ async function ThunderHome() {
   const admin = isThunderAdmin(user);
   const owner = admin && (await db.query("select acts_as($1, 'thunder', 'Owner') as ok", [user.coachId])).rows[0].ok;
   const schedule =
-    features.has("practice") && hasArea(user, "facilities")
+    features.has("practice") && hasArea(user, "practices")
       ? "/org/thunder/practice"
-      : features.has("events") && hasArea(user, "programs")
+      : features.has("events") && hasArea(user, "events")
         ? "/events"
         : null;
   const parts = [
     ...(features.has("team-building") && hasArea(user, "teams")
-      ? [{ title: "Teams", about: "Every team: staff, rosters, uniforms and practices; add or import teams.", href: "/org/thunder/teams" }]
+      ? [
+          {
+            title: "Teams",
+            about: "Every team: staff, rosters, uniforms and practices; add or import teams.",
+            href: "/org/thunder/teams",
+          },
+        ]
       : []),
     ...(schedule ? [{ title: "Schedule", about: "Practice slots, the season and events.", href: schedule }] : []),
-    ...(features.has("uniforms") && hasArea(user, "players")
+    ...(features.has("uniforms") && hasArea(user, "uniforms")
       ? [{ title: "Uniforms", about: "Numbers and sizes for every rostered player.", href: "/org/thunder/uniforms" }]
       : []),
-    ...(hasArea(user, "facilities")
-      ? [{ title: "Facilities", about: "Gyms, their availability, blackouts and hosting leagues' games.", href: "/org/thunder/facilities" }]
+    ...(hasArea(user, "facilities", "practices")
+      ? [
+          {
+            title: "Facilities",
+            about: "Gyms, their availability, blackouts and hosting leagues' games.",
+            href: "/org/thunder/facilities",
+          },
+        ]
       : []),
-    ...(admin || hasArea(user, "coaches", "players", "teams")
+    ...(admin || hasArea(user, "teams", "players")
       ? [{ title: "Members", about: "Staff, coaches, players and families.", href: "/org/thunder/members" }]
       : []),
   ];

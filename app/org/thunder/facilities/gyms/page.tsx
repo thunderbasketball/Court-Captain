@@ -22,7 +22,7 @@ export default function GymsPage() {
 async function Gyms() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
-  if (!hasArea(user, "facilities")) redirect("/");
+  if (!hasArea(user, "facilities", "practices")) redirect("/");
   const gyms = await listGyms({ pool: db });
   // How many teams list each gym as a practice location, and how many upcoming slots it has.
   const usage = await db.query<{ name: string; teams: number; upcoming: number; booked: number }>(

@@ -14,6 +14,7 @@ import RegisterPrograms from "../../../RegisterPrograms";
 import AddTeamButton from "../../../AddTeam";
 import { ImportTeamsButton, UndoImportButton } from "../../../TeamImport";
 import { addTeam, importTeams, previewImport, undoImport } from "./actions";
+import { followRename } from "@/lib/org-rename";
 
 export default function OrgTeamsPage({ params, searchParams }: PageProps<"/org/[slug]/teams">) {
   return (
@@ -35,6 +36,7 @@ async function OrgTeams({
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   const { slug } = await params;
+  await followRename(slug, (s) => `/org/${s}/teams`);
   const [o, list] = await Promise.all([orgInfo(db, slug), listOrgTeams({ pool: db, now: () => new Date() }, user, slug)]);
   if (!o || !list) notFound();
   // Who can be a Head Coach here: the organization's coaches (or a new person typed in).
@@ -75,7 +77,7 @@ async function OrgTeams({
                 example={
                   "Gender,Grade,Level,Coach First,Coach Last,Coach Cell,Alternate Name\nBoys,3rd/4th,REC,Sam,Lee,423-555-0101,Bolts\nGirls,5th,COMP,,,,"
                 }
-                help="One team per row: Gender, Grade, Level, then optionally the Head Coach's first name, last name and cell, and an Alternate name. Each team is named from its Head Coach (like 4G Epps; 4G TBD until a coach is added). Paste from a spreadsheet or choose a CSV file."
+                help="One team per row with its Gender, Grade and Level (REC or COMP), and if you have them the Head Coach's name and cell and an Alternate name, in any order. Each team is named from its Head Coach (like 4G Epps; 4G TBD until a coach is added). Paste from a spreadsheet or choose a CSV file. Next you'll check which column is which, then see exactly what will be added (we clean up things like 3 & 4 or R)."
               />
               <AddTeamButton
                 people={(coaches ?? []).map((c) => {

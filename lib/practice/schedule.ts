@@ -80,7 +80,7 @@ export async function weekGrid(
   const end = weekOf(weekStart).end;
   let team: (TeamWeek & { locations: string[] }) | null = null;
   if (viewAs === "director") {
-    if (!hasArea(viewer, "facilities")) throw new Error("Director only");
+    if (!hasArea(viewer, "practices")) throw new Error("Director only");
   } else {
     const t = await deps.pool.query<{ id: string; name: string; locations: string[]; role: string | null }>(
       `select t.id::text, t.name, t.practice_locations as locations,
@@ -90,7 +90,7 @@ export async function weekGrid(
       [viewAs.teamId, viewer.coachId],
     );
     const row = t.rows[0];
-    if (!row || (!row.role && !hasArea(viewer, "facilities"))) throw new Error("Not on this team");
+    if (!row || (!row.role && !hasArea(viewer, "practices"))) throw new Error("Not on this team");
     const booked = await upcomingInWeek(deps.pool, row.id, new Date(weekStart.getTime() + 12 * 3_600_000), now);
     team = {
       id: row.id,
@@ -98,7 +98,7 @@ export async function weekGrid(
       locations: row.locations.map((l) => l.toLowerCase()),
       booked,
       status: teamStatus(booked),
-      canBookRole: hasArea(viewer, "facilities") || BOOKING_ROLES.includes(row.role ?? ""),
+      canBookRole: hasArea(viewer, "practices") || BOOKING_ROLES.includes(row.role ?? ""),
     };
   }
 
@@ -200,7 +200,7 @@ export type SeasonMonth = { label: string; firstWeekday: number; days: SeasonDay
 
 // Director only. Every month from the first to the last practice slot, with per-day counts.
 export async function seasonCalendar(deps: Deps, viewer: SessionUser): Promise<SeasonMonth[]> {
-  if (!hasArea(viewer, "facilities")) throw new Error("Director only");
+  if (!hasArea(viewer, "practices")) throw new Error("Director only");
   const r = await deps.pool.query<{ iso: string; open: number; booked: number; blocked: number }>(
     `select to_char(starts_at at time zone '${TZ}', 'YYYY-MM-DD') as iso,
             count(*) filter (where team_id is null and not blackout)::int as open,

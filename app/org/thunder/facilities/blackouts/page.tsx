@@ -35,7 +35,7 @@ async function Blackouts() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   await requireFeature("thunder", "practice");
-  if (!hasArea(user, "facilities")) redirect("/");
+  if (!hasArea(user, "practices")) redirect("/");
   const now = new Date();
   const [{ upcoming, rules }, gyms] = await Promise.all([listBlackouts(db, now), listGyms({ pool: db })]);
 

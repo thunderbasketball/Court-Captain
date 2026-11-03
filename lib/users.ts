@@ -23,7 +23,7 @@ export type UserListItem = {
 
 // Admins (Members → Staff) and Directors of Coaches (Members → Coaches). Sorted by last name, then first name.
 export async function listUsers(viewer: SessionUser): Promise<UserListItem[]> {
-  if (!isThunderAdmin(viewer) && !hasArea(viewer, "coaches")) throw new Error("Director only");
+  if (!isThunderAdmin(viewer) && !hasArea(viewer, "teams")) throw new Error("Director only");
   const r = await db.query<UserListItem>(
     `select coach_id as "coachId", first_name as "firstName", last_name as "lastName", cell, email,
             (email is not null and lower(trim(email)) = lower(trim(coalesce(verified_email, '')))) as verified,

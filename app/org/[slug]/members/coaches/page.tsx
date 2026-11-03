@@ -3,68 +3,75 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
-import { isOrgAdmin } from "@/lib/org-admin";
+import { listOrgMembers } from "@/lib/org-members";
 import { orgInfo } from "@/lib/org-registry";
-import { COACH_ROLES, listOrgCoaches } from "@/lib/org-teams";
-import { formatCell } from "@/lib/phone";
 import AppHeader from "../../../../AppHeader";
-import { PageTitle, PhoneLink, card } from "../../../../ui";
+import { GroupTextButton } from "../../../../Contacts";
+import { PageTitle } from "../../../../ui";
+import UserList from "../../../../UserList";
 import OrgMembersNav from "../OrgMembersNav";
+import { followRename } from "@/lib/org-rename";
 
-export default function OrgCoachesPage({ params }: PageProps<"/org/[slug]/members/coaches">) {
+export default function OrgCoachesPage({ params, searchParams }: PageProps<"/org/[slug]/members/coaches">) {
   return (
     <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
-      <OrgCoaches params={params} />
+      <OrgCoaches params={params} searchParams={searchParams} />
     </Suspense>
   );
 }
 
-// Members → Coaches: everyone coaching the organization's teams, by last name, with their cell and teams (Head or
-// Assistant Coach). Coaches are added on each team's page.
-async function OrgCoaches({ params }: { params: PageProps<"/org/[slug]/members/coaches">["params"] }) {
+const TABS = [
+  { key: "active", label: "Active" },
+  { key: "inactive", label: "Inactive" },
+] as const;
+
+// Members → Coaches (Admins and Directors of Teams), like Thunder's: Active (everyone coaching its teams, with their
+// teams as Head or Asst Coach) and Inactive, by last name; View as for Admins. Coaches are added on each team's page.
+async function OrgCoaches({
+  params,
+  searchParams,
+}: {
+  params: PageProps<"/org/[slug]/members/coaches">["params"];
+  searchParams: PageProps<"/org/[slug]/members/coaches">["searchParams"];
+}) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   const { slug } = await params;
-  const [o, coaches, admin] = await Promise.all([
-    orgInfo(db, slug),
-    listOrgCoaches({ pool: db, now: () => new Date() }, user, slug),
-    isOrgAdmin(db, user.coachId, slug),
-  ]);
-  if (!o || !coaches) notFound();
-  const role = (r: string) => COACH_ROLES.find((x) => x.key === r)?.name ?? r;
+  await followRename(slug, (s) => `/org/${s}/members/coaches`);
+  const [o, members] = await Promise.all([orgInfo(db, slug), listOrgMembers(db, user, slug)]);
+  if (!o || !members || slug === "scenic-city") notFound();
+  const sp = await searchParams;
+  const tab = TABS.find((t) => t.key === sp.view)?.key ?? "active";
+  const { users, admin } = members;
+  const active = users.filter((u) => u.active && !u.director && (u.coach || u.teams.length > 0));
+  const counts = { active: active.length, inactive: users.filter((u) => !u.active && !u.director).length };
 
   return (
     <>
       <AppHeader user={user} context={`org:${slug}`} tab="org-members" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <PageTitle title="Members" subtitle={o.name} />
         <OrgMembersNav slug={slug} current="coaches" staff={admin} coaches />
-        <section className={`${card} p-4`}>
-          <h2 className="font-semibold">Coaches ({coaches.length})</h2>
-          <p className="mb-2 text-sm text-zinc-500">Add coaches on each team&apos;s page (Teams).</p>
-          {!coaches.length && <p className="text-sm text-zinc-500">No coaches yet.</p>}
-          <ul className="divide-y divide-zinc-100 dark:divide-white/5">
-            {coaches.map((c) => (
-              <li key={c.id} className="py-2.5 text-sm">
-                <p className="flex flex-wrap items-baseline gap-x-2 font-medium">
-                  {c.name}
-                  <PhoneLink cell={c.cell} label={formatCell(c.cell)} />
-                </p>
-                <p className="text-zinc-600 dark:text-zinc-300">
-                  {c.teams.map((t, i) => (
-                    <span key={t.id}>
-                      {i > 0 && " · "}
-                      <Link href={`/org/${slug}/teams/${t.id}`} className="text-thunder-blue hover:underline">
-                        {t.name}
-                      </Link>{" "}
-                      <span className="text-xs text-zinc-500">({role(t.role)})</span>
-                    </span>
-                  ))}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </section>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <PageTitle title="Coaches" subtitle="Coaches on your teams (add them on each team's page), and inactive coaches" />
+          {tab === "active" && active.length > 0 && <GroupTextButton cells={active.map((u) => u.cell)} label="Text coaches" />}
+        </div>
+        <nav className="mb-4 flex gap-1 overflow-x-auto rounded-full bg-zinc-100 p-1 [scrollbar-width:none] dark:bg-zinc-900">
+          {TABS.map((t) => (
+            <Link
+              key={t.key}
+              href={t.key === "active" ? `/org/${slug}/members/coaches` : `/org/${slug}/members/coaches?view=${t.key}`}
+              aria-current={t.key === tab ? "page" : undefined}
+              className={`shrink-0 rounded-full px-3 py-1.5 text-sm font-medium whitespace-nowrap ${
+                t.key === tab
+                  ? "bg-thunder-blue text-white shadow-sm"
+                  : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+              }`}
+            >
+              {t.label} <span className="tabular-nums opacity-70">{counts[t.key]}</span>
+            </Link>
+          ))}
+        </nav>
+        <UserList users={users} viewer={user} orgAdmin={admin} view={tab === "active" ? "coaches" : "inactive-coaches"} />
       </main>
     </>
   );

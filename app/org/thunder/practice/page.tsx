@@ -31,7 +31,7 @@ async function Practice({ searchParams }: { searchParams: PageProps<"/org/thunde
   const { active } = await currentContexts(user);
   const asked = typeof sp.team === "string" && /^\d{1,18}$/.test(sp.team) ? sp.team : null;
   const teamId = asked ?? (active?.key.startsWith("team:") ? active.key.slice(5) : null);
-  if (!teamId && !hasArea(user, "facilities")) redirect("/");
+  if (!teamId && !hasArea(user, "practices")) redirect("/");
   const mode = teamId ? "team" : "director";
 
   const start = await pickWeek(deps, typeof sp.week === "string" ? sp.week : undefined);

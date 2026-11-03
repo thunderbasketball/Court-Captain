@@ -8,7 +8,7 @@ import { hasArea, isThunderAdmin } from "@/lib/org-admin";
 export const memberLinks = (user: SessionUser) =>
   [
     { key: "staff", href: "/org/thunder/members/staff", label: "Staff", show: isThunderAdmin(user) },
-    { key: "coaches", href: "/org/thunder/members/coaches", label: "Coaches", show: hasArea(user, "coaches") },
+    { key: "coaches", href: "/org/thunder/members/coaches", label: "Coaches", show: hasArea(user, "teams") },
     { key: "players", href: "/org/thunder/members/players", label: "Players", show: hasArea(user, "players", "teams") },
     { key: "families", href: "/org/thunder/members/families", label: "Families", show: hasArea(user, "players", "teams") },
   ].filter((l) => l.show);

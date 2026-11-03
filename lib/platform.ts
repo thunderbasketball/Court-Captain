@@ -49,10 +49,11 @@ export async function setPlatformAdmin(deps: Deps, viewer: SessionUser, coachId:
 export type PlatformOrg = {
   slug: OrgSlug;
   name: string;
+  abbr: string; // shown before its team names in leagues ("ER 5B Harris")
   logo: string | null;
   color: string;
   features: { key: Feature; name: string; on: boolean; always: boolean; source: string | null; since: Date | null }[];
-  owners: { id: string; name: string }[];
+  owners: { id: string; name: string; cell: string | null; email: string | null }[]; // contact info for support
   admins: { id: string; name: string }[]; // Admins who aren't Owners (shown; Owners choose them)
   directors: DirectorRow[]; // Directors who aren't Admins, with their areas (shown; Admins choose them)
   options: { id: string; name: string }[]; // active users who aren't its Owners yet
@@ -85,13 +86,30 @@ export async function platformOverview(
   ]);
   const all = await listOrgs(deps.pool);
   const people = await Promise.all(all.map((o) => listDirectors(deps.pool, o.slug)));
-  const orgs = all.map(({ slug, name, logo, color }, i): PlatformOrg => {
+  const ownerIds = [
+    ...new Set(
+      people
+        .flat()
+        .filter((d) => d.owner)
+        .map((d) => d.id),
+    ),
+  ];
+  const emails = new Map(
+    (
+      await deps.pool.query<{ id: string; email: string | null }>(
+        "select coach_id as id, email from users where coach_id = any($1)",
+        [ownerIds],
+      )
+    ).rows.map((r) => [r.id, r.email]),
+  );
+  const orgs = all.map(({ slug, name, abbr, logo, color }, i): PlatformOrg => {
     const mine = new Map(feats.rows.filter((f) => f.org === slug).map((f) => [f.feature, f]));
     const team = people[i];
     const ownerIds = new Set(team.filter((d) => d.owner).map((d) => d.id));
     return {
       slug,
       name,
+      abbr,
       logo,
       color,
       features: FEATURES.map((f) => {
@@ -106,7 +124,7 @@ export async function platformOverview(
           since: row?.turned_on_at ?? null,
         };
       }),
-      owners: team.filter((d) => d.owner).map((d) => ({ id: d.id, name: d.name })),
+      owners: team.filter((d) => d.owner).map((d) => ({ id: d.id, name: d.name, cell: d.cell, email: emails.get(d.id) ?? null })),
       admins: team.filter((d) => d.admin && !d.owner).map((d) => ({ id: d.id, name: d.name })),
       directors: team.filter((d) => !d.admin),
       options: users.rows.filter((u) => !ownerIds.has(u.id)),

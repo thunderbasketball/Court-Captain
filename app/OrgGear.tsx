@@ -1,17 +1,18 @@
 import { db } from "@/lib/db";
 import { FEATURES } from "@/lib/features";
-import { isOrgAdmin } from "@/lib/org-admin";
+import { isOrgAdmin, isOrgOwner } from "@/lib/org-admin";
 import { orgInfo } from "@/lib/org-registry";
 import { ORG_COLORS } from "@/lib/org-signup";
 import { TZ } from "@/lib/time";
 import OrgLogo from "./OrgLogo";
 import OrgSettings from "./OrgSettings";
 
-// The gear after an organization's last tab, for its Admins only (checked here on the server): its login link, every
+// The gear after an organization's last tab, for its Admins only (checked here on the server): its name (Owners), login link, every
 // feature (what it has, since when, and what it can add: buying upgrades in the app is coming soon), its color and logo.
 export default async function OrgGear({ org, coachId }: { org: string; coachId: string }) {
-  const [admin, o, on, asked] = await Promise.all([
+  const [admin, owner, o, on, asked] = await Promise.all([
     isOrgAdmin(db, coachId, org),
+    isOrgOwner(db, coachId, org),
     orgInfo(db, org),
     db.query<{ feature: string; turned_on_at: Date }>("select feature, turned_on_at from org_features where org = $1", [org]),
     db.query<{ feature: string }>("select feature from org_feature_requests where org = $1", [org]),
@@ -30,6 +31,9 @@ export default async function OrgGear({ org, coachId }: { org: string; coachId: 
       colors={o.color && !(ORG_COLORS as readonly string[]).includes(o.color) ? [o.color, ...ORG_COLORS] : ORG_COLORS}
       login={o.login}
       abbr={o.abbr}
+      name={o.name}
+      short={o.short}
+      canRename={owner}
       featuresOn={have.length}
       logo={<OrgLogo src={o.logo} name={o.name} color={o.color} className="size-14 rounded-xl text-xl" />}
       features={

@@ -49,7 +49,7 @@ async function Event({ params }: { params: PageProps<"/events/[id]">["params"] }
           {event.staff.length ? event.staff.join(", ") : "Director only"}
         </p>
         {event.notes && <p className="mt-2 text-sm whitespace-pre-wrap">{event.notes}</p>}
-        {hasArea(user, "programs") && <EventTools id={event.id} name={event.name} />}
+        {hasArea(user, "events") && <EventTools id={event.id} name={event.name} />}
         <CheckIn target={{ kind: "event", id: event.id }} players={event.players} />
       </main>
     </>

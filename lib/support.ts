@@ -3,6 +3,7 @@
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { isOrgSlug } from "./orgs";
+import { orgHasArea } from "./org-admin";
 import { isPlatformAdmin } from "./platform";
 
 type Deps = { pool: Pool; now: () => Date };
@@ -44,22 +45,31 @@ export type SupportChat = {
 
 const MAX_CHATS = 60;
 const isStaff = (pool: Pick<Pool, "query">, coachId: string) => isPlatformAdmin(pool, coachId);
-// Who may answer a chat: CourtCaptain staff (every chat), or its organization's Owners and Admins.
+// Who may answer a chat: CourtCaptain staff (every chat), or its organization's Owners, Admins and Directors of Support.
 async function mayHelp(pool: Pick<Pool, "query">, coachId: string, org: string | null): Promise<boolean> {
   if (await isStaff(pool, coachId)) return true;
-  if (!org) return false;
-  const r = await pool.query<{ ok: boolean }>("select acts_as($1, $2, 'Admin') as ok", [coachId, org]);
-  return r.rows[0].ok;
+  return !!org && isOrgSlug(org) && orgHasArea(pool, coachId, org, "support");
 }
 
-async function loadChats(pool: Pick<Pool, "query">, viewer: SessionUser, where: string, params: unknown[]): Promise<SupportChat[]> {
-  const r = await pool.query<Omit<SupportChat, "chattingWith" | "messages"> & { messages: (ChatMessage & { coachId: string; staff: boolean; admin: boolean })[] }>(
+async function loadChats(
+  pool: Pick<Pool, "query">,
+  viewer: SessionUser,
+  where: string,
+  params: unknown[],
+): Promise<SupportChat[]> {
+  const r = await pool.query<
+    Omit<SupportChat, "chattingWith" | "messages"> & {
+      messages: (ChatMessage & { coachId: string; staff: boolean; admin: boolean; support: boolean })[];
+    }
+  >(
     `select q.id::text, u.first_name || ' ' || u.last_name as who, q.org, o.name as "orgName", q.status, q.asked_at as "startedAt",
             q.resolved_by as "resolvedBy",
             coalesce((select json_agg(json_build_object(
                         'id', m.id::text, 'coachId', m.coach_id, 'who', mu.first_name || ' ' || mu.last_name, 'body', m.body, 'at', m.sent_at,
                         'staff', exists (select 1 from platform_admins p where p.coach_id = m.coach_id),
-                        'admin', q.org is not null and has_role(m.coach_id, q.org, 'Admin'))
+                        'admin', q.org is not null and has_role(m.coach_id, q.org, 'Admin'),
+                        'support', q.org is not null and has_role(m.coach_id, q.org, 'Director') and exists (
+                          select 1 from director_areas a where a.coach_id = m.coach_id and a.org = q.org and a.area = 'support'))
                       order by m.sent_at, m.id)
                       from support_messages m join users mu on mu.coach_id = m.coach_id where m.question_id = q.id), '[]') as messages
      from support_questions q join users u on u.coach_id = q.coach_id left join organizations o on o.slug = q.org
@@ -71,8 +81,17 @@ async function loadChats(pool: Pick<Pool, "query">, viewer: SessionUser, where: 
     const messages: ChatMessage[] = c.messages.map((m) => ({
       id: m.id,
       who: m.who,
-      // Someone answering: CourtCaptain Support, or the organization's Admin (not the person who asked).
-      helper: m.who === c.who && !m.staff ? null : m.staff ? "CourtCaptain Support" : m.admin ? `${c.orgName ?? "Organization"} Admin` : null,
+      // Someone answering: CourtCaptain Support, or the organization's Admin or Director of Support (not the person who asked).
+      helper:
+        m.who === c.who && !m.staff
+          ? null
+          : m.staff
+            ? "CourtCaptain Support"
+            : m.admin
+              ? `${c.orgName ?? "Organization"} Admin`
+              : m.support
+                ? `${c.orgName ?? "Organization"} Support`
+                : null,
       body: m.body,
       at: new Date(m.at),
       mine: m.coachId === viewer.coachId,
@@ -83,7 +102,12 @@ async function loadChats(pool: Pick<Pool, "query">, viewer: SessionUser, where: 
 }
 
 // Start a chat from Support (in the organization the person is in). It's New until someone answering replies.
-export async function askQuestion(deps: Deps, viewer: SessionUser, org: unknown, question: unknown): Promise<Result<{ id: string }>> {
+export async function askQuestion(
+  deps: Deps,
+  viewer: SessionUser,
+  org: unknown,
+  question: unknown,
+): Promise<Result<{ id: string }>> {
   const q = text(question, 1000);
   if (!q) return { ok: false, message: "Type your question (up to 1000 characters)." };
   const recent = await deps.pool.query<{ n: number }>(
@@ -105,7 +129,7 @@ export async function askQuestion(deps: Deps, viewer: SessionUser, org: unknown,
 }
 
 // The person's own chats, and (`inbox`) the ones they answer: every chat for CourtCaptain staff; the chats started in
-// this organization for its Owners and Admins; null for everyone else.
+// this organization for its Owners, Admins and Directors of Support; null for everyone else.
 export async function supportChats(
   pool: Pick<Pool, "query">,
   viewer: SessionUser,
@@ -141,14 +165,20 @@ export async function replyChat(deps: Deps, viewer: SessionUser, id: unknown, bo
   ]);
   const next = helper && chat.coach_id !== viewer.coachId ? "working" : chat.status === "resolved" ? "working" : chat.status;
   if (next !== chat.status)
-    await deps.pool.query("update support_questions set status = $2, resolved_by = null, resolved_at = null where id = $1", [id, next]);
+    await deps.pool.query("update support_questions set status = $2, resolved_by = null, resolved_at = null where id = $1", [
+      id,
+      next,
+    ]);
   return { ok: true };
 }
 
 // Mark a chat Resolved (it leaves New and Working), or open it again. The person who started it, or someone answering it.
 export async function setChatResolved(deps: Deps, viewer: SessionUser, id: unknown, resolved: boolean): Promise<Result> {
   if (!isId(id)) return { ok: false, message: "That chat no longer exists." };
-  const c = await deps.pool.query<{ coach_id: string; org: string | null }>("select coach_id, org from support_questions where id = $1", [id]);
+  const c = await deps.pool.query<{ coach_id: string; org: string | null }>(
+    "select coach_id, org from support_questions where id = $1",
+    [id],
+  );
   const chat = c.rows[0];
   if (!chat) return { ok: false, message: "That chat no longer exists." };
   if (chat.coach_id !== viewer.coachId && !(await mayHelp(deps.pool, viewer.coachId, chat.org)))
@@ -163,17 +193,21 @@ export async function setChatResolved(deps: Deps, viewer: SessionUser, id: unkno
 }
 
 // CourtCaptain staff: add a chat's question and the last answer to everyone's Questions.
-export async function publishChat(deps: Deps, viewer: SessionUser, id: unknown, title: unknown, answer: unknown): Promise<Result> {
+export async function publishChat(
+  deps: Deps,
+  viewer: SessionUser,
+  id: unknown,
+  title: unknown,
+  answer: unknown,
+): Promise<Result> {
   if (!(await isStaff(deps.pool, viewer.coachId))) return staffOnly;
   const t = text(title, 120);
   const a = text(answer, 4000);
   if (!isId(id) || !t || !a) return { ok: false, message: "Fill in the question and the answer." };
-  await deps.pool.query("insert into support_articles (kind, title, body, updated_by, updated_at) values ('faq', $1, $2, $3, $4)", [
-    t,
-    a,
-    by(viewer),
-    deps.now(),
-  ]);
+  await deps.pool.query(
+    "insert into support_articles (kind, title, body, updated_by, updated_at) values ('faq', $1, $2, $3, $4)",
+    [t, a, by(viewer), deps.now()],
+  );
   return { ok: true };
 }
 

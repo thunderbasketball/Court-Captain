@@ -17,7 +17,7 @@ import { matchOrCreateUser } from "./user-match";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
-class TeamError extends Error {}
+export class TeamError extends Error {}
 
 const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
 const isId = (v: unknown): v is string => typeof v === "string" && /^\d{1,18}$/.test(v);
@@ -105,7 +105,7 @@ export type OrgCoach = { id: string; name: string; cell: string; teams: { id: st
 // Coaches or Teams. Null: not theirs to see.
 export async function listOrgCoaches(deps: Deps, viewer: SessionUser, org: unknown): Promise<OrgCoach[] | null> {
   const o = await usable(deps.pool, org);
-  if (!o || !(await orgHasArea(deps.pool, viewer.coachId, o, "coaches", "teams"))) return null;
+  if (!o || !(await orgHasArea(deps.pool, viewer.coachId, o, "teams"))) return null;
   const r = await deps.pool.query<OrgCoach>(
     `select u.coach_id as id, u.first_name || ' ' || u.last_name as name, u.cell,
             json_agg(json_build_object('id', t.id::text, 'name', t.name, 'role', c.role)
@@ -169,7 +169,7 @@ function cleanAlt(v: unknown): string | null {
 }
 
 // The Head Coach picked: none, an active user, or a new person (their login is made if new).
-async function resolveHead(q: PoolClient, v: unknown, now: Date): Promise<{ coachId: string; lastName: string } | null> {
+export async function resolveHead(q: PoolClient, v: unknown, now: Date): Promise<{ coachId: string; lastName: string } | null> {
   if (v === undefined || v === null || v === "" || v === "none") return null;
   if (typeof v === "string" && /^user:\d{7}$/.test(v)) {
     const u = await q.query<{ last_name: string }>("select last_name from users where coach_id = $1 and active", [v.slice(5)]);

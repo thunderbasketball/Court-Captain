@@ -43,7 +43,7 @@ async function Events({ searchParams }: { searchParams: PageProps<"/events">["se
   const deps = { pool: db, now: () => new Date() };
   const showPractices = (await searchParams).practices !== "off";
   const [events, practices, { active }] = await Promise.all([listEvents(deps, user), listPractices(deps, user), currentContexts(user)]);
-  if (!hasArea(user, "programs") && !events.length && !practices.length) redirect("/");
+  if (!hasArea(user, "events") && !events.length && !practices.length) redirect("/");
 
   const items: Item[] = [
     ...events.map((e) => ({
@@ -87,10 +87,10 @@ async function Events({ searchParams }: { searchParams: PageProps<"/events">["se
           <PageTitle
             title="Events"
             subtitle={
-              hasArea(user, "programs") ? "Events and team practices with player check-in" : "Your team practices and the events you run check-in for"
+              hasArea(user, "events") ? "Events and team practices with player check-in" : "Your team practices and the events you run check-in for"
             }
           />
-          {hasArea(user, "programs") && (
+          {hasArea(user, "events") && (
             <Link
               href="/events/new"
               className="shrink-0 rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark"
@@ -114,7 +114,7 @@ async function Events({ searchParams }: { searchParams: PageProps<"/events">["se
           </span>
           Show practices ({practices.length})
         </Link>
-        {!items.length && <p className="text-zinc-500">Nothing here yet.{hasArea(user, "programs") && " Tap “+ New event” to create one."}</p>}
+        {!items.length && <p className="text-zinc-500">Nothing here yet.{hasArea(user, "events") && " Tap “+ New event” to create one."}</p>}
         <div className="space-y-3">
           {upcoming.map((e) => (
             <ItemCard key={e.key} e={e} />

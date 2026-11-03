@@ -21,7 +21,7 @@ export type CoachGroup = { gender: "Boys" | "Girls"; grade: string; coaches: Vol
 // Directors of Coaches (and Admins). Parents who answered "interested in coaching" at registration, with any team staff
 // spots they already hold, grouped by their player's Gender, then Grade; Head Coach before Assistant, then by last name.
 export async function listVolunteerCoaches(viewer: SessionUser): Promise<CoachGroup[]> {
-  if (!hasArea(viewer, "coaches")) throw new Error("Director only");
+  if (!hasArea(viewer, "teams")) throw new Error("Director only");
   const r = await db.query<VolunteerCoach & { gender: "Boys" | "Girls"; grade: string }>(
     `select registrant_id as "registrantId", gender, grade,
             nullif(trim(parent1_first), '') as "firstName", nullif(trim(parent1_last), '') as "lastName",

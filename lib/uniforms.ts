@@ -99,7 +99,7 @@ export type UniformOrder = { teamId: string; team: string; registrantId: string;
 
 // Director only: every rostered player whose family ordered a uniform, by team (same order as the Teams page), then last name.
 export async function listUniformOrders(deps: Deps, viewer: SessionUser): Promise<UniformOrder[]> {
-  if (!hasArea(viewer, "players")) throw new Error("Director only");
+  if (!hasArea(viewer, "uniforms")) throw new Error("Director only");
   const r = await deps.pool.query<UniformOrder>(
     `select t.id::text as "teamId", t.name as team, p.registrant_id as "registrantId", p.last_name as "lastName", u.number, u.size
      from team_players p

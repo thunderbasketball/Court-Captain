@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
+import { hasArea } from "@/lib/org-admin";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import { facilitiesView } from "@/lib/facilities";
@@ -32,7 +33,8 @@ async function Facilities() {
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   const deps = { pool: db, now: () => new Date() };
   const view = await facilitiesView(deps, user);
-  if (!view) redirect("/");
+  // A Director of Practices only (no Facilities): Gyms and Blackouts.
+  if (!view) redirect(hasArea(user, "practices") ? "/org/thunder/facilities/gyms" : "/");
   const offers = (await hasFeature(db, "thunder", "hosting-available")) ? await hostingOffers(deps, user, "thunder") : null;
 
   return (

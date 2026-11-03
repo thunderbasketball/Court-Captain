@@ -71,7 +71,7 @@ export async function addGym(
   viewer: SessionUser,
   input: { name: unknown; courts: unknown },
 ): Promise<Result<{ id: string }>> {
-  if (!hasArea(viewer, "facilities")) return directorOnly;
+  if (!hasArea(viewer, "facilities", "practices")) return directorOnly;
   return run(async () => {
     const name = cleanPlaceName(input.name, "gym name");
     const list = Array.isArray(input.courts) ? input.courts : [];
@@ -109,7 +109,7 @@ export async function addGym(
 // (inactive, hidden) so practice history and attendance stay; its upcoming open slots and availability go.
 // A gym that never had a practice is deleted with its courts, slots, blackouts and availability.
 export async function deleteGym(deps: Deps, viewer: SessionUser, gymId: unknown): Promise<Result<{ kept: boolean }>> {
-  if (!hasArea(viewer, "facilities")) return directorOnly;
+  if (!hasArea(viewer, "facilities", "practices")) return directorOnly;
   if (typeof gymId !== "string" || !/^\d{1,18}$/.test(gymId)) return { ok: false, message: "That gym no longer exists." };
   return run(() =>
     withTx(deps.pool, async (q) => {
@@ -165,7 +165,7 @@ export async function addSlots(
   viewer: SessionUser,
   input: AddSlotsInput,
 ): Promise<Result<{ added: number; skipped: number; blocked: number }>> {
-  if (!hasArea(viewer, "facilities")) return directorOnly;
+  if (!hasArea(viewer, "practices")) return directorOnly;
   return run(async () => {
     if (!isId(input.gymId)) throw new UserError("Pick a gym.");
     const range = cleanRange(input.from, input.to);
@@ -301,7 +301,7 @@ export async function blackoutDates(
   viewer: SessionUser,
   input: BlackoutInput,
 ): Promise<Result<{ slots: number; removed: RemovedBooking[]; rule: string | null }>> {
-  if (!hasArea(viewer, "facilities")) return directorOnly;
+  if (!hasArea(viewer, "practices")) return directorOnly;
   return run(async () => {
     const mode = input.mode === "block" || input.mode === "restore" ? input.mode : null;
     if (!mode) throw new UserError("Choose Block or Restore.");
@@ -369,7 +369,7 @@ export async function deleteBlackoutRule(
   viewer: SessionUser,
   ruleId: unknown,
 ): Promise<Result<{ reopened: number }>> {
-  if (!hasArea(viewer, "facilities")) return directorOnly;
+  if (!hasArea(viewer, "practices")) return directorOnly;
   if (!isId(ruleId)) return { ok: false, message: "That yearly blackout no longer exists." };
   return run(() => withTx(deps.pool, async (q) => ({ reopened: await removeRule(q, ruleId, deps.now()) })));
 }
@@ -380,7 +380,7 @@ export async function setSlotBlocked(
   viewer: SessionUser,
   input: { slotId: unknown; blocked: unknown; reason?: unknown },
 ): Promise<Result<{ removed: string | null }>> {
-  if (!hasArea(viewer, "facilities")) return directorOnly;
+  if (!hasArea(viewer, "practices")) return directorOnly;
   if (!isId(input.slotId)) return { ok: false, message: "That practice slot no longer exists." };
   const slotId = input.slotId;
   return run(async () => {

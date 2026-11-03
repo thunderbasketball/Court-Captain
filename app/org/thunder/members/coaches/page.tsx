@@ -34,7 +34,7 @@ const TABS = [
 async function Coaches({ searchParams }: { searchParams: PageProps<"/org/thunder/members/coaches">["searchParams"] }) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
-  if (!hasArea(user, "coaches")) redirect("/");
+  if (!hasArea(user, "teams")) redirect("/");
   const sp = await searchParams;
   const tab = TABS.find((t) => t.key === sp.view)?.key ?? "active";
   const [users, groups] = await Promise.all([listUsers(user), listVolunteerCoaches(user)]);

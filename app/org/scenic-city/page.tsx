@@ -21,20 +21,20 @@ export default function ScenicPage() {
 // For the Director chip: `area` needs that Director area, `admin` needs an Admin (Admins have every area).
 const PARTS: { title: string; about: string; who: string[]; href?: string; feature?: Feature; area?: Area; admin?: boolean }[] = [
   {
+    title: "Teams",
+    about: "Every team, by division or by organization; add or import outside clubs' teams.",
+    who: ["Director", "Solo", "Coach"],
+    href: "/org/scenic-city/teams",
+    feature: "team-registration",
+    area: "teams",
+  },
+  {
     title: "Programs",
     about: "League, Circuit and Tournament: divisions, game and bracket days, and registered teams.",
     who: ["Director", "Solo", "Coach"],
     href: "/org/scenic-city/programs",
     feature: "programs",
     area: "programs",
-  },
-  {
-    title: "Teams",
-    about: "Every registered team: name, gender, grade, level and coach (under Programs).",
-    who: ["Director", "Solo", "Coach"],
-    href: "/org/scenic-city/teams",
-    feature: "team-registration",
-    area: "teams",
   },
   {
     title: "Game days",

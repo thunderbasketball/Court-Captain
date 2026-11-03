@@ -13,6 +13,7 @@ import { PageTitle, card } from "../../../ui";
 import Link from "next/link";
 import FacilitiesNav from "../../thunder/facilities/FacilitiesNav";
 import { orgFacilityLinks } from "./links";
+import { followRename } from "@/lib/org-rename";
 
 export default function OrgFacilitiesPage({ params }: PageProps<"/org/[slug]/facilities">) {
   return (
@@ -35,6 +36,7 @@ async function OrgFacilities({ params }: { params: PageProps<"/org/[slug]/facili
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   const { slug } = await params;
+  await followRename(slug, (s) => `/org/${s}/facilities`);
   const o = isOrgSlug(slug) && slug !== "thunder" ? await orgInfo(db, slug) : null;
   if (!o || !(await canHost(db, slug))) notFound();
   const deps = { pool: db, now: () => new Date() };

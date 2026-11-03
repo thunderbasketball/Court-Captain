@@ -75,7 +75,7 @@ export async function myDashboard(coachId: string): Promise<MyDashboard | null> 
       if (!mine.includes(role)) continue;
       if (top && (role === "Admin" || role === "Director") && role !== top) continue; // Owners and Admins are also Directors
       if (role === "Director" && !top) {
-        const names = areas.rows.filter((a) => a.org === org).map((a) => AREAS.find((x) => x.key === a.area)?.name ?? a.area);
+        const names = areas.rows.filter((a) => a.org === org).flatMap((a) => AREAS.find((x) => x.key === a.area)?.name ?? []);
         labels.push(...(names.length ? names.map((n) => `Director of ${n}`) : ["Director (no areas yet)"]));
         continue;
       }

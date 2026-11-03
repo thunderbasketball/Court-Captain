@@ -7,7 +7,8 @@ import { AREAS } from "@/lib/org-admin";
 import { platformOverview } from "@/lib/platform";
 import { TZ } from "@/lib/time";
 import AppHeader from "../AppHeader";
-import { card, PageTitle, PhoneLink } from "../ui";
+import { card, EmailLink, PageTitle, PhoneLink } from "../ui";
+import { ViewAsButton } from "../ViewAsButton";
 import Link from "next/link";
 import { formatCell } from "@/lib/phone";
 import { AddOwner, AddStaff, FeatureSwitch, RemoveOwner, RemoveStaff } from "./PlatformTools";
@@ -110,10 +111,15 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
                     <OrgLogo src={o.logo} name={o.name} color={o.color} className="size-10 rounded-lg" />
                   </a>
                   <div className="min-w-0 flex-1">
-                    <h2 className="font-semibold">{o.name}</h2>
+                    <h2 className="font-semibold">
+                      {o.name}
+                      <span className="ml-1.5 rounded bg-zinc-100 px-1.5 py-0.5 align-middle text-[11px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                        {o.abbr}
+                      </span>
+                    </h2>
                     <p className="text-xs text-zinc-500">
-                      {o.owners.length} owner{o.owners.length === 1 ? "" : "s"} · {o.features.filter((f) => f.on).length} features
-                      on · /login/{o.slug}
+                      {o.owners.length ? `Owner: ${o.owners.map((d) => d.name).join(", ")}` : "No owner yet"} ·{" "}
+                      {o.features.filter((f) => f.on).length} features on · /login/{o.slug}
                     </p>
                   </div>
                   <svg
@@ -127,17 +133,28 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
                 </summary>
                 <div className="border-t border-zinc-100 p-4 dark:border-white/5">
                   <h3 className="mb-1.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Owners</h3>
-                  <div className="mb-4 flex flex-wrap items-center gap-2">
+                  {/* Each Owner's contact info, and View as (view only) for support. */}
+                  <ul className="mb-2 divide-y divide-zinc-100 rounded-xl ring-1 ring-zinc-950/10 dark:divide-white/5 dark:ring-white/10">
                     {o.owners.map((d) => (
-                      <span
-                        key={d.id}
-                        className="inline-flex items-center gap-1 rounded-full bg-zinc-100 py-0.5 pr-1 pl-3 text-sm dark:bg-zinc-800"
-                      >
-                        {d.name}
-                        <RemoveOwner org={o.slug} orgName={o.name} coachId={d.id} name={d.name} />
-                      </span>
+                      <li key={d.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
+                        <span className="min-w-0">
+                          <span className="block font-medium">{d.name}</span>
+                          <span className="block text-zinc-500">
+                            {d.cell ? <PhoneLink cell={d.cell} label={formatCell(d.cell)} /> : "No cell"}
+                          </span>
+                          <span className="block truncate text-zinc-500">
+                            {d.email ? <EmailLink email={d.email} /> : "No email"}
+                          </span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-2">
+                          {d.id !== user.coachId && <ViewAsButton coachId={d.id} name={d.name} />}
+                          <RemoveOwner org={o.slug} orgName={o.name} coachId={d.id} name={d.name} />
+                        </span>
+                      </li>
                     ))}
-                    {o.owners.length === 0 && <span className="text-sm text-red-600">None yet: add one.</span>}
+                    {o.owners.length === 0 && <li className="px-3 py-2.5 text-sm text-red-600">None yet: add one.</li>}
+                  </ul>
+                  <div className="mb-4">
                     <AddOwner org={o.slug} options={o.options} />
                   </div>
 

@@ -8,6 +8,7 @@ import * as scenic from "@/lib/scenic";
 import * as partners from "@/lib/scenic-partners";
 import * as programs from "@/lib/scenic-programs";
 import * as teams from "@/lib/scenic-teams";
+import * as clubs from "@/lib/scenic-club-teams";
 import type { JoinInput } from "@/lib/scenic";
 
 const deps = { pool: db, now: () => new Date() };
@@ -116,4 +117,18 @@ export async function moveTeam(programId: string, teamId: string, poolId: string
 }
 export async function saveProgramDates(programId: string, input: { add: string[]; addBrackets: string[]; remove: string[] }) {
   return guarded((u) => programs.saveProgramDates(deps, u, programId, input), "programs");
+}
+
+// Outside clubs' teams (Directors of Teams; checked in lib/scenic-club-teams).
+export async function addClubTeam(input: clubs.ClubTeamInput) {
+  return guarded((u) => clubs.addClubTeam(deps, u, input), "team-registration");
+}
+export async function previewClubImport(text: string) {
+  return guarded((u) => clubs.previewClubImport(deps, u, text), "team-registration");
+}
+export async function importClubTeams(text: string) {
+  return guarded((u) => clubs.importClubTeams(deps, u, text), "team-registration");
+}
+export async function undoClubImport(id: string) {
+  return guarded((u) => clubs.undoClubImport(deps, u, id), "team-registration");
 }

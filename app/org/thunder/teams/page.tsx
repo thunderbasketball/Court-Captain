@@ -74,7 +74,7 @@ async function Teams({ searchParams }: { searchParams: PageProps<"/org/thunder/t
               example={
                 "Gender,Grade,Level,Coach First,Coach Last,Coach Cell,Alternate Name\nBoys,3rd/4th,REC,Sam,Lee,423-555-0101,Bolts\nGirls,5th,COMP,,,,"
               }
-              help="One team per row: Gender, Grade, Level, then optionally the Head Coach's first name, last name and cell, and an Alternate name. Each team is named from its Head Coach (like 4G Epps; 4G TBD until a coach is added). Paste from a spreadsheet or choose a CSV file."
+              help="One team per row with its Gender, Grade and Level (REC or COMP), and if you have them the Head Coach's name and cell and an Alternate name, in any order. Each team is named from its Head Coach (like 4G Epps; 4G TBD until a coach is added). Paste from a spreadsheet or choose a CSV file. Next you'll check which column is which, then see exactly what will be added (we clean up things like 3 & 4 or R)."
             />
             <AddTeamButton people={[...people.users, ...people.volunteers]} create={createTeam} href="/org/thunder/teams/" />
           </div>

@@ -29,6 +29,7 @@ import { Avatar } from "./ui";
 
 type Tab =
   | "teams"
+  | "scenic-teams"
   | "schedule"
   | "members"
   | "uniforms"
@@ -124,9 +125,9 @@ export default async function AppHeader({
   // `areas`: Director tabs show only for a Director with one of these areas (Admins have all; SPEC section 14).
   // `admin`: Admins only.
   const scheduleHref =
-    features.has("practice") && hasArea(user, "facilities")
+    features.has("practice") && hasArea(user, "practices")
       ? "/org/thunder/practice"
-      : features.has("events") && hasArea(user, "programs")
+      : features.has("events") && hasArea(user, "events")
         ? "/events"
         : null;
   type TabLink = { key: string; href: string; label: string; icon: string; feature?: Feature; areas?: Area[]; admin?: boolean };
@@ -137,10 +138,23 @@ export default async function AppHeader({
     { key: "teams", href: "/org/thunder/teams", label: "Teams", icon: ICONS.teams, feature: "team-building", areas: ["teams"] },
     // Schedule: Practice and Season (Facilities, Practice Management), Events (Programs, Event Management); opens the first.
     ...(scheduleHref ? [{ key: "schedule", href: scheduleHref, label: "Schedule", icon: ICONS.practice }] : []),
-    { key: "uniforms", href: "/org/thunder/uniforms", label: "Uniforms", icon: ICONS.uniforms, feature: "uniforms", areas: ["players"] },
-    { key: "facilities", href: "/org/thunder/facilities", label: "Facilities", icon: ICONS.facilities, areas: ["facilities"] },
-    // Members: Staff (Admins), Coaches (Coaches area), Players (Players or Teams areas); opens the first one they can see.
-    ...(isThunderAdmin(user) || hasArea(user, "coaches", "players", "teams")
+    {
+      key: "uniforms",
+      href: "/org/thunder/uniforms",
+      label: "Uniforms",
+      icon: ICONS.uniforms,
+      feature: "uniforms",
+      areas: ["uniforms"],
+    },
+    {
+      key: "facilities",
+      href: "/org/thunder/facilities",
+      label: "Facilities",
+      icon: ICONS.facilities,
+      areas: ["facilities", "practices"],
+    },
+    // Members: Staff (Admins), Coaches (Teams area), Players (Players or Teams areas); opens the first one they can see.
+    ...(isThunderAdmin(user) || hasArea(user, "teams", "players")
       ? [{ key: "members", href: "/org/thunder/members", label: "Members", icon: ICONS.users }]
       : []),
   ];
@@ -160,7 +174,7 @@ export default async function AppHeader({
   const regMembers =
     registered &&
     ((await isOrgAdmin(db, user.coachId, org)) ||
-      (features.has("team-building") && (await orgHasArea(db, user.coachId, org, "coaches", "teams"))));
+      (features.has("team-building") && (await orgHasArea(db, user.coachId, org, "teams"))));
   const regTeams =
     registered &&
     features.has("team-building") &&
@@ -185,11 +199,30 @@ export default async function AppHeader({
     org === "scenic-city" && scenicRole
       ? [
           { key: "scenic-home", href: "/org/scenic-city", label: "Home", icon: ICONS.home },
-          // Programs (with Teams under it), Facilities (Game days and hosting sites), Members (Staff, hosting sites'
-          // Owners and Admins, Coaches). A Director sees the ones their areas cover; everyone else sees Programs and
-          // Facilities (Game days).
+          // Teams (like every organization's), Programs, Facilities (Game days and hosting sites), Members (Staff,
+          // hosting sites' Owners and Admins, Coaches). A Director sees the ones their areas cover; everyone else sees
+          // Teams, Programs and Facilities (Game days).
+          ...(scenicRole !== "Director" || scenicAreas.includes("teams")
+            ? [
+                {
+                  key: "scenic-teams",
+                  href: "/org/scenic-city/teams",
+                  label: "Teams",
+                  icon: ICONS.teams,
+                  feature: "team-registration" as const,
+                },
+              ]
+            : []),
           ...(scenicRole !== "Director" || scenicAreas.some((a) => a === "programs" || a === "teams")
-            ? [{ key: "programs", href: "/org/scenic-city/programs", label: "Programs", icon: ICONS.events, feature: "programs" as const }]
+            ? [
+                {
+                  key: "programs",
+                  href: "/org/scenic-city/programs",
+                  label: "Programs",
+                  icon: ICONS.events,
+                  feature: "programs" as const,
+                },
+              ]
             : []),
           {
             key: "scenic-facilities",
@@ -199,7 +232,7 @@ export default async function AppHeader({
             feature: "hosting-partners" as const,
           },
           ...(scenicRole === "Director" &&
-          (scenicAdmin || scenicAreas.some((a) => ["facilities", "coaches", "teams", "programs"].includes(a)))
+          (scenicAdmin || scenicAreas.some((a) => ["facilities", "teams", "programs"].includes(a)))
             ? [
                 {
                   key: "scenic-members",

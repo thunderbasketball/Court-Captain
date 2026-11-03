@@ -4,7 +4,10 @@
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { FEATURES, READY_FOR_ANY_ORG, type Feature } from "./features";
+import { slugFor } from "./org-slug";
 import { withTx } from "./sql";
+
+export { slugFor };
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -43,15 +46,6 @@ export function logoType(bytes: Uint8Array): string | null {
     return "image/webp";
   return null;
 }
-
-export const slugFor = (name: string) =>
-  name
-    .toLowerCase()
-    .replace(/&/g, " and ")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 36)
-    .replace(/-+$/g, "") || "org";
 
 export async function createOrganization(
   deps: Deps,
@@ -139,6 +133,61 @@ export async function setOrgLogo(deps: Deps, viewer: SessionUser, org: string, l
     deps.now(),
   ]);
   return { ok: true };
+}
+
+// Owners (and CourtCaptain staff): fix or change the organization's name and short name. Its web address follows the
+// name (east-hamilton-high-school), and everything pointing at it follows too; the old address keeps working (login link,
+// bookmarks). Thunder and Scenic City keep their addresses.
+export async function renameOrg(
+  deps: Deps,
+  viewer: SessionUser,
+  org: string,
+  input: { name: unknown; short: unknown },
+): Promise<Result<{ slug: string }>> {
+  const name = cleanOrgName(input.name, 60);
+  if (!name) return { ok: false, message: "Enter the organization's name: letters, numbers and simple punctuation." };
+  const short = cleanOrgName(input.short, 20);
+  if (!short) return { ok: false, message: 'Enter a short name (up to 20 characters), e.g. "East Ham".' };
+  return withTx(deps.pool, async (q) => {
+    const o = await q.query<{ slug: string }>("select slug from organizations where slug = $1 for update", [org]);
+    if (!o.rowCount) return { ok: false as const, message: "That organization no longer exists." };
+    const owner = await q.query<{ ok: boolean }>("select acts_as($1, $2, 'Owner') as ok", [viewer.coachId, org]);
+    if (!owner.rows[0].ok) return { ok: false as const, message: "Only an Owner of this organization can change its name." };
+    const taken = await q.query("select 1 from organizations where lower(name) = lower($1) and slug <> $2", [name, org]);
+    if (taken.rowCount) return { ok: false as const, message: `There's already an organization named ${name} on CourtCaptain.` };
+    let slug = org;
+    if (org !== "thunder" && org !== "scenic-city" && slugFor(name) !== org) {
+      const base = slugFor(name);
+      slug = base;
+      // Free if no other organization has it now; an old address of this one can be taken back.
+      for (let n = 2; ; n++) {
+        const used = await q.query(
+          "select 1 from organizations where slug = $1 union all select 1 from org_old_slugs where old_slug = $1 and slug <> $2",
+          [slug, org],
+        );
+        if (!used.rowCount) break;
+        slug = `${base}-${n}`;
+      }
+    }
+    await q.query("update organizations set name = $2, short_name = $3 where slug = $1", [org, name, short]);
+    if (slug !== org) {
+      await q.query("delete from org_old_slugs where old_slug = $1", [slug]);
+      await q.query("update organizations set slug = $2 where slug = $1", [org, slug]); // everything pointing at it follows
+      await q.query("insert into org_old_slugs (old_slug, slug, changed_by, changed_at) values ($1, $2, $3, $4)", [
+        org,
+        slug,
+        by(viewer),
+        deps.now(),
+      ]);
+    }
+    return { ok: true as const, slug };
+  });
+}
+
+// An organization's address now, for an old one (null when it isn't one).
+export async function renamedTo(q: Pick<Pool, "query">, oldSlug: string): Promise<string | null> {
+  const r = await q.query<{ slug: string }>("select slug from org_old_slugs where old_slug = $1", [oldSlug]);
+  return r.rows[0]?.slug ?? null;
 }
 
 // Admins (and CourtCaptain staff): the organization's color, one of ORG_COLORS (its tabs, header line and letter badge).

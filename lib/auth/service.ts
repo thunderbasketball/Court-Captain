@@ -300,11 +300,14 @@ export async function getSessionUser(deps: Deps, token: string | undefined): Pro
 }
 
 // An Admin may view the app as anyone in their organization: anyone with a role (or Request) there, or, for Thunder,
-// anyone on a team's staff. SQL condition on the two coach ids.
-const CAN_VIEW_AS = (admin: string, target: string) => `exists (
+// anyone on a team's staff. CourtCaptain staff (support for every organization) may view as anyone. SQL condition on the
+// two coach ids.
+// (Wrapped in parentheses: it's combined with `and` in queries.)
+const CAN_VIEW_AS = (admin: string, target: string) => `(exists (select 1 from platform_admins p where p.coach_id = ${admin})
+  or exists (
   select 1 from org_roles a where a.coach_id = ${admin} and a.role = 'Admin'
     and (exists (select 1 from org_roles t where t.coach_id = ${target} and t.org = a.org)
-         or (a.org = 'thunder' and exists (select 1 from team_staff ts where ts.coach_id = ${target}))))`;
+         or (a.org = 'thunder' and exists (select 1 from team_staff ts where ts.coach_id = ${target})))))`;
 
 // Can this Admin see this person (View as, their dashboard)? Anyone in an organization they're an Admin of.
 export async function adminCanSee(q: Pick<Queryable, "query">, adminId: string, targetId: string): Promise<boolean> {
@@ -321,7 +324,8 @@ export async function setActingAs(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   if (!token) return { ok: false, message: "Please log in again." };
   const s = await deps.pool.query<{ coach_id: string; director: boolean }>(
-    `select s.coach_id, u.active and exists (select 1 from org_roles a where a.coach_id = u.coach_id and a.role = 'Admin') as director
+    `select s.coach_id, u.active and (exists (select 1 from org_roles a where a.coach_id = u.coach_id and a.role = 'Admin')
+              or exists (select 1 from platform_admins p where p.coach_id = u.coach_id)) as director
      from sessions s join users u on u.coach_id = s.coach_id
      where s.token_hash = $1 and s.expires_at > $2`,
     [sha256(token), deps.now()],
@@ -350,7 +354,11 @@ function toSessionUser(u: UserRow): SessionUser {
     firstName: u.first_name,
     lastName: u.last_name,
     isDirector: u.thunder_director,
-    thunderAreas: !u.thunder_director ? [] : u.thunder_admin ? AREAS.map((a) => a.key) : u.thunder_areas,
+    thunderAreas: !u.thunder_director
+      ? []
+      : u.thunder_admin
+        ? AREAS.map((a) => a.key)
+        : u.thunder_areas.filter((a) => AREAS.some((x) => x.key === a)),
     isAdmin: u.thunder_director && u.thunder_admin,
     isFamily: u.thunder_family,
     isCoach: u.thunder_coach,

@@ -40,7 +40,7 @@ export async function upcomingInWeek(q: Pick<PoolClient, "query">, teamId: strin
 }
 
 async function canBookFor(q: PoolClient, viewer: SessionUser, teamId: string): Promise<boolean> {
-  if (hasArea(viewer, "facilities")) return true;
+  if (hasArea(viewer, "practices")) return true;
   const r = await q.query("select 1 from team_staff where team_id = $1 and coach_id = $2 and role = any($3)", [
     teamId,
     viewer.coachId,
@@ -89,7 +89,7 @@ export async function bookSlot(
   if (!/^\d{1,18}$/.test(slotId) || !/^\d{1,18}$/.test(teamId)) return { ok: false, message: "Pick a practice slot and a team." };
   const now = deps.now();
   // The Director is exempt, except when booking from a team's view (they see and book it as a coach would).
-  const exempt = hasArea(viewer, "facilities") && input.asTeam !== true;
+  const exempt = hasArea(viewer, "practices") && input.asTeam !== true;
   try {
     return await withTx(deps.pool, async (q) => {
       const team = await q.query("select 1 from teams where id = $1", [teamId]);

@@ -84,6 +84,21 @@ describe("Support", () => {
     expect((await supportChats(db.pool, other, null)).mine[0].chattingWith).toBe("Sue X · CourtCaptain Support");
   });
 
+  it("a Director of Support answers their organization's chats; another Director doesn't", async () => {
+    const t = await askQuestion(deps(), coach, "thunder", "Where are the rosters?");
+    if (!t.ok) throw new Error("ask failed");
+    await db.pool.query("select set_role('5550004', 'thunder', 'Director', true, 'test')");
+    await db.pool.query("insert into director_areas (coach_id, org, area, granted_by) values ('5550004', 'thunder', 'teams', 'test')");
+    expect((await supportChats(db.pool, other, "thunder")).inbox).toBeNull();
+    expect(await replyChat(deps(), other, t.id, "hi")).toMatchObject({ ok: false });
+
+    await db.pool.query("insert into director_areas (coach_id, org, area, granted_by) values ('5550004', 'thunder', 'support', 'test')");
+    expect((await supportChats(db.pool, other, "thunder")).inbox!.map((c) => c.id)).toEqual([t.id]);
+    expect((await supportChats(db.pool, other, "scenic-city")).inbox).toBeNull();
+    expect(await replyChat(deps(), other, t.id, "Open the team, then Roster.")).toEqual({ ok: true });
+    expect((await supportChats(db.pool, coach, "thunder")).mine[0].chattingWith).toBe("Oz X · Thunder Basketball Support");
+  });
+
   it("everyone reads questions and guides; staff publish a chat, add, change and remove", async () => {
     const before = (await listArticles(db.pool)).length;
     const t = await askQuestion(deps(), coach, "thunder", "How do I print a roster?");

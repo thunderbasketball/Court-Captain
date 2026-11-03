@@ -13,6 +13,7 @@ import { MustBeEntered } from "../../../../TeamRow";
 import { listOrgRoster } from "@/lib/org-rosters";
 import { AddPlayerButton, ImportPlayersButton, RemovePlayerButton } from "../RosterTools";
 import { AddCoachButton, AltNameButton, DeleteTeamButton, RemoveCoachButton } from "../TeamTools";
+import { followRename } from "@/lib/org-rename";
 
 export default function OrgTeamPage({ params, searchParams }: PageProps<"/org/[slug]/teams/[id]">) {
   return (
@@ -35,6 +36,7 @@ async function OrgTeam({
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   const { slug, id } = await params;
+  await followRename(slug, (s) => `/org/${s}/teams/${id}`);
   const found = await getOrgTeam({ pool: db, now: () => new Date() }, user, slug, id);
   if (!found) notFound();
   const { team: t, canManage } = found;

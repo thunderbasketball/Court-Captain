@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-// A registered organization's Members: Staff (its Admins) and Coaches (Admins, Directors of Coaches or Teams).
+// A registered organization's Members: Staff (its Admins) and Coaches (Admins and Directors of Teams).
 export default function OrgMembersNav({
   slug,
   current,

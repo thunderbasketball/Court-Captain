@@ -23,7 +23,7 @@ async function Uniforms() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   await requireFeature("thunder", "uniforms");
-  if (!hasArea(user, "players")) redirect("/");
+  if (!hasArea(user, "uniforms")) redirect("/");
 
   const rows = await listUniformOrders({ pool: db, now: () => new Date() }, user);
   const teams = new Map<string, UniformOrder[]>();

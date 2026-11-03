@@ -57,19 +57,21 @@ describe("Admins and Director areas", () => {
 
   it("offers only the areas whose features the organization has", async () => {
     expect((await orgAreas(db.pool, "thunder")).map((a) => a.key)).toEqual([
-      "players",
       "teams",
-      "coaches",
+      "players",
+      "uniforms",
       "facilities",
-      "programs",
+      "practices",
+      "events",
+      "support",
     ]);
     expect((await orgAreas(db.pool, "scenic-city")).map((a) => a.key)).toEqual([
       "teams",
-      "coaches",
       "facilities",
       "programs",
-      "officials",
       "scheduling",
+      "officials",
+      "support",
     ]);
   });
 
@@ -77,15 +79,17 @@ describe("Admins and Director areas", () => {
     expect(await isOrgAdmin(db.pool, ada.coachId, "thunder")).toBe(true);
     expect(await isOrgAdmin(db.pool, ada.coachId, "scenic-city")).toBe(false);
     expect(await directorAreas(db.pool, ada.coachId, "thunder")).toEqual([
-      "players",
       "teams",
-      "coaches",
+      "players",
+      "uniforms",
       "facilities",
-      "programs",
+      "practices",
+      "events",
+      "support",
     ]);
     expect(await directorAreas(db.pool, bo.coachId, "thunder")).toEqual([]);
-    expect(await setDirectorAreas(deps(), ada, "thunder", bo.coachId, ["programs", "players", "players"])).toEqual({ ok: true });
-    expect(await directorAreas(db.pool, bo.coachId, "thunder")).toEqual(["players", "programs"]);
+    expect(await setDirectorAreas(deps(), ada, "thunder", bo.coachId, ["events", "players", "players"])).toEqual({ ok: true });
+    expect(await directorAreas(db.pool, bo.coachId, "thunder")).toEqual(["players", "events"]);
   });
 
   it("an Admin adds a Director with areas (clears their Request), changes them, and removes them", async () => {
@@ -149,13 +153,16 @@ describe("Admins and Director areas", () => {
       );
     const session = async (token: string) => (await getSessionUser({ ...deps(), sendEmail: async () => {} }, token))!;
     expect((await session("t-ada")).thunderAreas).toEqual([
-      "players",
       "teams",
-      "coaches",
+      "players",
+      "uniforms",
       "facilities",
+      "practices",
+      "events",
       "programs",
-      "officials",
       "scheduling",
+      "officials",
+      "support",
     ]);
     expect((await session("t-bo")).thunderAreas).toEqual([]);
 

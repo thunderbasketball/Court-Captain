@@ -8,8 +8,8 @@ import { hasArea } from "@/lib/org-admin";
 // Programs, with Event Management). Admins see all three.
 export async function scheduleLinks(user: SessionUser) {
   const [practice, events] = await Promise.all([hasFeature(db, "thunder", "practice"), hasFeature(db, "thunder", "events")]);
-  const facilities = practice && hasArea(user, "facilities");
-  const programs = events && hasArea(user, "programs");
+  const facilities = practice && hasArea(user, "practices");
+  const programs = events && hasArea(user, "events");
   return [
     { key: "practice", href: "/org/thunder/practice", label: "Practice", show: facilities },
     { key: "season", href: "/org/thunder/practice/season", label: "Season", show: facilities },

@@ -84,8 +84,11 @@ export type ScenicTeam = {
   grade: number;
   gradeLabel: string;
   partnerId: string | null;
-  partnerName: string | null;
+  partnerName: string | null; // its organization (a club, or an organization on CourtCaptain)
   ownerName: string | null; // Solo teams
+  altName: string | null; // e.g. "Bolts"
+  divisionLow: number | null; // the division it plays in (its latest program); none yet: null
+  divisionHigh: number | null;
   coachId: string | null; // an organization's team may have no Head Coach yet
   coachFirst: string | null;
   coachLast: string | null;
@@ -109,14 +112,21 @@ export async function listScenicTeams(
   const q = deps.pool;
   if (!(await hasRole(q, viewer.coachId, as))) return null;
   if (as === "Director" && !(await isTeamsDirector(q, viewer))) return null;
-  const where =
-    as === "Director" ? "true" : as === "Solo" ? "t.owner_coach_id = $1" : "t.coach_id = $1";
+  const where = as === "Director" ? "true" : as === "Solo" ? "t.owner_coach_id = $1" : "t.coach_id = $1";
   const r = await q.query<Omit<ScenicTeam, "gradeLabel" | "canEdit"> & { owner_coach_id: string | null; org_team: boolean }>(
     `select t.id::text, t.name, t.gender, t.level, t.grade_low as "gradeLow", t.grade, t.partner_id::text as "partnerId", p.name as "partnerName",
             o.first_name || ' ' || o.last_name as "ownerName", t.owner_coach_id,
             t.coach_id as "coachId", c.first_name as "coachFirst", c.last_name as "coachLast", c.cell as "coachCell",
-            t.created_by as "createdBy", t.updated_by as "updatedBy", (t.org_team_id is not null or t.thunder_team_id is not null) as org_team
+            t.created_by as "createdBy", t.updated_by as "updatedBy", (t.org_team_id is not null or t.thunder_team_id is not null) as org_team,
+            coalesce(t.alt_name, ot.alt_name, th.alt_name) as "altName", dv.grade_low as "divisionLow", dv.grade_high as "divisionHigh"
      from scenic_teams t
+     left join org_teams ot on ot.id = t.org_team_id
+     left join teams th on th.id = t.thunder_team_id
+     left join lateral (
+       select d.grade_low, d.grade_high from scenic_registrations r
+       join scenic_pools sp on sp.id = r.pool_id join scenic_grade_groups g on g.id = sp.group_id
+       join scenic_divisions d on d.id = g.division_id join scenic_programs pr on pr.id = r.program_id
+       where r.team_id = t.id order by pr.starts_on desc limit 1) dv on true
      left join users c on c.coach_id = t.coach_id
      left join partners p on p.id = t.partner_id
      left join users o on o.coach_id = t.owner_coach_id
@@ -129,8 +139,7 @@ export async function listScenicTeams(
     ...t,
     gradeLabel: gradeLabel(t.gradeLow, t.grade),
     // A registered organization's team is managed there (read-only here).
-    canEdit:
-      !org_team && (director || (as === "Solo" && owner_coach_id === viewer.coachId)),
+    canEdit: !org_team && (director || (as === "Solo" && owner_coach_id === viewer.coachId)),
   }));
   let addFor: TeamOwnerChoice[] = [];
   if (as === "Director") {

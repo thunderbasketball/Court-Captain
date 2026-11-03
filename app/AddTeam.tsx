@@ -7,13 +7,25 @@ import { Alert, PopUp } from "./client-ui";
 import { fieldLabel, inputCls, pillCls, primaryBtn } from "./ui";
 
 type Person = { value: string; firstName: string; lastName: string; detail?: string };
-type Input = { gender: string; grades: string[]; level: string; headCoach: unknown; altName: string };
+type Input = { gender: string; grades: string[]; level: string; headCoach: unknown; altName: string; club?: unknown };
+type Club = { value: string; label: string; abbr: string };
 type Create = (input: Input) => Promise<{ ok: true; id: string; name: string } | { ok: false; message: string }>;
 
 // "+ Add" on every organization's Teams page (Thunder's too): a pop-up like Thunder's New team page. The name is made
 // for you: top grade + gender + Head Coach's last name ("4G Epps"; "4G TBD" until a coach). Grades: one, or two next to
-// each other. `create` is the server's (it checks everything again); `href` + id opens the new team.
-export default function AddTeamButton({ people, create, href }: { people: Person[]; create: Create; href: string }) {
+// each other. `create` is the server's (it checks everything again); `href` + id opens the new team (none: stay here).
+// `clubs` (Scenic City): pick which outside club the team is for, or type a new one; its Abbreviation leads the name.
+export default function AddTeamButton({
+  people,
+  create,
+  href,
+  clubs,
+}: {
+  people: Person[];
+  create: Create;
+  href?: string;
+  clubs?: Club[];
+}) {
   const router = useRouter();
   return (
     <PopUp
@@ -21,14 +33,37 @@ export default function AddTeamButton({ people, create, href }: { people: Person
       title="Add a team"
       className="shrink-0 rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark"
     >
-      {() => <AddTeamForm people={people} create={create} onAdded={(id) => router.push(`${href}${id}`)} />}
+      {(close) => (
+        <AddTeamForm
+          people={people}
+          clubs={clubs}
+          create={create}
+          onAdded={(id) => {
+            if (href) return router.push(`${href}${id}`);
+            close();
+            router.refresh();
+          }}
+        />
+      )}
     </PopUp>
   );
 }
 
 const NEW = "new";
 
-function AddTeamForm({ people, create, onAdded }: { people: Person[]; create: Create; onAdded: (id: string) => void }) {
+function AddTeamForm({
+  people,
+  clubs,
+  create,
+  onAdded,
+}: {
+  people: Person[];
+  clubs?: Club[];
+  create: Create;
+  onAdded: (id: string) => void;
+}) {
+  const [club, setClub] = useState("");
+  const [newClub, setNewClub] = useState({ name: "", abbr: "" });
   const [gender, setGender] = useState<"Boys" | "Girls" | "">("");
   const [grades, setGrades] = useState<string[]>([]);
   const [level, setLevel] = useState<string>("REC");
@@ -47,8 +82,14 @@ function AddTeamForm({ people, create, onAdded }: { people: Person[]; create: Cr
     });
   const last =
     coach === NEW ? person.last.trim() : coach === "none" ? "TBD" : (people.find((p) => p.value === coach)?.lastName ?? "");
-  const preview = gender && grades.length && last ? teamName(gender, grades, last) : "—";
-  const ready = gender && grades.length && coach && (coach !== NEW || (person.first && person.last && person.cell));
+  const abbr = !clubs
+    ? ""
+    : club === NEW
+      ? newClub.abbr.trim().toUpperCase() || "…"
+      : (clubs.find((c) => c.value === club)?.abbr ?? "");
+  const preview = gender && grades.length && last ? `${abbr ? `${abbr} ` : ""}${teamName(gender, grades, last)}` : "—";
+  const clubReady = !clubs || (club && (club !== NEW || newClub.name.trim()));
+  const ready = clubReady && gender && grades.length && coach && (coach !== NEW || (person.first && person.last && person.cell));
 
   return (
     <form
@@ -57,12 +98,55 @@ function AddTeamForm({ people, create, onAdded }: { people: Person[]; create: Cr
         e.preventDefault();
         start(async () => {
           setError(null);
-          const r = await create({ gender, grades, level, headCoach: coach === NEW ? person : coach, altName: alt });
+          const r = await create({
+            gender,
+            grades,
+            level,
+            headCoach: coach === NEW ? person : coach,
+            altName: alt,
+            ...(clubs ? { club: club === NEW ? newClub : club } : {}),
+          });
           if (!r.ok) return setError(r.message);
           onAdded(r.id);
         });
       }}
     >
+      {clubs && (
+        <div className="space-y-2">
+          <label className="block">
+            <span className={fieldLabel}>Organization (an outside club)</span>
+            <select className={inputCls} value={club} onChange={(e) => setClub(e.target.value)}>
+              <option value="" disabled>
+                Choose…
+              </option>
+              <option value={NEW}>New club…</option>
+              {clubs.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label} ({c.abbr})
+                </option>
+              ))}
+            </select>
+          </label>
+          {club === NEW && (
+            <div className="grid grid-cols-3 gap-2">
+              <input
+                className={`${inputCls} col-span-2`}
+                maxLength={60}
+                placeholder="Club name"
+                value={newClub.name}
+                onChange={(e) => setNewClub({ ...newClub, name: e.target.value })}
+              />
+              <input
+                className={inputCls}
+                maxLength={6}
+                placeholder="Abbr. (HH)"
+                value={newClub.abbr}
+                onChange={(e) => setNewClub({ ...newClub, abbr: e.target.value })}
+              />
+            </div>
+          )}
+        </div>
+      )}
       <div>
         <span className={fieldLabel}>Gender</span>
         <div className="flex gap-2">

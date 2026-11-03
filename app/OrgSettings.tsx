@@ -2,8 +2,9 @@
 
 import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { changeOrgAbbr, changeOrgColor, changeOrgLogo } from "./register/actions";
+import { changeOrgAbbr, changeOrgColor, changeOrgLogo, renameOrganization } from "./register/actions";
 import { Alert, PopUp, Toast } from "./client-ui";
+import { slugFor } from "@/lib/org-slug";
 import { fieldLabel, inputCls, primaryBtn } from "./ui";
 
 // Admins: the gear after the last tab opens the organization's settings: its login link, features (and the ones it asked
@@ -17,6 +18,9 @@ export default function OrgSettings({
   colors,
   login,
   abbr,
+  name,
+  short,
+  canRename,
 }: {
   org: string;
   logo: ReactNode;
@@ -26,6 +30,9 @@ export default function OrgSettings({
   colors: readonly string[];
   login: string;
   abbr: string;
+  name: string;
+  short: string;
+  canRename: boolean; // Owners
 }) {
   const router = useRouter();
   const [msg, setMsg] = useState<string | null>(null);
@@ -59,6 +66,20 @@ export default function OrgSettings({
               </summary>
               <div className="mt-2">{features}</div>
             </details>
+            {canRename && (
+              <NameForm
+                org={org}
+                name={name}
+                short={short}
+                onSaved={(slug) => {
+                  close();
+                  setMsg("Name saved.");
+                  // A new web address: the same page there.
+                  if (slug !== org) router.replace(window.location.pathname.replace(`/${org}`, `/${slug}`));
+                  else router.refresh();
+                }}
+              />
+            )}
             <AbbrForm
               org={org}
               abbr={abbr}
@@ -90,6 +111,56 @@ export default function OrgSettings({
       </PopUp>
       {msg && <Toast key={msg} message={msg} />}
     </>
+  );
+}
+
+// Owners: the name (its web address and login link follow it, and the old ones keep working) and short name.
+function NameForm({ org, name, short, onSaved }: { org: string; name: string; short: string; onSaved: (slug: string) => void }) {
+  const [value, setValue] = useState(name);
+  const [shortValue, setShortValue] = useState(short);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, start] = useTransition();
+  const fixed = org === "thunder" || org === "scenic-city";
+  const next = fixed ? org : slugFor(value);
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          setError(null);
+          const r = await renameOrganization(org, value, shortValue);
+          if (!r.ok) return setError(r.message);
+          onSaved(r.slug);
+        });
+      }}
+    >
+      <h3 className="text-sm font-semibold">Name</h3>
+      <input className={inputCls} maxLength={60} value={value} onChange={(e) => setValue(e.target.value)} aria-label="Name" />
+      <label className="block text-xs text-zinc-500">
+        Short name (up to 20)
+        <input
+          className={`${inputCls} mt-0.5`}
+          maxLength={20}
+          value={shortValue}
+          onChange={(e) => setShortValue(e.target.value)}
+        />
+      </label>
+      {next !== org && (
+        <p className="text-xs text-amber-700 dark:text-amber-300">
+          The web address changes to <span className="font-mono">/org/{next}</span> (login link{" "}
+          <span className="font-mono">/login/{next}</span>). The old links keep working.
+        </p>
+      )}
+      <button
+        type="submit"
+        disabled={busy || (value.trim() === name && shortValue.trim() === short)}
+        className={`${primaryBtn} w-full`}
+      >
+        {busy ? "Saving…" : "Save name"}
+      </button>
+      {error && <Alert tone="red">{error}</Alert>}
+    </form>
   );
 }
 

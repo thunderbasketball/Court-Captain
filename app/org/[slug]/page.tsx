@@ -10,6 +10,7 @@ import { orgInfo } from "@/lib/org-registry";
 import { isOrgSlug } from "@/lib/orgs";
 import AppHeader from "../../AppHeader";
 import { card } from "../../ui";
+import { followRename } from "@/lib/org-rename";
 
 export default function OrgHomePage({ params }: PageProps<"/org/[slug]">) {
   return (
@@ -25,6 +26,7 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   const { slug } = await params;
+  await followRename(slug, (s) => `/org/${s}`);
   const o = isOrgSlug(slug) ? await orgInfo(db, slug) : null;
   if (!o) notFound();
   // Anyone with a role there (CourtCaptain staff too, in the background).
@@ -37,7 +39,7 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
     hasFeature(db, slug, "team-building"),
     isOrgAdmin(db, user.coachId, slug),
     orgHasArea(db, user.coachId, slug, "teams"),
-    orgHasArea(db, user.coachId, slug, "coaches", "teams"),
+    orgHasArea(db, user.coachId, slug, "teams"),
     canHost(db, slug),
     orgHasArea(db, user.coachId, slug, "facilities"),
     db.query(
