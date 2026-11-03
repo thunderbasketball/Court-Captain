@@ -82,3 +82,13 @@ export async function saveUniform(
   const clean = changes && typeof changes === "object" ? changes : {};
   return guarded((u) => uniforms.saveUniform(deps, u, String(teamId), String(registrantId), clean), "uniforms");
 }
+
+// on: the player needs a uniform though their family didn't order one (checked again in lib/uniforms).
+export async function setNeedsUniform(teamId: string, registrantId: string, on: boolean) {
+  return guarded((u) => uniforms.setNeedsUniform(deps, u, String(teamId), String(registrantId), on === true), "uniforms");
+}
+
+// Directors of Uniforms (Home): the player's uniform is on the TeamSnap order now.
+export async function markUniformAdded(teamId: string, registrantId: string) {
+  return guarded((u) => uniforms.markUniformAdded(deps, u, String(teamId), String(registrantId)), "uniforms");
+}

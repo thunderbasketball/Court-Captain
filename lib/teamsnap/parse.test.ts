@@ -95,6 +95,21 @@ describe("parseRegistrations", () => {
     ]);
   });
 
+  it("a charged Uniform Fee counts as ordering a uniform, even when they answered NO", () => {
+    const csv = [
+      "Registrant Id,First,Last,Birthdate,Winter Fees,Uniform Needed?,NEW Uniform Fee",
+      "1,Ann,A,06-09-2016,4th Girls,YES,Uniform Fee",
+      "2,Bo,B,06-09-2016,4th Boys,NO,Uniform Fee",
+      "3,Cy,C,06-09-2016,4th Boys,NO,",
+    ].join("\n");
+    const r = parseRegistrations(csv, { schoolYear: 2026 });
+    expect(r.players.map((p) => [p.first_name, p.uniform_needed])).toEqual([
+      ["Ann", true],
+      ["Bo", true],
+      ["Cy", false],
+    ]);
+  });
+
   it("fixes all-lowercase names only", () => {
     const r = parse(row({ rid: "1", first: "ethan", last: "McNabb" }));
     expect(r.players[0]).toMatchObject({ first_name: "Ethan", last_name: "McNabb" });

@@ -7,8 +7,10 @@ import { orgFeatures } from "@/lib/features";
 import { hasArea, isThunderAdmin } from "@/lib/org-admin";
 import { orgMetrics } from "@/lib/org-metrics";
 import { visitStats } from "@/lib/site-visits";
+import { uniformRequests } from "@/lib/uniforms";
 import AppHeader from "../../AppHeader";
 import OrgMetrics from "../../OrgMetrics";
+import UniformRequests from "./UniformRequests";
 import { card } from "../../ui";
 
 export default function ThunderHomePage() {
@@ -37,6 +39,8 @@ async function ThunderHome() {
         visitStats({ pool: db, now: () => now }, user, "thunder"),
       ])
     : [null, null];
+  // Directors of Uniforms: players their coaches say need a uniform, to add to the TeamSnap order.
+  const requests = features.has("uniforms") ? await uniformRequests({ pool: db, now: () => now }, user) : null;
   const schedule =
     features.has("practice") && hasArea(user, "practices")
       ? "/org/thunder/practice"
@@ -78,6 +82,7 @@ async function ThunderHome() {
         <p className="mb-4 text-sm text-zinc-500 dark:text-zinc-400">
           Welcome, {user.firstName} · {owner ? "Owner" : admin ? "Admin" : "Director"}
         </p>
+        {requests && <UniformRequests list={requests} />}
         {metrics && <OrgMetrics m={metrics} visits={visits} base="/org/thunder" thunder now={now} />}
         {!parts.length && <p className="text-sm text-zinc-500">No areas yet. An Admin gives Directors their areas.</p>}
         <div className="grid gap-3 sm:grid-cols-2">

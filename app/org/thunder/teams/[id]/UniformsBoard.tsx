@@ -5,12 +5,14 @@ import { useRouter } from "next/navigation";
 import { gradeLabel } from "@/lib/grades";
 import { SIZES, duplicateNumbers, isMissing, type UniformRow } from "@/lib/uniform-fields";
 import { Toast } from "../../../../client-ui";
-import { saveUniform } from "../actions";
+import { saveUniform, setNeedsUniform } from "../actions";
 
 const field =
   "rounded-lg border-0 bg-white px-2 py-1.5 text-base ring-1 ring-zinc-950/10 outline-none focus:ring-2 focus:ring-thunder-blue dark:bg-zinc-900 dark:ring-white/15";
 
-// Uniforms tab: a number for every rostered player, and a size for those who ordered a uniform. Each change saves at once.
+// Uniforms tab: a number for every rostered player, and a size for those who need a uniform. A player whose family didn't
+// order one gets a "Needs a uniform" box: ticking it brings the size, and lists them on Home for the Director of Uniforms
+// to add to the TeamSnap order. Each change saves at once.
 export default function UniformsBoard({ teamId, rows: initial }: { teamId: string; rows: UniformRow[] }) {
   const router = useRouter();
   const [rows, setRows] = useState(initial);
@@ -33,6 +35,24 @@ export default function UniformsBoard({ teamId, rows: initial }: { teamId: strin
       list.map((x) => (x.registrantId === row.registrantId ? { ...x, updatedBy: r.updatedBy, updatedAt: r.updatedAt } : x)),
     );
     // Updates the Uniforms tab's red flash.
+    router.refresh();
+  }
+
+  async function needs(row: UniformRow, on: boolean) {
+    const undo = { ordered: row.ordered, neededBy: row.neededBy, addedBy: row.addedBy, size: row.size };
+    setRows((list) =>
+      list.map((x) =>
+        x.registrantId === row.registrantId
+          ? { ...x, ordered: on, neededBy: on ? "you" : null, addedBy: null, size: on ? x.size : null }
+          : x,
+      ),
+    );
+    const r = await setNeedsUniform(teamId, row.registrantId, on);
+    if (!r.ok) {
+      setRows((list) => list.map((x) => (x.registrantId === row.registrantId ? { ...x, ...undo } : x)));
+      return setError(`${row.firstName} ${row.lastName}: ${r.message}`);
+    }
+    setRows((list) => list.map((x) => (x.registrantId === row.registrantId ? { ...x, neededBy: on ? r.by : null } : x)));
     router.refresh();
   }
 
@@ -72,15 +92,41 @@ export default function UniformsBoard({ teamId, rows: initial }: { teamId: strin
                   </span>
                   <span className="block text-xs text-zinc-400">{gradeLabel(r.grade)}</span>
                 </span>
-                <span
-                  className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
-                    r.ordered
-                      ? "bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300"
-                      : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
-                  }`}
-                >
-                  {r.ordered ? "Ordered a uniform" : "No uniform ordered"}
-                </span>
+                {(() => {
+                  // Ordered at registration, or added to the TeamSnap order after their coach asked: ordered.
+                  const waiting = !r.registered && !!r.neededBy && !r.addedBy;
+                  const [tone, text] =
+                    r.registered || r.addedBy
+                      ? ["bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300", "Ordered a uniform"]
+                      : waiting
+                        ? [
+                            "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300",
+                            "Needs a uniform · not ordered yet",
+                          ]
+                        : ["bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300", "No uniform ordered"];
+                  return (
+                    // The chip, and under it (when their family didn't order one) the Needs a uniform box.
+                    <span className="flex shrink-0 flex-col items-end gap-1.5">
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}>{text}</span>
+                      {!r.registered && (
+                        <label className="flex items-center gap-2 text-sm">
+                          Needs a uniform
+                          <input
+                            type="checkbox"
+                            className="size-5 accent-thunder-blue"
+                            checked={!!r.neededBy}
+                            onChange={(e) => needs(r, e.target.checked)}
+                          />
+                        </label>
+                      )}
+                      {r.neededBy && !r.registered && (
+                        <span className="text-xs text-zinc-400">
+                          {r.addedBy ? `On the TeamSnap order (${r.addedBy})` : `By ${r.neededBy}`}
+                        </span>
+                      )}
+                    </span>
+                  );
+                })()}
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-1.5 text-sm">

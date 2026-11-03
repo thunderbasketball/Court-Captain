@@ -76,6 +76,7 @@ const ALIASES = {
   coach_request: ["coachrequest"],
   coaching_interest: ["areyouinterestedincoaching", "interestedincoaching"],
   uniform_needed: ["uniformneeded"],
+  uniform_fee: ["newuniformfee", "uniformfee"], // "Uniform Fee" when they were charged for a uniform
   uniform_size: ["uniformsize"],
   uniform_number: ["uniformnumber"],
   checkout_type: ["checkouttype"],
@@ -250,7 +251,9 @@ export function parseRegistrations(input: string | string[][], opts: { schoolYea
     }
 
     const interest = clean(get("coaching_interest"));
-    const uniformNeeded = clean(get("uniform_needed"))?.toUpperCase();
+    // Ordered a uniform: they answered YES, or they were charged the Uniform Fee (the Director adds the fee when a family
+    // answered NO by mistake).
+    const uniformNeeded = clean(get("uniform_fee")) ? "YES" : clean(get("uniform_needed"))?.toUpperCase();
     const registeredAt = clean(get("registered_at"));
 
     result.players.push({

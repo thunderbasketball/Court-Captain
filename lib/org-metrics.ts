@@ -111,11 +111,12 @@ async function missingTeams(q: Pick<Queryable, "query">, org: string): Promise<O
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 }
 
-// Rostered players with a number, and a size when their family ordered a uniform (as the Uniforms page counts them).
+// Rostered players with a number, and a size when they need a uniform (ordered, or ticked by their coach) (as the Uniforms page counts them).
 async function uniformMetrics(q: Pick<Queryable, "query">): Promise<OrgMetrics["uniforms"]> {
   const r = await q.query<{ players: number; missing: number }>(
     `select count(*)::int as players,
-            count(*) filter (where u.number is null or (coalesce(g.uniform_needed, false) and u.size is null))::int as missing
+            count(*) filter (where u.number is null
+                             or ((coalesce(g.uniform_needed, false) or u.needs_uniform_at is not null) and u.size is null))::int as missing
      from team_players p
      left join team_uniforms u on u.team_id = p.team_id and u.registrant_id = p.registrant_id
      left join registrations g on g.registrant_id = p.registrant_id`,

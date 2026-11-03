@@ -6,7 +6,10 @@ export type UniformRow = {
   firstName: string;
   lastName: string;
   grade: string;
-  ordered: boolean; // the family ordered a uniform at registration
+  ordered: boolean; // needs a uniform: ordered at registration, or a coach said so
+  registered: boolean; // the family ordered one at registration (TeamSnap)
+  neededBy: string | null; // the coach who said they need one (when they didn't order at registration)
+  addedBy: string | null; // the Director who added it to the TeamSnap order
   askedSize: string | null; // what the parent asked for at registration
   askedNumber: string | null;
   number: string | null;
@@ -30,7 +33,7 @@ export const duplicateNumbers = (rows: Pick<UniformRow, "number">[]) => {
 // "Mc" always stays (even if typed "MCCROBEY"); other prefixes only when the name was typed with the inner capital.
 export function jerseyName(lastName: string): string {
   let name = lastName.trim().replace(/\s*#\s*\d+$/, "");
-  for (let prev = ""; prev !== name; ) {
+  for (let prev = ""; prev !== name;) {
     prev = name;
     name = name.replace(/[\s,]+(jr|sr|ii|iii|iv|v|2nd|3rd)\.?$/i, "").trim();
   }
