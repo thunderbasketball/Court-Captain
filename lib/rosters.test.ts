@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
-import { addPlayers, listRoster, movePlayer, removePlayer, rosterBoard, rosterCandidates } from "./rosters";
+import { addPlayers, allRosterBoards, listRoster, movePlayer, removePlayer, rosterBoard, rosterCandidates } from "./rosters";
 import { createTestDb } from "./testing/db";
 
 const person = (coachId: string, firstName: string, isDirector = false): SessionUser => ({
@@ -169,6 +169,27 @@ describe("rosters", () => {
     });
     expect((await rosterBoard(deps(), director, "Girls", "3"))!.teams).toHaveLength(0);
     expect(names(await rosterBoard(deps(), director, "Girls", "5")).free).toEqual(["Dee", "Bea", "Ava"]);
+  });
+
+  it("whole roster board (Home): Boys then Girls, youngest grade first; not rostered, then that grade's teams", async () => {
+    await reg("r5", "Eve", "Cole", "Girls", "3");
+    await db.pool.query("update registrations set coach_request = 'Coach Hank' where registrant_id = 'r2'");
+    await movePlayer(deps(), director, "r1", other);
+    const all = await allRosterBoards(deps(), director);
+    expect(
+      all!.map((b) => [
+        `${b.gender} ${b.grade}`,
+        b.unrostered.map((p) => p.firstName),
+        b.teams.map((t) => `${t.name}: ${t.players.map((p) => p.firstName).join(",")}`),
+      ]),
+    ).toEqual([
+      ["Boys 4", ["Cy"], []],
+      ["Girls 3", ["Eve"], []],
+      ["Girls 4", ["Bea"], ["4G B: Ava", "4G A: "]],
+      ["Girls 5", ["Dee"], []],
+    ]);
+    expect(all![2].unrostered[0].coachRequest).toBe("Coach Hank");
+    expect(await allRosterBoards(deps(), head)).toBeNull();
   });
 
   it("roster board: Directors only, and checks its input", async () => {

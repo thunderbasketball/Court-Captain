@@ -195,6 +195,64 @@ export async function rosterBoard(deps: Deps, viewer: SessionUser, gender: unkno
   };
 }
 
+// ---- Whole roster board (Director, Home's "Not on a team"): every grade at once ----
+
+export type GradeBoard = RosterBoard & { gender: "Boys" | "Girls"; grade: string };
+
+// Boys then Girls, each youngest grade first. In each grade: its registered players not on any team, then the teams
+// named for it (top grade = this grade) with their whole rosters. Each grade that has a player or a team is listed.
+export async function allRosterBoards(deps: Deps, viewer: SessionUser): Promise<GradeBoard[] | null> {
+  if (!hasArea(viewer, "teams")) return null;
+  const [teams, players, free] = await Promise.all([
+    deps.pool.query<Omit<BoardTeam, "players"> & { gender: string; sort: number }>(
+      `select t.id::text, t.name, t.level, t.gender, t.grade_sort as sort from teams t
+       where t.gender in ('Boys', 'Girls') and t.grade_sort is not null
+       order by t.level = 'COMP' desc, lower(t.name)`,
+    ),
+    deps.pool.query<BoardPlayer & { teamId: string }>(
+      `select p.team_id::text as "teamId", p.registrant_id as "registrantId", p.first_name as "firstName", p.last_name as "lastName", p.grade,
+              (select nullif(trim(g.coach_request), '') from registrations g where g.registrant_id = p.registrant_id) as "coachRequest"
+       from team_players p order by lower(p.last_name), lower(p.first_name)`,
+    ),
+    deps.pool.query<BoardPlayer & { gender: string; sort: number }>(
+      `select g.registrant_id as "registrantId", g.first_name as "firstName", g.last_name as "lastName", g.grade, g.gender,
+              g.grade_sort as sort, nullif(trim(g.coach_request), '') as "coachRequest"
+       from registrations g where g.gender in ('Boys', 'Girls') and g.grade_sort is not null
+         and not exists (select 1 from team_players p where p.registrant_id = g.registrant_id)
+       order by lower(g.last_name), lower(g.first_name)`,
+    ),
+  ]);
+  const boards = new Map<string, GradeBoard & { sort: number }>();
+  const board = (gender: string, sort: number) => {
+    const key = `${gender}|${sort}`;
+    let b = boards.get(key);
+    if (!b)
+      boards.set(
+        key,
+        (b = { gender: gender as "Boys" | "Girls", grade: sort === 0 ? "K" : String(sort), sort, unrostered: [], teams: [] }),
+      );
+    return b;
+  };
+  const strip = (p: BoardPlayer): BoardPlayer => ({
+    registrantId: p.registrantId,
+    firstName: p.firstName,
+    lastName: p.lastName,
+    grade: p.grade,
+    coachRequest: p.coachRequest,
+  });
+  for (const p of free.rows) board(p.gender, p.sort).unrostered.push(strip(p));
+  for (const t of teams.rows)
+    board(t.gender, t.sort).teams.push({
+      id: t.id,
+      name: t.name,
+      level: t.level,
+      players: players.rows.filter((p) => p.teamId === t.id).map(strip),
+    });
+  return [...boards.values()]
+    .sort((a, b) => (a.gender === b.gender ? a.sort - b.sort : a.gender === "Boys" ? -1 : 1))
+    .map((b) => ({ gender: b.gender, grade: b.grade, unrostered: b.unrostered, teams: b.teams }));
+}
+
 // Puts a player on a team, or takes them off (teamId null). With `from` (the roster board: the team they were dragged
 // from, or null from "Not on a team"), only that team is left, so a 2nd team stays; without it, every other team is.
 export async function movePlayer(

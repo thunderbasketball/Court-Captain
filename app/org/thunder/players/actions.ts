@@ -40,6 +40,23 @@ export async function loadRosterBoard(gender: string, grade: string) {
   }
 }
 
+// Home's "Not on a team": every grade's board at once (Director of Teams only, checked again inside lib/rosters).
+export async function loadAllRosterBoards() {
+  const user = await currentUser();
+  if (!user) return { ok: false as const, message: "Please log in again." };
+  const refused = await featureRefusal("thunder", "player-registration");
+  if (refused) return refused;
+  try {
+    const boards = await rosters.allRosterBoards({ pool: db, now: () => new Date() }, user);
+    return boards
+      ? { ok: true as const, boards }
+      : { ok: false as const, message: "Only a Director of Teams can roster players." };
+  } catch (e) {
+    console.error("Roster boards failed:", e);
+    return { ok: false as const, message: "Something went wrong. Please try again." };
+  }
+}
+
 // teamId null: take the player off the team they came from (`from`; null: "Not on a team").
 export async function movePlayer(registrantId: string, teamId: string | null, from: string | null) {
   const user = await currentUser();

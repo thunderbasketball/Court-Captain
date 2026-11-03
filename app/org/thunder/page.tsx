@@ -83,7 +83,9 @@ async function ThunderHome() {
           Welcome, {user.firstName} · {owner ? "Owner" : admin ? "Admin" : "Director"}
         </p>
         {requests && <UniformRequests list={requests} />}
-        {metrics && <OrgMetrics m={metrics} visits={visits} base="/org/thunder" thunder now={now} />}
+        {metrics && (
+          <OrgMetrics m={metrics} visits={visits} base="/org/thunder" thunder now={now} roster={hasArea(user, "teams")} />
+        )}
         {!parts.length && <p className="text-sm text-zinc-500">No areas yet. An Admin gives Directors their areas.</p>}
         <div className="grid gap-3 sm:grid-cols-2">
           {parts.map((p) => (

@@ -4,23 +4,27 @@ import { TZ } from "@/lib/time";
 import type { VisitRange, VisitStats } from "@/lib/site-visits";
 import RegistrationTrend from "./RegistrationTrend";
 import SiteVisits from "./SiteVisits";
+import NotOnTeamBoard from "./org/thunder/players/NotOnTeamBoard";
 import { card } from "./ui";
 
 // An organization's Home metrics for its Owners and Admins (SPEC.md section 14): number tiles that open the page behind
 // them, the daily registration trend, teams missing something, and coaches' use of the app. `base` is the
 // organization's address ("/org/thunder"); Thunder's pages (players, uniforms, practices, requests) are only Thunder's.
+// `roster`: the viewer can roster players, so "Not on a team" opens every grade's roster board.
 export default function OrgMetrics({
   m,
   visits,
   base,
   thunder,
   now,
+  roster = false,
 }: {
   m: Metrics;
   visits: Record<VisitRange, VisitStats> | null;
   base: string;
   thunder: boolean;
   now: Date;
+  roster?: boolean;
 }) {
   const waiting = m.waiting.requests + m.waiting.newChats + m.waiting.workingChats;
   const tiles = [
@@ -47,6 +51,7 @@ export default function OrgMetrics({
         : "Every player is on a team",
       href: `${base}/members/players`,
       alert: m.notOnTeam.total > 0,
+      board: roster,
     },
     m.uniforms && {
       label: "Uniform order prep",
@@ -95,6 +100,12 @@ export default function OrgMetrics({
               </p>
             </>
           );
+          if ("board" in t && t.board)
+            return (
+              <div key={t.label} className={`${card} p-3 hover:ring-zinc-400/40`}>
+                <NotOnTeamBoard>{body}</NotOnTeamBoard>
+              </div>
+            );
           return t.href ? (
             <Link key={t.label} href={t.href} className={`${card} block p-3 hover:ring-zinc-400/40`}>
               {body}
