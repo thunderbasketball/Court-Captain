@@ -630,10 +630,10 @@ describe("Scenic City roles", () => {
 });
 
 describe("sessions", () => {
-  it("last 24 hours from the PIN login, then the PIN is needed again", async () => {
+  it("last 72 hours from the PIN login, then the PIN is needed again", async () => {
     await addUser({});
     const t = token(await auth.submitPin(deps, CELL, "5678"));
-    clock.advanceMinutes(24 * 60 - 1);
+    clock.advanceMinutes(72 * 60 - 1);
     expect(await auth.getSessionUser(deps, t)).not.toBeNull();
     clock.advanceMinutes(1);
     expect(await auth.getSessionUser(deps, t)).toBeNull();

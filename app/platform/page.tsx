@@ -122,6 +122,29 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
                       {o.owners.length ? `Owner: ${o.owners.map((d) => d.name).join(", ")}` : "No owner yet"} ·{" "}
                       {o.features.filter((f) => f.on).length} features on · /login/{o.slug}
                     </p>
+                    {/* Its numbers at a glance, without opening the card. */}
+                    <dl className="mt-2 grid grid-cols-4 gap-1.5 text-center">
+                      {[
+                        { label: "People", value: o.stats.people },
+                        { label: "Teams", value: o.stats.teams },
+                        { label: "Players", value: o.stats.players ?? "—" },
+                        { label: "Visits wk", value: o.stats.visitsWeek, note: `${o.stats.visitsToday} today` },
+                      ].map((m) => (
+                        <div key={m.label} className="rounded-lg bg-zinc-50 px-1 py-1.5 dark:bg-white/5">
+                          <dt className="text-[11px] text-zinc-500">{m.label}</dt>
+                          <dd className="text-base font-semibold tabular-nums">{m.value}</dd>
+                          {m.note && <dd className="text-[10px] text-zinc-500">{m.note}</dd>}
+                        </div>
+                      ))}
+                    </dl>
+                    {o.stats.coaches > 0 && (
+                      <p className="mt-1.5 text-xs text-zinc-500">
+                        Coaches logged in this week:{" "}
+                        <span className="font-medium text-zinc-800 dark:text-zinc-100">
+                          {o.stats.coachesThisWeek} of {o.stats.coaches}
+                        </span>
+                      </p>
+                    )}
                   </div>
                   <svg
                     viewBox="0 0 20 20"

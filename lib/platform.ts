@@ -8,6 +8,7 @@ import { listDirectors, type DirectorRow } from "./org-admin";
 import { BUILT_IN, isOrgSlug, type OrgSlug } from "./orgs";
 import { listOrgs, orgInfo, orgName } from "./org-registry";
 import { withTx, type Queryable } from "./sql";
+import { TZ } from "./time";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result = { ok: true } | { ok: false; message: string };
@@ -57,7 +58,58 @@ export type PlatformOrg = {
   admins: { id: string; name: string }[]; // Admins who aren't Owners (shown; Owners choose them)
   directors: DirectorRow[]; // Directors who aren't Admins, with their areas (shown; Admins choose them)
   options: { id: string; name: string }[]; // active users who aren't its Owners yet
+  stats: OrgStats;
 };
+
+// The short numbers under each organization's card. players: null where the organization keeps no players (Scenic City).
+export type OrgStats = {
+  people: number; // with a role there or a place on one of its teams (CourtCaptain staff not counted)
+  teams: number;
+  players: number | null; // Thunder: registered; others: on their teams' rosters
+  coaches: number; // active Head and Assistant Coaches
+  coachesThisWeek: number; // …who logged in in the last 7 days
+  visitsToday: number; // page views (lib/site-visits.ts), Eastern days; the week starts Monday
+  visitsWeek: number;
+};
+
+async function orgStats(q: Pick<Queryable, "query">, org: OrgSlug, now: Date): Promise<OrgStats> {
+  const thunder = org === "thunder";
+  const coaches = thunder
+    ? "select coach_id from team_staff where role in ('HeadCoach', 'AsstCoach')"
+    : "select c.coach_id from org_team_coaches c join org_teams t on t.id = c.team_id where t.org = $1";
+  const r = await q.query<OrgStats>(
+    `select
+       (select count(*)::int from users u
+        where not exists (select 1 from platform_admins p where p.coach_id = u.coach_id)
+          and (exists (select 1 from org_roles o where o.coach_id = u.coach_id and o.org = $1)
+               or ($1 = 'thunder' and exists (select 1 from team_staff s where s.coach_id = u.coach_id))
+               or exists (select 1 from org_team_coaches c join org_teams t on t.id = c.team_id
+                          where c.coach_id = u.coach_id and t.org = $1))) as people,
+       ${
+         thunder
+           ? "(select count(*)::int from teams)"
+           : org === "scenic-city"
+             ? "(select count(*)::int from scenic_teams)"
+             : "(select count(*)::int from org_teams where org = $1)"
+       } as teams,
+       ${
+         thunder
+           ? "(select count(*)::int from registrations)"
+           : org === "scenic-city"
+             ? "null::int"
+             : "(select count(*)::int from org_team_players p join org_teams t on t.id = p.team_id where t.org = $1)"
+       } as players,
+       (select count(*)::int from users u where u.active and u.coach_id in (${coaches})) as coaches,
+       (select count(*)::int from users u where u.active and u.coach_id in (${coaches})
+          and u.last_login_at > $2::timestamptz - interval '7 days') as "coachesThisWeek",
+       (select coalesce(sum(views), 0)::int from site_visits
+        where org = $1 and hour >= date_trunc('day', $2::timestamptz at time zone $3) at time zone $3) as "visitsToday",
+       (select coalesce(sum(views), 0)::int from site_visits
+        where org = $1 and hour >= date_trunc('week', $2::timestamptz at time zone $3) at time zone $3) as "visitsWeek"`,
+    [org, now, TZ],
+  );
+  return r.rows[0];
+}
 
 // Everything on the CourtCaptain page; null for anyone who isn't an admin.
 export async function platformOverview(
@@ -85,7 +137,10 @@ export async function platformOverview(
     ),
   ]);
   const all = await listOrgs(deps.pool);
-  const people = await Promise.all(all.map((o) => listDirectors(deps.pool, o.slug)));
+  const [people, stats] = await Promise.all([
+    Promise.all(all.map((o) => listDirectors(deps.pool, o.slug))),
+    Promise.all(all.map((o) => orgStats(deps.pool, o.slug, deps.now()))),
+  ]);
   const ownerIds = [
     ...new Set(
       people
@@ -128,6 +183,7 @@ export async function platformOverview(
       admins: team.filter((d) => d.admin && !d.owner).map((d) => ({ id: d.id, name: d.name })),
       directors: team.filter((d) => !d.admin),
       options: users.rows.filter((u) => !ownerIds.has(u.id)),
+      stats: stats[i],
     };
   });
   const staffIds = new Set(admins.rows.map((a) => a.id));

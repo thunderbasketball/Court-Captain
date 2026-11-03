@@ -146,4 +146,37 @@ describe("CourtCaptain Admin", () => {
     expect(await setPlatformAdmin(deps(), admin, "5550002", false)).toEqual({ ok: true });
     expect(await isOrgOwner(db.pool, "5550002", org)).toBe(false);
   });
+
+  it("each organization's numbers: people, teams, players, coaches logged in this week, visits (staff not counted)", async () => {
+    const team = (
+      await db.pool.query<{ id: string }>(
+        "insert into teams (name, gender, grades, grade_sort, level, created_by) values ('4G A', 'Girls', '{4}', 4, 'REC', 'x') returning id::text",
+      )
+    ).rows[0].id;
+    await db.pool.query(
+      "insert into team_staff (team_id, coach_id, role, added_by) values ($1, '5550003', 'HeadCoach', 'x'), ($1, '5550002', 'TeamParent', 'x')",
+      [team],
+    );
+    await db.pool.query(
+      `insert into registrations (registrant_id, registration_id, first_name, last_name, gender, grade, grade_sort, program, raw, imported_at, imported_by)
+       values ('r1', 'r1', 'A', 'B', 'Girls', '4', 4, 'x', '{}', now(), 'x')`,
+    );
+    await db.pool.query("update users set last_login_at = '2026-10-30T12:00:00Z' where coach_id = '5550003'");
+    // Saturday Oct 31, 8 AM Eastern: today, earlier this week (Monday), and last week.
+    await db.pool.query(
+      `insert into site_visits (org, hour, coach_id, views) values ('thunder', '2026-10-31T12:00:00Z', '5550003', 2),
+         ('thunder', '2026-10-26T14:00:00Z', '5550002', 3), ('thunder', '2026-10-25T14:00:00Z', '5550002', 5)`,
+    );
+    const view = (await platformOverview(deps(), admin))!;
+    expect(view.orgs.find((o) => o.slug === "thunder")!.stats).toEqual({
+      people: 2, // Bo and Cy; not Ada (CourtCaptain staff)
+      teams: 1,
+      players: 1,
+      coaches: 1, // Head and Assistant Coaches only
+      coachesThisWeek: 1,
+      visitsToday: 2,
+      visitsWeek: 5,
+    });
+    expect(view.orgs.find((o) => o.slug === "scenic-city")!.stats).toMatchObject({ teams: 0, players: null });
+  });
 });

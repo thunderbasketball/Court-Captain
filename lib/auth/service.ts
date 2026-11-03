@@ -8,7 +8,7 @@ import { cleanEmail, cleanName, isCode, isPin, maskEmail } from "./validate";
 import { AREAS, type Area } from "../org-admin";
 
 // Same device stays logged in this long after entering the PIN; then the PIN is asked again.
-export const SESSION_HOURS = 24;
+export const SESSION_HOURS = 72;
 export const CODE_MINUTES = 15;
 export const CODE_MAX_TRIES = 5;
 export const CODES_PER_HOUR = 3;
