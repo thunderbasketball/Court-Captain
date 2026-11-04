@@ -4,12 +4,15 @@ import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import { teamPrograms } from "@/lib/org-leagues";
+import { scheduledGames } from "@/lib/scenic-games";
+import { LeagueGames } from "../../../../LeagueGames";
 import { COACH_ROLES, getOrgTeam } from "@/lib/org-teams";
 import AppHeader from "../../../../AppHeader";
 import { Chip, card } from "../../../../ui";
 import { DateChips, ProgramButton, RegisterLeagueButton } from "../../../../leagues/LeagueButtons";
 import { easternDate } from "@/lib/time";
 import { MustBeEntered } from "../../../../TeamRow";
+import { HeadCoachEmailButton, WaitingCoachButton } from "../../../../CoachContactTools";
 import { listOrgRoster } from "@/lib/org-rosters";
 import { AddPlayerButton, ImportPlayersButton, RemovePlayerButton } from "../RosterTools";
 import { AddCoachButton, AltNameButton, DeleteTeamButton, RemoveCoachButton } from "../TeamTools";
@@ -44,6 +47,9 @@ async function OrgTeam({
   const roster = await listOrgRoster({ pool: db, now: () => new Date() }, user, slug, t.id);
   const today = easternDate(new Date());
   const progs = await teamPrograms({ pool: db, now: () => new Date() }, user, slug, t.id);
+  // Its League games (opponent, time and gym once scheduled): matchups are made for its copy in the League.
+  const copy = (await db.query<{ id: string }>("select id::text from scenic_teams where org_team_id = $1", [t.id])).rows[0]?.id;
+  const games = copy ? ((await scheduledGames(db, [copy]))[copy] ?? []) : [];
   const day = (d: string) =>
     new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
   const roleName = (r: string) => COACH_ROLES.find((x) => x.key === r)?.name ?? r;
@@ -99,7 +105,11 @@ async function OrgTeam({
                 {t.gender} · {t.grade} grade
               </p>
               <p className="mt-1 text-xs text-zinc-400">Created by {t.createdBy}</p>
-              {!hasHead && <MustBeEntered what="COACH INFO" />}
+              {!hasHead && !t.waitingCoach && <MustBeEntered what="COACH INFO" />}
+              {t.waitingCoach && <MustBeEntered what="COACH CELL" />}
+              {(t.waitingCoach || t.coaches.some((c) => c.role === "HeadCoach" && !c.email)) && (
+                <MustBeEntered what="COACH EMAIL" />
+              )}
               {!t.players && <MustBeEntered what="ROSTER" />}
             </div>
           </div>
@@ -154,7 +164,21 @@ async function OrgTeam({
                 <h2 className="font-semibold">Coaches</h2>
                 {canManage && <AddCoachButton org={slug} teamId={t.id} hasHead={hasHead} />}
               </div>
-              {!t.coaches.length && <p className="text-sm text-zinc-500">No coaches yet.</p>}
+              {!t.coaches.length && !t.waitingCoach && <p className="text-sm text-zinc-500">No coaches yet.</p>}
+              {t.waitingCoach && (
+                // Named without a cell yet (imported): adding it makes them the Head Coach.
+                <div className="flex items-center justify-between gap-3 py-2.5">
+                  <span className="text-sm">
+                    <span className="block font-medium">
+                      {t.waitingCoach.first} {t.waitingCoach.last}
+                    </span>
+                    <span className="block text-xs text-zinc-500">Head Coach · no cell or email yet</span>
+                  </span>
+                  {canManage && (
+                    <WaitingCoachButton org={slug} teamId={t.id} first={t.waitingCoach.first} last={t.waitingCoach.last} />
+                  )}
+                </div>
+              )}
               <ul className="divide-y divide-zinc-100 dark:divide-white/5">
                 {t.coaches.map((c) => (
                   <li key={c.id} className="flex items-center justify-between gap-3 py-2.5">
@@ -163,6 +187,12 @@ async function OrgTeam({
                       <span className="block text-xs text-zinc-500">
                         {roleName(c.role)} · added by {c.addedBy}
                       </span>
+                      {c.role === "HeadCoach" && !c.email && (
+                        <span className="mt-1 flex items-center gap-2">
+                          <span className="text-xs font-semibold text-red-600 dark:text-red-400">No email yet</span>
+                          {canManage && <HeadCoachEmailButton org={slug} teamId={t.id} name={c.name} />}
+                        </span>
+                      )}
                     </span>
                     {canManage && <RemoveCoachButton org={slug} teamId={t.id} coachId={c.id} name={c.name} />}
                   </li>
@@ -217,6 +247,7 @@ async function OrgTeam({
                                     teamOff={p.registered.teamOff}
                                     canChange={progs.canRegister}
                                   />
+                                  <LeagueGames games={games.filter((g) => g.programId === p.id)} today={today} />
                                 </div>
                               )}
                             </>

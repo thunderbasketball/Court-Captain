@@ -13,6 +13,8 @@ import {
   removeOrgTeamCoach,
   setOrgTeamAltName,
   undoTeamImport,
+  setOrgHeadCoachEmail,
+  setOrgWaitingCoach,
 } from "./org-teams";
 import { addOrgPlayer, importOrgPlayers, listOrgRoster, previewPlayerImport, removeOrgPlayer } from "./org-rosters";
 import { createTestDb } from "./testing/db";
@@ -49,11 +51,11 @@ describe("teams for a registered organization", () => {
     await createOrganization(deps(), jo, { ...input, features: ["team-building"] }, null);
   });
 
-  it("teams are named Grade + Gender + Head Coach (TBD until one), unique; renamed when the Head Coach changes", async () => {
+  it("teams are named Grade + Gender + Head Coach (TBD until one), numbered when the same; renamed when the Head Coach changes", async () => {
     const add = (input: Record<string, unknown>) =>
       createOrgTeam(deps(), jo, org, { level: "REC", headCoach: "none", ...input } as Parameters<typeof createOrgTeam>[3]);
     expect(await add({ gender: "Girls", grades: ["5"] })).toMatchObject({ ok: true, name: "5G TBD" });
-    expect(await add({ gender: "Girls", grades: ["5"] })).toMatchObject({ ok: true, name: "5G TBD 2" });
+    expect(await add({ gender: "Girls", grades: ["5"] })).toMatchObject({ ok: true, name: "5G TBD 2" }); // the 1st is "5G TBD 1"
     const b = await add({
       gender: "Boys",
       grades: ["4", "3"],
@@ -64,10 +66,12 @@ describe("teams for a registered organization", () => {
     expect(b).toMatchObject({ ok: true, name: "4B Lee" });
     const id = (b as { id: string }).id;
     expect(await hasRole("5550009", "Coach")).toBe(true); // login made, Coach role here
-    expect(await add({ gender: "Boys", grades: ["4"], headCoach: "user:5550009" })).toEqual({
-      ok: false,
-      message: 'There\'s already a team named "4B Lee".',
-    });
+    // The same name again numbers both; when one goes, the other drops its number.
+    const again = await add({ gender: "Boys", grades: ["4"], headCoach: "user:5550009" });
+    expect(again).toMatchObject({ ok: true, name: "4B Lee 2" });
+    expect((await getOrgTeam(deps(), jo, org, id))!.team.name).toBe("4B Lee 1");
+    expect(await deleteOrgTeam(deps(), jo, org, (again as { id: string }).id)).toEqual({ ok: true });
+    expect((await getOrgTeam(deps(), jo, org, id))!.team.name).toBe("4B Lee");
     expect(await add({ gender: "Boys", grades: ["4", "6"] })).toMatchObject({ ok: false }); // not next to each other
     expect(await add({ gender: "Boys", grades: ["4"], altName: "=cmd" })).toMatchObject({ ok: false });
 
@@ -78,7 +82,7 @@ describe("teams for a registered organization", () => {
       ok: false,
       message: "This team already has a Head Coach. Remove them first.",
     });
-    const tbd = (await listOrgTeams(deps(), jo, org))!.teams.find((t) => t.name === "5G TBD")!.id;
+    const tbd = (await listOrgTeams(deps(), jo, org))!.teams.find((t) => t.name === "5G TBD 1")!.id;
     expect(
       await addOrgTeamCoach(deps(), jo, org, tbd, { first: "Ann", last: "Kim", cell: "4235550021", role: "HeadCoach" }),
     ).toMatchObject({ ok: true });
@@ -87,14 +91,14 @@ describe("teams for a registered organization", () => {
     expect(list.teams.map((t) => `${t.gender} ${t.grade} ${t.level} ${t.name}${t.altName ? ` · ${t.altName}` : ""}`)).toEqual([
       "Boys 3rd/4th COMP 4B Lee · Bolts",
       "Girls 5th REC 5G Kim",
-      "Girls 5th REC 5G TBD 2",
+      "Girls 5th REC 5G TBD", // left alone, it dropped its number
     ]);
     expect(list.teams[0].coaches.map((c) => `${c.name} ${c.role} by ${c.addedBy}`)).toEqual([
       "Sam Lee HeadCoach by Jordan Harris",
       "Pat Lee AsstCoach by Jordan Harris",
     ]);
     expect(await removeOrgTeamCoach(deps(), jo, org, tbd, "5550021")).toEqual({ ok: true });
-    expect((await getOrgTeam(deps(), jo, org, tbd))!.team.name).toBe("5G TBD");
+    expect((await getOrgTeam(deps(), jo, org, tbd))!.team.name).toBe("5G TBD 2");
     expect(await setOrgTeamAltName(deps(), jo, org, tbd, "Rockets")).toEqual({ ok: true });
     expect((await getOrgTeam(deps(), jo, org, tbd))!.team.altName).toBe("Rockets");
 
@@ -109,6 +113,37 @@ describe("teams for a registered organization", () => {
     expect(await deleteOrgTeam(deps(), jo, org, id)).toEqual({ ok: true });
     expect(await hasRole("5550009", "Coach")).toBe(false);
     expect(await hasRole("5550008", "Coach")).toBe(false);
+  });
+
+  it("a coach with no cell: the team waits for it, named for them; their cell makes them the Head Coach", async () => {
+    const text = "Gender,Grade,Level,Coach First,Coach Last\nGirls,3,COMP,Alex,Campbell\nGirls,3,REC,Alex,Campbell";
+    expect(await importTeams(deps(), jo, org, text)).toMatchObject({ added: ["3G Campbell 1", "3G Campbell 2"] });
+    const list = (await listOrgTeams(deps(), jo, org))!.teams;
+    expect(list.map((t) => [t.name, t.waitingCoach])).toEqual([
+      ["3G Campbell 1", { first: "Alex", last: "Campbell" }],
+      ["3G Campbell 2", { first: "Alex", last: "Campbell" }],
+    ]);
+    const id = list[0].id;
+    expect(await setOrgWaitingCoach(deps(), jo, org, id, null)).toMatchObject({ ok: true, name: "3G TBD" });
+    expect((await getOrgTeam(deps(), jo, org, list[1].id))!.team.name).toBe("3G Campbell"); // left alone: no number
+    expect(
+      await addOrgTeamCoach(deps(), jo, org, list[1].id, {
+        first: "Alex",
+        last: "Campbell",
+        cell: "4235550123",
+        role: "HeadCoach",
+      }),
+    ).toMatchObject({ ok: true });
+    const t = (await getOrgTeam(deps(), jo, org, list[1].id))!.team;
+    expect([t.name, t.waitingCoach, t.coaches.map((c) => [c.role, c.email])]).toEqual([
+      "3G Campbell",
+      null,
+      [["HeadCoach", null]],
+    ]);
+    expect(await setOrgHeadCoachEmail(deps(), jo, org, list[1].id, "alex@example.com")).toEqual({ ok: true });
+    expect(await setOrgHeadCoachEmail(deps(), { ...jo, coachId: "5550007" }, org, list[1].id, "a@b.co")).toMatchObject({
+      ok: false,
+    });
   });
 
   it("needs Team Management, and isn't for Thunder or Scenic City", async () => {
@@ -136,31 +171,32 @@ Coed,3,REC,,,,`;
     const rows = (pre as { rows: { name: string; status: string; gradeLabel: string | null }[] }).rows;
     expect(rows.map((r) => `${r.name || "-"}:${r.status}:${r.gradeLabel}`)).toEqual([
       "4B Lee:exists:4th",
-      "5G Lee:new:5th",
+      "5G Lee 1:new:5th", // Ann's COMP and REC teams: the same name, so both numbered
       "4B TBD:new:3rd/4th",
-      "5G Lee:error:5th",
+      "5G Lee 2:new:5th",
       "-:error:3rd",
     ]);
     expect(await previewTeamImport(deps(), { ...jo, coachId: "5550007" }, org, text)).toMatchObject({ ok: false });
     expect(await importTeams(deps(), jo, org, text)).toEqual({
       ok: true,
-      added: ["5G Lee", "4B TBD"],
-      skipped: ["4B Lee: already a team", "5G Lee: Listed twice", "Row 6: Gender: Boys or Girls"],
+      added: ["5G Lee 1", "4B TBD", "5G Lee 2"],
+      skipped: ["4B Lee: already a team", "Row 6: Gender: Boys or Girls"],
     });
     const list = (await listOrgTeams(deps(), jo, org))!.teams;
     expect(list.map((t) => `${t.name}${t.altName ? ` · ${t.altName}` : ""}`)).toEqual([
       "4B TBD · Comets",
       "4B Lee",
-      "5G Lee · Rockets",
+      "5G Lee 1 · Rockets",
+      "5G Lee 2",
     ]);
-    expect(list.find((t) => t.name === "5G Lee")!.coaches).toMatchObject([{ name: "Ann Lee", role: "HeadCoach" }]);
+    expect(list.find((t) => t.name === "5G Lee 1")!.coaches).toMatchObject([{ name: "Ann Lee", role: "HeadCoach" }]);
     // Again: nothing new.
     expect(await importTeams(deps(), jo, org, text)).toMatchObject({ ok: true, added: [] });
 
     // Undo: the import's teams go (and their coaches lose the Coach role); a team registered in a program is kept.
     const [batch] = (await listTeamImports(deps(), jo, org))!;
-    expect(batch).toMatchObject({ importedBy: "Jordan Harris", teams: 2, left: 2, undoneBy: null });
-    const rockets = list.find((t) => t.name === "5G Lee")!.id;
+    expect(batch).toMatchObject({ importedBy: "Jordan Harris", teams: 3, left: 3, undoneBy: null });
+    const rockets = list.find((t) => t.name === "5G Lee 1")!.id;
     const st = await db.pool.query<{ id: string }>(
       `insert into scenic_teams (name, gender, grade_low, grade, level, coach_id, created_by, updated_by, org_team_id, owner_coach_id)
        values ('Rockets', 'Girls', 5, 5, 'COMP', null, 'x', 'x', $1, '5550001') returning id::text`,
@@ -187,7 +223,12 @@ Coed,3,REC,,,,`;
       [p.rows[0].id, st.rows[0].id, pool.rows[0].id],
     );
     expect(await undoTeamImport(deps(), { ...jo, coachId: "5550007" }, org, batch.id)).toMatchObject({ ok: false });
-    expect(await undoTeamImport(deps(), jo, org, batch.id)).toEqual({ ok: true, removed: ["4B TBD"], kept: ["5G Lee"] });
+    expect(await undoTeamImport(deps(), jo, org, batch.id)).toEqual({
+      ok: true,
+      removed: ["4B TBD", "5G Lee 2"],
+      kept: ["5G Lee 1"],
+    });
+    // Left alone, it dropped its number.
     expect((await listOrgTeams(deps(), jo, org))!.teams.map((t) => t.name)).toEqual(["4B Lee", "5G Lee"]);
     // Withdraw it, then undo again: it goes, and Ann loses the Coach role.
     await db.pool.query("delete from scenic_registrations");

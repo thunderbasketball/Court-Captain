@@ -17,14 +17,73 @@ export function gradesOk(grades: string[]): boolean {
   return b === a + 1;
 }
 
-// A team with no Head Coach yet is "4G TBD"; another like it "4G TBD 2", and so on (`taken`: names in use, lower case).
-export function tbdName(gender: "Boys" | "Girls", grades: string[], taken: Set<string>): string {
-  const base = teamName(gender, grades, "TBD");
-  for (let n = 1; ; n++) {
-    const name = n === 1 ? base : `${base} ${n}`;
-    if (!taken.has(name.toLowerCase())) return name;
-  }
+// ---- Names in use: the same name is numbered, every one of them ----
+// "3G Campbell" for one team; when another would get it too, both are numbered: "3G Campbell 1" and "3G Campbell 2"
+// (a 3rd is "3G Campbell 3"). Teams with no Head Coach yet the same way: "4G TBD", then "4G TBD 1" and "4G TBD 2".
+
+export type NamedTeam = { id: string; name: string };
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// "3G Campbell 2" → "3G Campbell".
+export const baseName = (name: string) => name.replace(/ \d{1,3}$/, "");
+const inGroup = (name: string, base: string) => new RegExp(`^${escape(base)}( \\d{1,3})?$`, "i").test(name);
+
+// The name a new team gets (`base` by the rule), and the teams to rename first (one that had `base` gets a number).
+export function placeName(teams: NamedTeam[], base: string): { name: string; renames: NamedTeam[] } {
+  const group = teams.filter((t) => inGroup(t.name, base));
+  if (!group.length) return { name: base, renames: [] };
+  const used = new Set(group.map((t) => Number(t.name.slice(base.length).trim()) || 0));
+  const next = () => {
+    let n = 1;
+    while (used.has(n)) n++;
+    used.add(n);
+    return `${base} ${n}`;
+  };
+  const renames = group.filter((t) => t.name.toLowerCase() === base.toLowerCase()).map((t) => ({ id: t.id, name: next() }));
+  return { name: next(), renames };
 }
+
+// After a team leaves a name (renamed or deleted): the one team left with it drops its number ("3G Campbell 1" →
+// "3G Campbell"). `teams`: those still there.
+export function settleName(teams: NamedTeam[], base: string): NamedTeam | null {
+  const group = teams.filter((t) => inGroup(t.name, base));
+  return group.length === 1 && group[0].name !== base ? { id: group[0].id, name: base } : null;
+}
+
+// An import's preview: the name each new row will get, numbered against the teams already there and the rows before it.
+// `add` returns notes for teams already there that get a number because of it.
+export function namePlanner(existing: NamedTeam[]) {
+  const teams = existing.map((t) => ({ ...t }));
+  const already = new Set(existing.map((t) => t.id));
+  return {
+    add(key: string, base: string): string[] {
+      const { name, renames } = placeName(teams, base);
+      const notes: string[] = [];
+      for (const r of renames) {
+        const t = teams.find((x) => x.id === r.id)!;
+        if (already.has(r.id)) notes.push(`${t.name} (already a team) becomes ${r.name}`);
+        t.name = r.name;
+      }
+      teams.push({ id: key, name });
+      return notes;
+    },
+    nameOf: (key: string) => teams.find((t) => t.id === key)?.name ?? "",
+  };
+}
+
+// An import's rows already there: a row with a coach is the team with that name (numbered or not) and level, each team
+// matched once (so a coach's COMP and REC teams are each found).
+export function existingTeams(teams: { name: string; level: string }[]) {
+  const used = new Set<number>();
+  return (base: string, level: string | null) => {
+    const i = teams.findIndex((t, k) => !used.has(k) && t.level === level && inGroup(t.name, base));
+    if (i < 0) return false;
+    used.add(i);
+    return true;
+  };
+}
+
+// With no Head Coach yet: "4G TBD" (numbered when there's another).
+export const tbdBase = (gender: "Boys" | "Girls", grades: string[]) => teamName(gender, grades, "TBD");
 
 // A team's name in a league: its organization's Abbreviation first ("ER 5B Harris").
 export const leagueName = (abbr: string, name: string) => `${abbr} ${name}`;

@@ -14,6 +14,7 @@ import { cleanPlaceName } from "./scenic-partners";
 import { LEVELS, gradeLabel, gradeRange, teamsICanManage, type Level } from "./scenic-teams";
 import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
+import { scheduledGames, type ScheduledGame } from "./scenic-games";
 
 export { REG_OPTIONS, type ProgramOption, type RegOptionKind } from "./program-options";
 
@@ -113,6 +114,7 @@ export type RegisteredTeam = {
   gradeLabel: string;
   level: Level;
   from: string; // partner name, or "Solo · owner"
+  partnerId: string | null; // the school or organization it comes from (its home gyms on the Scheduler Grid)
   coach: string | null; // an organization's team may have no Head Coach yet
   coachCell: string | null;
   registeredBy: string;
@@ -190,6 +192,7 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
       grade: number;
       level: Level;
       partner: string | null;
+      partner_id: string | null;
       owner: string | null;
       coach: string;
       coach_cell: string;
@@ -200,7 +203,7 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
       removed_by: string | null;
       off: Record<string, string>;
     }>(
-      `select r.pool_id::text, t.id::text as team_id, t.name, t.grade_low, t.grade, t.level, p.name as partner,
+      `select r.pool_id::text, t.id::text as team_id, t.name, t.grade_low, t.grade, t.level, p.name as partner, t.partner_id::text,
               o.first_name || ' ' || o.last_name as owner, c.first_name || ' ' || c.last_name as coach, c.cell as coach_cell,
               r.registered_by, r.moved_by, r.paid, r.paid_set_by, r.removed_by,
               coalesce((select json_object_agg(x.off, x.set_by) from scenic_team_off x
@@ -225,6 +228,7 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
     gradeLabel: gradeLabel(r.grade_low, r.grade),
     level: r.level,
     from: r.partner ?? `Solo · ${r.owner}`,
+    partnerId: r.partner_id,
     coach: r.coach,
     coachCell: r.coach_cell,
     registeredBy: r.registered_by,
@@ -282,6 +286,164 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
     canRegister,
     cantRegister,
   };
+}
+
+// ---- Teams by date (a League's page and the Scheduler) ----
+
+export type DateTeam = RegisteredTeam & {
+  division: string; // "Boys 3rd–4th · 4th REC"
+  divisionId: string;
+  divisionName: string; // "Boys 3rd–4th"
+  group: string; // "4th REC"
+  groupGrade: number; // the grade group's grade (a 3rd/4th team plays as 4th)
+  note: string; // "1GG", "2GG" or "Bracket"
+  out: string | null; // taken out of (or withdrew from) this date or the Brackets: by whom
+};
+export type DateEvent = {
+  key: string; // the date, or "brackets"
+  date: string; // the Game Day, or the first Bracket Day
+  lastDate: string; // the same, or the last Bracket Day
+  bracket: boolean;
+  teams: DateTeam[]; // Boys then Girls by grade (division order); those out are listed, crossed out
+  playing: number; // teams still in
+  games: number; // games guaranteed that day (teams still in)
+};
+
+// A League's Game Days, each with its teams (1GG/2GG), then the Brackets as one event over its Bracket Days (teams play
+// until they lose): the teams in the brackets. Other kinds of programs: none.
+export function teamsByDate(p: ProgramDetail): DateEvent[] {
+  if (p.kind !== "League") return [];
+  const registered = p.divisionList.flatMap((d) =>
+    d.groups.flatMap((g) =>
+      g.pools.flatMap((o) =>
+        o.teams.map((t) => ({
+          ...t,
+          division: `${d.label} · ${g.label}`,
+          divisionId: d.id,
+          divisionName: d.label,
+          group: g.label,
+          groupGrade: g.grade,
+        })),
+      ),
+    ),
+  );
+  const inPlay = (t: DateTeam) => !t.removedBy && !t.out;
+  const days: DateEvent[] = p.gameDates.map((date) => {
+    const teams = registered
+      .filter((t) => t.entry?.perDate[date])
+      .map((t) => ({ ...t, note: `${t.entry!.perDate[date]}GG`, out: t.off[date] ?? null }));
+    const games = teams.filter(inPlay).reduce((n, t) => n + t.entry!.perDate[date], 0);
+    return { key: date, date, lastDate: date, bracket: false, teams, playing: teams.filter(inPlay).length, games };
+  });
+  if (p.bracketDates.length) {
+    const teams = registered.filter((t) => t.entry?.bracket).map((t) => ({ ...t, note: "Bracket", out: t.off.brackets ?? null }));
+    days.push({
+      key: "brackets",
+      date: p.bracketDates[0],
+      lastDate: p.bracketDates.at(-1)!,
+      bracket: true,
+      teams,
+      playing: teams.filter(inPlay).length,
+      games: 0,
+    });
+  }
+  return days;
+}
+
+export type ScheduleDay = {
+  date: string; // YYYY-MM-DD
+  playing: number; // teams still in, every League that day
+  games: number; // games guaranteed, every League that day
+  programs: (DateEvent & {
+    programId: string;
+    programName: string;
+    bracketDays: string[];
+    matchups: Matchup[];
+    otherDays: Record<string, string[]>; // pair "a-b" (lower id first) → the League's other Game Days they play
+    // Each team's matchups on every Game Day of the League (past ones too), soonest first.
+    teamGames: Record<string, ScheduledGame[]>;
+  })[];
+};
+// One game in a division on a Game Day (team ids; names come from the day's teams).
+export type Matchup = {
+  id: string;
+  divisionId: string;
+  a: string;
+  b: string;
+  before: string[]; // the League's other Game Days these two also play (YYYY-MM-DD)
+  createdBy: string;
+  court: string | null; // its game slot on the Grid: the court key and start time ("HH:MM"), or null
+  starts: string | null;
+  placedBy: string | null;
+};
+
+// The Scheduler (Admins and Directors of Scheduling): every League's upcoming Game Days (and Brackets, on their first
+// Bracket Day) on one list, soonest first, each with the teams playing. Null for anyone else.
+export async function gameDaySchedule(deps: Deps, viewer: SessionUser): Promise<{ today: string; days: ScheduleDay[] } | null> {
+  if (!(await isScheduler(deps.pool, viewer))) return null;
+  const today = easternDate(deps.now());
+  const ids = await deps.pool.query<{ id: string }>(
+    `select id::text from scenic_programs where kind = 'League' and ends_on >= $1::date order by starts_on, lower(name)`,
+    [today],
+  );
+  // Every matchup in these Leagues (all days, to show pairs that also meet on another Game Day).
+  const all = await deps.pool.query<Matchup & { programId: string; day: string }>(
+    `select m.id::text, m.program_id::text as "programId", m.division_id::text as "divisionId", m.day::text,
+            m.team_a::text as a, m.team_b::text as b, m.created_by as "createdBy",
+            m.court_key as court, to_char(m.starts, 'HH24:MI') as starts, m.placed_by as "placedBy"
+       from scenic_matchups m where m.program_id = any($1::bigint[])
+      order by m.day, m.id`,
+    [ids.rows.map((r) => r.id)],
+  );
+  const pair = (m: { programId: string; a: string; b: string }) => `${m.programId}:${m.a}-${m.b}`;
+  const daysOf = new Map<string, string[]>();
+  for (const m of all.rows) daysOf.set(pair(m), [...(daysOf.get(pair(m)) ?? []), m.day]);
+  const byDay = new Map<string, ScheduleDay>();
+  for (const { id } of ids.rows) {
+    const p = await getProgram(deps, viewer, id);
+    if (!p) continue;
+    // Each team's games in this League, with where and when once placed on the Grid.
+    const games = await scheduledGames(
+      deps.pool,
+      p.divisionList.flatMap((d) => d.groups.flatMap((g) => g.pools.flatMap((o) => o.teams.map((t) => t.teamId)))),
+    );
+    for (const list of Object.values(games)) list.splice(0, list.length, ...list.filter((g) => g.programId === p.id));
+    for (const e of teamsByDate(p)) {
+      if (e.lastDate < today) continue;
+      const day = byDay.get(e.date) ?? { date: e.date, playing: 0, games: 0, programs: [] };
+      const matchups = e.bracket
+        ? []
+        : all.rows
+            .filter((m) => m.programId === p.id && m.day === e.date)
+            .map(({ id, divisionId, a, b, createdBy, programId, court, starts, placedBy }) => ({
+              id,
+              divisionId,
+              a,
+              b,
+              createdBy,
+              court,
+              starts,
+              placedBy,
+              before: daysOf.get(pair({ programId, a, b }))!.filter((d) => d !== e.date),
+            }));
+      const otherDays: Record<string, string[]> = {};
+      if (!e.bracket)
+        for (const m of all.rows) if (m.programId === p.id && m.day !== e.date) (otherDays[`${m.a}-${m.b}`] ??= []).push(m.day);
+      day.programs.push({
+        ...e,
+        programId: p.id,
+        programName: p.name,
+        bracketDays: e.bracket ? p.bracketDates : [],
+        matchups,
+        otherDays,
+        teamGames: e.bracket ? {} : games,
+      });
+      day.playing += e.playing;
+      day.games += e.games;
+      byDay.set(e.date, day);
+    }
+  }
+  return { today, days: [...byDay.values()].sort((a, b) => a.date.localeCompare(b.date)) };
 }
 
 // ---- Directors of Programs: create, edit, delete ----
@@ -688,6 +850,43 @@ export async function registerTeam(
       const r = await saveChoice(q, programId, teamId, choice, by(viewer), deps.now());
       if ("error" in r) throw new ProgramError(r.error);
       return r;
+    }),
+  );
+}
+
+// Register every team this person can register (the ones "Register a team" offers) that isn't in the program yet, each
+// into its matching division (smallest pool); a League: ALL Season. Teams with no division here are skipped and say why.
+// Same rules as one team: whoever manages the teams while registration is open, a Director of Programs any time.
+export async function registerAllScenicTeams(
+  deps: Deps,
+  viewer: SessionUser,
+  programId: unknown,
+): Promise<Result<{ registered: string[]; skipped: string[] }>> {
+  if (!isId(programId)) return { ok: false, message: "Pick a program." };
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      const p = await q.query<{ reg_opens: string; reg_closes: string }>(
+        "select reg_opens::text, reg_closes::text from scenic_programs where id = $1 for update",
+        [programId],
+      );
+      if (!p.rows[0]) throw new ProgramError("That program no longer exists.");
+      const manage = await isProgramsDirector(q, viewer);
+      if (!manage && regStatus(easternDate(deps.now()), p.rows[0].reg_opens, p.rows[0].reg_closes) !== "open")
+        throw new ProgramError("Registration isn't open for this program.");
+      const done = new Set(
+        (
+          await q.query<{ id: string }>("select team_id::text as id from scenic_registrations where program_id = $1", [programId])
+        ).rows.map((r) => r.id),
+      );
+      const registered: string[] = [];
+      const skipped: string[] = [];
+      for (const t of await teamsICanManage(q, viewer)) {
+        if (done.has(t.id)) continue;
+        const placed = await saveChoice(q, programId, t.id, { allSeason: true, days: [] }, by(viewer), deps.now());
+        if ("error" in placed) skipped.push(`${t.name}: ${placed.error}`);
+        else registered.push(`${t.name}: ${placed.division}`);
+      }
+      return { registered, skipped };
     }),
   );
 }

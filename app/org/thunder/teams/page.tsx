@@ -74,7 +74,7 @@ async function Teams({ searchParams }: { searchParams: PageProps<"/org/thunder/t
               example={
                 "Gender,Grade,Level,Coach First,Coach Last,Coach Cell,Alternate Name\nBoys,3rd/4th,REC,Sam,Lee,423-555-0101,Bolts\nGirls,5th,COMP,,,,"
               }
-              help="One team per row with its Gender, Grade and Level (REC or COMP), and if you have them the Head Coach's name and cell and an Alternate name, in any order. Each team is named from its Head Coach (like 4G Epps; 4G TBD until a coach is added). Paste from a spreadsheet or choose a CSV file. Next you'll check which column is which, then see exactly what will be added (we clean up things like 3 & 4 or R)."
+              help="One team per row with its Gender, Grade and Level (REC or COMP), and if you have them the Head Coach's name, cell and email and an Alternate name, in any order. Each team is named from its Head Coach (like 4G Epps; 4G TBD until a coach is added; the same name twice gets numbers: 4G Epps 1 and 2). A coach without a cell is fine: add it later on the team. Paste from a spreadsheet or choose a CSV file. Next you'll check which column is which, then see exactly what will be added (we clean up things like 3 & 4 or R)."
             />
             <AddTeamButton people={[...people.users, ...people.volunteers]} create={createTeam} href="/org/thunder/teams/" />
           </div>
@@ -94,6 +94,8 @@ async function Teams({ searchParams }: { searchParams: PageProps<"/org/thunder/t
                   level={t.level}
                   sub={[gradesText(t.grades), ...t.practiceLocations].join(" · ")}
                   hasCoach={!!t.headCoach}
+                  waitingCoach={t.waitingCoach && `${t.waitingCoach.first} ${t.waitingCoach.last}`}
+                  needsEmail={t.staff.some((p) => p.role === "HeadCoach" && !p.email)}
                   players={t.players.length}
                   people={t.staff.map((p) => (
                     <ContactChip

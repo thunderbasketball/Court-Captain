@@ -57,3 +57,12 @@ export async function previewPlayers(org: string, teamId: string, text: string) 
 export async function importPlayers(org: string, teamId: string, text: string) {
   return guarded((u) => rosters.importOrgPlayers(deps(), u, org, teamId, text));
 }
+
+// A Head Coach named without a cell yet: fix the name, or remove them (null). Their cell goes through addCoach (Head
+// Coach). Checked again in lib/org-teams.
+export async function saveWaitingCoach(org: string, teamId: string, input: { first: string; last: string } | null) {
+  return guarded((u) => teams.setOrgWaitingCoach(deps(), u, org, teamId, input));
+}
+export async function saveHeadCoachEmail(org: string, teamId: string, email: string) {
+  return guarded((u) => teams.setOrgHeadCoachEmail(deps(), u, org, teamId, String(email)));
+}

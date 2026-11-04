@@ -113,7 +113,10 @@ describe("Home metrics", () => {
         { label: "3rd Girls", n: 1 },
       ],
     });
-    expect(m.missing).toEqual([{ id: t2, name: "3G TBD", noCoach: true, noPlayers: true }]);
+    expect(m.missing).toEqual([
+      { id: t2, name: "3G TBD", noCoach: true, noCell: false, noEmail: false, noPlayers: true },
+      { id: expect.any(String), name: "5B Coach", noCoach: false, noCell: false, noEmail: true, noPlayers: false }, // Head Coach has no email
+    ]);
     expect(m.uniforms).toEqual({ players: 2, ready: 1, missing: 1 }); // r1 ordered a uniform and has no size
     expect(m.practices).toEqual({ thisWeek: { booked: 1, open: 1 }, nextWeek: { booked: 0, open: 1 }, blackoutDays: 1 });
     expect(m.coaches.map((c) => [c.name, c.teams, c.lastLogin?.toISOString() ?? null])).toEqual([

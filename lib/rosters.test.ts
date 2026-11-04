@@ -113,8 +113,17 @@ describe("rosters", () => {
   });
 
   it("staff can see their roster but not change it; others can't see it", async () => {
+    await db.pool.query(
+      `update registrations set parent1_first = 'Pam', parent1_last = 'Ames', parent1_cell = '(423) 555-7777', parent1_email = 'pam@x.com',
+              parent2_first = 'Jo', parent2_cell = 'none', parent2_email = 'not an email' where registrant_id = 'r1'`,
+    );
     await addPlayers(deps(), director, team, ["r1"]);
-    expect((await listRoster(deps(), head, team))?.length).toBe(1);
+    const seen = await listRoster(deps(), head, team);
+    expect(seen?.length).toBe(1);
+    expect(seen![0].parents).toEqual([
+      { name: "Pam Ames", cell: "4235557777", email: "pam@x.com" },
+      { name: "Jo", cell: null, email: null },
+    ]);
     expect(await listRoster(deps(), stranger, team)).toBeNull();
     expect(await addPlayers(deps(), head, team, ["r2"])).toEqual({
       ok: false,

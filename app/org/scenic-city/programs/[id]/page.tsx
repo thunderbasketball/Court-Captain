@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { REG_OPTIONS, entryLine, money } from "@/lib/program-options";
 import { requireFeature } from "@/lib/features-server";
 import { formatCell } from "@/lib/phone";
-import { getProgram, listPrograms } from "@/lib/scenic-programs";
+import { getProgram, listPrograms, teamsByDate } from "@/lib/scenic-programs";
 import { dayLabel } from "@/lib/time";
 import { shortDate as shortDay } from "@/lib/program-options";
 import AppHeader from "../../../../AppHeader";
@@ -26,6 +26,7 @@ import {
   WithdrawTeam,
 } from "../ProgramTools";
 import ProgramDates from "../ProgramDates";
+import { RegisterAllButton } from "../../../../leagues/LeagueButtons";
 import { RegBadge } from "../RegBadge";
 
 export default function ProgramPage({ params }: PageProps<"/org/scenic-city/programs/[id]">) {
@@ -56,37 +57,11 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
     : [];
   const fee = p.feeCents === null ? null : `$${(p.feeCents / 100).toFixed(2)}`;
   const shown = manage ? p.divisionList : p.divisionList.filter((d) => d.teams);
-  // A League's Game Days, each with its teams (1GG/2GG), then the Brackets as one event over its Bracket Days (teams play
-  // until they lose): the teams in the brackets.
-  const registered = p.divisionList.flatMap((d) =>
-    d.groups.flatMap((g) => g.pools.flatMap((o) => o.teams.map((t) => ({ ...t, division: `${d.label} · ${g.label}` })))),
-  );
-  const byDate =
-    p.kind === "League"
-      ? [
-          ...p.gameDates.map((date) => {
-            const teams = registered
-              .filter((t) => t.entry?.perDate[date])
-              .map((t) => ({ ...t, note: `${t.entry!.perDate[date]}GG`, out: t.off[date] ?? null }));
-            const games = teams.filter((t) => !t.removedBy && !t.out).reduce((n, t) => n + t.entry!.perDate[date], 0);
-            return { key: date, date, title: dayLabel(date), bracket: false, teams, games };
-          }),
-          ...(p.bracketDates.length
-            ? [
-                {
-                  key: "brackets",
-                  date: p.bracketDates[0],
-                  title: `Brackets · ${p.bracketDates.map(shortDay).join(", ")}`,
-                  bracket: true,
-                  teams: registered
-                    .filter((t) => t.entry?.bracket)
-                    .map((t) => ({ ...t, note: "Bracket", out: t.off.brackets ?? null })),
-                  games: 0,
-                },
-              ]
-            : []),
-        ]
-      : [];
+  // A League's Game Days with their teams, then the Brackets (lib: teamsByDate, shared with the Scheduler).
+  const byDate = teamsByDate(p).map((e) => ({
+    ...e,
+    title: e.bracket ? `Brackets · ${p.bracketDates.map(shortDay).join(", ")}` : dayLabel(e.date),
+  }));
   const nextDate = byDate.find((d) => d.date >= p.today)?.key;
 
   return (
@@ -183,7 +158,18 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
 
         {(p.canRegister.length > 0 || p.cantRegister.length > 0) && (
           <section className={`${card} space-y-2 p-4`}>
-            <h2 className="font-semibold">Register a team</h2>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <h2 className="font-semibold">Register a team</h2>
+              {p.canRegister.length > 1 && (
+                <RegisterAllButton
+                  org="scenic-city"
+                  programId={p.id}
+                  program={p.name}
+                  count={p.canRegister.length}
+                  allSeason={p.kind === "League"}
+                />
+              )}
+            </div>
             {p.canRegister.length > 0 ? (
               <RegisterTeam
                 programId={p.id}
@@ -326,8 +312,7 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
                       )}
                     </span>
                     <span className="shrink-0 text-xs text-zinc-500">
-                      {d.teams.filter((t) => !t.removedBy && !t.out).length} team
-                      {d.teams.filter((t) => !t.removedBy && !t.out).length === 1 ? "" : "s"}
+                      {d.playing} team{d.playing === 1 ? "" : "s"}
                       {d.games > 0 && ` · ${d.games} game${d.games === 1 ? "" : "s"} guaranteed`}
                     </span>
                   </summary>

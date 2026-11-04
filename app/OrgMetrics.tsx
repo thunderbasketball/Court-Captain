@@ -138,7 +138,9 @@ export default function OrgMetrics({
             <h2 className="text-sm font-semibold">
               Teams missing something <span className="font-normal text-zinc-500">({m.missing.length})</span>
             </h2>
-            {!m.missing.length && <p className="mt-1 text-sm text-zinc-500">✓ Every team has a Head Coach and players.</p>}
+            {!m.missing.length && (
+              <p className="mt-1 text-sm text-zinc-500">✓ Every team has a Head Coach (with cell and email) and players.</p>
+            )}
             <ul className="mt-1 max-h-64 divide-y divide-zinc-100 overflow-y-auto dark:divide-white/5">
               {m.missing.map((t) => (
                 <li key={t.id} className="flex items-center justify-between gap-2 py-1.5 text-sm">
@@ -147,6 +149,8 @@ export default function OrgMetrics({
                   </Link>
                   <span className="flex shrink-0 gap-1">
                     {t.noCoach && <Need>No Head Coach</Need>}
+                    {t.noCell && <Need>No coach cell</Need>}
+                    {t.noEmail && <Need>No coach email</Need>}
                     {t.noPlayers && <Need>No players</Need>}
                   </span>
                 </li>

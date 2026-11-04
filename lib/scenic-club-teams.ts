@@ -10,7 +10,17 @@ import { cleanPlaceName } from "./scenic-partners";
 import { gradeLabel, LEVELS, parseGrade } from "./scenic-teams";
 import { withTx, type Queryable } from "./sql";
 import { parseTeamRows, type ImportRow } from "./team-import-parse";
-import { gradesOk, leagueName, teamName } from "./team-names";
+import {
+  baseName,
+  existingTeams,
+  gradesOk,
+  leagueName,
+  namePlanner,
+  placeName,
+  settleName,
+  teamName,
+  type NamedTeam,
+} from "./team-names";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -100,21 +110,18 @@ async function clubTeamName(
   last: string | null,
 ) {
   await q.query("select pg_advisory_xact_lock(hashtext('scenic-club:' || $1))", [club.id]);
-  const taken = new Set(
-    (await q.query<{ name: string }>("select lower(name) as name from scenic_teams where partner_id = $1", [club.id])).rows.map(
-      (r) => r.name,
-    ),
-  );
-  if (last) {
-    const name = leagueName(club.abbr, teamName(gender, grades, last));
-    if (taken.has(name.toLowerCase())) throw new TeamError(`There's already a team named "${name}".`);
-    return name;
-  }
-  const base = leagueName(club.abbr, teamName(gender, grades, "TBD"));
-  for (let n = 1; ; n++) {
-    const name = n === 1 ? base : `${base} ${n}`;
-    if (!taken.has(name.toLowerCase())) return name;
-  }
+  const teams = (await q.query<NamedTeam>("select id::text, name from scenic_teams where partner_id = $1", [club.id])).rows;
+  // Numbered, with any of the club's teams already named that ("RA 3G Campbell 1", "RA 3G Campbell 2").
+  const { name, renames } = placeName(teams, leagueName(club.abbr, teamName(gender, grades, last ?? "TBD")));
+  for (const r of renames) await q.query("update scenic_teams set name = $2 where id = $1", [r.id, r.name]);
+  return name;
+}
+
+// After a club's team is removed: the one left with its name drops its number.
+async function settleClubName(q: Pick<Queryable, "query">, clubId: string, base: string) {
+  const teams = (await q.query<NamedTeam>("select id::text, name from scenic_teams where partner_id = $1", [clubId])).rows;
+  const s = settleName(teams, base);
+  if (s) await q.query("update scenic_teams set name = $2 where id = $1", [s.id, s.name]);
 }
 
 const altOf = (v: unknown) => {
@@ -137,13 +144,28 @@ async function insertTeam(
     coachId: string | null;
     alt: string | null;
     importId?: string;
+    waiting?: { first: string; last: string } | null; // a Head Coach named without a cell yet
   },
 ) {
   const nums = t.grades.map((g) => (g === "K" ? 0 : Number(g))).sort((a, b) => a - b);
   const r = await q.query<{ id: string }>(
-    `insert into scenic_teams (name, gender, grade_low, grade, level, partner_id, coach_id, created_by, created_at, updated_by, updated_at, alt_name, import_id)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $8, $9, $10, $11) returning id::text`,
-    [t.name, t.gender, nums[0], nums.at(-1), t.level, t.club.id, t.coachId, by(viewer), now, t.alt, t.importId ?? null],
+    `insert into scenic_teams (name, gender, grade_low, grade, level, partner_id, coach_id, created_by, created_at, updated_by, updated_at, alt_name, import_id, coach_first, coach_last)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $8, $9, $10, $11, $12, $13) returning id::text`,
+    [
+      t.name,
+      t.gender,
+      nums[0],
+      nums.at(-1),
+      t.level,
+      t.club.id,
+      t.coachId,
+      by(viewer),
+      now,
+      t.alt,
+      t.importId ?? null,
+      t.waiting?.first ?? null,
+      t.waiting?.last ?? null,
+    ],
   );
   if (t.coachId)
     await q.query("select set_role($1, $2, 'Coach', true, $3), set_role($1, $2, 'Request', false, $3)", [
@@ -211,25 +233,35 @@ export type ClubImportRow = ImportRow & { status: "new" | "exists" | "error"; gr
 const importGrades = (g: string) => g.split("-").map((x) => (x === "0" ? "K" : x));
 
 async function previewRows(q: Pick<Queryable, "query">, text: string) {
-  const parsed = parseTeamRows(text, { named: true });
+  const parsed = parseTeamRows(text, { named: true, cellOptional: true });
   const partners = (
     await q.query<{
       id: string;
       name: string;
       abbr: string | null;
       org_slug: string | null;
-      names: string[] | null;
+      teams: { id: string; name: string; level: string }[];
       alts: string[] | null;
     }>(
       `select p.id::text, p.name, p.abbr, p.org_slug,
-              array(select lower(t.name) from scenic_teams t where t.partner_id = p.id) as names,
+              coalesce((select json_agg(json_build_object('id', t.id::text, 'name', t.name, 'level', t.level)) from scenic_teams t
+                        where t.partner_id = p.id), '[]') as teams,
               array(select lower(t.alt_name) from scenic_teams t where t.partner_id = p.id and t.alt_name is not null) as alts
        from partners p`,
     )
   ).rows;
   const byName = new Map(partners.map((p) => [p.name.toLowerCase(), p]));
-  const seen = new Set<string>();
-  const rows: ClubImportRow[] = parsed.rows.map((p) => {
+  // Per club: its teams already there (by name, numbered or not, and level) and each new team's name, numbered when the
+  // same as another's.
+  const clubs = new Map<string, { there: ReturnType<typeof existingTeams>; plan: ReturnType<typeof namePlanner> }>();
+  const forClub = (key: string, teams: { id: string; name: string; level: string }[]) => {
+    let c = clubs.get(key);
+    if (!c) clubs.set(key, (c = { there: existingTeams(teams), plan: namePlanner(teams) }));
+    return c;
+  };
+  const seenAlt = new Set<string>();
+  const planned: { club: string; key: string }[] = [];
+  const rows: ClubImportRow[] = parsed.rows.map((p, i) => {
     // The first column is the club: errors about a "team name" are about it.
     const errors = p.errors.map((e) =>
       /team name/i.test(e)
@@ -242,21 +274,32 @@ async function previewRows(q: Pick<Queryable, "query">, text: string) {
     if (club?.org_slug) errors.push(`${club.name} is on CourtCaptain: they add their own teams`);
     const abbr = club?.abbr ?? clubAbbr(p.name);
     const team = p.gender && p.grade ? leagueName(abbr, teamName(p.gender, importGrades(p.grade), p.coach?.last ?? "TBD")) : "";
-    const key = p.coach ? team.toLowerCase() : p.altName ? `alt:${p.altName.toLowerCase()}` : "";
-    const clubKey = `${p.name.toLowerCase()}|${key}`;
-    if (key && seen.has(clubKey)) errors.push("Listed twice");
-    if (key) seen.add(clubKey);
-    const there = !!club && !!key && (p.coach ? !!club.names?.includes(key) : !!club.alts?.includes(key.slice(4)));
+    const alt = !p.coach && p.altName ? `${p.name.toLowerCase()}|${p.altName.toLowerCase()}` : "";
+    if (alt && seenAlt.has(alt)) errors.push("Listed twice");
+    if (alt) seenAlt.add(alt);
+    const c = forClub(p.name.toLowerCase(), club?.teams ?? []);
+    const there =
+      !errors.length &&
+      (p.coach ? !!club && c.there(team, p.level) : !!club && !!p.altName && !!club.alts?.includes(p.altName.toLowerCase()));
+    const status = errors.length ? "error" : there ? "exists" : "new";
+    const fixes = status === "new" ? [...p.fixes, ...c.plan.add(`row:${i}`, team)] : p.fixes;
+    if (status === "new" && p.coach && !p.coach.cell)
+      fixes.push(`${p.coach.first} ${p.coach.last} has no cell yet: the team waits for it (COACH CELL MUST BE ENTERED)`);
+    if (status === "new") planned[i] = { club: p.name.toLowerCase(), key: `row:${i}` };
     const g = p.grade ? parseGrade(p.grade) : null;
     return {
       ...p,
       // A club name that can't be used is shown as typed.
       name: team && !errors.some((e) => /organization/i.test(e)) ? `${team} · ${club?.name ?? `${p.name} (new club)`}` : p.name,
+      fixes,
       errors,
       gradeLabel: g ? gradeLabel(g.low, g.grade) : null,
-      status: errors.length ? "error" : there ? "exists" : "new",
+      status,
     };
   });
+  // Names as they'll be once every row is added (a later row can number an earlier one).
+  for (const [i, pl] of planned.entries())
+    if (pl) rows[i] = { ...rows[i], name: rows[i].name.replace(/^[^·]+·/, `${clubs.get(pl.club)!.plan.nameOf(pl.key)} ·`) };
   return { rows, tooMany: parsed.tooMany, clubs: parsed.rows.map((r) => r.name) };
 }
 
@@ -305,9 +348,13 @@ export async function importClubTeams(
         }
         try {
           const club = await clubFor(q, viewer, { name: clubs[i], abbr: "" });
-          const head = r.coach ? await resolveHead(q, r.coach, deps.now()) : null;
+          // With a cell: their login (made if new). Without one yet: the team waits for it, named for them.
+          const head = r.coach?.cell ? await resolveHead(q, r.coach, deps.now()) : null;
+          if (head && r.coach?.email)
+            await q.query("update users set email = $2 where coach_id = $1 and email is null", [head.coachId, r.coach.email]);
+          const waiting = r.coach && !r.coach.cell ? { first: r.coach.first, last: r.coach.last } : null;
           const grades = importGrades(r.grade!);
-          const name = await clubTeamName(q, club, r.gender!, grades, head?.lastName ?? null);
+          const name = await clubTeamName(q, club, r.gender!, grades, head?.lastName ?? waiting?.last ?? null);
           await insertTeam(q, viewer, deps.now(), {
             name,
             gender: r.gender!,
@@ -317,6 +364,7 @@ export async function importClubTeams(
             coachId: head?.coachId ?? null,
             alt: r.altName,
             importId: batch,
+            waiting,
           });
           added.push(`${name} · ${club.name}`);
         } catch (e) {
@@ -326,7 +374,12 @@ export async function importClubTeams(
       }
       if (added.length) await q.query("update scenic_team_imports set teams = $2 where id = $1", [batch, added.length]);
       else await q.query("delete from scenic_team_imports where id = $1", [batch]);
-      return { added, skipped };
+      // As named now: a later team can have numbered an earlier one ("RA 3G Campbell 1").
+      const names = await q.query<{ name: string }>(
+        "select t.name || ' · ' || p.name as name from scenic_teams t join partners p on p.id = t.partner_id where t.import_id = $1 order by t.id",
+        [batch],
+      );
+      return { added: names.rows.map((x) => x.name), skipped };
     });
   });
 }
@@ -368,8 +421,8 @@ export async function undoClubImport(
       );
       if (!i.rows[0]) throw new TeamError("That import no longer exists.");
       if (i.rows[0].undone_by) throw new TeamError(`${i.rows[0].undone_by} already undid it.`);
-      const teams = await q.query<{ id: string; name: string; coach_id: string | null; registered: boolean }>(
-        `select t.id::text, t.name, t.coach_id, exists (select 1 from scenic_registrations r where r.team_id = t.id) as registered
+      const teams = await q.query<{ id: string; name: string; partner: string; coach_id: string | null; registered: boolean }>(
+        `select t.id::text, t.name, t.partner_id::text as partner, t.coach_id, exists (select 1 from scenic_registrations r where r.team_id = t.id) as registered
          from scenic_teams t where t.import_id = $1 order by t.gender, t.grade, lower(t.name) for update`,
         [importId],
       );
@@ -386,6 +439,7 @@ export async function undoClubImport(
           if (!still.rowCount) await q.query("select set_role($1, $2, 'Coach', false, $3)", [t.coach_id, ORG, by(viewer)]);
         }
         removed.push(t.name);
+        await settleClubName(q, t.partner, baseName(t.name));
       }
       if (!kept.length)
         await q.query("update scenic_team_imports set undone_by = $2, undone_at = $3 where id = $1", [

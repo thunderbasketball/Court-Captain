@@ -22,7 +22,8 @@ export type OrgMetrics = {
   } | null;
   teams: { total: number; rec: number; comp: number; boys: number; girls: number } | null; // with Team Management
   notOnTeam: { total: number; groups: { label: string; n: number }[] } | null; // "5th Boys"
-  missing: { id: string; name: string; noCoach: boolean; noPlayers: boolean }[]; // by name
+  // by name. noCell: a Head Coach named without a cell yet; noEmail: a Head Coach without an email.
+  missing: { id: string; name: string; noCoach: boolean; noCell: boolean; noEmail: boolean; noPlayers: boolean }[];
   uniforms: { players: number; ready: number; missing: number } | null;
   practices: {
     thisWeek: { booked: number; open: number };
@@ -95,19 +96,22 @@ async function notOnTeamMetrics(q: Pick<Queryable, "query">): Promise<OrgMetrics
 }
 
 async function missingTeams(q: Pick<Queryable, "query">, org: string): Promise<OrgMetrics["missing"]> {
-  const sql =
+  const [teams, staff, players] =
     org === "thunder"
-      ? `select t.id::text, t.name,
-                not exists (select 1 from team_staff s where s.team_id = t.id and s.role = 'HeadCoach') as "noCoach",
-                not exists (select 1 from team_players p where p.team_id = t.id) as "noPlayers"
-         from teams t`
-      : `select t.id::text, t.name,
-                not exists (select 1 from org_team_coaches c where c.team_id = t.id and c.role = 'HeadCoach') as "noCoach",
-                not exists (select 1 from org_team_players p where p.team_id = t.id) as "noPlayers"
-         from org_teams t where t.org = $1`;
-  const r = await q.query<OrgMetrics["missing"][number]>(sql, org === "thunder" ? [] : [org]);
+      ? ["teams t", "team_staff s where s.team_id = t.id", "team_players p where p.team_id = t.id"]
+      : ["org_teams t", "org_team_coaches s where s.team_id = t.id", "org_team_players p where p.team_id = t.id"];
+  const r = await q.query<OrgMetrics["missing"][number]>(
+    `select t.id::text, t.name,
+            t.coach_first is null and not exists (select 1 from ${staff} and s.role = 'HeadCoach') as "noCoach",
+            t.coach_first is not null as "noCell",
+            exists (select 1 from ${staff} and s.role = 'HeadCoach'
+                    and exists (select 1 from users u where u.coach_id = s.coach_id and u.email is null)) as "noEmail",
+            not exists (select 1 from ${players}) as "noPlayers"
+     from ${teams} ${org === "thunder" ? "" : "where t.org = $1"}`,
+    org === "thunder" ? [] : [org],
+  );
   return r.rows
-    .filter((t) => t.noCoach || t.noPlayers)
+    .filter((t) => t.noCoach || t.noCell || t.noEmail || t.noPlayers)
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 }
 

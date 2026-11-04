@@ -5,7 +5,18 @@ import type { SessionUser } from "./auth/service";
 import { cleanEmail, cleanName } from "./auth/validate";
 import { normalizeCell } from "./phone";
 import { withTx } from "./sql";
-import { GRADES, LEVELS, gradeSort, gradesOk, tbdName, teamName } from "./team-names";
+import {
+  GRADES,
+  LEVELS,
+  baseName,
+  gradeSort,
+  gradesOk,
+  placeName,
+  settleName,
+  tbdBase,
+  teamName,
+  type NamedTeam,
+} from "./team-names";
 import { hasArea } from "./org-admin";
 import { syncThunderCopy } from "./thunder-leagues";
 import { matchOrCreateUser } from "./user-match";
@@ -45,6 +56,7 @@ export type TeamListItem = {
   createdBy: string;
   practiceLocations: string[];
   headCoach: { first: string; last: string; cell: string } | null;
+  waitingCoach: { first: string; last: string } | null; // named without a cell yet: COACH CELL MUST BE ENTERED
   staff: Contact[]; // Head Coach, Assistant, Manager, Team Parent order
   players: { registrantId: string; first: string; last: string; grade: string; rosteredBy: string }[]; // by last name
 };
@@ -58,6 +70,7 @@ export async function listTeams(deps: Deps, viewer: SessionUser): Promise<TeamLi
   if (!hasArea(viewer, "teams")) throw new Error("Director only");
   const r = await deps.pool.query<Omit<TeamListItem, "headCoach">>(
     `select t.id::text, t.name, t.gender, t.grades, t.level, t.alt_name as "altName", t.created_by as "createdBy", t.practice_locations as "practiceLocations",
+            case when t.coach_first is null then null else json_build_object('first', t.coach_first, 'last', t.coach_last) end as "waitingCoach",
             coalesce((select json_agg(json_build_object('coachId', u.coach_id, 'role', s.role, 'first', u.first_name, 'last', u.last_name,
                                                         'cell', u.cell, 'email', u.email) order by ${roleOrder})
                       from team_staff s join users u on u.coach_id = s.coach_id where s.team_id = t.id), '[]') as staff,
@@ -97,8 +110,9 @@ export type TeamDetail = Omit<TeamListItem, "headCoach" | "staff"> & {
 export async function getTeam(deps: Deps, viewer: SessionUser, id: string): Promise<TeamDetail | null> {
   if (!/^\d{1,18}$/.test(id)) return null;
   const t = await deps.pool.query<Omit<TeamListItem, "headCoach" | "staff">>(
-    `select id::text, name, gender, grades, level, alt_name as "altName", created_by as "createdBy", practice_locations as "practiceLocations"
-     from teams where id = $1`,
+    `select t.id::text, t.name, t.gender, t.grades, t.level, t.alt_name as "altName", t.created_by as "createdBy", t.practice_locations as "practiceLocations",
+            case when t.coach_first is null then null else json_build_object('first', t.coach_first, 'last', t.coach_last) end as "waitingCoach"
+     from teams t where t.id = $1`,
     [id],
   );
   if (!t.rows[0]) return null;
@@ -277,10 +291,41 @@ function cleanLocations(v: unknown): string[] {
   return out;
 }
 
-// Re-applies the naming rule after a change. With no head coach, the current last name is kept.
+// A Thunder team's name from `base` (the rule's name): numbered, with any team already named it, when taken (SPEC.md
+// section 14). Inside the caller's transaction; `exceptId`: the team being renamed.
+export async function thunderTeamName(q: Pick<PoolClient, "query">, base: string, exceptId: string | null): Promise<string> {
+  await q.query("select pg_advisory_xact_lock(hashtext('org-teams:thunder'))");
+  const teams = (await q.query<NamedTeam>("select id::text, name from teams where ($1::bigint is null or id <> $1)", [exceptId]))
+    .rows;
+  const { name, renames } = placeName(teams, base);
+  for (const r of renames) {
+    await q.query("update teams set name = $2 where id = $1", [r.id, r.name]);
+    await syncThunderCopy(q, r.id);
+  }
+  return name;
+}
+
+// After a team leaves a name: the one left with it drops its number.
+export async function settleThunderName(q: Pick<PoolClient, "query">, base: string) {
+  await q.query("select pg_advisory_xact_lock(hashtext('org-teams:thunder'))");
+  const teams = (await q.query<NamedTeam>("select id::text, name from teams")).rows;
+  const s = settleName(teams, base);
+  if (!s) return;
+  await q.query("update teams set name = $2 where id = $1", [s.id, s.name]);
+  await syncThunderCopy(q, s.id);
+}
+
+// Re-applies the naming rule after a change: the Head Coach's last name, else the coach waiting for a cell's, else the
+// current one is kept.
 async function rename(q: PoolClient, teamId: string): Promise<string> {
-  const t = await q.query<{ name: string; gender: "Boys" | "Girls"; grades: string[]; head_last: string | null }>(
-    `select t.name, t.gender, t.grades, u.last_name as head_last
+  const t = await q.query<{
+    name: string;
+    gender: "Boys" | "Girls";
+    grades: string[];
+    head_last: string | null;
+    coach_last: string | null;
+  }>(
+    `select t.name, t.gender, t.grades, u.last_name as head_last, t.coach_last
      from teams t
      left join team_staff s on s.team_id = t.id and s.role = 'HeadCoach'
      left join users u on u.coach_id = s.coach_id
@@ -288,13 +333,14 @@ async function rename(q: PoolClient, teamId: string): Promise<string> {
     [teamId],
   );
   const r = t.rows[0];
-  const name = teamName(r.gender, r.grades, r.head_last ?? (r.name.replace(/^\S+\s*/, "") || "Team"));
+  const base = teamName(r.gender, r.grades, r.head_last ?? r.coach_last ?? (baseName(r.name).replace(/^\S+\s*/, "") || "Team"));
   await syncThunderCopy(q, teamId); // its copy in a league follows (Head Coach now; the name below)
-  if (name === r.name) return name;
-  const clash = await q.query("select 1 from teams where lower(name) = lower($1) and id <> $2", [name, teamId]);
-  if (clash.rows[0]) throw new UserError(`That would rename the team to "${name}", but that name is taken.`);
+  // Same name by the rule (numbered or not): kept.
+  if (r.name.toLowerCase() === base.toLowerCase() || baseName(r.name).toLowerCase() === base.toLowerCase()) return r.name;
+  const name = await thunderTeamName(q, base, teamId);
   await q.query("update teams set name = $2 where id = $1", [teamId, name]);
   await syncThunderCopy(q, teamId);
+  await settleThunderName(q, baseName(r.name));
   return name;
 }
 
@@ -316,8 +362,11 @@ export async function createTeam(deps: Deps, viewer: SessionUser, input: CreateT
     return withTx(deps.pool, async (q) => {
       await q.query("select pg_advisory_xact_lock(hashtext('org-teams:thunder'))");
       const head = none ? null : await resolvePerson(q, input.headCoach, true, now);
-      const taken = new Set((await q.query<{ name: string }>("select lower(name) as name from teams")).rows.map((r) => r.name));
-      const name = head ? teamName(f.gender, f.grades, head.lastName) : tbdName(f.gender, f.grades, taken);
+      const name = await thunderTeamName(
+        q,
+        head ? teamName(f.gender, f.grades, head.lastName) : tbdBase(f.gender, f.grades),
+        null,
+      );
       const t = await q.query<{ id: string }>(
         `insert into teams (name, gender, grades, grade_sort, level, created_at, created_by, alt_name)
          values ($1, $2, $3, $4, $5, $6, $7, $8) on conflict (name) do nothing returning id::text`,
@@ -366,10 +415,11 @@ export async function deleteTeam(deps: Deps, viewer: SessionUser, id: string): P
   if (!/^\d{1,18}$/.test(id)) return { ok: false, message: "That team no longer exists." };
   return run(() =>
     withTx(deps.pool, async (q) => {
-      const t = await q.query("select 1 from teams where id = $1 for update", [id]);
+      const t = await q.query<{ name: string }>("select name from teams where id = $1 for update", [id]);
       if (!t.rows[0]) throw new UserError("That team no longer exists.");
       await q.query("update slots set team_id = null, booked_by = null, booked_at = null where team_id = $1", [id]);
       await q.query("delete from teams where id = $1", [id]);
+      await settleThunderName(q, baseName(t.rows[0].name));
       return {};
     }),
   );
@@ -418,7 +468,11 @@ export async function addStaff(
           throw new UserError(`This team already has a ${roleLabel(role)} (${held.rows[0].who}). Remove them first.`);
       }
       const p = await resolvePerson(q, input.person, COACH_ROLES.includes(role), now);
-      if (role === "HeadCoach") await q.query("delete from team_staff where team_id = $1 and role = 'HeadCoach'", [teamId]);
+      if (role === "HeadCoach") {
+        await q.query("delete from team_staff where team_id = $1 and role = 'HeadCoach'", [teamId]);
+        // A coach waiting for a cell is replaced by the real one.
+        await q.query("update teams set coach_first = null, coach_last = null where id = $1", [teamId]);
+      }
       const r = await q.query(
         "insert into team_staff (team_id, coach_id, role, added_at, added_by) values ($1, $2, $3, $4, $5) on conflict do nothing",
         [teamId, p.coachId, role, now, by],
@@ -427,6 +481,65 @@ export async function addStaff(
       return { who: p.who, newLogin: p.newLogin, name: role === "HeadCoach" ? await rename(q, teamId) : "" };
     }),
   );
+}
+
+// ---- A Head Coach named without a cell yet ----
+
+// Directors of Teams: fix the waiting coach's name, or remove them (null: the team is "TBD" again). Only while the team
+// has no Head Coach; adding their cell (addStaff, Head Coach, a new person) makes them the Head Coach.
+export async function setWaitingCoach(
+  deps: Deps,
+  viewer: SessionUser,
+  teamId: string,
+  input: { first: unknown; last: unknown } | null,
+): Promise<Result<{ name: string }>> {
+  if (!hasArea(viewer, "teams")) return { ok: false, message: "Only a Director of Teams can change the Head Coach." };
+  if (!/^\d{1,18}$/.test(teamId)) return { ok: false, message: "That team no longer exists." };
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      const first = input ? cleanName(input.first) : null;
+      const last = input ? cleanName(input.last) : null;
+      if (input && (!first || !last)) throw new UserError("Enter the coach's first and last name (letters only).");
+      const t = await q.query("select 1 from teams where id = $1 for update", [teamId]);
+      if (!t.rows[0]) throw new UserError("That team no longer exists.");
+      const head = await q.query("select 1 from team_staff where team_id = $1 and role = 'HeadCoach'", [teamId]);
+      if (head.rows[0]) throw new UserError("This team already has a Head Coach.");
+      await q.query("update teams set coach_first = $2, coach_last = $3 where id = $1", [teamId, first, last]);
+      // Removed: named "TBD" again.
+      return { name: input ? await rename(q, teamId) : await renameTbd(q, teamId) };
+    }),
+  );
+}
+
+// The team back to "4G TBD" (numbered when taken).
+async function renameTbd(q: PoolClient, teamId: string): Promise<string> {
+  const t = await q.query<{ name: string; gender: "Boys" | "Girls"; grades: string[] }>(
+    "select name, gender, grades from teams where id = $1",
+    [teamId],
+  );
+  const r = t.rows[0];
+  const base = tbdBase(r.gender, r.grades);
+  if (baseName(r.name).toLowerCase() === base.toLowerCase()) return r.name;
+  const name = await thunderTeamName(q, base, teamId);
+  await q.query("update teams set name = $2 where id = $1", [teamId, name]);
+  await syncThunderCopy(q, teamId);
+  await settleThunderName(q, baseName(r.name));
+  return name;
+}
+
+// Directors of Teams: the Head Coach's email when they have none yet (they confirm it with a code at their next login).
+export async function setHeadCoachEmail(deps: Deps, viewer: SessionUser, teamId: string, email: unknown): Promise<Result> {
+  if (!hasArea(viewer, "teams")) return { ok: false, message: "Only a Director of Teams can do that." };
+  if (!/^\d{1,18}$/.test(teamId)) return { ok: false, message: "That team no longer exists." };
+  const e = cleanEmail(email);
+  if (!e) return { ok: false, message: "Enter a real email address." };
+  const r = await deps.pool.query(
+    `update users u set email = $2, updated_at = $3, updated_by = $4
+     from team_staff s where s.team_id = $1 and s.role = 'HeadCoach' and s.coach_id = u.coach_id and u.email is null`,
+    [teamId, e, deps.now(), byOf(viewer)],
+  );
+  if (!r.rowCount) return { ok: false, message: "This team's Head Coach already has an email." };
+  return { ok: true };
 }
 
 export async function removeStaff(

@@ -73,7 +73,7 @@ describe("cleaning up pasted teams", () => {
 
   it("fixes common ways of writing things and says what it changed", () => {
     const { rows } = parseTeamRows(
-      "Sex\tGrade\tType\tHead Coach\tPhone\tEmail\nb\t3 & 4\tR\tthomas battle\t423.555.0101\tx@y.z\nGIRLS\t5th Grade\tc\tLee, Sam\t4235550102\t",
+      "Sex\tGrade\tType\tHead Coach\tPhone\tEmail\nb\t3 & 4\tR\tthomas battle\t423.555.0101\tTom@Example.com\nGIRLS\t5th Grade\tc\tLee, Sam\t4235550102\t",
       { named: false },
     );
     expect(rows.map((r) => [r.gender, r.grade, r.level, r.coach, r.fixes, r.errors])).toEqual([
@@ -81,7 +81,7 @@ describe("cleaning up pasted teams", () => {
         "Boys",
         "3-4",
         "REC",
-        { first: "Thomas", last: "Battle", cell: "4235550101" },
+        { first: "Thomas", last: "Battle", cell: "4235550101", email: "tom@example.com" },
         ['Gender "b" → Boys', 'Grade "3 & 4" → 3rd/4th', 'Level "R" → REC', 'Coach "thomas battle" → Thomas Battle'],
         [],
       ],
@@ -89,10 +89,24 @@ describe("cleaning up pasted teams", () => {
         "Girls",
         "5",
         "COMP",
-        { first: "Sam", last: "Lee", cell: "4235550102" },
+        { first: "Sam", last: "Lee", cell: "4235550102", email: null },
         ['Gender "GIRLS" → Girls', 'Level "c" → COMP', 'Coach "Lee, Sam" → Sam Lee'],
         [],
       ],
+    ]);
+  });
+
+  it("a coach's name without a cell, where allowed; a cell given must be 10 digits; a bad email is a problem", () => {
+    const text =
+      "Gender,Grade,Level,Coach First,Coach Last,Coach Cell,Coach Email\nGirls,3,REC,Alex,Campbell,,\nBoys,4,REC,Sam,Lee,555,\nBoys,5,REC,Ann,Kim,,nope";
+    const loose = parseTeamRows(text, { named: false, cellOptional: true }).rows;
+    expect(loose.map((r) => [r.coach, r.errors])).toEqual([
+      [{ first: "Alex", last: "Campbell", cell: null, email: null }, []],
+      [null, ["Coach: first and last name (a cell, if given, needs 10 digits)"]],
+      [null, ['Coach email "nope" doesn\'t look right']],
+    ]);
+    expect(parseTeamRows(text, { named: false }).rows[0].errors).toEqual([
+      "Coach: first name, last name and a 10-digit cell (or leave all three blank)",
     ]);
   });
 

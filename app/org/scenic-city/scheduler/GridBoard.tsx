@@ -1,0 +1,326 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { Alert } from "../../../client-ui";
+import { placeGame } from "../actions";
+
+export type GridTeam = { id: string; name: string; partnerId: string | null; group: string; division: string; from: string };
+export type GridGame = {
+  id: string;
+  a: GridTeam;
+  b: GridTeam;
+  league: string | null;
+  court: string | null;
+  starts: string | null;
+};
+export type GridGymView = {
+  key: string;
+  name: string;
+  host: string;
+  hostId: string;
+  address: string | null;
+  opens: string;
+  closes: string;
+  courts: { id: string; name: string; starts: string; ends: string }[];
+  blocks: [string, string][];
+};
+
+const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+const label = (t: string) => {
+  const [h, m] = t.split(":").map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+};
+
+// The Grid's gyms, each collapsed (host, hours, courts, open slots). Expanded: a game slot per court and block. Drag a
+// game (or tap it, then tap where it goes) from the gym's selection area (its home games not yet placed; when none,
+// the games with no home gym) into an open slot, between slots, or back to a selection area to take it off the grid.
+// Each move is saved at once, and checked on the server (open, free, neither team already playing then).
+export function GridBoard({ gyms, games: initial, minutes }: { gyms: GridGymView[]; games: GridGame[]; minutes: number }) {
+  const router = useRouter();
+  const [games, setGames] = useState(initial);
+  // After a save the page refreshes with the server's games: take them in without starting over, so open gyms stay
+  // open.
+  const [seen, setSeen] = useState(initial);
+  if (seen !== initial) {
+    setSeen(initial);
+    setGames(initial);
+  }
+  const [opened, setOpened] = useState<Set<string>>(new Set());
+  const [picked, setPicked] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [, start] = useTransition();
+  const active = dragging ?? picked;
+  const hosts = new Set(gyms.map((g) => g.hostId));
+  const courts = new Map(gyms.flatMap((g) => g.courts.map((c) => [c.id, { ...c, gym: g }] as const)));
+  // On the grid: a court of an open gym at one of its block times (a game left off by a new game length isn't).
+  const onGrid = (x: GridGame) => !!x.court && !!x.starts && !!courts.get(x.court)?.gym.blocks.some(([s]) => s === x.starts);
+  const homeless = (x: GridGame) => !hosts.has(x.a.partnerId ?? "") && !hosts.has(x.b.partnerId ?? "");
+  const isHome = (x: GridGame, hostId: string) => x.a.partnerId === hostId || x.b.partnerId === hostId;
+  const at = (court: string, s: string) => games.find((x) => x.court === court && x.starts === s && onGrid(x));
+  const shares = (x: GridGame, y: GridGame) => [x.a.id, x.b.id].some((n) => n === y.a.id || n === y.b.id);
+  // A team in the game being moved already plays within a game length of this time.
+  const busy = (s: string) => {
+    const g = active && games.find((x) => x.id === active);
+    return (
+      !!g && games.some((y) => y.id !== g.id && onGrid(y) && shares(g, y) && Math.abs(toMin(y.starts!) - toMin(s)) < minutes)
+    );
+  };
+
+  function move(id: string, slot: { court: string; starts: string } | null) {
+    setPicked(null);
+    setDragging(null);
+    setError(null);
+    const g = games.find((x) => x.id === id);
+    if (!g) return;
+    if (slot && at(slot.court, slot.starts)) return setError("That slot already has a game. Move that game first.");
+    if (!slot && !onGrid(g)) return;
+    const before = games;
+    setGames(games.map((x) => (x.id === id ? { ...x, court: slot?.court ?? null, starts: slot?.starts ?? null } : x)));
+    start(async () => {
+      const r = await placeGame(id, slot);
+      if (!r.ok) {
+        setGames(before);
+        setError(r.message);
+      } else router.refresh();
+    });
+  }
+
+  const target = (key: string, slot: { court: string; starts: string } | null) => ({
+    onDragOver: (e: React.DragEvent) => {
+      e.preventDefault();
+      setOver(key);
+    },
+    onDragLeave: () => setOver((o) => (o === key ? null : o)),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      setOver(null);
+      const id = e.dataTransfer.getData("text/plain");
+      if (/^\d+$/.test(id)) move(id, slot);
+    },
+    onClick: () => picked && move(picked, slot),
+  });
+
+  function card(x: GridGame, hostId?: string, full = false) {
+    const on = active === x.id;
+    const [h, v] = hostId && x.b.partnerId === hostId && x.a.partnerId !== hostId ? [x.b, x.a] : [x.a, x.b];
+    return (
+      <button
+        key={x.id}
+        type="button"
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData("text/plain", x.id);
+          setDragging(x.id);
+        }}
+        onDragEnd={() => setDragging(null)}
+        title={`${h.name} vs ${v.name} · ${h.division} · ${h.group === v.group ? h.group : `${h.group}/${v.group}`}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          setPicked(on ? null : x.id);
+        }}
+        className={`${full ? "block h-full w-full" : "max-w-full"} cursor-grab rounded-md px-2 py-1.5 text-left text-xs shadow-sm ring-1 active:cursor-grabbing ${
+          on ? "bg-scenic-navy text-white ring-scenic-navy" : "bg-white ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/15"
+        }`}
+      >
+        <span className="block truncate">
+          <span className="font-semibold">{h.name}</span>
+          {hostId && isHome(x, hostId) && (
+            <span className={`font-semibold ${on ? "" : "text-emerald-700 dark:text-emerald-300"}`}> (H)</span>
+          )}
+          <span className={on ? "text-white/80" : "text-zinc-500"}> vs </span>
+          <span className="font-semibold">{v.name}</span>
+          <span className={`text-[11px] ${on ? "text-white/80" : "text-zinc-500"}`}>
+            {" "}
+            · {h.group === v.group ? h.group : `${h.group}/${v.group}`}
+            {x.league && ` · ${x.league}`}
+          </span>
+        </span>
+      </button>
+    );
+  }
+
+  const ring = (key: string) =>
+    over === key
+      ? "bg-sky-50 ring-2 ring-scenic-navy dark:bg-sky-500/10 dark:ring-white"
+      : active
+        ? "ring-1 ring-scenic-navy/40 dark:ring-white/40"
+        : "ring-1 ring-zinc-950/10 dark:ring-white/15";
+
+  const noHome = games.filter(homeless);
+  return (
+    <div className="space-y-3">
+      {error && <Alert tone="red">{error}</Alert>}
+      {active && (
+        <p className="text-xs text-zinc-500">
+          Tap or drop on an open slot. <span className="font-semibold text-red-600 dark:text-red-400">Red</span>: a team in this
+          game already plays then. Drop on a selection area to take it off the grid.
+        </p>
+      )}
+      {gyms.map((g) => {
+        const open = (c: { starts: string; ends: string }, [a, b]: [string, string]) =>
+          toMin(c.starts) <= toMin(a) && toMin(b) <= toMin(c.ends);
+        const slots = g.blocks.reduce((n, b) => n + g.courts.filter((c) => open(c, b)).length, 0);
+        const placed = games.filter((x) => onGrid(x) && courts.get(x.court!)?.gym.key === g.key).length;
+        const home = games.filter((x) => isHome(x, g.hostId) && !onGrid(x));
+        const pool = home.length ? home : noHome.filter((x) => !onGrid(x));
+        return (
+          <details
+            key={g.key}
+            open={opened.has(g.key)}
+            onToggle={(e) => {
+              const isOpen = (e.currentTarget as HTMLDetailsElement).open;
+              setOpened((o) => {
+                if (isOpen === o.has(g.key)) return o;
+                const n = new Set(o);
+                if (isOpen) n.add(g.key);
+                else n.delete(g.key);
+                return n;
+              });
+            }}
+            className="group overflow-hidden rounded-lg ring-1 ring-zinc-200 dark:ring-white/10"
+          >
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-zinc-50 px-3 py-2 dark:bg-white/5 [&::-webkit-details-marker]:hidden">
+              <span className="min-w-0 text-sm">
+                <span className="font-semibold">
+                  <span className="mr-1 inline-block text-zinc-400 transition group-open:rotate-90">›</span>
+                  {g.name}
+                </span>
+                <span className="block text-xs text-zinc-500">
+                  {g.host}
+                  {g.address && ` · ${g.address}`}
+                </span>
+              </span>
+              <span className="shrink-0 text-right text-xs text-zinc-500">
+                {label(g.opens)} – {label(g.closes)}
+                <span className="block">
+                  {g.courts.length} court{g.courts.length === 1 ? "" : "s"} · {placed}/{slots} slots filled
+                </span>
+              </span>
+            </summary>
+            {g.blocks.length ? (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-white dark:bg-zinc-950">
+                      <th className="sticky left-0 z-[1] bg-white px-2 py-1.5 text-left font-semibold whitespace-nowrap dark:bg-zinc-950">
+                        Time
+                      </th>
+                      {g.courts.map((c) => (
+                        <th key={c.id} className="min-w-36 px-2 py-1.5 text-left font-semibold whitespace-nowrap">
+                          {c.name}
+                          {(c.starts !== g.opens || c.ends !== g.closes) && (
+                            <span className="block font-normal text-zinc-500">
+                              {label(c.starts)} – {label(c.ends)}
+                            </span>
+                          )}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-white/5">
+                    {g.blocks.map((b) => (
+                      <tr key={b[0]}>
+                        <td className="sticky left-0 z-[1] bg-white px-2 py-0.5 font-medium whitespace-nowrap tabular-nums dark:bg-zinc-950">
+                          {label(b[0])}
+                        </td>
+                        {g.courts.map((c) => {
+                          const key = `${c.id}@${b[0]}`;
+                          if (!open(c, b))
+                            return (
+                              <td key={c.id} className="px-1 py-0.5">
+                                <span className="flex h-8 items-center justify-center rounded-md bg-zinc-100 text-[11px] text-zinc-400 dark:bg-white/5">
+                                  Closed
+                                </span>
+                              </td>
+                            );
+                          const here = at(c.id, b[0]);
+                          return (
+                            <td key={c.id} className="px-1 py-0.5">
+                              <div
+                                {...target(key, { court: c.id, starts: b[0] })}
+                                className={`h-8 rounded-md ${here ? "" : "border border-dashed"} ${
+                                  !here && active && busy(b[0])
+                                    ? "border-red-400 bg-red-50 dark:bg-red-500/10"
+                                    : here
+                                      ? ""
+                                      : "border-emerald-400/60 bg-emerald-50/60 dark:border-emerald-400/30 dark:bg-emerald-500/5"
+                                } ${over === key ? "ring-2 ring-scenic-navy dark:ring-white" : ""}`}
+                              >
+                                {here && card(here, g.hostId, true)}
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="px-3 py-2 text-sm text-zinc-500">
+                Open {label(g.opens)} – {label(g.closes)}: shorter than one game.
+              </p>
+            )}
+            <section
+              {...target(`pool:${g.key}`, null)}
+              className={`m-2 rounded-lg bg-amber-50/50 p-2 dark:bg-amber-500/5 ${ring(`pool:${g.key}`)}`}
+            >
+              <h4 className="flex items-baseline justify-between gap-2 text-sm font-semibold">
+                {home.length ? `Home games: ${g.host}` : "No home gym games"}
+                <span className="text-xs font-normal text-zinc-500">{pool.length} to place</span>
+              </h4>
+              {!home.length && (
+                <p className="text-xs text-zinc-500">No {g.host} games left to place, so these games have no home gym.</p>
+              )}
+              {pool.length ? (
+                <div className="mt-1.5 grid grid-cols-2 gap-1.5 sm:grid-cols-3">{pool.map((x) => card(x, g.hostId))}</div>
+              ) : (
+                <p className="mt-1 text-xs text-zinc-400">Every game is placed.</p>
+              )}
+            </section>
+          </details>
+        );
+      })}
+      {games.length > 0 && (
+        <section {...target("pool:none", null)} className={`overflow-hidden rounded-lg px-3 py-2 ${ring("pool:none")}`}>
+          <h4 className="flex items-baseline justify-between gap-2 text-sm font-semibold">
+            No home gym
+            <span className="text-xs font-normal text-zinc-500">
+              {noHome.filter((x) => !onGrid(x)).length} of {noHome.length} to place
+            </span>
+          </h4>
+          <p className="text-xs text-zinc-500">Neither team&apos;s school or organization has a gym open this day.</p>
+          {noHome.length ? (
+            <ul className="mt-1 divide-y divide-zinc-100 text-sm dark:divide-white/5">
+              {noHome.map((x) => {
+                const c = x.court ? courts.get(x.court) : null;
+                return (
+                  <li key={x.id} className="flex items-center justify-between gap-3 py-1">
+                    <span className="min-w-0">
+                      <span className="font-medium">{x.a.name}</span>
+                      <span className="text-zinc-500"> vs </span>
+                      <span className="font-medium">{x.b.name}</span>
+                      <span className="block text-xs text-zinc-500">
+                        {x.a.division} · {x.a.from} vs {x.b.from}
+                      </span>
+                    </span>
+                    <span
+                      className={`shrink-0 text-xs ${onGrid(x) ? "text-emerald-700 dark:text-emerald-300" : "text-zinc-400"}`}
+                    >
+                      {onGrid(x) && c ? `${c.gym.name} ${c.name} · ${label(x.starts!)}` : "Not placed"}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="mt-1 text-xs text-zinc-400">Every game has a home gym.</p>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}

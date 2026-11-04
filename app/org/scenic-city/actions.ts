@@ -9,6 +9,8 @@ import * as partners from "@/lib/scenic-partners";
 import * as programs from "@/lib/scenic-programs";
 import * as teams from "@/lib/scenic-teams";
 import * as clubs from "@/lib/scenic-club-teams";
+import * as matchups from "@/lib/scenic-matchups";
+import * as grid from "@/lib/scenic-grid";
 import type { JoinInput } from "@/lib/scenic";
 
 const deps = { pool: db, now: () => new Date() };
@@ -73,6 +75,9 @@ export async function createScenicTeam(input: teams.TeamInput) {
 export async function updateScenicTeam(id: string, input: teams.TeamInput) {
   return guarded((u) => teams.updateScenicTeam(deps, u, id, input), "team-registration");
 }
+export async function setScenicCoachEmail(id: string, email: string) {
+  return guarded((u) => teams.setScenicCoachEmail(deps, u, id, String(email)), "team-registration");
+}
 export async function deleteScenicTeam(id: string) {
   return guarded((u) => teams.deleteScenicTeam(deps, u, id), "team-registration");
 }
@@ -87,6 +92,9 @@ export async function deleteProgram(id: string) {
 }
 export async function registerTeam(programId: string, teamId: string, choice?: unknown) {
   return guarded((u) => programs.registerTeam(deps, u, programId, teamId, choice), "programs");
+}
+export async function registerAllScenicTeams(programId: string) {
+  return guarded((u) => programs.registerAllScenicTeams(deps, u, programId), "programs");
 }
 export async function setTeamOff(programId: string, teamId: string, what: string, out: boolean) {
   return guarded((u) => programs.setTeamOff(deps, u, programId, teamId, what, out === true), "programs");
@@ -131,4 +139,20 @@ export async function importClubTeams(text: string) {
 }
 export async function undoClubImport(id: string) {
   return guarded((u) => clubs.undoClubImport(deps, u, id), "team-registration");
+}
+
+// Scheduler: create (or create again) one division's matchups on a Game Day (Admins and Directors of Scheduling).
+export async function createMatchups(programId: string, day: string, divisionId: string) {
+  return guarded((u) => matchups.createMatchups(deps, u, programId, day, divisionId), "programs");
+}
+export async function saveMatchups(programId: string, day: string, divisionId: string, games: [string, string][]) {
+  return guarded((u) => matchups.saveMatchups(deps, u, programId, day, divisionId, games), "programs");
+}
+// Scheduler Grid: a Game Day's game length in minutes (Admins and Directors of Scheduling).
+export async function setGameLength(day: string, minutes: number) {
+  return guarded((u) => grid.setGameLength(deps, u, day, minutes), "programs");
+}
+// Scheduler Grid: put a game in a slot (court and start time), move it, or take it off the grid (null).
+export async function placeGame(matchupId: string, slot: { court: string; starts: string } | null) {
+  return guarded((u) => grid.placeGame(deps, u, matchupId, slot), "programs");
 }

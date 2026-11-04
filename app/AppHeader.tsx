@@ -41,7 +41,7 @@ type Tab =
   | "org-members"
   | "org-facilities"
   | ScenicTab;
-type ScenicTab = "scenic-home" | "programs" | "scenic-facilities" | "scenic-members";
+type ScenicTab = "scenic-home" | "programs" | "scheduler" | "scenic-facilities" | "scenic-members";
 export type TeamTab = "staff" | "roster" | "uniforms" | "practices";
 
 // Events the person runs check-in for (from yesterday on), plus their teams' practices today.
@@ -224,6 +224,18 @@ export default async function AppHeader({
                   href: "/org/scenic-city/programs",
                   label: "Programs",
                   icon: ICONS.events,
+                  feature: "programs" as const,
+                },
+              ]
+            : []),
+          // Scheduler: who plays on each Game Day (Admins and Directors of Scheduling, on the Director chip).
+          ...(scenicRole === "Director" && scenicAreas.includes("scheduling")
+            ? [
+                {
+                  key: "scheduler",
+                  href: "/org/scenic-city/scheduler",
+                  label: "Scheduler",
+                  icon: ICONS.practice,
                   feature: "programs" as const,
                 },
               ]

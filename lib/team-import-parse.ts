@@ -4,7 +4,7 @@
 // match so the person can change it; it then sends the rows back under our own headings. Values are cleaned up ("3 & 4"
 // → 3rd/4th, "R" → REC, "b" → Boys, "thomas battle" → Thomas Battle) and each change is noted for the preview.
 // Commas or tabs between columns; quotes allowed. Pure: no database, so the browser and tests use it too.
-import { cleanName } from "./auth/validate";
+import { cleanEmail, cleanName } from "./auth/validate";
 import { normalizeCell } from "./phone";
 
 export const MAX_IMPORT_ROWS = 200;
@@ -19,6 +19,7 @@ export type ImportField =
   | "coachLast"
   | "coachName" // first and last together ("Sam Lee" or "Lee, Sam")
   | "coachCell"
+  | "coachEmail"
   | "altName"
   | "skip";
 
@@ -29,7 +30,8 @@ export type ImportRow = {
   grade: string | null; // "3" or "3-4" (one grade, or two in a row)
   gradeText: string; // as typed
   level: "COMP" | "REC" | null;
-  coach: { first: string; last: string; cell: string } | null;
+  // `cell` null: named without a cell yet (`cellOptional` imports); the team waits for it. `email` optional.
+  coach: { first: string; last: string; cell: string | null; email: string | null } | null;
   altName: string | null; // optional ("Bolts")
   fixes: string[]; // what was cleaned up: 'Grade "3 & 4" → 3rd/4th'
   errors: string[];
@@ -46,6 +48,7 @@ export function importFields(named: boolean, nameLabel = "Team"): { key: ImportF
     { key: "coachLast", label: "Coach Last" },
     { key: "coachName", label: "Coach Name" },
     { key: "coachCell", label: "Coach Cell" },
+    { key: "coachEmail", label: "Coach Email" },
     { key: "altName", label: "Alternate Team Name" },
     { key: "skip", label: "Don't import" },
   ];
@@ -182,6 +185,7 @@ const HEADINGS: Record<Exclude<ImportField, "skip" | "name" | "team">, string[]>
   coachFirst: ["coachfirst", "coachfirstname", "headcoachfirst", "headcoachfirstname", "first", "firstname"],
   coachLast: ["coachlast", "coachlastname", "headcoachlast", "headcoachlastname", "last", "lastname"],
   coachName: ["coach", "coachname", "headcoach", "headcoachname", "name", "fullname", "coachfullname"],
+  coachEmail: ["coachemail", "email", "emailaddress", "headcoachemail", "coachemailaddress"],
   coachCell: ["coachcell", "cell", "phone", "mobile", "cellphone", "phonenumber", "coachphone", "headcoachcell", "number"],
   altName: ["alternateteamname", "altteamname", "alternatename", "altname", "alternate", "nickname", "mascot", "teamnickname"],
 };
@@ -193,7 +197,7 @@ function headingField(cell: string, named: boolean): ImportField | null {
   if (NAME_HEADINGS.includes(n)) return named ? "name" : "team";
   if (!named && n.startsWith("teamlike")) return "team"; // our own "Team (like 4G Epps)"
   for (const [k, list] of Object.entries(HEADINGS)) if (list.includes(n)) return k as ImportField;
-  if (/email|dob|birth|address|zip|notes?$|paid|fee/.test(n)) return "skip";
+  if (/email|dob|birth|address|zip|notes?$|paid|fee/.test(n)) return "skip"; // other emails (a parent's)
   return null;
 }
 
@@ -203,6 +207,7 @@ function contentField(values: string[]): ImportField | null {
   if (!filled.length) return null;
   const most = (ok: (v: string) => boolean) => filled.filter(ok).length >= Math.ceil(filled.length * 0.7);
   if (most((v) => !!normalizeCell(v) && /\d{3}/.test(v))) return "coachCell";
+  if (most((v) => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(v))) return "coachEmail";
   if (most((v) => !!cleanGender(v) && v.length <= 8)) return "gender";
   if (most((v) => !!cleanLevel(v))) return "level";
   if (most((v) => !!cleanGrade(v).grade)) return "grade";
@@ -228,7 +233,9 @@ export function guessColumns(table: { cells: string[] }[], named: boolean): { he
     const sniffed = usual.map((_, i) => contentField(data.map((r) => r.cells[i] ?? "")));
     if (sniffed.every((f, i) => !f || f === usual[i])) columns = usual;
     else {
-      const free = order.filter((f) => !sniffed.includes(f) && !["gender", "grade", "level", "coachCell"].includes(f));
+      const free = order.filter(
+        (f) => !sniffed.includes(f) && !["gender", "grade", "level", "coachCell", "coachEmail"].includes(f),
+      );
       columns = sniffed.map((f) => f ?? free.shift() ?? "skip");
     }
   }
@@ -264,13 +271,15 @@ const NAME_OK = /^[A-Za-z0-9][A-Za-z0-9 .'&\-,()#/]{0,59}$/;
 
 // Teams are named from their grade, gender and Head Coach ("4G Epps"; "4G TBD" with none yet), so most imports have no
 // Team column (`named: false`; the caller makes the name). Named imports (Scenic City's clubs) start with the name.
-// The coach is optional unless `coachRequired`.
+// The coach is optional unless `coachRequired`; with `cellOptional`, a coach's first and last name is enough (the team
+// waits for their cell).
 export function parseTeamRows(
   text: string,
-  opts: { named?: boolean; coachRequired?: boolean } = {},
+  opts: { named?: boolean; coachRequired?: boolean; cellOptional?: boolean } = {},
 ): { rows: ImportRow[]; tooMany: boolean } {
   const named = opts.named ?? true;
   const coachRequired = opts.coachRequired ?? false;
+  const cellOptional = opts.cellOptional ?? false;
   const table = splitTable(text);
   const { header, columns } = guessColumns(table, named);
   const rows: ImportRow[] = (header ? table.slice(1) : table).map(({ line, cells }) => {
@@ -321,20 +330,25 @@ export function parseTeamRows(
     const full = v("coachName");
     if (full && !cf && !cl) ({ first: cf, last: cl } = splitName(full));
     const cc = v("coachCell");
+    const ce = v("coachEmail");
     let coach: ImportRow["coach"] = null;
     if (coachRequired && !(cf || cl || cc)) errors.push("Head Coach: first name, last name and a 10-digit cell");
-    else if (cf || cl || cc) {
+    else if (cf || cl || cc || ce) {
       const first = cleanName(fixCase(cf));
       const last = cleanName(fixCase(cl));
       const cell = normalizeCell(cc);
-      if (!first || !last || !cell)
+      const email = ce ? cleanEmail(ce) : null;
+      if (!first || !last || (cc ? !cell : !cellOptional))
         errors.push(
           coachRequired
             ? "Head Coach: first name, last name and a 10-digit cell"
-            : "Coach: first name, last name and a 10-digit cell (or leave all three blank)",
+            : cellOptional
+              ? "Coach: first and last name (a cell, if given, needs 10 digits)"
+              : "Coach: first name, last name and a 10-digit cell (or leave all three blank)",
         );
+      else if (ce && !email) errors.push(`Coach email "${ce}" doesn't look right`);
       else {
-        coach = { first, last, cell };
+        coach = { first, last, cell: cell ?? null, email };
         const typed = full && !v("coachFirst") && !v("coachLast") ? full : `${cf} ${cl}`;
         if (typed.replace(/\s+/g, " ").trim() !== `${first} ${last}`) fixes.push(`Coach "${typed.trim()}" → ${first} ${last}`);
       }

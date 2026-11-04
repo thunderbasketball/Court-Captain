@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { registerAll, registerTeam, setDayOff, withdrawTeam } from "./actions";
+import { registerAllScenicTeams } from "../org/scenic-city/actions";
 import { PopUp, Toast, useConfirm } from "../client-ui";
 import RegisterChoices from "../org/scenic-city/programs/RegisterChoices";
 import { shortDate, type Choice, type ChoiceResult, type ProgramOption } from "@/lib/program-options";
@@ -10,17 +11,19 @@ import { shortDate, type Choice, type ChoiceResult, type ProgramOption } from "@
 const btn = "shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold disabled:opacity-50";
 
 // Register all of the organization's unregistered teams into a program at once; then say where they went and who was
-// skipped (and why).
+// skipped (and why). Scenic City (its own program page): the teams it can register there. `allSeason`: a League.
 export function RegisterAllButton({
   org,
   programId,
   program,
   count,
+  allSeason = true,
 }: {
   org: string;
   programId: string;
   program: string;
   count: number;
+  allSeason?: boolean;
 }) {
   const router = useRouter();
   const [busy, start] = useTransition();
@@ -34,7 +37,7 @@ export function RegisterAllButton({
         className={`${btn} bg-thunder-blue text-white`}
         onClick={() =>
           start(async () => {
-            const r = await registerAll(org, programId);
+            const r = org === "scenic-city" ? await registerAllScenicTeams(programId) : await registerAll(org, programId);
             if (!r.ok) return setMsg(r.message);
             setResult({ registered: r.registered, skipped: r.skipped });
             setMsg(`${r.registered.length} registered in ${program}.`);
@@ -42,7 +45,7 @@ export function RegisterAllButton({
           })
         }
       >
-        {busy ? "Registering…" : `Register all unregistered (${count}) · ALL Season`}
+        {busy ? "Registering…" : `Register all unregistered (${count})${allSeason ? " · ALL Season" : ""}`}
       </button>
       {result && (
         <div className="space-y-1 text-xs">

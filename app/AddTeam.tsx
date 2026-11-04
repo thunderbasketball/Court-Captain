@@ -233,6 +233,7 @@ function AddTeamForm({
           {preview}
           {alt.trim() && <span className="text-sm font-normal text-zinc-500"> · {alt.trim()}</span>}
         </p>
+        <p className="text-xs text-zinc-500">If another team has this name, both get a number (1, 2).</p>
       </div>
       {error && <Alert tone="red">{error}</Alert>}
       <button type="submit" disabled={busy || !ready} className={`${primaryBtn} w-full`}>

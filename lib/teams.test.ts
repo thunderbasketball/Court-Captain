@@ -114,11 +114,18 @@ describe("teams", () => {
     expect(u.rows[0]).toEqual({ thunder_coach: true, thunder_request: false });
   });
 
-  it("refuses a duplicate team name and changes nothing", async () => {
-    await createTeam(deps(), director, { gender: "Girls", grades: ["4"], level: "REC", headCoach: "user:9913694" });
-    const r = await createTeam(deps(), director, { gender: "Girls", grades: ["4"], level: "COMP", headCoach: "user:9913694" });
-    expect(r).toEqual({ ok: false, message: 'There\'s already a team named "4G Epps".' });
-    expect(await listTeams(deps(), director)).toHaveLength(1);
+  it("the same name numbers both teams (and a lone one drops its number when the other goes)", async () => {
+    await createTeam(deps(), director, { gender: "Girls", grades: ["4"], level: "COMP", headCoach: "user:9913694" });
+    const r = await createTeam(deps(), director, { gender: "Girls", grades: ["4"], level: "REC", headCoach: "user:9913694" });
+    expect(r).toMatchObject({ ok: true, name: "4G Epps 2" });
+    expect((await listTeams(deps(), director))!.map((t) => t.name).sort()).toEqual(["4G Epps 1", "4G Epps 2"]);
+    // TBD teams the same way.
+    await createTeam(deps(), director, { gender: "Boys", grades: ["3"], level: "REC", headCoach: "none" });
+    expect(await createTeam(deps(), director, { gender: "Boys", grades: ["3"], level: "COMP", headCoach: "none" })).toMatchObject(
+      { name: "3B TBD 2" },
+    );
+    expect(await deleteTeam(deps(), director, (r as { id: string }).id)).toEqual({ ok: true });
+    expect((await listTeams(deps(), director))!.map((t) => t.name).sort()).toEqual(["3B TBD 1", "3B TBD 2", "4G Epps"]);
   });
 
   it("refuses a volunteer whose cell matches another user's last 7 digits", async () => {

@@ -3,7 +3,7 @@
 // cell: that cell is their login (made if new), and they get the organization's Coach role.
 import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
-import { cleanName } from "./auth/validate";
+import { cleanEmail, cleanName } from "./auth/validate";
 import { hasFeature } from "./features";
 import { orgHasArea } from "./org-admin";
 import { isOrgSlug, type OrgSlug } from "./orgs";
@@ -12,7 +12,17 @@ import { cleanPlaceName } from "./scenic-partners";
 import { gradeLabel, LEVELS, parseGrade } from "./scenic-teams";
 import { parseTeamRows, type ImportRow } from "./team-import-parse";
 import { withTx, type Queryable } from "./sql";
-import { gradesOk, tbdName, teamName } from "./team-names";
+import {
+  baseName,
+  existingTeams,
+  gradesOk,
+  namePlanner,
+  placeName,
+  settleName,
+  tbdBase,
+  teamName,
+  type NamedTeam,
+} from "./team-names";
 import { matchOrCreateUser } from "./user-match";
 
 type Deps = { pool: Pool; now: () => Date };
@@ -35,7 +45,7 @@ const usable = async (q: Pick<Queryable, "query">, org: unknown): Promise<OrgSlu
 export const canManageTeams = (q: Pick<Queryable, "query">, viewer: SessionUser, org: OrgSlug) =>
   orgHasArea(q, viewer.coachId, org, "teams");
 
-export type OrgTeamCoach = { id: string; name: string; cell: string; role: CoachRole; addedBy: string };
+export type OrgTeamCoach = { id: string; name: string; cell: string; email: string | null; role: CoachRole; addedBy: string };
 export type OrgTeam = {
   id: string;
   name: string;
@@ -46,6 +56,7 @@ export type OrgTeam = {
   players: number; // on its roster (none yet: ROSTER MUST BE ENTERED)
   createdBy: string;
   coaches: OrgTeamCoach[]; // Head Coach first, then by name
+  waitingCoach: { first: string; last: string } | null; // named without a cell yet: COACH CELL MUST BE ENTERED
 };
 
 async function teams(q: Pick<Queryable, "query">, org: string, onlyFor: string | null, id: string | null): Promise<OrgTeam[]> {
@@ -60,11 +71,13 @@ async function teams(q: Pick<Queryable, "query">, org: string, onlyFor: string |
     alt_name: string | null;
     players: number;
     coaches: OrgTeamCoach[];
+    waiting: OrgTeam["waitingCoach"];
   }>(
     `select t.id::text, t.name, t.gender, t.grade_low, t.grade, t.level, t.created_by, t.alt_name,
+            case when t.coach_first is null then null else json_build_object('first', t.coach_first, 'last', t.coach_last) end as waiting,
             (select count(*)::int from org_team_players p where p.team_id = t.id) as players,
             coalesce((select json_agg(json_build_object('id', c.coach_id, 'name', u.first_name || ' ' || u.last_name, 'cell', u.cell,
-                                                        'role', c.role, 'addedBy', c.added_by)
+                                                        'email', u.email, 'role', c.role, 'addedBy', c.added_by)
                                       order by c.role desc, u.last_name, u.first_name)
                       from org_team_coaches c join users u on u.coach_id = c.coach_id where c.team_id = t.id), '[]') as coaches
      from org_teams t
@@ -83,6 +96,7 @@ async function teams(q: Pick<Queryable, "query">, org: string, onlyFor: string |
     altName: t.alt_name,
     players: t.players,
     coaches: t.coaches,
+    waitingCoach: t.waiting,
   }));
 }
 
@@ -186,8 +200,9 @@ export async function resolveHead(q: PoolClient, v: unknown, now: Date): Promise
   return { coachId: m.coachId, lastName: m.lastName };
 }
 
-// The team's name by the rule (Grade + Gender + Head Coach's last name, or "TBD" numbered), unique in the organization.
-// Run inside the caller's transaction, after locking the organization's teams.
+// The team's name by the rule (Grade + Gender + Head Coach's last name, or "TBD"), numbered with any team already named
+// that ("3G Campbell 1", "3G Campbell 2"). A team keeping its name by the rule keeps its number. Run inside the
+// caller's transaction, after locking the organization's teams.
 async function ruleName(
   q: Pick<Queryable, "query">,
   org: string,
@@ -197,33 +212,46 @@ async function ruleName(
   exceptId: string | null,
   current: string | null = null,
 ): Promise<string> {
-  const taken = new Set(
-    (
-      await q.query<{ name: string }>(
-        "select lower(name) as name from org_teams where org = $1 and ($2::bigint is null or id <> $2)",
-        [org, exceptId],
-      )
-    ).rows.map((r) => r.name),
-  );
-  if (!last) {
-    // Already a "TBD" name of this grade and gender: keep it.
-    const base = teamName(gender, grades, "TBD");
-    if (current && (current === base || current.startsWith(`${base} `)) && !taken.has(current.toLowerCase())) return current;
-    return tbdName(gender, grades, taken);
-  }
-  const name = teamName(gender, grades, last);
-  if (taken.has(name.toLowerCase())) throw new TeamError(`There's already a team named "${name}".`);
+  const base = last ? teamName(gender, grades, last) : tbdBase(gender, grades);
+  if (current && (current.toLowerCase() === base.toLowerCase() || baseName(current).toLowerCase() === base.toLowerCase()))
+    return current;
+  const teams = (
+    await q.query<NamedTeam>("select id::text, name from org_teams where org = $1 and ($2::bigint is null or id <> $2)", [
+      org,
+      exceptId,
+    ])
+  ).rows;
+  const { name, renames } = placeName(teams, base);
+  for (const r of renames) await setOrgTeamName(q, org, r.id, r.name);
   return name;
+}
+
+// A team's name, and its copy's in a league ("ER 5B Harris").
+async function setOrgTeamName(q: Pick<Queryable, "query">, org: string, teamId: string, name: string) {
+  await q.query("update org_teams set name = $2 where id = $1", [teamId, name]);
+  await q.query(
+    `update scenic_teams st set name = coalesce(o.abbr, upper(left(o.slug, 4))) || ' ' || $2
+     from organizations o where st.org_team_id = $1 and o.slug = $3`,
+    [teamId, name, org],
+  );
+}
+
+// After a team leaves a name (renamed or removed): the one left with it drops its number.
+async function settleOrgName(q: Pick<Queryable, "query">, org: string, base: string) {
+  const teams = (await q.query<NamedTeam>("select id::text, name from org_teams where org = $1", [org])).rows;
+  const s = settleName(teams, base);
+  if (s) await setOrgTeamName(q, org, s.id, s.name);
 }
 
 const lockTeams = (q: Pick<Queryable, "query">, org: string) =>
   q.query("select pg_advisory_xact_lock(hashtext('org-teams:' || $1))", [org]);
 
-// Re-applies the naming rule after the Head Coach changes; its copy in a league follows ("ER 5B Harris").
+// Re-applies the naming rule after the Head Coach changes (or the coach waiting for a cell); its copy in a league
+// follows ("ER 5B Harris").
 async function renameOrgTeam(q: PoolClient, org: string, teamId: string) {
   await lockTeams(q, org);
   const t = await q.query<{ name: string; gender: "Boys" | "Girls"; grade_low: number; grade: number; last: string | null }>(
-    `select t.name, t.gender, t.grade_low, t.grade, u.last_name as last from org_teams t
+    `select t.name, t.gender, t.grade_low, t.grade, coalesce(u.last_name, t.coach_last) as last from org_teams t
      left join org_team_coaches c on c.team_id = t.id and c.role = 'HeadCoach' left join users u on u.coach_id = c.coach_id
      where t.id = $1`,
     [teamId],
@@ -231,12 +259,8 @@ async function renameOrgTeam(q: PoolClient, org: string, teamId: string) {
   const r = t.rows[0];
   const grades = [...new Set([r.grade_low, r.grade])].map(gradeStr);
   const name = await ruleName(q, org, r.gender, grades, r.last, teamId, r.name);
-  if (name !== r.name) await q.query("update org_teams set name = $2 where id = $1", [teamId, name]);
-  await q.query(
-    `update scenic_teams st set name = coalesce(o.abbr, upper(left(o.slug, 4))) || ' ' || $2
-     from organizations o where st.org_team_id = $1 and o.slug = $3`,
-    [teamId, name, org],
-  );
+  await setOrgTeamName(q, org, teamId, name);
+  if (name !== r.name) await settleOrgName(q, org, baseName(r.name));
   return name;
 }
 
@@ -298,6 +322,58 @@ export async function setOrgTeamAltName(
   });
 }
 
+// ---- A Head Coach named without a cell yet ----
+
+// Fix the waiting coach's name, or remove them (null: "TBD" again). Only while the team has no Head Coach; adding their
+// cell (addOrgTeamCoach, Head Coach) makes them the Head Coach.
+export async function setOrgWaitingCoach(
+  deps: Deps,
+  viewer: SessionUser,
+  org: unknown,
+  teamId: unknown,
+  input: { first: unknown; last: unknown } | null,
+): Promise<Result<{ name: string }>> {
+  return run(async () => {
+    if (!isId(teamId)) throw new TeamError("That team no longer exists.");
+    const first = input ? cleanName(input.first) : null;
+    const last = input ? cleanName(input.last) : null;
+    if (input && (!first || !last)) throw new TeamError("Enter the coach's first and last name (letters only).");
+    const o = await mustManage(deps.pool, viewer, org);
+    return withTx(deps.pool, async (q) => {
+      const t = await q.query("select 1 from org_teams where id = $1 and org = $2 for update", [teamId, o]);
+      if (!t.rowCount) throw new TeamError("That team no longer exists.");
+      const head = await q.query("select 1 from org_team_coaches where team_id = $1 and role = 'HeadCoach'", [teamId]);
+      if (head.rowCount) throw new TeamError("This team already has a Head Coach.");
+      await q.query("update org_teams set coach_first = $2, coach_last = $3 where id = $1", [teamId, first, last]);
+      return { name: await renameOrgTeam(q, o, teamId) };
+    });
+  });
+}
+
+// The Head Coach's email when they have none yet (they confirm it with a code at their next login).
+export async function setOrgHeadCoachEmail(
+  deps: Deps,
+  viewer: SessionUser,
+  org: unknown,
+  teamId: unknown,
+  email: unknown,
+): Promise<Result> {
+  return run(async () => {
+    if (!isId(teamId)) throw new TeamError("That team no longer exists.");
+    const e = cleanEmail(email);
+    if (!e) throw new TeamError("Enter a real email address.");
+    const o = await mustManage(deps.pool, viewer, org);
+    const r = await deps.pool.query(
+      `update users u set email = $3, updated_at = $4, updated_by = $5
+       from org_team_coaches c join org_teams t on t.id = c.team_id
+       where c.team_id = $1 and t.org = $2 and c.role = 'HeadCoach' and c.coach_id = u.coach_id and u.email is null`,
+      [teamId, o, e, deps.now(), by(viewer)],
+    );
+    if (!r.rowCount) throw new TeamError("This team's Head Coach already has an email.");
+    return {};
+  });
+}
+
 // Removing a team removes its coaches from it; anyone left coaching nothing here loses the Coach role.
 export async function deleteOrgTeam(deps: Deps, viewer: SessionUser, org: unknown, id: unknown): Promise<Result> {
   return run(async () => {
@@ -308,8 +384,10 @@ export async function deleteOrgTeam(deps: Deps, viewer: SessionUser, org: unknow
         "select c.coach_id from org_team_coaches c join org_teams t on t.id = c.team_id where t.id = $1 and t.org = $2",
         [id, o],
       );
-      const d = await q.query("delete from org_teams where id = $1 and org = $2", [id, o]);
+      await lockTeams(q, o);
+      const d = await q.query<{ name: string }>("delete from org_teams where id = $1 and org = $2 returning name", [id, o]);
       if (!d.rowCount) throw new TeamError("That team no longer exists.");
+      await settleOrgName(q, o, baseName(d.rows[0].name));
       for (const c of coaches.rows) await dropCoachRoleIfIdle(q, o, c.coach_id, viewer);
       return {};
     });
@@ -324,7 +402,7 @@ async function dropCoachRoleIfIdle(q: Pick<Queryable, "query">, org: string, coa
   if (!still.rowCount) await q.query("select set_role($1, $2, 'Coach', false, $3)", [coachId, org, by(viewer)]);
 }
 
-export type OrgCoachInput = { first: unknown; last: unknown; cell: unknown; role: unknown };
+export type OrgCoachInput = { first: unknown; last: unknown; cell: unknown; role: unknown; email?: unknown };
 
 // Add a coach by name and cell (their login is made if new). One Head Coach per team.
 export async function addOrgTeamCoach(
@@ -343,6 +421,8 @@ export async function addOrgTeamCoach(
     if (!cell) throw new TeamError("Enter the coach's 10-digit cell number.");
     const role = COACH_ROLES.find((r) => r.key === input.role);
     if (!role) throw new TeamError("Pick Head Coach or Assistant Coach.");
+    const email = input.email ? cleanEmail(input.email) : null;
+    if (input.email && !email) throw new TeamError("Enter a real email address (or leave it blank).");
     const o = await mustManage(deps.pool, viewer, org);
     return withTx(deps.pool, async (q) => {
       const t = await q.query("select 1 from org_teams where id = $1 and org = $2 for update", [teamId, o]);
@@ -351,8 +431,9 @@ export async function addOrgTeamCoach(
         const head = await q.query("select 1 from org_team_coaches where team_id = $1 and role = 'HeadCoach'", [teamId]);
         if (head.rowCount) throw new TeamError("This team already has a Head Coach. Remove them first.");
       }
-      const m = await matchOrCreateUser(q, { first, last, cell, email: null }, deps.now());
+      const m = await matchOrCreateUser(q, { first, last, cell, email }, deps.now());
       if ("error" in m) throw new TeamError(m.error);
+      if (email) await q.query("update users set email = $2 where coach_id = $1 and email is null", [m.coachId, email]);
       const ins = await q.query(
         `insert into org_team_coaches (team_id, coach_id, role, added_by, added_at) values ($1, $2, $3, $4, $5)
          on conflict do nothing`,
@@ -361,6 +442,8 @@ export async function addOrgTeamCoach(
       if (!ins.rowCount) throw new TeamError(`${m.who} already coaches this team.`);
       // Its copy in a league (Scenic City) shows the new Head Coach; the team takes their last name ("4G Epps").
       if (role.key === "HeadCoach") {
+        // A coach waiting for a cell is replaced by the real one.
+        await q.query("update org_teams set coach_first = null, coach_last = null where id = $1", [teamId]);
         await q.query("update scenic_teams set coach_id = $2 where org_team_id = $1", [teamId, m.coachId]);
         await renameOrgTeam(q, o, teamId);
       }
@@ -410,32 +493,36 @@ export type ImportPreviewRow = ImportRow & { status: "new" | "exists" | "error";
 const importGrades = (g: string) => g.split("-").map((x) => (x === "0" ? "K" : x));
 
 async function previewRows(q: Pick<Queryable, "query">, org: string, text: string) {
-  const parsed = parseTeamRows(text, { named: false });
+  const parsed = parseTeamRows(text, { named: false, cellOptional: true });
   const { tooMany } = parsed;
   const teams = (
-    await q.query<{ name: string; alt: string | null }>(
-      "select lower(name) as name, lower(alt_name) as alt from org_teams where org = $1",
+    await q.query<{ id: string; name: string; level: string; alt: string | null }>(
+      "select id::text, name, level, lower(alt_name) as alt from org_teams where org = $1",
       [org],
     )
   ).rows;
-  // A team is already there by its name, or (no coach yet, so no name to match) by its Alternate name.
-  const have = new Set([...teams.map((r) => r.name), ...teams.filter((r) => r.alt).map((r) => `alt:${r.alt}`)]);
-  const seen = new Set<string>();
-  const out: ImportPreviewRow[] = parsed.rows.map((p) => {
-    // The name by the rule; with no coach it's "4G TBD" (numbered when added).
-    const name = p.gender && p.grade ? teamName(p.gender, importGrades(p.grade), p.coach?.last ?? "TBD") : "";
-    const r = { ...p, name };
-    const key = r.coach ? name.toLowerCase() : r.altName ? `alt:${r.altName.toLowerCase()}` : "";
-    const errors = [...r.errors, ...(key && seen.has(key) ? ["Listed twice"] : [])];
-    if (key) seen.add(key);
-    const g = r.grade ? parseGrade(r.grade) : null;
-    return {
-      ...r,
-      errors,
-      gradeLabel: g ? gradeLabel(g.low, g.grade) : null,
-      status: errors.length ? "error" : key && have.has(key) ? "exists" : "new",
-    };
+  // A team is already there by its name (numbered or not) and level, or (no coach yet, so no name to match) by its
+  // Alternate name.
+  const there = existingTeams(teams);
+  const alts = new Set(teams.filter((t) => t.alt).map((t) => t.alt!));
+  // Each new team's name, numbered when the same as another's ("3G Campbell 1", "3G Campbell 2").
+  const plan = namePlanner(teams);
+  const seenAlt = new Set<string>();
+  const rows: ImportPreviewRow[] = parsed.rows.map((p, i) => {
+    const grades = p.grade ? importGrades(p.grade) : null;
+    const base = p.gender && grades ? (p.coach ? teamName(p.gender, grades, p.coach.last) : tbdBase(p.gender, grades)) : "";
+    const alt = !p.coach && p.altName ? p.altName.toLowerCase() : "";
+    const errors = [...p.errors, ...(alt && seenAlt.has(alt) ? ["Listed twice"] : [])];
+    if (alt) seenAlt.add(alt);
+    const status = errors.length ? "error" : (p.coach ? there(base, p.level) : !!alt && alts.has(alt)) ? "exists" : "new";
+    const fixes = status === "new" ? [...p.fixes, ...plan.add(`row:${i}`, base)] : p.fixes;
+    if (status === "new" && p.coach && !p.coach.cell)
+      fixes.push(`${p.coach.first} ${p.coach.last} has no cell yet: the team waits for it (COACH CELL MUST BE ENTERED)`);
+    const g = p.grade ? parseGrade(p.grade) : null;
+    return { ...p, name: base, fixes, errors, gradeLabel: g ? gradeLabel(g.low, g.grade) : null, status };
   });
+  // Names as they'll be once every row is added (a later row can number an earlier one).
+  const out = rows.map((r, i) => (r.status === "new" ? { ...r, name: plan.nameOf(`row:${i}`) } : r));
   return { rows: out, tooMany };
 }
 
@@ -483,24 +570,37 @@ export async function importTeams(
           continue;
         }
         const g = parseGrade(r.grade)!;
-        const m = r.coach ? await matchOrCreateUser(q, { ...r.coach, email: null }, deps.now()) : null;
+        // With a cell: their login (made if new). Without one yet: the team waits for it, named for them.
+        const c = r.coach;
+        const m = c?.cell
+          ? await matchOrCreateUser(q, { first: c.first, last: c.last, cell: c.cell, email: c.email }, deps.now())
+          : null;
         if (m && "error" in m) {
           skipped.push(`${r.name}: ${m.error}`);
           continue;
         }
-        // Named by the rule from the coach's last name as it is on their login (or "TBD", numbered).
-        let name: string;
-        try {
-          name = await ruleName(q, o, r.gender!, importGrades(r.grade!), m ? m.lastName : null, null);
-        } catch (e) {
-          if (!(e instanceof TeamError)) throw e;
-          skipped.push(`${r.name}: already a team`);
-          continue;
-        }
+        if (m && c?.email)
+          await q.query("update users set email = $2 where coach_id = $1 and email is null", [m.coachId, c.email]);
+        const waiting = c && !c.cell ? c : null;
+        // Named by the rule from the coach's last name as it is on their login (or "TBD"); numbered when taken.
+        const name = await ruleName(q, o, r.gender!, importGrades(r.grade!), m?.lastName ?? waiting?.last ?? null, null);
         const t = await q.query<{ id: string }>(
-          `insert into org_teams (org, name, gender, grade_low, grade, level, created_by, created_at, import_id, alt_name)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id::text`,
-          [o, name, r.gender, g.low, g.grade, r.level, by(viewer), deps.now(), batch, r.altName],
+          `insert into org_teams (org, name, gender, grade_low, grade, level, created_by, created_at, import_id, alt_name, coach_first, coach_last)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id::text`,
+          [
+            o,
+            name,
+            r.gender,
+            g.low,
+            g.grade,
+            r.level,
+            by(viewer),
+            deps.now(),
+            batch,
+            r.altName,
+            waiting?.first ?? null,
+            waiting?.last ?? null,
+          ],
         );
         if (m) {
           await q.query(
@@ -517,7 +617,9 @@ export async function importTeams(
       }
       if (added.length) await q.query("update org_team_imports set teams = $2 where id = $1", [batch, added.length]);
       else await q.query("delete from org_team_imports where id = $1", [batch]);
-      return { added, skipped };
+      // As named now: a later team can have numbered an earlier one ("3G Campbell 1").
+      const names = await q.query<{ name: string }>("select name from org_teams where import_id = $1 order by id", [batch]);
+      return { added: names.rows.map((x) => x.name), skipped };
     });
   });
 }
@@ -580,6 +682,7 @@ export async function undoTeamImport(
         for (const c of coaches.rows) await dropCoachRoleIfIdle(q, o, c.coach_id, viewer);
         removed.push(t.name);
       }
+      for (const b of new Set(removed.map(baseName))) await settleOrgName(q, o, b);
       if (!kept.length)
         await q.query("update org_team_imports set undone_by = $2, undone_at = $3 where id = $1", [
           importId,

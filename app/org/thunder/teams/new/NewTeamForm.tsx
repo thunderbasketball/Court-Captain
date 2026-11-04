@@ -99,6 +99,7 @@ export default function NewTeamForm({ users, volunteers }: { users: PersonOption
       <div className="rounded-xl bg-zinc-50 px-4 py-3 dark:bg-zinc-800/50">
         <p className="text-xs font-medium text-zinc-500">Team name</p>
         <p className="text-lg font-semibold">{preview ?? "—"}</p>
+        <p className="text-xs text-zinc-500">If another team has this name, both get a number (1, 2).</p>
       </div>
 
       {error && (

@@ -3,7 +3,7 @@
 // Each team names a coach by cell: that cell is their login (made if new), and they get the Scenic City Coach role.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
-import { cleanName } from "./auth/validate";
+import { cleanEmail, cleanName } from "./auth/validate";
 import { orgHasArea } from "./org-admin";
 import type { ScenicRole } from "./orgs";
 import { normalizeCell } from "./phone";
@@ -90,9 +90,11 @@ export type ScenicTeam = {
   divisionLow: number | null; // the division it plays in (its latest program); none yet: null
   divisionHigh: number | null;
   coachId: string | null; // an organization's team may have no Head Coach yet
-  coachFirst: string | null;
+  coachFirst: string | null; // the Head Coach, or one named without a cell yet (imported: coachId and coachCell null)
   coachLast: string | null;
   coachCell: string | null;
+  coachEmail: string | null;
+  waitingCoach: boolean; // named without a cell yet: COACH CELL MUST BE ENTERED
   createdBy: string;
   updatedBy: string;
   canEdit: boolean;
@@ -116,7 +118,8 @@ export async function listScenicTeams(
   const r = await q.query<Omit<ScenicTeam, "gradeLabel" | "canEdit"> & { owner_coach_id: string | null; org_team: boolean }>(
     `select t.id::text, t.name, t.gender, t.level, t.grade_low as "gradeLow", t.grade, t.partner_id::text as "partnerId", p.name as "partnerName",
             o.first_name || ' ' || o.last_name as "ownerName", t.owner_coach_id,
-            t.coach_id as "coachId", c.first_name as "coachFirst", c.last_name as "coachLast", c.cell as "coachCell",
+            t.coach_id as "coachId", coalesce(c.first_name, t.coach_first) as "coachFirst", coalesce(c.last_name, t.coach_last) as "coachLast",
+            c.cell as "coachCell", c.email as "coachEmail", (t.coach_id is null and t.coach_first is not null) as "waitingCoach",
             t.created_by as "createdBy", t.updated_by as "updatedBy", (t.org_team_id is not null or t.thunder_team_id is not null) as org_team,
             coalesce(t.alt_name, ot.alt_name, th.alt_name) as "altName", dv.grade_low as "divisionLow", dv.grade_high as "divisionHigh"
      from scenic_teams t
@@ -272,13 +275,39 @@ export async function updateScenicTeam(
       if (!(await canEdit(q, viewer, t.rows[0]))) throw new TeamError("You can't change this team.");
       const coach = await coachFor(q, f, viewer, deps.now());
       await q.query(
-        `update scenic_teams set name = $2, gender = $3, grade_low = $4, grade = $5, coach_id = $6, updated_by = $7, updated_at = $8, level = $9
+        // The coach now has a cell and login: no longer waiting.
+        `update scenic_teams set name = $2, gender = $3, grade_low = $4, grade = $5, coach_id = $6, updated_by = $7, updated_at = $8, level = $9,
+                coach_first = null, coach_last = null
          where id = $1`,
         [id, f.name, f.gender, f.grade.low, f.grade.grade, coach.coachId, by(viewer), deps.now(), f.level],
       );
       return { newLogin: coach.newLogin };
     });
   });
+}
+
+// The Head Coach's email when they have none yet (whoever can edit the team). They confirm it with a code at their next
+// login.
+export async function setScenicCoachEmail(deps: Deps, viewer: SessionUser, id: unknown, email: unknown): Promise<Result> {
+  if (!isId(id)) return { ok: false, message: "That team no longer exists." };
+  const e = cleanEmail(email);
+  if (!e) return { ok: false, message: "Enter a real email address." };
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      const t = await q.query<{ partner_id: string | null; owner_coach_id: string | null; coach_id: string | null }>(
+        "select partner_id::text, owner_coach_id, coach_id from scenic_teams where id = $1 for update",
+        [id],
+      );
+      if (!t.rows[0]) throw new TeamError("That team no longer exists.");
+      if (!(await canEdit(q, viewer, t.rows[0]))) throw new TeamError("You can't change this team.");
+      const r = await q.query(
+        "update users set email = $2, updated_at = $3, updated_by = $4 where coach_id = $1 and email is null",
+        [t.rows[0].coach_id, e, deps.now(), by(viewer)],
+      );
+      if (!r.rowCount) throw new TeamError("This team's Head Coach already has an email.");
+      return {};
+    }),
+  );
 }
 
 export async function deleteScenicTeam(deps: Deps, viewer: SessionUser, id: unknown): Promise<Result> {

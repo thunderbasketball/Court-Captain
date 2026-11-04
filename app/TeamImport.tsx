@@ -186,7 +186,13 @@ function ImportForm({
                 </div>
                 {r.coach && (
                   <p className="text-xs text-zinc-500">
-                    Head Coach {r.coach.first} {r.coach.last} · {formatCell(r.coach.cell)}
+                    Head Coach {r.coach.first} {r.coach.last} ·{" "}
+                    {r.coach.cell ? (
+                      formatCell(r.coach.cell)
+                    ) : (
+                      <span className="font-medium text-amber-700 dark:text-amber-300">no cell yet (add it on the team)</span>
+                    )}
+                    {r.coach.email && <> · {r.coach.email}</>}
                   </p>
                 )}
                 {r.fixes.length > 0 && (

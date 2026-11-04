@@ -92,3 +92,12 @@ export async function setNeedsUniform(teamId: string, registrantId: string, on: 
 export async function markUniformAdded(teamId: string, registrantId: string) {
   return guarded((u) => uniforms.markUniformAdded(deps, u, String(teamId), String(registrantId)), "uniforms");
 }
+
+// A Head Coach named without a cell yet: fix the name, or remove them (null). Their cell goes through addStaff (Head
+// Coach, a new person). Checked again in lib/teams.
+export async function saveWaitingCoach(teamId: string, input: { first: string; last: string } | null) {
+  return guarded((u) => teams.setWaitingCoach(deps, u, String(teamId), input));
+}
+export async function saveHeadCoachEmail(teamId: string, email: string) {
+  return guarded((u) => teams.setHeadCoachEmail(deps, u, String(teamId), String(email)));
+}

@@ -3,6 +3,8 @@ import type { SessionUser } from "./auth/service";
 
 const ALL = { allSeason: true, days: [] }; // register for ALL Season
 import {
+  gameDaySchedule,
+  registerAllScenicTeams,
   addDivision,
   addPool,
   copyDivisions,
@@ -20,6 +22,9 @@ import {
   withdrawTeam,
 } from "./scenic-programs";
 import { listGameDays } from "./scenic-partners";
+import { createMatchups, saveMatchups } from "./scenic-matchups";
+import { placeGame, setGameLength } from "./scenic-grid";
+import { scheduledGames } from "./scenic-games";
 import { createScenicTeam } from "./scenic-teams";
 import { createTestDb, grant } from "./testing/db";
 
@@ -245,6 +250,23 @@ describe("Scenic City programs", () => {
     expect((await getProgram(deps(), sam, id))!.teams).toBe(3);
   });
 
+  it("Register all: every team this person can register here, each to its division (ALL Season); the rest skipped, saying why", async () => {
+    const id = await newLeague();
+    await div(id, "Boys", 3, 4, ["REC", "COMP"]);
+    const b34c = await team(pat, baylor, "Baylor 3/4 Comp", "Boys", "3-4", "COMP");
+    await team(pat, baylor, "Baylor 4 Rec", "Boys", "4", "REC");
+    await team(pat, baylor, "Baylor 5th", "Boys", "5", "REC");
+    await team(sam, "solo", "Sam Girls", "Girls", "5", "REC"); // not Pat's
+    expect(await registerTeam(deps(), pat, id, b34c, ALL)).toMatchObject({ ok: true });
+    expect(await registerAllScenicTeams(deps(), pat, id)).toEqual({
+      ok: true,
+      registered: ["Baylor 4 Rec: Boys 3rd–4th · 4th REC · Pool A"],
+      skipped: ["Baylor 5th: This program has no Boys 5th REC."],
+    });
+    expect((await getProgram(deps(), dee, id))!.teams).toBe(2);
+    expect(await registerAllScenicTeams(deps(), pat, "x")).toMatchObject({ ok: false });
+  });
+
   it("registration window: closed means no sign-ups or withdrawals except by a Director of Programs", async () => {
     const id = await newLeague();
     await div(id, "Boys", 5, 5, ["REC"]);
@@ -423,4 +445,220 @@ describe("Scenic City programs", () => {
     expect(await off(fay, "2027-01-09", false)).toEqual({ ok: true });
     expect(await shown()).toMatchObject({ removedBy: null, off: { brackets: "Fay X" } });
   });
+  it("the Scheduler lists every League's upcoming Game Days with the teams playing (Directors of Scheduling only)", async () => {
+    const a = await newLeague();
+    const b = await newLeague({ name: "Spring League 2027" });
+    await saveProgramDates(deps(), dee, a, { add: ["2027-01-09", "2027-01-16"], addBrackets: ["2027-03-06"], remove: [] });
+    await saveProgramDates(deps(), dee, b, { add: ["2027-01-16"], addBrackets: [], remove: [] });
+    await div(a, "Boys", 3, 4, ["COMP"]);
+    await div(b, "Boys", 3, 4, ["COMP"]);
+    const t1 = await team(pat, baylor, "Baylor 3/4", "Boys", "3-4", "COMP");
+    const t2 = await team(pat, baylor, "Baylor 4th", "Boys", "4", "COMP");
+    await registerTeam(deps(), pat, a, t1, ALL);
+    expect(await registerTeam(deps(), pat, b, t2, ALL)).toMatchObject({ ok: true });
+
+    expect(await gameDaySchedule(deps(), fay)).toBeNull(); // Facilities only
+    await db.pool.query(
+      "insert into director_areas (coach_id, org, area, granted_by) values ('5550004', 'scenic-city', 'scheduling', 'test')",
+    );
+    await setTeamOff(deps(), fay, a, t1, "2027-01-09", true);
+    const s = (await gameDaySchedule(deps(), fay))!;
+    expect(
+      s.days.map((d) => ({
+        date: d.date,
+        playing: d.playing,
+        games: d.games,
+        programs: d.programs.map(
+          (p) => `${p.programName}: ${p.teams.map((t) => `${t.name} ${t.note}${t.out ? " (out)" : ""}`).join(", ")}`,
+        ),
+      })),
+    ).toEqual([
+      { date: "2027-01-09", playing: 0, games: 0, programs: ["Winter League 2027: Baylor 3/4 1GG (out)"] },
+      {
+        date: "2027-01-16",
+        playing: 2,
+        games: 2,
+        programs: ["Spring League 2027: Baylor 4th 1GG", "Winter League 2027: Baylor 3/4 1GG"],
+      },
+      { date: "2027-03-06", playing: 1, games: 0, programs: ["Winter League 2027: Baylor 3/4 Bracket"] },
+    ]);
+    // Past Game Days drop off.
+    now = new Date("2027-01-12T15:00:00Z");
+    expect((await gameDaySchedule(deps(), fay))!.days.map((d) => d.date)).toEqual(["2027-01-16", "2027-03-06"]);
+  });
+  it("the Scheduler creates a division's matchups, keeping pairs new across Game Days", async () => {
+    const id = await newLeague();
+    await saveProgramDates(deps(), dee, id, { add: ["2027-01-09", "2027-01-16"], addBrackets: [], remove: [] });
+    await div(id, "Boys", 3, 4, ["COMP"]);
+    const divisionId = (await getProgram(deps(), dee, id))!.divisionList[0].id;
+    const teams: string[] = [];
+    for (const [who, forWhom, name] of [
+      [pat, baylor, "Baylor A"],
+      [pat, baylor, "Baylor B"],
+      [sam, "solo", "Sam A"],
+      [sam, "solo", "Sam B"],
+    ] as const) {
+      const t = await team(who, forWhom, name, "Boys", "4", "COMP");
+      expect(await registerTeam(deps(), who, id, t, ALL)).toMatchObject({ ok: true });
+      teams.push(t);
+    }
+    expect(await createMatchups(deps(), fay, id, "2027-01-09", divisionId)).toEqual({
+      ok: false,
+      message: "Only a Scenic City Admin or Director of Scheduling can do that.",
+    });
+    await db.pool.query(
+      "insert into director_areas (coach_id, org, area, granted_by) values ('5550004', 'scenic-city', 'scheduling', 'test')",
+    );
+    expect(await createMatchups(deps(), fay, id, "2027-01-10", divisionId)).toMatchObject({ ok: false });
+    expect(await createMatchups(deps(), fay, id, "2027-01-09", divisionId)).toEqual({
+      ok: true,
+      created: 2,
+      short: [],
+      repeats: [],
+    });
+    expect(await createMatchups(deps(), fay, id, "2027-01-16", divisionId)).toEqual({
+      ok: true,
+      created: 2,
+      short: [],
+      repeats: [],
+    });
+    const names = new Map([
+      [teams[0], "Baylor A"],
+      [teams[1], "Baylor B"],
+      [teams[2], "Sam A"],
+      [teams[3], "Sam B"],
+    ]);
+    const games = async (day: string) =>
+      (await gameDaySchedule(deps(), fay))!.days
+        .find((d) => d.date === day)!
+        .programs[0].matchups.map((m) => [names.get(m.a), names.get(m.b)].sort().join(" vs "))
+        .sort();
+    const jan9 = await games("2027-01-09");
+    const jan16 = await games("2027-01-16");
+    // Teams from another club first; a pair from Jan 9 isn't repeated on Jan 16.
+    expect(jan9.every((g) => g.includes("Baylor") && g.includes("Sam"))).toBe(true);
+    expect(jan16.filter((g) => jan9.includes(g))).toEqual([]);
+    // Creating again replaces that day's matchups; a team taken out isn't paired.
+    await setTeamOff(deps(), fay, id, teams[3], "2027-01-16", true);
+    expect(await createMatchups(deps(), fay, id, "2027-01-16", divisionId)).toMatchObject({ ok: true, created: 1 });
+    expect((await games("2027-01-16")).some((g) => g.includes("Sam B"))).toBe(false);
+
+    // Rearranged by hand (drag and drop): checked again on the server, then saved as given.
+    const save = (g: unknown) => saveMatchups(deps(), fay, id, "2027-01-09", divisionId, g);
+    const [a, b, c, d] = teams;
+    expect(await saveMatchups(deps(), dee, id, "2027-01-09", divisionId, [[a, b]])).toMatchObject({ ok: false });
+    expect(await save([[a, a]])).toEqual({ ok: false, message: "Baylor A can't play itself." });
+    expect(
+      await save([
+        [a, b],
+        [b, a],
+      ]),
+    ).toEqual({ ok: false, message: "Baylor B vs Baylor A is in there twice." });
+    expect(
+      await save([
+        [a, b],
+        [a, c],
+      ]),
+    ).toEqual({ ok: false, message: "Baylor A is guaranteed 1 game that day; take it out of one." });
+    expect(await save([[a, "999999"]])).toMatchObject({ ok: false });
+    expect(await save([[a, b]])).toEqual({ ok: true, saved: 1 }); // Sam A and Sam B left in the Sandbox
+    expect(await games("2027-01-09")).toEqual(["Baylor A vs Baylor B"]);
+    expect(
+      await save([
+        [c, a],
+        [d, b],
+      ]),
+    ).toEqual({ ok: true, saved: 2 });
+    expect(await games("2027-01-09")).toEqual(["Baylor A vs Sam A", "Baylor B vs Sam B"]);
+    // Teams tab: each team's matchups by date, across the League's Game Days (the same list on every day's tab).
+    const s = (await gameDaySchedule(deps(), fay))!;
+    const list = (i: number, id: string) =>
+      s.days[i].programs[0].teamGames[id].map((g) => `${g.date} ${g.opponent} ${g.opponentGroup}`);
+    expect(list(0, a)[0]).toBe("2027-01-09 Sam A 4th COMP");
+    expect(list(0, c)[0]).toBe("2027-01-09 Baylor A 4th COMP");
+    expect(list(1, a)).toEqual(list(0, a));
+    expect([...list(0, a)].sort()).toEqual(list(0, a));
+
+    // Grid: drag games into game slots at a gym open that day.
+    const gym = await db.pool.query<{ id: string }>(
+      `insert into partner_gyms (partner_id, name, created_by) values ($1, 'Main Gym', 't') returning id::text`,
+      [baylor],
+    );
+    const court = (
+      await db.pool.query<{ id: string }>(
+        `insert into partner_courts (gym_id, name, created_by) values ($1, 'Court 1', 't') returning id::text`,
+        [gym.rows[0].id],
+      )
+    ).rows[0].id;
+    await db.pool.query(
+      `insert into court_hours (court_id, game_day_id, starts, ends, set_by) select $1, id, '09:00', '12:00', 't' from game_days where day = '2027-01-09'`,
+      [court],
+    );
+    const jan9Games = s.days[0].programs[0].matchups;
+    const [g1, g2] = jan9Games.map((m) => m.id);
+    expect(await placeGame(deps(), dee, g1, { court, starts: "09:00" })).toMatchObject({ ok: false }); // not a Scheduler
+    expect(await placeGame(deps(), fay, g1, { court, starts: "11:30" })).toEqual({
+      ok: false,
+      message: "Main Gym Court 1 is open 9:00 AM–12:00 PM; a game doesn't fit then.",
+    });
+    expect(await placeGame(deps(), fay, g1, { court: "999", starts: "09:00" })).toMatchObject({ ok: false });
+    expect(await placeGame(deps(), fay, g1, { court, starts: "09:00" })).toEqual({ ok: true });
+    expect(await placeGame(deps(), fay, g2, { court, starts: "09:00" })).toEqual({
+      ok: false,
+      message: "That slot already has a game. Move that game first.",
+    });
+    expect(await placeGame(deps(), fay, g2, { court, starts: "09:55" })).toEqual({ ok: true });
+    const placed = async () =>
+      Object.fromEntries(
+        (await gameDaySchedule(deps(), fay))!.days[0].programs[0].matchups.map((m) => [
+          [names.get(m.a), names.get(m.b)].sort().join(" vs "),
+          m.starts,
+        ]),
+      );
+    expect(await placed()).toEqual({ "Baylor A vs Sam A": "09:00", "Baylor B vs Sam B": "09:55" });
+    // Saving the division again keeps each pair in its slot; a new pair starts off the grid.
+    expect(
+      await save([
+        [a, c],
+        [b, d],
+      ]),
+    ).toEqual({ ok: true, saved: 2 });
+    expect(await placed()).toEqual({ "Baylor A vs Sam A": "09:00", "Baylor B vs Sam B": "09:55" });
+    expect(
+      await save([
+        [a, d],
+        [b, c],
+      ]),
+    ).toEqual({ ok: true, saved: 2 });
+    expect(await placed()).toEqual({ "Baylor A vs Sam B": null, "Baylor B vs Sam A": null });
+    // A team can't play two games at once.
+    const [h1, h2] = (await gameDaySchedule(deps(), fay))!.days[0].programs[0].matchups.map((m) => m.id);
+    expect(await placeGame(deps(), fay, h1, { court, starts: "09:00" })).toEqual({ ok: true });
+    expect(await placeGame(deps(), fay, h1, null)).toEqual({ ok: true }); // back off the grid
+    expect(await placeGame(deps(), fay, h2, { court, starts: "09:00" })).toEqual({ ok: true });
+    // On the team's card: its games by date with the opponent, and the gym, court and time once placed.
+    const placedGame = (await gameDaySchedule(deps(), fay))!.days[0].programs[0].matchups.find((m) => m.id === h2)!;
+    const mine = (await scheduledGames(db.pool, [placedGame.a]))[placedGame.a];
+    expect(mine.find((g) => g.date === "2027-01-09")).toMatchObject({
+      program: "Winter League 2027",
+      opponent: names.get(placedGame.b),
+      opponentGroup: "4th COMP",
+      gym: "Main Gym",
+      court: "Court 1",
+      starts: "09:00",
+    });
+    expect(mine.find((g) => g.date === "2027-01-16")).toMatchObject({ gym: null, starts: null });
+    // Changing the game length moves placed games with their blocks (the 2nd game stays the 2nd); one that no longer
+    // fits before the court closes comes off the grid.
+    expect(await placeGame(deps(), fay, h1, { court, starts: "09:55" })).toEqual({ ok: true });
+    const times = async () =>
+      Object.fromEntries((await gameDaySchedule(deps(), fay))!.days[0].programs[0].matchups.map((m) => [m.id, m.starts]));
+    expect(await setGameLength(deps(), fay, "2027-01-09", 60)).toEqual({ ok: true, moved: 2, off: [] });
+    expect(await times()).toEqual({ [h2]: "09:00", [h1]: "10:00" });
+    expect(await setGameLength(deps(), fay, "2027-01-09", 90)).toEqual({ ok: true, moved: 2, off: [] });
+    expect(await times()).toEqual({ [h2]: "09:00", [h1]: "10:30" });
+    const r = await setGameLength(deps(), fay, "2027-01-09", 120);
+    expect(r).toMatchObject({ ok: true, moved: 1 });
+    expect(await times()).toEqual({ [h2]: "09:00", [h1]: null });
+  }, 60_000);
 });

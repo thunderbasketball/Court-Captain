@@ -6,7 +6,12 @@ import { currentScenic } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
 import { requireFeature } from "@/lib/features-server";
 import { formatCell } from "@/lib/phone";
+import { MustBeEntered } from "../../../TeamRow";
+import { HeadCoachEmailButton } from "../../../CoachContactTools";
 import { listClubImports, outsideClubs, scenicCoachOptions } from "@/lib/scenic-club-teams";
+import { scheduledGames } from "@/lib/scenic-games";
+import { easternDate } from "@/lib/time";
+import { LeagueGames } from "../../../LeagueGames";
 import { GRADE_CHOICES, gradeRange, listScenicTeams, type ScenicTeam } from "@/lib/scenic-teams";
 import { TZ } from "@/lib/time";
 import AppHeader from "../../../AppHeader";
@@ -58,6 +63,12 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
   if (!data) redirect("/org/scenic-city");
   const view = (await searchParams).view === "org" ? "org" : "division";
   const teams = [...data.teams].sort(byTeam);
+  // Each team's League games (opponent, time and gym once scheduled), on its card.
+  const games = await scheduledGames(
+    db,
+    teams.map((t) => t.id),
+  );
+  const today = easternDate(new Date());
   const director = scenic.role === "Director";
   const [clubs, people, imports] = director
     ? await Promise.all([outsideClubs(db), scenicCoachOptions(db), listClubImports(deps, user)])
@@ -95,9 +106,24 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
           <p>
             Coach {t.coachFirst} {t.coachLast} · <PhoneLink cell={t.coachCell} label={formatCell(t.coachCell)} />
           </p>
+        ) : t.waitingCoach ? (
+          // Imported with first and last name only: Edit adds their cell (their login).
+          <p>
+            Coach {t.coachFirst} {t.coachLast} <span className="text-zinc-400">· no cell yet</span>
+          </p>
         ) : (
-          <p className="font-semibold text-red-600 motion-safe:animate-pulse dark:text-red-400">COACH INFO MUST BE ENTERED</p>
+          <MustBeEntered what="COACH INFO" />
         )}
+        {t.waitingCoach && <MustBeEntered what="COACH CELL" />}
+        {(t.waitingCoach || (t.coachId && !t.coachEmail)) && (
+          <span className="flex items-center gap-2">
+            <MustBeEntered what="COACH EMAIL" />
+            {t.canEdit && t.coachId && !t.coachEmail && (
+              <HeadCoachEmailButton org="scenic-city" teamId={t.id} name={`${t.coachFirst} ${t.coachLast}`} />
+            )}
+          </span>
+        )}
+        <LeagueGames games={games[t.id] ?? []} today={today} />
         <p className="text-xs text-zinc-500">
           Added by {t.createdBy}
           {t.updatedBy !== t.createdBy && ` · last changed by ${t.updatedBy}`}
@@ -129,7 +155,7 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
                   example={
                     "Organization,Gender,Grade,Level,Coach First,Coach Last,Coach Cell,Alternate Name\nHixson Hoops,Boys,5th,REC,Sam,Lee,423-555-0101,Bolts\nHixson Hoops,Girls,3rd/4th,COMP,,,,"
                   }
-                  help="Teams for outside clubs (organizations not on CourtCaptain), one per row with its Organization, Gender, Grade and Level (REC or COMP), and if you have them the Head Coach's name and cell and an Alternate name, in any order. A new club is added with its initials as its Abbreviation. Each team is named with the club's Abbreviation, grade, gender and Head Coach (like HH 5B Lee; HH 5B TBD until a coach). Organizations on CourtCaptain add their own teams. Paste from a spreadsheet or choose a CSV file. Next you'll check which column is which, then see exactly what will be added (we clean up things like 3 & 4 or R)."
+                  help="Teams for outside clubs (organizations not on CourtCaptain), one per row with its Organization, Gender, Grade and Level (REC or COMP), and if you have them the Head Coach's name, cell and email and an Alternate name, in any order. A coach without a cell is fine: Edit the team later to add it. A new club is added with its initials as its Abbreviation. Each team is named with the club's Abbreviation, grade, gender and Head Coach (like HH 5B Lee; HH 5B TBD until a coach). Organizations on CourtCaptain add their own teams. Paste from a spreadsheet or choose a CSV file. Next you'll check which column is which, then see exactly what will be added (we clean up things like 3 & 4 or R)."
                 />
                 <AddTeamButton
                   people={people}

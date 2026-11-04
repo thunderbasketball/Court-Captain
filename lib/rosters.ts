@@ -4,6 +4,7 @@ import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { withTx } from "./sql";
 import { hasArea } from "./org-admin";
+import { normalizeCell } from "./phone";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -27,20 +28,41 @@ export type RosterPlayer = {
   rosteredBy: string;
   rosteredAt: Date;
   registered: boolean; // still in the current registrations
+  parents: Parent[]; // from registration, for the team's staff to reach the family
 };
+
+export type Parent = { name: string; cell: string | null; email: string | null };
 
 // Sorted by last name. Null when the viewer can't see this team.
 export async function listRoster(deps: Deps, viewer: SessionUser, teamId: string): Promise<RosterPlayer[] | null> {
   if (!isId(teamId) || !(await canSeeRoster(deps.pool, viewer, teamId))) return null;
-  const r = await deps.pool.query<RosterPlayer>(
+  type Row = Omit<RosterPlayer, "parents"> & Record<`p${1 | 2}${"f" | "l" | "c" | "e"}`, string | null>;
+  const r = await deps.pool.query<Row>(
     `select p.registrant_id as "registrantId", p.first_name as "firstName", p.last_name as "lastName", p.gender, p.grade,
             p.rostered_by as "rosteredBy", p.rostered_at as "rosteredAt",
-            exists (select 1 from registrations g where g.registrant_id = p.registrant_id) as registered
-     from team_players p where p.team_id = $1
+            g.registrant_id is not null as registered,
+            g.parent1_first as p1f, g.parent1_last as p1l, g.parent1_cell as p1c, g.parent1_email as p1e,
+            g.parent2_first as p2f, g.parent2_last as p2l, g.parent2_cell as p2c, g.parent2_email as p2e
+     from team_players p left join registrations g on g.registrant_id = p.registrant_id
+     where p.team_id = $1
      order by lower(p.last_name), lower(p.first_name)`,
     [teamId],
   );
-  return r.rows;
+  return r.rows.map(({ p1f, p1l, p1c, p1e, p2f, p2l, p2c, p2e, ...x }) => ({
+    ...x,
+    parents: [parent(p1f, p1l, p1c, p1e), parent(p2f, p2l, p2c, p2e)].filter((v): v is Parent => !!v),
+  }));
+}
+
+// A parent from registration; a cell only when it's a real 10-digit number, an email only when it looks like one.
+function parent(first: string | null, last: string | null, cell: string | null, email: string | null): Parent | null {
+  const c = cell ? normalizeCell(cell) : null;
+  const e = email?.trim() && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ? email.trim() : null;
+  const name = [first, last]
+    .map((v) => v?.trim())
+    .filter(Boolean)
+    .join(" ");
+  return name || c || e ? { name: name || "Parent", cell: c, email: e } : null;
 }
 
 export type RosterCandidate = {

@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { hasFeature } from "@/lib/features";
 import { MustBeEntered } from "../../../../TeamRow";
+import { HeadCoachEmailButton, WaitingCoachButton } from "../../../../CoachContactTools";
 import { requireFeature } from "@/lib/features-server";
 import { db } from "@/lib/db";
 import { gradesText } from "@/lib/event-names";
@@ -17,11 +18,15 @@ import { listUniforms, uniformsMissing } from "@/lib/uniforms";
 import { TZ } from "@/lib/time";
 import { getTeam, personOptions, roleLabel } from "@/lib/teams";
 import { ViewAsButton } from "../../../../ViewAsButton";
+import { GroupTextButton } from "../../../../Contacts";
 import AppHeader, { type TeamTab } from "../../../../AppHeader";
 import { Chip, EmailLink, PersonRow, PhoneLink, card } from "../../../../ui";
 import AvailablePlayers from "./AvailablePlayers";
 import UniformsBoard from "./UniformsBoard";
 import { AddPlayersButton, RemovePlayerButton } from "./RosterTools";
+import { scheduledGames } from "@/lib/scenic-games";
+import { easternDate } from "@/lib/time";
+import { LeagueGames } from "../../../../LeagueGames";
 import { AddStaffButton, DeleteTeamButton, RemoveStaffButton, TeamEditForm } from "./TeamEditor";
 import { hasArea, isThunderAdmin } from "@/lib/org-admin";
 
@@ -64,6 +69,13 @@ async function Team({
     canEvaluate(db, user, team.id),
   ]);
   const players = roster ?? [];
+  // Every parent's cell and email once, for one group text or email to the team's families.
+  const parentCells = [...new Set(players.flatMap((p) => p.parents.flatMap((g) => (g.cell ? [g.cell] : []))))];
+  const parentEmails = [...new Set(players.flatMap((p) => p.parents.flatMap((g) => (g.email ? [g.email.toLowerCase()] : []))))];
+  // Its Scenic City League games (opponent, time and gym once scheduled): matchups are made for its copy there.
+  const copy = (await db.query<{ id: string }>("select id::text from scenic_teams where thunder_team_id = $1", [team.id])).rows[0]
+    ?.id;
+  const games = copy ? ((await scheduledGames(db, [copy]))[copy] ?? []) : [];
   const canBook = asDirector || team.myRoles.some((r) => r !== "TeamParent");
   // The team page is split into the Staff / Roster / Uniforms / Practices tabs: in the header for its staff, and on the
   // page for Admins and Directors (the same views as the coaches, with their own tools), to help support the team.
@@ -157,8 +169,13 @@ async function Team({
                   <p className="text-sm text-zinc-500 dark:text-zinc-400">Practices: {team.practiceLocations.join(", ")}</p>
                 )}
                 <p className="mt-1 text-xs text-zinc-400">Created by {team.createdBy}</p>
-                {!team.staff.some((x) => x.role === "HeadCoach") && <MustBeEntered what="COACH INFO" />}
+                {!team.staff.some((x) => x.role === "HeadCoach") && !team.waitingCoach && <MustBeEntered what="COACH INFO" />}
+                {team.waitingCoach && <MustBeEntered what="COACH CELL" />}
+                {(team.waitingCoach || team.staff.some((x) => x.role === "HeadCoach" && !x.email)) && (
+                  <MustBeEntered what="COACH EMAIL" />
+                )}
                 {!players.length && <MustBeEntered what="ROSTER" />}
+                <LeagueGames games={games} today={easternDate(new Date())} />
               </div>
             </div>
             {canEditTeam && (
@@ -191,7 +208,26 @@ async function Team({
                 />
               )}
             </div>
-            {!team.staff.length && <p className="px-4 pb-4 text-sm text-zinc-500">No staff yet.</p>}
+            {!team.staff.length && !team.waitingCoach && <p className="px-4 pb-4 text-sm text-zinc-500">No staff yet.</p>}
+            {team.waitingCoach && (
+              // Named without a cell yet (imported): the Director adds it, which makes them the Head Coach.
+              <div className="flex items-center justify-between gap-3 border-t border-zinc-100 px-4 py-3 dark:border-white/5">
+                <span className="min-w-0 text-sm">
+                  <span className="block font-medium">
+                    {team.waitingCoach.first} {team.waitingCoach.last}
+                  </span>
+                  <span className="block text-xs text-zinc-500">Head Coach · no cell or email yet</span>
+                </span>
+                {asDirector && (
+                  <WaitingCoachButton
+                    org="thunder"
+                    teamId={team.id}
+                    first={team.waitingCoach.first}
+                    last={team.waitingCoach.last}
+                  />
+                )}
+              </div>
+            )}
             <ul className="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-white/5 dark:border-white/5">
               {team.staff.map((s) => (
                 <PersonRow
@@ -212,10 +248,19 @@ async function Team({
                   <p>
                     <PhoneLink cell={s.cell} label={formatCell(s.cell)} />
                   </p>
-                  {s.email && (
+                  {s.email ? (
                     <p className="truncate">
                       <EmailLink email={s.email} />
                     </p>
+                  ) : (
+                    s.role === "HeadCoach" && (
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-semibold text-red-600 dark:text-red-400">No email yet</p>
+                        {asDirector && (
+                          <HeadCoachEmailButton org="thunder" teamId={team.id} name={`${s.firstName} ${s.lastName}`} />
+                        )}
+                      </div>
+                    )
                   )}
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs">Added by {s.addedBy}</p>
@@ -246,6 +291,19 @@ async function Team({
                 />
               )}
             </div>
+            {parentCells.length + parentEmails.length > 0 && (
+              <div className="flex flex-wrap gap-2 px-4 pb-3">
+                <GroupTextButton cells={parentCells} label="Text parents" />
+                {parentEmails.length > 0 && (
+                  <a
+                    href={`mailto:?bcc=${parentEmails.map(encodeURIComponent).join(",")}`}
+                    className="shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
+                  >
+                    ✉️ Email parents ({parentEmails.length})
+                  </a>
+                )}
+              </div>
+            )}
             {!players.length && (
               <p className="px-4 pb-4 text-sm text-zinc-500">
                 {asDirector ? "No players yet. Tap “+ Add players”." : "No players on the roster yet."}
@@ -262,6 +320,17 @@ async function Team({
                       {gradeLabel(p.grade)} · Rostered by {p.rosteredBy}
                       {!p.registered && <span className="text-amber-700 dark:text-amber-400"> · no longer in registrations</span>}
                     </span>
+                    {p.parents.map((g, i) => (
+                      <span key={i} className="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-xs">
+                        <span className="text-zinc-600 dark:text-zinc-300">{g.name}</span>
+                        {g.cell && <PhoneLink cell={g.cell} label={formatCell(g.cell)} />}
+                        {g.email && <EmailLink email={g.email} />}
+                        {!g.cell && !g.email && <span className="text-zinc-400">no cell or email</span>}
+                      </span>
+                    ))}
+                    {p.registered && !p.parents.length && (
+                      <span className="mt-0.5 block text-xs text-zinc-400">No parent contact in registration</span>
+                    )}
                   </span>
                   {asDirector && (
                     <RemovePlayerButton teamId={team.id} registrantId={p.registrantId} name={`${p.firstName} ${p.lastName}`} />

@@ -3,13 +3,14 @@ import type { ReactNode } from "react";
 import { Chip } from "./ui";
 
 // What a team still needs, flashing red until it's done.
-export function MustBeEntered({ what }: { what: "COACH INFO" | "ROSTER" }) {
+export function MustBeEntered({ what }: { what: "COACH INFO" | "COACH CELL" | "COACH EMAIL" | "ROSTER" }) {
   return <span className="block animate-pulse text-sm font-semibold text-red-600 dark:text-red-400">{what} MUST BE ENTERED</span>;
 }
 
 // One team on a Teams page, the same for Thunder and every organization: its grade/gender badge, name (and Alternate
 // name), level, grades and practice places, its staff (`people`) and buttons (`actions`), and what it still needs:
-// a Head Coach (COACH INFO MUST BE ENTERED) and players (ROSTER MUST BE ENTERED).
+// a Head Coach (COACH INFO MUST BE ENTERED), their cell when named without one (COACH CELL), their email (COACH EMAIL)
+// and players (ROSTER MUST BE ENTERED).
 export default function TeamRow({
   href,
   name,
@@ -18,6 +19,8 @@ export default function TeamRow({
   level,
   sub,
   hasCoach,
+  waitingCoach,
+  needsEmail,
   players,
   people,
   actions,
@@ -29,6 +32,8 @@ export default function TeamRow({
   level: string;
   sub: string; // e.g. "2nd Grade · Action Church"
   hasCoach: boolean;
+  waitingCoach?: string | null; // a Head Coach named without a cell yet ("Alex Campbell")
+  needsEmail?: boolean; // the Head Coach (or the one waiting) has no email
   players: number;
   people?: ReactNode;
   actions?: ReactNode;
@@ -64,7 +69,14 @@ export default function TeamRow({
       <div className="mt-1.5 flex items-start gap-2 pl-12">
         <div className="flex flex-1 flex-col gap-1">
           {people && <div className="flex flex-wrap gap-x-1 gap-y-1">{people}</div>}
-          {!hasCoach && <MustBeEntered what="COACH INFO" />}
+          {waitingCoach && (
+            <span className="text-sm text-zinc-600 dark:text-zinc-300">
+              Head Coach {waitingCoach} <span className="text-zinc-400">· no cell yet</span>
+            </span>
+          )}
+          {!hasCoach && !waitingCoach && <MustBeEntered what="COACH INFO" />}
+          {waitingCoach && <MustBeEntered what="COACH CELL" />}
+          {(waitingCoach || needsEmail) && <MustBeEntered what="COACH EMAIL" />}
           {!players && <MustBeEntered what="ROSTER" />}
         </div>
         {actions}
@@ -83,9 +95,10 @@ export const TEAM_GROUPS = [
 ] as const;
 
 export function teamTabs<T extends { level: string; gender: string }>(teams: T[], view: unknown, register: boolean) {
-  const groups = TEAM_GROUPS.map((g) => ({ ...g, teams: teams.filter((t) => t.level === g.level && t.gender === g.gender) })).filter(
-    (g) => g.teams.length,
-  );
+  const groups = TEAM_GROUPS.map((g) => ({
+    ...g,
+    teams: teams.filter((t) => t.level === g.level && t.gender === g.gender),
+  })).filter((g) => g.teams.length);
   const keys = [...groups.map((g) => g.key as string), ...(register ? ["register"] : [])];
   const current = typeof view === "string" && keys.includes(view) ? view : (keys[0] ?? "");
   return { groups, current, group: groups.find((g) => g.key === current) ?? null };

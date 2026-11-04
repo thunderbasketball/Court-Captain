@@ -5,7 +5,8 @@ import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { hasArea } from "./org-admin";
 import { parseTeamRows, type ImportRow } from "./team-import-parse";
-import { tbdName, teamName } from "./team-names";
+import { baseName, existingTeams, namePlanner, tbdBase, teamName } from "./team-names";
+import { settleThunderName, thunderTeamName } from "./teams";
 import { withTx, type Queryable } from "./sql";
 import { matchOrCreateUser } from "./user-match";
 
@@ -23,27 +24,33 @@ const gradeText = (gs: string[]) =>
 export type ThunderImportRow = ImportRow & { status: "new" | "exists" | "error"; gradeLabel: string | null };
 
 async function previewRows(q: Pick<Queryable, "query">, text: string) {
-  const { rows, tooMany } = parseTeamRows(text, { named: false });
-  // A team is already there by its name, or (no coach yet, so no name to match) by its Alternate name.
-  const teams = (await q.query<{ name: string; alt: string | null }>("select lower(name) as name, lower(alt_name) as alt from teams")).rows;
-  const have = new Set([...teams.map((r) => r.name), ...teams.filter((r) => r.alt).map((r) => `alt:${r.alt}`)]);
-  const seen = new Set<string>();
-  const out: ThunderImportRow[] = rows.map((r) => {
+  const { rows, tooMany } = parseTeamRows(text, { named: false, cellOptional: true });
+  const teams = (
+    await q.query<{ id: string; name: string; level: string; alt: string | null }>(
+      "select id::text, name, level, lower(alt_name) as alt from teams",
+    )
+  ).rows;
+  // A team is already there by its name (numbered or not) and level, or (no coach yet, so no name to match) by its
+  // Alternate name.
+  const there = existingTeams(teams);
+  const alts = new Set(teams.filter((t) => t.alt).map((t) => t.alt!));
+  // Each new team's name, numbered when the same as another's ("3G Campbell 1", "3G Campbell 2").
+  const plan = namePlanner(teams);
+  const seenAlt = new Set<string>();
+  const out: ThunderImportRow[] = rows.map((r, i) => {
     const grades = r.grade ? gradesOf(r.grade) : null;
-    // The name by the rule; with no Head Coach yet it's "4G TBD" (numbered when added).
-    const name = r.gender && grades ? teamName(r.gender, grades, r.coach?.last ?? "TBD") : "";
-    const key = r.coach ? name.toLowerCase() : r.altName ? `alt:${r.altName.toLowerCase()}` : "";
-    const errors = [...r.errors, ...(key && seen.has(key) ? ["Listed twice"] : [])];
-    if (key) seen.add(key);
-    return {
-      ...r,
-      name,
-      errors,
-      gradeLabel: grades ? gradeText(grades) : null,
-      status: errors.length ? "error" : key && have.has(key) ? "exists" : "new",
-    };
+    const base = r.gender && grades ? (r.coach ? teamName(r.gender, grades, r.coach.last) : tbdBase(r.gender, grades)) : "";
+    const alt = !r.coach && r.altName ? r.altName.toLowerCase() : "";
+    const errors = [...r.errors, ...(alt && seenAlt.has(alt) ? ["Listed twice"] : [])];
+    if (alt) seenAlt.add(alt);
+    const status = errors.length ? "error" : (r.coach ? there(base, r.level) : !!alt && alts.has(alt)) ? "exists" : "new";
+    const fixes = status === "new" ? [...r.fixes, ...plan.add(`row:${i}`, base)] : r.fixes;
+    if (status === "new" && r.coach && !r.coach.cell)
+      fixes.push(`${r.coach.first} ${r.coach.last} has no cell yet: the team waits for it (COACH CELL MUST BE ENTERED)`);
+    return { ...r, name: base, fixes, errors, gradeLabel: grades ? gradeText(grades) : null, status };
   });
-  return { rows: out, tooMany };
+  // Names as they'll be once every row is added (a later row can number an earlier one).
+  return { rows: out.map((r, i) => (r.status === "new" ? { ...r, name: plan.nameOf(`row:${i}`) } : r)), tooMany };
 }
 
 const tooBig = (text: unknown) =>
@@ -90,18 +97,24 @@ export async function importThunderTeams(
         skipped.push(`${r.name || `Row ${r.line}`}: ${r.status === "exists" ? "already a team" : r.errors.join("; ")}`);
         continue;
       }
-      const m = r.coach ? await matchOrCreateUser(q, { ...r.coach, email: null }, deps.now()) : null;
+      // With a cell: their login (made if new). Without one yet: the team waits for it, named for them.
+      const c = r.coach;
+      const m = c?.cell
+        ? await matchOrCreateUser(q, { first: c.first, last: c.last, cell: c.cell, email: c.email }, deps.now())
+        : null;
       if (m && "error" in m) {
         skipped.push(`${r.name}: ${m.error}`);
         continue;
       }
+      if (m && c?.email) await q.query("update users set email = $2 where coach_id = $1 and email is null", [m.coachId, c.email]);
+      const waiting = c && !c.cell ? c : null;
       const grades = gradesOf(r.grade!);
-      // The Head Coach's last name as it is on their login; with none yet, "4G TBD" (numbered).
-      const taken = new Set((await q.query<{ name: string }>("select lower(name) as name from teams")).rows.map((x) => x.name));
-      const name = m ? teamName(r.gender!, grades, m.lastName) : tbdName(r.gender!, grades, taken);
+      // The Head Coach's last name as it is on their login; with none yet, "4G TBD". Numbered when taken.
+      const last = m?.lastName ?? waiting?.last;
+      const name = await thunderTeamName(q, last ? teamName(r.gender!, grades, last) : tbdBase(r.gender!, grades), null);
       const t = await q.query<{ id: string }>(
-        `insert into teams (name, gender, grades, grade_sort, level, created_at, created_by, import_id, alt_name)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9) on conflict (name) do nothing returning id::text`,
+        `insert into teams (name, gender, grades, grade_sort, level, created_at, created_by, import_id, alt_name, coach_first, coach_last)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) on conflict (name) do nothing returning id::text`,
         [
           name,
           r.gender,
@@ -112,6 +125,8 @@ export async function importThunderTeams(
           by(viewer),
           batch,
           r.altName,
+          waiting?.first ?? null,
+          waiting?.last ?? null,
         ],
       );
       if (!t.rows[0]) {
@@ -132,7 +147,9 @@ export async function importThunderTeams(
     }
     if (added.length) await q.query("update org_team_imports set teams = $2 where id = $1", [batch, added.length]);
     else await q.query("delete from org_team_imports where id = $1", [batch]);
-    return { ok: true as const, added, skipped };
+    // As named now: a later team can have numbered an earlier one ("3G Campbell 1").
+    const names = await q.query<{ name: string }>("select name from teams where import_id = $1 order by id", [batch]);
+    return { ok: true as const, added: names.rows.map((x) => x.name), skipped };
   });
 }
 
@@ -187,6 +204,8 @@ export async function undoThunderImport(
       await q.query("delete from teams where id = $1", [t.id]);
       removed.push(t.name);
     }
+    // A team left alone with a numbered name drops its number.
+    for (const b of new Set(removed.map(baseName))) await settleThunderName(q, b);
     if (!kept.length)
       await q.query("update org_team_imports set undone_by = $2, undone_at = $3 where id = $1", [
         importId,

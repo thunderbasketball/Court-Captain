@@ -9,7 +9,7 @@ import {
   previewClubImport,
   undoClubImport,
 } from "./scenic-club-teams";
-import { listScenicTeams } from "./scenic-teams";
+import { listScenicTeams, setScenicCoachEmail, updateScenicTeam } from "./scenic-teams";
 import { createTestDb, grant } from "./testing/db";
 
 const person = (coachId: string, firstName: string): SessionUser => ({
@@ -60,9 +60,10 @@ describe("Scenic City: outside clubs' teams", () => {
     const input = { club: baylor, gender: "Boys", grades: ["5"], level: "REC", headCoach: "user:5550005", altName: "Bolts" };
     expect(await addClubTeam(deps(), fay, input)).toMatchObject({ ok: false });
     expect(await addClubTeam(deps(), dee, input)).toMatchObject({ ok: true, name: "BS 5B Harris" });
-    expect(await addClubTeam(deps(), dee, input)).toMatchObject({
-      ok: false,
-      message: 'There\'s already a team named "BS 5B Harris".',
+    // The same name again: both numbered.
+    expect(await addClubTeam(deps(), dee, { ...input, level: "COMP", altName: "" })).toMatchObject({
+      ok: true,
+      name: "BS 5B Harris 2",
     });
 
     // A new club (with its Abbreviation), no coach yet: TBD, numbered.
@@ -74,7 +75,7 @@ describe("Scenic City: outside clubs' teams", () => {
       headCoach: "none",
     };
     expect(await addClubTeam(deps(), dee, hh)).toMatchObject({ ok: true, name: "HH 4G TBD" });
-    expect(await addClubTeam(deps(), dee, hh)).toMatchObject({ ok: true, name: "HH 4G TBD 2" });
+    expect(await addClubTeam(deps(), dee, hh)).toMatchObject({ ok: true, name: "HH 4G TBD 2" }); // the 1st is "HH 4G TBD 1"
     // An organization on CourtCaptain adds its own teams.
     expect(await addClubTeam(deps(), dee, { ...hh, club: { name: "thunder basketball" } })).toMatchObject({
       ok: false,
@@ -83,10 +84,49 @@ describe("Scenic City: outside clubs' teams", () => {
 
     const list = (await listScenicTeams(deps(), dee, "Director"))!.teams;
     expect(list.map((t) => [t.name, t.partnerName, t.altName, t.divisionLow])).toEqual([
-      ["BS 5B Harris", "Baylor School", "Bolts", null],
-      ["HH 4G TBD", "Hixson Hoops", null, null],
+      ["BS 5B Harris 2", "Baylor School", null, null], // COMP first
+      ["BS 5B Harris 1", "Baylor School", "Bolts", null],
+      ["HH 4G TBD 1", "Hixson Hoops", null, null],
       ["HH 4G TBD 2", "Hixson Hoops", null, null],
     ]);
+  });
+
+  it("Import: a coach with no cell waits on the team (named for them); Edit adds the cell; then their email", async () => {
+    const text =
+      "Organization,Gender,Grade,Level,Coach First,Coach Last\nTemp,Boys,5,COMP,Alex,Campbell\nTemp,Boys,5,REC,Alex,Campbell";
+    const pre = await previewClubImport(deps(), dee, text);
+    expect(pre).toMatchObject({ ok: true });
+    expect((pre as { rows: { name: string; status: string }[] }).rows.map((r) => `${r.name}:${r.status}`)).toEqual([
+      "T 5B Campbell 1 · Temp (new club):new",
+      "T 5B Campbell 2 · Temp (new club):new",
+    ]);
+    expect(await importClubTeams(deps(), dee, text)).toMatchObject({
+      added: ["T 5B Campbell 1 · Temp", "T 5B Campbell 2 · Temp"],
+    });
+    const teams = async () => (await listScenicTeams(deps(), dee, "Director"))!.teams.filter((t) => t.partnerName === "Temp");
+    const [t] = await teams();
+    expect(t).toMatchObject({ coachId: null, coachFirst: "Alex", coachLast: "Campbell", coachCell: null, waitingCoach: true });
+    const edit = {
+      name: t.name,
+      gender: "Boys",
+      level: t.level,
+      grade: "5",
+      coachFirst: "Alex",
+      coachLast: "Campbell",
+      coachCell: "4235550123",
+    };
+    expect(await updateScenicTeam(deps(), dee, t.id, edit as Parameters<typeof updateScenicTeam>[3])).toMatchObject({
+      ok: true,
+      newLogin: true,
+    });
+    expect((await teams()).find((x) => x.id === t.id)).toMatchObject({
+      coachCell: "4235550123",
+      coachEmail: null,
+      waitingCoach: false,
+    });
+    expect(await setScenicCoachEmail(deps(), fay, t.id, "alex@example.com")).toMatchObject({ ok: false });
+    expect(await setScenicCoachEmail(deps(), dee, t.id, "alex@example.com")).toEqual({ ok: true });
+    expect((await teams()).find((x) => x.id === t.id)).toMatchObject({ coachEmail: "alex@example.com" });
   });
 
   it("Import: preview, add (new clubs made), skip what's there or wrong, and undo", async () => {
