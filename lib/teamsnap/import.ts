@@ -2,7 +2,8 @@ import type { Pool } from "pg";
 import { withTx, type Queryable } from "../sql";
 import type { ParseResult } from "./parse";
 
-// Replaces TeamSnap's registrations in one transaction (players added in the app stay). Refuses if the file had errors,
+// Replaces TeamSnap's registrations in one transaction (players added in the app stay); players no longer registered
+// come off their teams. Refuses if the file had errors,
 // so a bad file never clears the old data.
 export async function importRegistrations(
   pool: Pool,
@@ -27,6 +28,13 @@ export async function replaceRegistrations(
   const r = await q.query("insert into registrations select * from jsonb_populate_recordset(null::registrations, $1)", [
     JSON.stringify(rows),
   ]);
+  // A player no longer in registrations comes off every roster (with their uniform there); past check-ins stay.
+  await q.query(
+    "delete from team_players p where not exists (select 1 from registrations g where g.registrant_id = p.registrant_id)",
+  );
+  await q.query(
+    "delete from team_uniforms u where not exists (select 1 from registrations g where g.registrant_id = u.registrant_id)",
+  );
   // A hand import overrides the sheet until the sheet changes again.
   await q.query("update sync_status set source_hash = null where name = 'registrations'");
   return { imported: r.rowCount ?? 0 };

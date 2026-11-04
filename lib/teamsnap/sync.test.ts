@@ -54,6 +54,29 @@ describe("syncRegistrations", () => {
     expect((await names()).map((r) => r.first_name)).toEqual(["Ann", "Ann", "Ann"]);
   });
 
+  it("a player no longer in registrations comes off their team", async () => {
+    await sync(sheet(...players(2)));
+    const team = (
+      await db.pool.query(
+        "insert into teams (name, gender, grades, grade_sort, level, created_by) values ('4G X', 'Girls', '{4}', 4, 'REC', 'x') returning id",
+      )
+    ).rows[0].id;
+    for (const id of ["1", "2"]) {
+      await db.pool.query(
+        `insert into team_players (team_id, registrant_id, first_name, last_name, gender, grade, grade_sort, rostered_by, rostered_at)
+         values ($1, $2, 'Sam', 'X', 'Girls', '4', 4, 'x', now())`,
+        [team, id],
+      );
+      await db.pool.query(
+        "insert into team_uniforms (team_id, registrant_id, number, updated_by, updated_at) values ($1, $2, '1', 'x', now())",
+        [team, id],
+      );
+    }
+    await sync(sheet(row({ rid: "1", first: "Ann" }), row({ rid: "3", first: "Ann" })));
+    expect((await db.pool.query("select registrant_id from team_players")).rows).toEqual([{ registrant_id: "1" }]);
+    expect((await db.pool.query("select registrant_id from team_uniforms")).rows).toEqual([{ registrant_id: "1" }]);
+  });
+
   it("a sheet with errors changes nothing and is reported", async () => {
     await sync(sheet(...players(2)));
     const r = await sync(sheet(row({ rid: "9" }), row({ rid: "9" })));
