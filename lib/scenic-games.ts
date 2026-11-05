@@ -7,7 +7,8 @@ export type ScheduledGame = {
   programId: string;
   program: string;
   date: string; // YYYY-MM-DD
-  opponent: string;
+  opponent: string; // "TBD" until it has one
+  home: boolean; // this team is the home team
   opponentGroup: string; // "5th REC"
   gym: string | null; // where and when, once placed on the Grid
   court: string | null;
@@ -30,18 +31,19 @@ export const PLACE_SQL = `left join lateral (
 export async function scheduledGames(q: Pick<Pool, "query">, teamIds: string[]): Promise<Record<string, ScheduledGame[]>> {
   if (!teamIds.length) return {};
   const r = await q.query<Omit<ScheduledGame, "opponentGroup"> & { team: string; grade: number | null; level: string | null }>(
-    `select x.me::text as team, p.id::text as "programId", p.name as program, m.day::text as date, o.name as opponent,
+    `select x.me::text as team, p.id::text as "programId", p.name as program, m.day::text as date,
+            coalesce(o.name, 'TBD') as opponent, coalesce(m.home_side, 'a') = x.side as home,
             gg.grade, gg.level, place.gym, place.court, place.address, to_char(m.starts, 'HH24:MI') as starts
        from scenic_matchups m
-       cross join lateral (values (m.team_a, m.team_b), (m.team_b, m.team_a)) x (me, other)
+       cross join lateral (values (m.team_a, m.team_b, 'a'), (m.team_b, m.team_a, 'b')) x (me, other, side)
        join scenic_programs p on p.id = m.program_id
-       join scenic_teams o on o.id = x.other
+       left join scenic_teams o on o.id = x.other
        left join scenic_registrations r on r.program_id = m.program_id and r.team_id = x.other
        left join scenic_pools po on po.id = r.pool_id
        left join scenic_grade_groups gg on gg.id = po.group_id
        ${PLACE_SQL}
       where x.me = any($1::bigint[])
-      order by m.day, m.starts nulls last, lower(o.name)`,
+      order by m.day, m.starts nulls last, lower(coalesce(o.name, 'TBD'))`,
     [teamIds],
   );
   const out: Record<string, ScheduledGame[]> = {};

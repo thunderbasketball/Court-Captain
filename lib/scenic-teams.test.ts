@@ -194,7 +194,10 @@ describe("Scenic City teams", () => {
       ok: false,
       message: "Pick Boys or Girls.",
     });
-    expect(await createScenicTeam(deps(), pat, { ...team({ level: "ELITE" }), for: baylor })).toEqual({ ok: false, message: "Pick COMP or REC." });
+    expect(await createScenicTeam(deps(), pat, { ...team({ level: "ELITE" }), for: baylor })).toEqual({
+      ok: false,
+      message: "Pick COMP or REC.",
+    });
     expect(await createScenicTeam(deps(), pat, { ...team({ coachFirst: "@x" }), for: baylor })).toMatchObject({ ok: false });
     expect(await createScenicTeam(deps(), pat, { ...team(), for: "nobody" })).toEqual({
       ok: false,

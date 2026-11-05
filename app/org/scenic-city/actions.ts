@@ -11,6 +11,7 @@ import * as teams from "@/lib/scenic-teams";
 import * as clubs from "@/lib/scenic-club-teams";
 import * as matchups from "@/lib/scenic-matchups";
 import * as grid from "@/lib/scenic-grid";
+import * as simulation from "@/lib/dev-teams";
 import type { JoinInput } from "@/lib/scenic";
 
 const deps = { pool: db, now: () => new Date() };
@@ -102,6 +103,12 @@ export async function setTeamOff(programId: string, teamId: string, what: string
 export async function withdrawTeam(programId: string, teamId: string) {
   return guarded((u) => programs.withdrawTeam(deps, u, programId, teamId), "programs");
 }
+export async function setTeamsOff(programId: string, teamIds: string[], out: boolean) {
+  return guarded((u) => programs.setTeamsOff(deps, u, programId, teamIds, out === true), "programs");
+}
+export async function withdrawTeams(programId: string, teamIds: string[]) {
+  return guarded((u) => programs.withdrawTeams(deps, u, programId, teamIds), "programs");
+}
 export async function setPaid(programId: string, teamId: string, paid: boolean) {
   return guarded((u) => programs.setPaid(deps, u, programId, teamId, paid === true), "programs");
 }
@@ -145,7 +152,7 @@ export async function undoClubImport(id: string) {
 export async function createMatchups(programId: string, day: string, divisionId: string) {
   return guarded((u) => matchups.createMatchups(deps, u, programId, day, divisionId), "programs");
 }
-export async function saveMatchups(programId: string, day: string, divisionId: string, games: [string, string][]) {
+export async function saveMatchups(programId: string, day: string, divisionId: string, games: [string, string | null][]) {
   return guarded((u) => matchups.saveMatchups(deps, u, programId, day, divisionId, games), "programs");
 }
 // Scheduler Grid: a Game Day's game length in minutes (Admins and Directors of Scheduling).
@@ -155,4 +162,9 @@ export async function setGameLength(day: string, minutes: number) {
 // Scheduler Grid: put a game in a slot (court and start time), move it, or take it off the grid (null).
 export async function placeGame(matchupId: string, slot: { court: string; starts: string } | null) {
   return guarded((u) => grid.placeGame(deps, u, matchupId, slot), "programs");
+}
+
+// Simulation mode (development only): simulated (DEV) teams on or off.
+export async function setSimulation(on: boolean) {
+  return guarded((u) => simulation.setSimulation(deps, u, on === true), "programs");
 }

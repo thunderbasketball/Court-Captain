@@ -18,8 +18,10 @@ import {
   saveProgram,
   saveProgramDates,
   setTeamOff,
+  setTeamsOff,
   setPaid,
   withdrawTeam,
+  withdrawTeams,
 } from "./scenic-programs";
 import { listGameDays } from "./scenic-partners";
 import { createMatchups, saveMatchups } from "./scenic-matchups";
@@ -445,6 +447,40 @@ describe("Scenic City programs", () => {
     expect(await off(fay, "2027-01-09", false)).toEqual({ ok: true });
     expect(await shown()).toMatchObject({ removedBy: null, off: { brackets: "Fay X" } });
   });
+  it("picked teams: taken out of the program or withdrawn together", async () => {
+    const id = await newLeague();
+    await div(id, "Boys", 3, 4, ["COMP"]);
+    const ts = [
+      await team(pat, baylor, "Baylor A", "Boys", "3-4", "COMP"),
+      await team(pat, baylor, "Baylor B", "Boys", "3-4", "COMP"),
+      await team(pat, baylor, "Baylor C", "Boys", "3-4", "COMP"),
+    ];
+    for (const t of ts) await registerTeam(deps(), pat, id, t, ALL);
+    const listed = async () =>
+      (await getProgram(deps(), dee, id))!.divisionList[0].groups
+        .flatMap((g) => g.pools.flatMap((o) => o.teams))
+        .map((t) => `${t.name}${t.removedBy ? " out" : ""}`)
+        .sort();
+
+    expect(await setTeamsOff(deps(), pat, id, ts.slice(0, 2), true)).toEqual({
+      ok: false,
+      message: "Only a Scenic City Admin or Director of Scheduling can do that.",
+    });
+    await db.pool.query(
+      "insert into director_areas (coach_id, org, area, granted_by) values ('5550004', 'scenic-city', 'scheduling', 'test')",
+    );
+    expect(await setTeamsOff(deps(), fay, id, [], true)).toEqual({ ok: false, message: "Pick at least one team." });
+    expect(await setTeamsOff(deps(), fay, id, ["x"], true)).toEqual({ ok: false, message: "Pick at least one team." });
+    expect(await setTeamsOff(deps(), fay, id, ts.slice(0, 2), true)).toEqual({ ok: true, changed: 2 });
+    expect(await setTeamsOff(deps(), fay, id, ts, true)).toEqual({ ok: true, changed: 1 }); // the 2 already out stay as they were
+    expect(await listed()).toEqual(["Baylor A out", "Baylor B out", "Baylor C out"]);
+    expect(await setTeamsOff(deps(), fay, id, [ts[0]], false)).toEqual({ ok: true, changed: 1 });
+
+    expect(await withdrawTeams(deps(), fay, id, ts)).toMatchObject({ ok: false }); // Scheduling isn't Programs
+    expect(await withdrawTeams(deps(), dee, id, [ts[1], ts[2]])).toEqual({ ok: true, withdrawn: 2 });
+    expect(await listed()).toEqual(["Baylor A"]);
+  });
+
   it("the Scheduler lists every League's upcoming Game Days with the teams playing (Directors of Scheduling only)", async () => {
     const a = await newLeague();
     const b = await newLeague({ name: "Spring League 2027" });
@@ -515,12 +551,14 @@ describe("Scenic City programs", () => {
       created: 2,
       short: [],
       repeats: [],
+      tbd: [],
     });
     expect(await createMatchups(deps(), fay, id, "2027-01-16", divisionId)).toEqual({
       ok: true,
       created: 2,
       short: [],
       repeats: [],
+      tbd: [],
     });
     const names = new Map([
       [teams[0], "Baylor A"],
@@ -531,17 +569,41 @@ describe("Scenic City programs", () => {
     const games = async (day: string) =>
       (await gameDaySchedule(deps(), fay))!.days
         .find((d) => d.date === day)!
-        .programs[0].matchups.map((m) => [names.get(m.a), names.get(m.b)].sort().join(" vs "))
+        .programs[0].matchups.map((m) => [names.get(m.a), m.b ? names.get(m.b) : "TBD"].sort().join(" vs "))
         .sort();
     const jan9 = await games("2027-01-09");
     const jan16 = await games("2027-01-16");
     // Teams from another club first; a pair from Jan 9 isn't repeated on Jan 16.
     expect(jan9.every((g) => g.includes("Baylor") && g.includes("Sam"))).toBe(true);
     expect(jan16.filter((g) => jan9.includes(g))).toEqual([]);
-    // Creating again replaces that day's matchups; a team taken out isn't paired.
+    // Home and away: each club has one of its two games at home on Jan 9.
+    const homes = async (day: string) =>
+      Object.fromEntries(
+        (await gameDaySchedule(deps(), fay))!.days
+          .find((x) => x.date === day)!
+          .programs[0].matchups.flatMap((m) => [
+            [names.get(m.a), m.home === "a"],
+            [names.get(m.b!), m.home === "b"],
+          ]),
+      );
+    const h9 = await homes("2027-01-09");
+    const h16 = await homes("2027-01-16");
+    expect([h9["Baylor A"], h9["Baylor B"]].filter(Boolean)).toHaveLength(1);
+    expect([h9["Sam A"], h9["Sam B"]].filter(Boolean)).toHaveLength(1);
+    // Each Jan 16 game whose teams were one home and one away on Jan 9 swaps them (two teams both home on Jan 9 can't).
+    const pairs16 = (await gameDaySchedule(deps(), fay))!.days[1].programs[0].matchups.map((m) => [
+      names.get(m.a)!,
+      names.get(m.b!)!,
+    ]);
+    for (const [x, y] of pairs16) if (h9[x] !== h9[y]) expect([h16[x], h16[y]]).toEqual([!h9[x], !h9[y]]);
+    // Two teams both home (or both away) on Jan 9: one of them swaps.
+    for (const [x, y] of pairs16) if (h9[x] === h9[y]) expect(h16[x]).toBe(!h16[y]);
+    // Creating again replaces that day's matchups; a team taken out isn't paired. The team left over plays TBD.
     await setTeamOff(deps(), fay, id, teams[3], "2027-01-16", true);
-    expect(await createMatchups(deps(), fay, id, "2027-01-16", divisionId)).toMatchObject({ ok: true, created: 1 });
+    const again = await createMatchups(deps(), fay, id, "2027-01-16", divisionId);
+    expect(again).toMatchObject({ ok: true, created: 2, short: [], tbd: [expect.stringMatching(/ plays TBD$/)] });
     expect((await games("2027-01-16")).some((g) => g.includes("Sam B"))).toBe(false);
+    expect((await games("2027-01-16")).filter((g) => g.includes("TBD"))).toHaveLength(1);
 
     // Rearranged by hand (drag and drop): checked again on the server, then saved as given.
     const save = (g: unknown) => saveMatchups(deps(), fay, id, "2027-01-09", divisionId, g);
@@ -563,6 +625,20 @@ describe("Scenic City programs", () => {
     expect(await save([[a, "999999"]])).toMatchObject({ ok: false });
     expect(await save([[a, b]])).toEqual({ ok: true, saved: 1 }); // Sam A and Sam B left in the Sandbox
     expect(await games("2027-01-09")).toEqual(["Baylor A vs Baylor B"]);
+    // A game with one team plays TBD (by hand: once a day per team).
+    expect(
+      await save([
+        [a, b],
+        [c, null],
+      ]),
+    ).toEqual({ ok: true, saved: 2 });
+    expect(await games("2027-01-09")).toEqual(["Baylor A vs Baylor B", "Sam A vs TBD"]);
+    expect(
+      await save([
+        [c, null],
+        [c, null],
+      ]),
+    ).toEqual({ ok: false, message: "Sam A plays TBD twice." });
     expect(
       await save([
         [c, a],
@@ -611,7 +687,7 @@ describe("Scenic City programs", () => {
     const placed = async () =>
       Object.fromEntries(
         (await gameDaySchedule(deps(), fay))!.days[0].programs[0].matchups.map((m) => [
-          [names.get(m.a), names.get(m.b)].sort().join(" vs "),
+          [names.get(m.a), m.b ? names.get(m.b) : "TBD"].sort().join(" vs "),
           m.starts,
         ]),
       );
@@ -641,7 +717,7 @@ describe("Scenic City programs", () => {
     const mine = (await scheduledGames(db.pool, [placedGame.a]))[placedGame.a];
     expect(mine.find((g) => g.date === "2027-01-09")).toMatchObject({
       program: "Winter League 2027",
-      opponent: names.get(placedGame.b),
+      opponent: names.get(placedGame.b!),
       opponentGroup: "4th COMP",
       gym: "Main Gym",
       court: "Court 1",

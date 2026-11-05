@@ -1,12 +1,15 @@
 "use client";
 
+import { TeamName, isDevTeam } from "../../../ui";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, useConfirm } from "../../../client-ui";
 import { createMatchups, saveMatchups } from "../actions";
 
 export type BoardTeam = { id: string; name: string; group: string; need: number };
-type Game = { key: string; a: string | null; b: string | null };
+// A game: two sides; one empty side is TBD (no opponent yet). home: the home side as saved (unknown once changed).
+type Game = { key: string; a: string | null; b: string | null; home: Side | null };
+export type BoardGame = { a: string | null; b: string | null; home: Side | null };
 type Side = "a" | "b";
 // A picked team: which one, and where from ("sandbox", or a game's side "<game key>:a").
 type Picked = { team: string; from: string };
@@ -14,10 +17,11 @@ type Picked = { team: string; from: string };
 const pairKey = (a: string, b: string) => (BigInt(a) < BigInt(b) ? `${a}-${b}` : `${b}-${a}`);
 const shortDay = (d: string) =>
   new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+const gameKey = (g: { a: string | null; b: string | null }) => (g.a && g.b ? pairKey(g.a, g.b) : `${g.a ?? g.b}-TBD`);
 const sign = (games: Game[]) =>
   games
-    .filter((g) => g.a && g.b)
-    .map((g) => pairKey(g.a!, g.b!))
+    .filter((g) => g.a || g.b)
+    .map(gameKey)
     .sort()
     .join(",");
 
@@ -38,11 +42,11 @@ export function MatchupBoard({
   divisionId: string;
   division: string;
   teams: BoardTeam[];
-  initial: [string | null, string | null][]; // a game whose team was taken out comes with that side empty
+  initial: BoardGame[]; // a TBD game (or one whose team was taken out) has one side empty
   otherDays: Record<string, string[]>;
 }) {
   const router = useRouter();
-  const start0 = initial.map(([a, b], i) => ({ key: `g${i}`, a, b }));
+  const start0 = initial.map((g, i) => ({ key: `g${i}`, ...g }));
   const [games, setGames] = useState<Game[]>(start0);
   const [next, setNext] = useState(initial.length);
   const [picked, setPicked] = useState<Picked | null>(null);
@@ -57,11 +61,11 @@ export function MatchupBoard({
   const team = new Map(teams.map((t) => [t.id, t]));
   const placed = (id: string) => games.reduce((n, g) => n + (g.a === id ? 1 : 0) + (g.b === id ? 1 : 0), 0);
   const sandbox = teams.filter((t) => placed(t.id) < t.need);
-  const dirty = sign(games) !== sign(start0) || games.some((g) => !g.a || !g.b);
+  const dirty = sign(games) !== sign(start0);
   const dupes = new Set(
     games
-      .filter((g) => g.a && g.b)
-      .map((g) => pairKey(g.a!, g.b!))
+      .filter((g) => g.a || g.b)
+      .map(gameKey)
       .filter((k, i, all) => all.indexOf(k) !== i),
   );
 
@@ -74,13 +78,16 @@ export function MatchupBoard({
     let list = games.map((g) => ({ ...g }));
     const slot = (k: string) => list.find((g) => g.key === k)!;
     if (to === "sandbox") {
-      if (fromSlot) slot(fromSlot[0])[fromSlot[1]] = null;
+      if (fromSlot) {
+        slot(fromSlot[0])[fromSlot[1]] = null;
+        slot(fromSlot[0]).home = null;
+      }
     } else {
       let target: [string, Side];
       if (to === "new") {
         const k = `g${next}`;
         setNext(next + 1);
-        list.push({ key: k, a: null, b: null });
+        list.push({ key: k, a: null, b: null, home: null });
         target = [k, "a"];
       } else target = to.split(":") as [string, Side];
       const into = slot(target[0]);
@@ -90,8 +97,10 @@ export function MatchupBoard({
       if (!fromSlot && was !== p.team && placed(p.team) >= (team.get(p.team)?.need ?? 0))
         return setNote({ tone: "red", lines: [`${team.get(p.team)?.name} already has all its games.`] });
       into[target[1]] = p.team;
+      into.home = null; // home and away are set again when saved
       if (fromSlot) {
         const back = slot(fromSlot[0]);
+        back.home = null;
         // A swap: the team that was here goes where the picked one came from (unless it would play itself).
         back[fromSlot[1]] = was && back[fromSlot[1] === "a" ? "b" : "a"] !== was ? was : null;
       }
@@ -153,10 +162,12 @@ export function MatchupBoard({
               ? "bg-red-50 ring-2 ring-red-500 dark:bg-red-500/15"
               : before
                 ? "bg-amber-50 ring-2 ring-amber-500 dark:bg-amber-500/15"
-                : "bg-white ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/15"
+                : isDevTeam(t?.name)
+                  ? "bg-violet-50 ring-1 ring-violet-300 dark:bg-violet-500/10 dark:ring-violet-400/30"
+                  : "bg-white ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/15"
         }`}
       >
-        <span className="block truncate font-medium">{t?.name ?? "A removed team"}</span>
+        <span className="block truncate font-medium">{t ? <TeamName name={t.name} /> : "A removed team"}</span>
         <span className={`block text-[11px] ${on || dragging === id ? "text-white/80" : "text-zinc-500"}`}>
           {t?.group}
           {today && <span className="ml-1 font-semibold text-red-700 dark:text-red-300">· Plays today</span>}
@@ -172,8 +183,9 @@ export function MatchupBoard({
 
   const save = () =>
     start(async () => {
-      const full = games.filter((g) => g.a && g.b).map((g) => [g.a!, g.b!] as [string, string]);
-      const r = await saveMatchups(programId, day, divisionId, full);
+      // A game with one team plays TBD.
+      const list = games.filter((g) => g.a || g.b).map((g) => [g.a ?? g.b!, g.a && g.b ? g.b : null] as [string, string | null]);
+      const r = await saveMatchups(programId, day, divisionId, list);
       setNote(
         r.ok
           ? { tone: "green", lines: [`Saved ${r.saved} matchup${r.saved === 1 ? "" : "s"}.`] }
@@ -199,6 +211,7 @@ export function MatchupBoard({
         tone: "green",
         lines: [
           `${r.created} matchup${r.created === 1 ? "" : "s"} created.`,
+          ...r.tbd,
           ...r.short,
           ...r.repeats.map((x) => `Played before: ${x}`),
         ],
@@ -217,7 +230,8 @@ export function MatchupBoard({
       <ul className="space-y-1">
         {games.map((g) => {
           const met = g.a && g.b ? otherDays[pairKey(g.a, g.b)] : undefined;
-          const twice = g.a && g.b && dupes.has(pairKey(g.a, g.b));
+          const twice = (g.a || g.b) && dupes.has(gameKey(g));
+          const one = !g.a !== !g.b; // one team: plays TBD
           return (
             <li key={g.key} className="rounded-lg bg-zinc-50 p-1 dark:bg-white/5">
               {/* A tag only when something needs attention: the pair meets on another Game Day, or twice today. */}
@@ -228,7 +242,11 @@ export function MatchupBoard({
                       Also {met.map(shortDay).join(", ")}
                     </span>
                   )}
-                  {twice && <span className="font-semibold text-red-600 dark:text-red-400">Same matchup twice</span>}
+                  {twice && (
+                    <span className="font-semibold text-red-600 dark:text-red-400">
+                      {one ? "TBD twice" : "Same matchup twice"}
+                    </span>
+                  )}
                 </div>
               )}
               <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-1.5">
@@ -238,11 +256,24 @@ export function MatchupBoard({
                   return (
                     <div key={side} className="contents">
                       {j === 1 && <span className="text-xs font-semibold text-zinc-400">vs</span>}
-                      <div {...dropProps(id)} className={`min-h-10 rounded-md p-0.5 ${ring(id)}`}>
+                      <div {...dropProps(id)} className={`relative min-h-10 rounded-md p-0.5 ${ring(id)}`}>
                         {who ? (
                           chip(who, id)
+                        ) : one ? (
+                          <span className="block px-1 py-1 text-center text-xs">
+                            <span className="font-semibold text-zinc-600 dark:text-zinc-300">TBD</span>
+                            <span className="block text-[11px] text-zinc-400">Drop an opponent</span>
+                          </span>
                         ) : (
                           <span className="block px-1 py-2 text-center text-xs text-zinc-400">Drop an opponent</span>
+                        )}
+                        {g.home === side && (
+                          <span
+                            title="Home team"
+                            className="pointer-events-none absolute -top-1.5 -right-1 rounded-full bg-emerald-600 px-1.5 text-[10px] leading-4 font-bold text-white"
+                          >
+                            H
+                          </span>
                         )}
                       </div>
                     </div>

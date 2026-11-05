@@ -121,16 +121,16 @@ export async function setGameLength(
     const old = (await q.query<{ m: number }>("select game_minutes as m from game_days where day = $1::date for update", [day]))
       .rows[0].m;
     await q.query("update game_days set game_minutes = $2, game_minutes_set_by = $3 where day = $1::date", [day, m, by]);
-    const placed = await q.query<{ id: string; court: string; starts: string; a: string; b: string; name: string }>(
+    const placed = await q.query<{ id: string; court: string; starts: string; a: string; b: string | null; name: string }>(
       `select m.id::text, m.court_key as court, to_char(m.starts, 'HH24:MI') as starts, m.team_a::text as a, m.team_b::text as b,
-              ta.name || ' vs ' || tb.name as name
-         from scenic_matchups m join scenic_teams ta on ta.id = m.team_a join scenic_teams tb on tb.id = m.team_b
+              ta.name || ' vs ' || coalesce(tb.name, 'TBD') as name
+         from scenic_matchups m join scenic_teams ta on ta.id = m.team_a left join scenic_teams tb on tb.id = m.team_b
         where m.day = $1::date and m.court_key is not null
         order by m.starts, m.id`,
       [day],
     );
     // New times, block by block; then games that overlap a game of the same team (earlier ones kept) come off.
-    const kept: { id: string; court: string; start: number; a: string; b: string }[] = [];
+    const kept: { id: string; court: string; start: number; a: string; b: string | null }[] = [];
     const off: string[] = [];
     for (const g of placed.rows) {
       const c = courts.get(g.court);
@@ -140,7 +140,7 @@ export async function setGameLength(
       const clash = kept.some(
         (k) =>
           (k.court === g.court && k.start === start) ||
-          ([k.a, k.b].some((t) => t === g.a || t === g.b) && Math.abs(k.start - start) < m),
+          ([k.a, k.b].some((t) => t !== null && (t === g.a || t === g.b)) && Math.abs(k.start - start) < m),
       );
       if (start < c.starts || start + m > c.ends || clash) off.push(g.name);
       else kept.push({ id: g.id, court: g.court, start, a: g.a, b: g.b });
@@ -182,7 +182,7 @@ export async function placeGame(
     return { ok: false, message: "Pick a game slot." };
   if (!(await isScheduler(deps.pool, viewer)))
     return { ok: false, message: "Only a Scenic City Admin or Director of Scheduling can do that." };
-  const m = await deps.pool.query<{ day: string; a: string; b: string }>(
+  const m = await deps.pool.query<{ day: string; a: string; b: string | null }>(
     "select day::text, team_a::text as a, team_b::text as b from scenic_matchups where id = $1",
     [matchupId],
   );

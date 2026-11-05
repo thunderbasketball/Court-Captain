@@ -9,13 +9,15 @@ import { shortDate } from "@/lib/program-options";
 import { dayGrid, gameLength, gridBlocks, type DayGrid } from "@/lib/scenic-grid";
 import { gameDaySchedule, type DateTeam, type ScheduleDay } from "@/lib/scenic-programs";
 import AppHeader from "../../../AppHeader";
-import { PageTitle, card } from "../../../ui";
+import { PageTitle, TeamName, card } from "../../../ui";
 import { TeamOffButton } from "../programs/ProgramTools";
 import { MatchupBoard } from "./MatchupBoard";
-import { GamePlace } from "../../../LeagueGames";
+import { GamePlace, HomeAway } from "../../../LeagueGames";
 import type { ScheduledGame } from "@/lib/scenic-games";
 import { GameLengthInput } from "./GameLengthInput";
 import { GridBoard } from "./GridBoard";
+import { SimulationToggle } from "./SimulationToggle";
+import { simulatedTeams } from "@/lib/dev-teams";
 
 export default function SchedulerPage({ searchParams }: PageProps<"/org/scenic-city/scheduler">) {
   return (
@@ -66,6 +68,7 @@ async function Scheduler({ searchParams }: { searchParams: PageProps<"/org/sceni
       <AppHeader user={user} context={scenic.key} tab="scheduler" />
       <main className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 py-6">
         <PageTitle title="Scheduler" subtitle="Each Game Day across every League: its teams, matchups and grid." />
+        <SimulationToggle teams={await simulatedTeams(db)} />
         {!day ? (
           <p className={`${card} px-4 py-3 text-sm text-zinc-500`}>
             No upcoming Game Days. A Director of Programs adds them on each League&apos;s page.
@@ -185,7 +188,7 @@ function Teams({ day }: { day: ScheduleDay }) {
                           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
                             <span className={`min-w-0 ${t.removedBy || t.out ? "text-zinc-400 line-through" : ""}`}>
                               <span className="mr-1 inline-block text-zinc-400 transition group-open:rotate-90">›</span>
-                              <span className="font-medium">{t.name}</span>{" "}
+                              <TeamName name={t.name} className="font-medium" />{" "}
                               <span className="text-xs text-zinc-500">
                                 {t.group} · {t.from}
                               </span>
@@ -254,7 +257,7 @@ function Matchups({ day }: { day: ScheduleDay }) {
               const team = new Map(teams.map((t) => [t.teamId, t]));
               const games = p.matchups
                 .filter((m) => m.divisionId === divisionId)
-                .map((m) => ({ ...m, ta: team.get(m.a), tb: team.get(m.b) }))
+                .map((m) => ({ ...m, ta: team.get(m.a), tb: m.b ? team.get(m.b) : undefined }))
                 .sort(
                   (x, y) =>
                     (x.ta?.groupGrade ?? 99) - (y.ta?.groupGrade ?? 99) || (x.ta?.name ?? "").localeCompare(y.ta?.name ?? ""),
@@ -286,10 +289,11 @@ function Matchups({ day }: { day: ScheduleDay }) {
                       divisionId={divisionId}
                       division={division}
                       teams={playing.map((t) => ({ id: t.teamId, name: t.name, group: t.group, need: t.entry!.perDate[p.date] }))}
-                      initial={games.map((m) => [
-                        m.ta && !m.ta.removedBy && !m.ta.out ? m.a : null,
-                        m.tb && !m.tb.removedBy && !m.tb.out ? m.b : null,
-                      ])}
+                      initial={games.map((m) => ({
+                        a: m.ta && !m.ta.removedBy && !m.ta.out ? m.a : null,
+                        b: m.tb && !m.tb.removedBy && !m.tb.out ? m.b : null,
+                        home: m.home,
+                      }))}
                       otherDays={p.otherDays}
                     />
                     {games.length > 0 && <p className="mt-2 text-xs text-zinc-500">Last saved by {games[0].createdBy}</p>}
@@ -327,7 +331,8 @@ function TeamGames({ team, date, games }: { team: DateTeam; date: string; games:
                 <>
                   {on.map((g) => (
                     <span key={g.opponent} className="mb-0.5 block">
-                      vs {g.opponent} <span className="font-normal text-zinc-500">{g.opponentGroup}</span>
+                      <HomeAway home={g.home} /> vs <TeamName name={g.opponent} />{" "}
+                      <span className="font-normal text-zinc-500">{g.opponentGroup}</span>
                       <GamePlace g={g} />
                     </span>
                   ))}
@@ -358,6 +363,7 @@ function Grid({ day, grid }: { day: ScheduleDay; grid: DayGrid }) {
     group: t.group,
     division: t.divisionName,
     from: t.from,
+    grade: t.groupGrade,
   });
   const games = day.programs
     .filter((p) => !p.bracket)
@@ -369,25 +375,32 @@ function Grid({ day, grid }: { day: ScheduleDay; grid: DayGrid }) {
       };
       return p.matchups.flatMap((m) => {
         const a = inPlay(m.a);
-        const b = inPlay(m.b);
-        return a && b
-          ? [
-              {
-                id: m.id,
-                a: team(a),
-                b: team(b),
-                league: day.programs.length > 1 ? p.programName : null,
-                court: m.court,
-                starts: m.starts,
-              },
-            ]
-          : [];
+        const b = m.b ? inPlay(m.b) : null;
+        // Both teams still playing (or one against TBD); the home side first.
+        if (!a || (m.b && !b)) return [];
+        const [home, away] = m.home === "b" ? [b, a] : [a, b];
+        return [
+          {
+            id: m.id,
+            home: home ? team(home) : null,
+            away: away ? team(away) : null,
+            league: day.programs.length > 1 ? p.programName : null,
+            court: m.court,
+            starts: m.starts,
+          },
+        ];
       });
     })
-    .sort(
-      (x, y) =>
-        x.a.division.localeCompare(y.a.division) || x.a.group.localeCompare(y.a.group) || x.a.name.localeCompare(y.a.name),
-    );
+    // Youngest grade first (K, 1st, 2nd…), Boys before Girls (their division names start with it), then the grade group (COMP, REC) and the home team's name.
+    .sort((x, y) => {
+      const [p, q] = [(x.home ?? x.away)!, (y.home ?? y.away)!];
+      return (
+        p.grade - q.grade ||
+        p.division.localeCompare(q.division) ||
+        p.group.localeCompare(q.group) ||
+        p.name.localeCompare(q.name)
+      );
+    });
   const gyms = grid.gyms.map((g) => {
     const opens = g.courts.reduce((m, c) => (c.starts < m ? c.starts : m), "23:59");
     const closes = g.courts.reduce((m, c) => (c.ends > m ? c.ends : m), "00:00");

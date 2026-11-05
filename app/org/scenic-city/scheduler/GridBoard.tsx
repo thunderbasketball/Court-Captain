@@ -1,15 +1,24 @@
 "use client";
 
+import { TeamName } from "../../../ui";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Alert } from "../../../client-ui";
 import { placeGame } from "../actions";
 
-export type GridTeam = { id: string; name: string; partnerId: string | null; group: string; division: string; from: string };
+export type GridTeam = {
+  id: string;
+  name: string;
+  partnerId: string | null;
+  group: string;
+  division: string;
+  from: string;
+  grade: number; // its grade group's grade, for sorting youngest first
+};
 export type GridGame = {
   id: string;
-  a: GridTeam;
-  b: GridTeam;
+  home: GridTeam | null; // the home team: the game belongs at its school's or organization's gym (null: TBD)
+  away: GridTeam | null; // null: TBD (one of the two is always a team)
   league: string | null;
   court: string | null;
   starts: string | null;
@@ -26,6 +35,11 @@ export type GridGymView = {
   blocks: [string, string][];
 };
 
+// Boys' games blue, Girls' pink (the division name starts with the gender).
+const genderCls = (x: GridGame) =>
+  (x.home ?? x.away)!.division.startsWith("Girls")
+    ? "bg-pink-50 ring-pink-300 dark:bg-pink-500/15 dark:ring-pink-400/40"
+    : "bg-sky-50 ring-sky-300 dark:bg-sky-500/15 dark:ring-sky-400/40";
 const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
 const label = (t: string) => {
   const [h, m] = t.split(":").map(Number);
@@ -48,19 +62,22 @@ export function GridBoard({ gyms, games: initial, minutes }: { gyms: GridGymView
   }
   const [opened, setOpened] = useState<Set<string>>(new Set());
   const [picked, setPicked] = useState<string | null>(null);
+  // Shift-click (or Cmd/Ctrl-click) picks several games to move together.
+  const [selected, setSelected] = useState<string[]>([]);
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [, start] = useTransition();
-  const active = dragging ?? picked;
+  const active = dragging ?? picked ?? selected[0] ?? null;
   const hosts = new Set(gyms.map((g) => g.hostId));
   const courts = new Map(gyms.flatMap((g) => g.courts.map((c) => [c.id, { ...c, gym: g }] as const)));
   // On the grid: a court of an open gym at one of its block times (a game left off by a new game length isn't).
   const onGrid = (x: GridGame) => !!x.court && !!x.starts && !!courts.get(x.court)?.gym.blocks.some(([s]) => s === x.starts);
-  const homeless = (x: GridGame) => !hosts.has(x.a.partnerId ?? "") && !hosts.has(x.b.partnerId ?? "");
-  const isHome = (x: GridGame, hostId: string) => x.a.partnerId === hostId || x.b.partnerId === hostId;
+  const homeless = (x: GridGame) => !hosts.has(x.home?.partnerId ?? "");
+  const isHome = (x: GridGame, hostId: string) => !!x.home && x.home.partnerId === hostId;
   const at = (court: string, s: string) => games.find((x) => x.court === court && x.starts === s && onGrid(x));
-  const shares = (x: GridGame, y: GridGame) => [x.a.id, x.b.id].some((n) => n === y.a.id || n === y.b.id);
+  const ids = (x: GridGame) => [x.home, x.away].flatMap((t) => (t ? [t.id] : []));
+  const shares = (x: GridGame, y: GridGame) => ids(x).some((n) => ids(y).includes(n));
   // A team in the game being moved already plays within a game length of this time.
   const busy = (s: string) => {
     const g = active && games.find((x) => x.id === active);
@@ -88,6 +105,66 @@ export function GridBoard({ gyms, games: initial, minutes }: { gyms: GridGymView
     });
   }
 
+  // Several games at once: dropped on a slot, they fill that court's open blocks from there on (skipping blocks that are
+  // taken, closed, or when one of the game's teams already plays); dropped on a selection area, they all come off the
+  // grid. Each is saved (and checked on the server) one after another.
+  function moveMany(list: string[], slot: { court: string; starts: string } | null) {
+    setPicked(null);
+    setDragging(null);
+    setSelected([]);
+    setError(null);
+    const moving = games.filter((x) => list.includes(x.id)); // in the list's order: youngest first
+    if (!moving.length) return;
+    const plan = new Map<string, { court: string; starts: string } | null>();
+    if (!slot) for (const g of moving) if (onGrid(g)) plan.set(g.id, null);
+    if (slot) {
+      const c = courts.get(slot.court);
+      if (!c) return;
+      const times = c.gym.blocks
+        .map(([b]) => b)
+        .filter((b) => b >= slot.starts && toMin(b) >= toMin(c.starts) && toMin(b) + minutes <= toMin(c.ends));
+      // Where every game is once the planned moves are made.
+      const placedAt = (x: GridGame) =>
+        plan.has(x.id) ? plan.get(x.id) : onGrid(x) ? { court: x.court!, starts: x.starts! } : null;
+      for (const g of moving) {
+        const free = times.find((t) => {
+          const holder = games.find((y) => y.id !== g.id && placedAt(y)?.court === slot.court && placedAt(y)?.starts === t);
+          if (holder) return false;
+          return !games.some((y) => {
+            const p = y.id === g.id ? null : placedAt(y);
+            return p && shares(g, y) && Math.abs(toMin(p.starts) - toMin(t)) < minutes;
+          });
+        });
+        if (!free) break;
+        plan.set(g.id, { court: slot.court, starts: free });
+      }
+      if (plan.size < moving.length)
+        setError(
+          `${plan.size ? `Only ${plan.size} of the ${moving.length} games fit` : "None of those games fit"} on that court from there.`,
+        );
+    }
+    if (!plan.size) return;
+    const before = games;
+    setGames(
+      games.map((x) =>
+        plan.has(x.id) ? { ...x, court: plan.get(x.id)?.court ?? null, starts: plan.get(x.id)?.starts ?? null } : x,
+      ),
+    );
+    start(async () => {
+      // Games coming off a slot first, so the others can take their places.
+      const order = [...plan].sort(([, a], [, b]) => (a ? 1 : 0) - (b ? 1 : 0));
+      for (const [id, to] of order) {
+        const r = await placeGame(id, to);
+        if (!r.ok) {
+          setGames(before);
+          setError(r.message);
+          break;
+        }
+      }
+      router.refresh();
+    });
+  }
+
   const target = (key: string, slot: { court: string; starts: string } | null) => ({
     onDragOver: (e: React.DragEvent) => {
       e.preventDefault();
@@ -97,41 +174,53 @@ export function GridBoard({ gyms, games: initial, minutes }: { gyms: GridGymView
     onDrop: (e: React.DragEvent) => {
       e.preventDefault();
       setOver(null);
-      const id = e.dataTransfer.getData("text/plain");
-      if (/^\d+$/.test(id)) move(id, slot);
+      const data = e.dataTransfer.getData("text/plain");
+      if (/^\d+$/.test(data)) move(data, slot);
+      else if (/^\d+(,\d+)+$/.test(data)) moveMany(data.split(","), slot);
     },
-    onClick: () => picked && move(picked, slot),
+    onClick: () => (selected.length ? moveMany(selected, slot) : picked && move(picked, slot)),
   });
 
   function card(x: GridGame, hostId?: string, full = false) {
-    const on = active === x.id;
-    const [h, v] = hostId && x.b.partnerId === hostId && x.a.partnerId !== hostId ? [x.b, x.a] : [x.a, x.b];
+    const on = active === x.id || selected.includes(x.id);
+    const tbd = { ...(x.home ?? x.away)!, name: "TBD" };
+    const [h, v] = [x.home ?? tbd, x.away ?? tbd];
     return (
       <button
         key={x.id}
         type="button"
         draggable
         onDragStart={(e) => {
-          e.dataTransfer.setData("text/plain", x.id);
+          // A picked game drags all the picked ones with it.
+          const group = selected.includes(x.id) && selected.length > 1 ? selected : null;
+          if (!group) setSelected([]);
+          e.dataTransfer.setData("text/plain", group ? group.join(",") : x.id);
           setDragging(x.id);
         }}
         onDragEnd={() => setDragging(null)}
         title={`${h.name} vs ${v.name} · ${h.division} · ${h.group === v.group ? h.group : `${h.group}/${v.group}`}`}
         onClick={(e) => {
           e.stopPropagation();
+          if (e.shiftKey || e.metaKey || e.ctrlKey) {
+            setPicked(null);
+            const base = selected.length ? selected : picked ? [picked] : [];
+            setSelected(base.includes(x.id) ? base.filter((i) => i !== x.id) : [...base, x.id]);
+            return;
+          }
+          setSelected([]);
           setPicked(on ? null : x.id);
         }}
         className={`${full ? "block h-full w-full" : "max-w-full"} cursor-grab rounded-md px-2 py-1.5 text-left text-xs shadow-sm ring-1 active:cursor-grabbing ${
-          on ? "bg-scenic-navy text-white ring-scenic-navy" : "bg-white ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/15"
+          on ? "bg-scenic-navy text-white ring-scenic-navy" : genderCls(x)
         }`}
       >
         <span className="block truncate">
-          <span className="font-semibold">{h.name}</span>
+          <TeamName name={h.name} className="font-semibold" />
           {hostId && isHome(x, hostId) && (
             <span className={`font-semibold ${on ? "" : "text-emerald-700 dark:text-emerald-300"}`}> (H)</span>
           )}
           <span className={on ? "text-white/80" : "text-zinc-500"}> vs </span>
-          <span className="font-semibold">{v.name}</span>
+          <TeamName name={v.name} className="font-semibold" />
           <span className={`text-[11px] ${on ? "text-white/80" : "text-zinc-500"}`}>
             {" "}
             · {h.group === v.group ? h.group : `${h.group}/${v.group}`}
@@ -153,6 +242,16 @@ export function GridBoard({ gyms, games: initial, minutes }: { gyms: GridGymView
   return (
     <div className="space-y-3">
       {error && <Alert tone="red">{error}</Alert>}
+      {selected.length > 1 && (
+        <p className="flex items-center justify-between gap-2 rounded-md bg-scenic-navy/10 px-2 py-1 text-xs font-semibold text-scenic-navy dark:bg-white/10 dark:text-white">
+          {selected.length} games picked: drag one (or tap a slot) to place them in that court&apos;s next open blocks, youngest
+          first.
+          <button type="button" onClick={() => setSelected([])} className="shrink-0 underline">
+            Clear
+          </button>
+        </p>
+      )}
+      {!active && <p className="text-xs text-zinc-500">Hold Shift and click games to pick several and move them together.</p>}
       {active && (
         <p className="text-xs text-zinc-500">
           Tap or drop on an open slot. <span className="font-semibold text-red-600 dark:text-red-400">Red</span>: a team in this
@@ -292,19 +391,24 @@ export function GridBoard({ gyms, games: initial, minutes }: { gyms: GridGymView
               {noHome.filter((x) => !onGrid(x)).length} of {noHome.length} to place
             </span>
           </h4>
-          <p className="text-xs text-zinc-500">Neither team&apos;s school or organization has a gym open this day.</p>
+          <p className="text-xs text-zinc-500">
+            The home team&apos;s school or organization has no gym open this day (or the home side is TBD).
+          </p>
           {noHome.length ? (
             <ul className="mt-1 divide-y divide-zinc-100 text-sm dark:divide-white/5">
               {noHome.map((x) => {
                 const c = x.court ? courts.get(x.court) : null;
                 return (
-                  <li key={x.id} className="flex items-center justify-between gap-3 py-1">
+                  <li
+                    key={x.id}
+                    className={`my-1 flex items-center justify-between gap-3 rounded-md px-2 py-1 ring-1 ${genderCls(x)}`}
+                  >
                     <span className="min-w-0">
-                      <span className="font-medium">{x.a.name}</span>
-                      <span className="text-zinc-500"> vs </span>
-                      <span className="font-medium">{x.b.name}</span>
+                      <TeamName name={x.home?.name ?? "TBD"} className="font-medium" />
+                      <span className="text-zinc-500"> (H) vs </span>
+                      <TeamName name={x.away?.name ?? "TBD"} className="font-medium" />
                       <span className="block text-xs text-zinc-500">
-                        {x.a.division} · {x.a.from} vs {x.b.from}
+                        {(x.home ?? x.away)!.division} · {[x.home, x.away].flatMap((t) => (t ? [t.from] : ["TBD"])).join(" vs ")}
                       </span>
                     </span>
                     <span

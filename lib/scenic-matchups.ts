@@ -11,7 +11,8 @@ import { withTx } from "./sql";
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
 
-export type MatchTeam = { id: string; need: number; club: string; grade: number; level: string };
+// hadTbd: it already played TBD on another Game Day this season, so it shouldn't be the one left without an opponent.
+export type MatchTeam = { id: string; need: number; club: string; grade: number; level: string; hadTbd?: boolean };
 export type Plan = { pairs: [string, string][]; short: { id: string; games: number }[] };
 
 const key = (a: string, b: string) => (BigInt(a) < BigInt(b) ? `${a}-${b}` : `${b}-${a}`);
@@ -27,15 +28,18 @@ function random(seed: number) {
 }
 
 // Pairs teams for one day. `met`: how many times each pair (key a-b) already played on other days.
-// Tries many orders and keeps the plan with the fewest games missing, then the lowest cost.
+// Tries many orders and keeps the plan with the fewest games missing, then the fewest left short who already played TBD
+// this season, then the lowest cost.
 export function planMatchups(teams: MatchTeam[], met: Map<string, number>, tries = 300): Plan {
+  // In order of importance, each outweighing everything after it over a whole day's plan: a pair that already met on
+  // another Game Day, then two teams from the same organization (club), then grade and level differences.
   const cost = (a: MatchTeam, b: MatchTeam) =>
-    (met.get(key(a.id, b.id)) ?? 0) * 1000 +
-    (a.club === b.club ? 100 : 0) +
+    (met.get(key(a.id, b.id)) ?? 0) * 1_000_000 +
+    (a.club === b.club ? 10_000 : 0) +
     Math.abs(a.grade - b.grade) * 20 +
     (a.level === b.level ? 0 : 10);
   const rand = random(teams.length * 7919 + 17);
-  let best: { pairs: [string, string][]; missing: number; cost: number; need: Map<string, number> } | null = null;
+  let best: { pairs: [string, string][]; missing: number; tbd: number; cost: number; need: Map<string, number> } | null = null;
   for (let t = 0; t < tries; t++) {
     const order = teams
       .map((x) => ({ x, r: rand() }))
@@ -61,9 +65,14 @@ export function planMatchups(teams: MatchTeam[], met: Map<string, number>, tries
       total += cost(a, b);
     }
     const missing = [...need.values()].reduce((n, v) => n + v, 0);
-    if (!best || missing < best.missing || (missing === best.missing && total < best.cost))
-      best = { pairs, missing, cost: total, need };
-    if (best.missing <= 1 && best.cost === 0) break;
+    const tbd = teams.filter((x) => x.hadTbd && need.get(x.id)! > 0).length;
+    if (
+      !best ||
+      missing < best.missing ||
+      (missing === best.missing && (tbd < best.tbd || (tbd === best.tbd && total < best.cost)))
+    )
+      best = { pairs, missing, tbd, cost: total, need };
+    if (best.missing <= 1 && best.tbd === 0 && best.cost === 0) break;
   }
   return {
     pairs: best?.pairs ?? [],
@@ -71,22 +80,167 @@ export function planMatchups(teams: MatchTeam[], met: Map<string, number>, tries
   };
 }
 
-// Games keep their grid slot when a division's matchups are saved or created again: the same pair stays where it was.
+// Home and away. Each team alternates: home on its last Game Day means away now, and away means home. Where that
+// doesn't decide it, each organization (club) gets about half its games at home that day (counting its games already
+// set in other divisions, `today`), then the team with fewer home games this season is home.
+// A game: two teams, or one team against TBD (b null; side "a" = the team is home). `fixed`: a side already set
+// (a matchup kept from before), counted but not changed. Returns each game's home side.
+export type HomeTeam = { club: string; last: "H" | "A" | null; homeGames: number };
+export function assignHome(
+  games: { a: string; b: string | null; fixed?: "a" | "b" }[],
+  teams: Map<string, HomeTeam>,
+  today: Map<string, { home: number; total: number }> = new Map(),
+): ("a" | "b")[] {
+  const org = new Map([...today].map(([k, v]) => [k, { ...v }]));
+  const count = (id: string | null, home: boolean, total: boolean) => {
+    const c = id && teams.get(id)?.club;
+    if (!c) return;
+    const o = org.get(c) ?? { home: 0, total: 0 };
+    if (home) o.home++;
+    if (total) o.total++;
+    org.set(c, o);
+  };
+  for (const g of games) {
+    count(g.a, g.fixed === "a", true);
+    count(g.b, g.fixed === "b", true);
+  }
+  // Breaking the alternation for a side: its home team was home last time, its away team was away last time.
+  const breaks = (g: { a: string; b: string | null }, side: "a" | "b") => {
+    const [h, v] = side === "a" ? [g.a, g.b] : [g.b, g.a];
+    return (h && teams.get(h)?.last === "H" ? 1 : 0) + (v && teams.get(v)?.last === "A" ? 1 : 0);
+  };
+  // How many home games this side's organization is still short of half its games that day (more: it should be home).
+  // TBD has no organization (0), so a team against TBD is home when its organization is short of home games.
+  const owed = (g: { a: string; b: string | null }, side: "a" | "b") => {
+    const h = side === "a" ? g.a : g.b;
+    const c = h && teams.get(h)?.club;
+    const o = c ? org.get(c) : undefined;
+    return o ? o.total / 2 - o.home : 0;
+  };
+  const out: ("a" | "b")[] = games.map((g) => g.fixed ?? "a");
+  // Games the alternation decides go first, so the organizations' balance is evened out with the rest.
+  const order = games
+    .map((g, i) => ({ g, i, gap: Math.abs(breaks(g, "a") - breaks(g, "b")) }))
+    .filter((x) => !x.g.fixed)
+    .sort((x, y) => y.gap - x.gap || x.i - y.i);
+  for (const { g, i } of order) {
+    const score = (side: "a" | "b") => {
+      const h = side === "a" ? g.a : g.b;
+      return [breaks(g, side), -owed(g, side), h ? (teams.get(h)?.homeGames ?? 0) : 0];
+    };
+    const [x, y] = [score("a"), score("b")];
+    const side = x[0] !== y[0] ? (x[0] < y[0] ? "a" : "b") : x[1] !== y[1] ? (x[1] < y[1] ? "a" : "b") : x[2] <= y[2] ? "a" : "b";
+    out[i] = side;
+    count(side === "a" ? g.a : g.b, true, false);
+  }
+  return out;
+}
+
+// Games keep their grid slot when a division's matchups are saved or created again: the same pair (or the same team
+// against TBD) stays where it was. Also returns each kept pair's home side, for a save to keep it.
 async function keepSlots(q: PoolClient, programId: string, day: string, divisionId: string) {
-  const r = await q.query<{ a: string; b: string; court: string; starts: string; by: string; at: Date }>(
-    `select team_a::text as a, team_b::text as b, court_key as court, starts::text, placed_by as by, placed_at as at
-       from scenic_matchups where program_id = $1 and day = $2::date and division_id = $3 and court_key is not null`,
+  const r = await q.query<{
+    a: string;
+    b: string | null;
+    side: "a" | "b" | null;
+    court: string | null;
+    starts: string | null;
+    by: string | null;
+    at: Date | null;
+  }>(
+    `select team_a::text as a, team_b::text as b, home_side as side, court_key as court, starts::text, placed_by as by, placed_at as at
+       from scenic_matchups where program_id = $1 and day = $2::date and division_id = $3`,
     [programId, day, divisionId],
   );
-  return async () => {
-    for (const x of r.rows)
-      await q.query(
-        `update scenic_matchups set court_key = $5, starts = $6::time, placed_by = $7, placed_at = $8
-          where program_id = $1 and day = $2::date and team_a = $3 and team_b = $4`,
-        [programId, day, x.a, x.b, x.court, x.starts, x.by, x.at],
-      );
+  const sides = new Map(r.rows.map((x) => [`${x.a}-${x.b ?? "TBD"}`, x.side ?? "a"]));
+  return {
+    sides,
+    restore: async () => {
+      for (const x of r.rows.filter((x) => x.court))
+        await q.query(
+          `update scenic_matchups set court_key = $5, starts = $6::time, placed_by = $7, placed_at = $8
+            where program_id = $1 and day = $2::date and team_a = $3 and team_b is not distinct from $4::bigint`,
+          [programId, day, x.a, x.b, x.court, x.starts, x.by, x.at],
+        );
+    },
   };
 }
+
+// What home and away need to know: each of the division's teams' organization, whether it was home or away on its last
+// Game Day before this one, its home games this season and its TBD games (dates); pairs already played on other Game
+// Days; and each organization's games already set in the League's other divisions that day.
+async function history(q: PoolClient, programId: string, day: string, divisionId: string, teams: DateTeam[]) {
+  const club = new Map(teams.map((t) => [t.teamId, t.from]));
+  const rows = (
+    await q.query<{ a: string; b: string | null; side: "a" | "b" | null; day: string; division: string }>(
+      `select team_a::text as a, team_b::text as b, home_side as side, day::text, division_id::text as division
+         from scenic_matchups where program_id = $1 order by day, id`,
+      [programId],
+    )
+  ).rows;
+  const met = new Map<string, number>();
+  const metOn = new Map<string, string[]>();
+  const tbdOn = new Map<string, string>();
+  const home = new Map<string, HomeTeam>(teams.map((t) => [t.teamId, { club: t.from, last: null, homeGames: 0 }]));
+  const today = new Map<string, { home: number; total: number }>();
+  for (const r of rows) {
+    const side = r.side ?? "a";
+    if (r.day === day) {
+      if (r.division === divisionId) continue;
+      for (const [id, s] of [
+        [r.a, "a"],
+        [r.b, "b"],
+      ] as const) {
+        const c = id && club.get(id);
+        if (!c) continue;
+        const o = today.get(c) ?? { home: 0, total: 0 };
+        o.total++;
+        if (side === s) o.home++;
+        today.set(c, o);
+      }
+      continue;
+    }
+    if (r.b) {
+      met.set(key(r.a, r.b), (met.get(key(r.a, r.b)) ?? 0) + 1);
+      metOn.set(key(r.a, r.b), [...(metOn.get(key(r.a, r.b)) ?? []), r.day]);
+    } else if (!tbdOn.has(r.a)) tbdOn.set(r.a, r.day);
+    for (const [id, s] of [
+      [r.a, "a"],
+      [r.b, "b"],
+    ] as const) {
+      const t = id && home.get(id);
+      if (!t) continue;
+      if (side === s) t.homeGames++;
+      if (r.day < day) t.last = side === s ? "H" : "A"; // rows are in date order: the latest earlier Game Day wins
+    }
+  }
+  return { met, metOn, tbdOn, home, today };
+}
+
+// Saves a division's games for the day: each [a, b] (b null: TBD) with its home side, team_a the lower id.
+async function insertGames(
+  q: PoolClient,
+  programId: string,
+  divisionId: string,
+  day: string,
+  games: { a: string; b: string | null; side: "a" | "b" }[],
+  by: string,
+  now: Date,
+) {
+  for (const g of games) {
+    const swap = g.b !== null && BigInt(g.b) < BigInt(g.a);
+    const [lo, hi] = swap ? [g.b, g.a] : [g.a, g.b];
+    const side = swap ? (g.side === "a" ? "b" : "a") : g.side;
+    await q.query(
+      `insert into scenic_matchups (program_id, division_id, day, team_a, team_b, home_side, created_by, created_at)
+       values ($1, $2, $3::date, $4, $5, $6, $7, $8)`,
+      [programId, divisionId, day, lo, hi, side, by, now],
+    );
+  }
+}
+
+const shortDate = (d: string) =>
+  new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
 // The division's teams still playing that day (not taken out or withdrawn), with their games guaranteed.
 export function playingTeams(teams: DateTeam[], divisionId: string): DateTeam[] {
@@ -94,13 +248,15 @@ export function playingTeams(teams: DateTeam[], divisionId: string): DateTeam[] 
 }
 
 // Create (or create again) one division's matchups on one Game Day. Admins and Directors of Scheduling only.
+// A team left without an opponent plays TBD, unless it already played TBD this season (then it's listed as short).
+// Home and away: see assignHome.
 export async function createMatchups(
   deps: Deps,
   viewer: SessionUser,
   programId: unknown,
   day: unknown,
   divisionId: unknown,
-): Promise<Result<{ created: number; short: string[]; repeats: string[] }>> {
+): Promise<Result<{ created: number; short: string[]; repeats: string[]; tbd: string[] }>> {
   if (!isId(programId) || !isDate(day) || !isId(divisionId)) return { ok: false, message: "Pick a division on a Game Day." };
   if (!(await isScheduler(deps.pool, viewer)))
     return { ok: false, message: "Only a Scenic City Admin or Director of Scheduling can do that." };
@@ -111,57 +267,72 @@ export async function createMatchups(
   const division = p.divisionList.find((d) => d.id === divisionId);
   if (!division) return { ok: false, message: "That division isn't in this League." };
   const teams = playingTeams(event.teams, divisionId);
-  if (teams.length < 2) return { ok: false, message: `${division.label} needs at least 2 teams playing that day.` };
+  if (!teams.length) return { ok: false, message: `${division.label} has no teams playing that day.` };
   const by = `${viewer.firstName} ${viewer.lastName}`;
   const name = new Map(teams.map((t) => [t.teamId, t.name]));
 
   return withTx(deps.pool, async (q) => {
     // One Scheduler at a time per League, so two taps can't mix two plans.
     await q.query("select pg_advisory_xact_lock(hashtext('scenic-matchups:' || $1))", [programId]);
-    const before = await q.query<{ a: string; b: string; day: string }>(
-      `select team_a::text as a, team_b::text as b, day::text from scenic_matchups where program_id = $1 and day <> $2::date`,
-      [programId, day],
-    );
-    const met = new Map<string, number>();
-    const metOn = new Map<string, string[]>();
-    for (const r of before.rows) {
-      met.set(key(r.a, r.b), (met.get(key(r.a, r.b)) ?? 0) + 1);
-      metOn.set(key(r.a, r.b), [...(metOn.get(key(r.a, r.b)) ?? []), r.day].sort());
-    }
+    const h = await history(q, programId, day, divisionId, event.teams);
     const plan = planMatchups(
-      teams.map((t) => ({ id: t.teamId, need: t.entry!.perDate[day], club: t.from, grade: t.groupGrade, level: t.level })),
-      met,
+      teams.map((t) => ({
+        id: t.teamId,
+        need: t.entry!.perDate[day],
+        club: t.from,
+        grade: t.groupGrade,
+        level: t.level,
+        hadTbd: h.tbdOn.has(t.teamId),
+      })),
+      h.met,
     );
-    const restore = await keepSlots(q, programId, day, divisionId);
+    // One TBD game for a team left short (never twice in a day), unless it already played TBD this season.
+    const tbd = plan.short.filter((x) => !h.tbdOn.has(x.id)).map((x) => x.id);
+    const games: { a: string; b: string | null }[] = [
+      ...plan.pairs.map(([a, b]) => ({ a, b })),
+      ...tbd.map((a) => ({ a, b: null })),
+    ];
+    const sides = assignHome(games, h.home, h.today);
+    const kept = await keepSlots(q, programId, day, divisionId);
     await q.query("delete from scenic_matchups where program_id = $1 and day = $2::date and division_id = $3", [
       programId,
       day,
       divisionId,
     ]);
-    for (const [a, b] of plan.pairs) {
-      const [lo, hi] = BigInt(a) < BigInt(b) ? [a, b] : [b, a];
-      await q.query(
-        `insert into scenic_matchups (program_id, division_id, day, team_a, team_b, created_by, created_at)
-         values ($1, $2, $3::date, $4, $5, $6, $7)`,
-        [programId, divisionId, day, lo, hi, by, deps.now()],
-      );
-    }
-    await restore();
+    await insertGames(
+      q,
+      programId,
+      divisionId,
+      day,
+      games.map((g, i) => ({ ...g, side: sides[i] })),
+      by,
+      deps.now(),
+    );
+    await kept.restore();
+    const left = (s: { id: string; games: number }) => s.games - (tbd.includes(s.id) ? 1 : 0);
     return {
       ok: true as const,
-      created: plan.pairs.length,
-      short: plan.short.map((s) => `${name.get(s.id)} needs ${s.games} more game${s.games === 1 ? "" : "s"}`),
+      created: games.length,
+      tbd: tbd.map((id) => `${name.get(id)} plays TBD`),
+      short: plan.short
+        .filter((s) => left(s) > 0)
+        .map(
+          (s) =>
+            `${name.get(s.id)} needs ${left(s)} more game${left(s) === 1 ? "" : "s"}` +
+            (h.tbdOn.has(s.id) ? ` (it already played TBD on ${shortDate(h.tbdOn.get(s.id)!)})` : ""),
+        ),
       repeats: plan.pairs
-        .filter(([a, b]) => met.has(key(a, b)))
-        .map(([a, b]) => `${name.get(a)} vs ${name.get(b)} (also ${metOn.get(key(a, b))!.join(", ")})`),
+        .filter(([a, b]) => h.met.has(key(a, b)))
+        .map(([a, b]) => `${name.get(a)} vs ${name.get(b)} (also ${h.metOn.get(key(a, b))!.map(shortDate).join(", ")})`),
     };
   });
 }
 
 // Save one division's matchups on one Game Day as the Scheduler arranged them (drag and drop). Admins and Directors of
-// Scheduling only. Every game is checked again here: both teams in this division and still playing that day, not the
-// same team twice, no pair twice that day, and no team in more games than it's guaranteed. Replaces that division's
-// matchups for the day; teams left out stay in the Sandbox (short).
+// Scheduling only. Every game is checked again here: both teams in this division and still playing that day (b null:
+// TBD), not the same team twice, no pair twice that day, TBD at most once a team, and no team in more games than it's
+// guaranteed. Replaces that division's matchups for the day; a pair kept from before keeps its home team and slot, new
+// ones get home and away as assignHome sets them. Teams left out stay in the Sandbox (short).
 export async function saveMatchups(
   deps: Deps,
   viewer: SessionUser,
@@ -180,18 +351,23 @@ export async function saveMatchups(
   if (!event) return { ok: false, message: "That isn't one of this League's Game Days." };
   if (!p.divisionList.some((d) => d.id === divisionId)) return { ok: false, message: "That division isn't in this League." };
   const teams = new Map(playingTeams(event.teams, divisionId).map((t) => [t.teamId, t]));
-  const pairs = new Set<string>();
+  const seen = new Set<string>();
+  const list: { a: string; b: string | null }[] = [];
   const count = new Map<string, number>();
   for (const g of games as unknown[]) {
     const [a, b] = Array.isArray(g) ? g : [];
-    if (!isId(a) || !isId(b)) return { ok: false, message: "Those matchups weren't readable." };
+    if (!isId(a) || (b !== null && !isId(b))) return { ok: false, message: "Those matchups weren't readable." };
     const ta = teams.get(a);
-    const tb = teams.get(b);
-    if (!ta || !tb) return { ok: false, message: "A team in those matchups isn't playing in this division that day." };
+    const tb = b === null ? null : teams.get(b);
+    if (!ta || tb === undefined)
+      return { ok: false, message: "A team in those matchups isn't playing in this division that day." };
     if (a === b) return { ok: false, message: `${ta.name} can't play itself.` };
-    if (pairs.has(key(a, b))) return { ok: false, message: `${ta.name} vs ${tb.name} is in there twice.` };
-    pairs.add(key(a, b));
-    for (const t of [ta, tb]) {
+    const k = b === null ? `${a}-TBD` : key(a, b);
+    if (seen.has(k))
+      return { ok: false, message: b === null ? `${ta.name} plays TBD twice.` : `${ta.name} vs ${tb!.name} is in there twice.` };
+    seen.add(k);
+    list.push({ a, b });
+    for (const t of tb ? [ta, tb] : [ta]) {
       count.set(t.teamId, (count.get(t.teamId) ?? 0) + 1);
       const gg = t.entry!.perDate[day];
       if (count.get(t.teamId)! > gg)
@@ -201,21 +377,34 @@ export async function saveMatchups(
   const by = `${viewer.firstName} ${viewer.lastName}`;
   return withTx(deps.pool, async (q) => {
     await q.query("select pg_advisory_xact_lock(hashtext('scenic-matchups:' || $1))", [programId]);
-    const restore = await keepSlots(q, programId, day, divisionId);
+    const kept = await keepSlots(q, programId, day, divisionId);
+    const h = await history(q, programId, day, divisionId, event.teams);
+    // A pair kept from before keeps its home side (stored with team_a the lower id).
+    const fixed = list.map((g) => {
+      const swap = g.b !== null && BigInt(g.b) < BigInt(g.a);
+      const side = kept.sides.get(swap ? `${g.b}-${g.a}` : `${g.a}-${g.b ?? "TBD"}`);
+      return side ? (swap ? (side === "a" ? "b" : "a") : side) : undefined;
+    });
+    const sides = assignHome(
+      list.map((g, i) => ({ ...g, fixed: fixed[i] })),
+      h.home,
+      h.today,
+    );
     await q.query("delete from scenic_matchups where program_id = $1 and day = $2::date and division_id = $3", [
       programId,
       day,
       divisionId,
     ]);
-    for (const k of pairs) {
-      const [lo, hi] = k.split("-");
-      await q.query(
-        `insert into scenic_matchups (program_id, division_id, day, team_a, team_b, created_by, created_at)
-         values ($1, $2, $3::date, $4, $5, $6, $7)`,
-        [programId, divisionId, day, lo, hi, by, deps.now()],
-      );
-    }
-    await restore();
-    return { ok: true as const, saved: pairs.size };
+    await insertGames(
+      q,
+      programId,
+      divisionId,
+      day,
+      list.map((g, i) => ({ ...g, side: sides[i] })),
+      by,
+      deps.now(),
+    );
+    await kept.restore();
+    return { ok: true as const, saved: list.length };
   });
 }

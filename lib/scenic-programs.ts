@@ -369,7 +369,8 @@ export type Matchup = {
   id: string;
   divisionId: string;
   a: string;
-  b: string;
+  b: string | null; // null: TBD (no opponent yet)
+  home: "a" | "b"; // which side is home (TBD games: "b" means the team is away)
   before: string[]; // the League's other Game Days these two also play (YYYY-MM-DD)
   createdBy: string;
   court: string | null; // its game slot on the Grid: the court key and start time ("HH:MM"), or null
@@ -389,13 +390,13 @@ export async function gameDaySchedule(deps: Deps, viewer: SessionUser): Promise<
   // Every matchup in these Leagues (all days, to show pairs that also meet on another Game Day).
   const all = await deps.pool.query<Matchup & { programId: string; day: string }>(
     `select m.id::text, m.program_id::text as "programId", m.division_id::text as "divisionId", m.day::text,
-            m.team_a::text as a, m.team_b::text as b, m.created_by as "createdBy",
+            m.team_a::text as a, m.team_b::text as b, coalesce(m.home_side, 'a') as home, m.created_by as "createdBy",
             m.court_key as court, to_char(m.starts, 'HH24:MI') as starts, m.placed_by as "placedBy"
        from scenic_matchups m where m.program_id = any($1::bigint[])
       order by m.day, m.id`,
     [ids.rows.map((r) => r.id)],
   );
-  const pair = (m: { programId: string; a: string; b: string }) => `${m.programId}:${m.a}-${m.b}`;
+  const pair = (m: { programId: string; a: string; b: string | null }) => `${m.programId}:${m.a}-${m.b ?? "TBD"}`;
   const daysOf = new Map<string, string[]>();
   for (const m of all.rows) daysOf.set(pair(m), [...(daysOf.get(pair(m)) ?? []), m.day]);
   const byDay = new Map<string, ScheduleDay>();
@@ -415,11 +416,12 @@ export async function gameDaySchedule(deps: Deps, viewer: SessionUser): Promise<
         ? []
         : all.rows
             .filter((m) => m.programId === p.id && m.day === e.date)
-            .map(({ id, divisionId, a, b, createdBy, programId, court, starts, placedBy }) => ({
+            .map(({ id, divisionId, a, b, home, createdBy, programId, court, starts, placedBy }) => ({
               id,
               divisionId,
               a,
               b,
+              home,
               createdBy,
               court,
               starts,
@@ -428,7 +430,8 @@ export async function gameDaySchedule(deps: Deps, viewer: SessionUser): Promise<
             }));
       const otherDays: Record<string, string[]> = {};
       if (!e.bracket)
-        for (const m of all.rows) if (m.programId === p.id && m.day !== e.date) (otherDays[`${m.a}-${m.b}`] ??= []).push(m.day);
+        for (const m of all.rows)
+          if (m.programId === p.id && m.day !== e.date && m.b) (otherDays[`${m.a}-${m.b}`] ??= []).push(m.day);
       day.programs.push({
         ...e,
         programId: p.id,
@@ -1108,6 +1111,60 @@ export async function setTeamOff(
           what,
         ]);
       return {};
+    }),
+  );
+}
+
+// Picked teams (check boxes on the program page): up to 500 distinct ids, or null when they aren't readable.
+function pickedIds(teamIds: unknown): string[] | null {
+  if (!Array.isArray(teamIds) || !teamIds.length || teamIds.length > 500 || !teamIds.every(isId)) return null;
+  return [...new Set(teamIds as string[])];
+}
+
+// Admins and Directors of Scheduling: take the picked teams out of the whole program at once, or restore them (`out`
+// false). Same as Remove on each team, in one transaction; who did it is recorded. Returns how many changed.
+export async function setTeamsOff(
+  deps: Deps,
+  viewer: SessionUser,
+  programId: unknown,
+  teamIds: unknown,
+  out: boolean,
+): Promise<Result<{ changed: number }>> {
+  const ids = pickedIds(teamIds);
+  if (!isId(programId) || !ids) return { ok: false, message: "Pick at least one team." };
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      if (!(await isScheduler(q, viewer)))
+        throw new ProgramError("Only a Scenic City Admin or Director of Scheduling can do that.");
+      const r = await q.query(
+        `update scenic_registrations set removed_by = $3, removed_at = $4
+          where program_id = $1 and team_id = any($2::bigint[]) and (removed_by is null) = $5`,
+        [programId, ids, out ? by(viewer) : null, out ? deps.now() : null, out],
+      );
+      return { changed: r.rowCount ?? 0 };
+    }),
+  );
+}
+
+// Directors of Programs: withdraw the picked teams at once (their registrations are deleted, as Withdraw on each team).
+export async function withdrawTeams(
+  deps: Deps,
+  viewer: SessionUser,
+  programId: unknown,
+  teamIds: unknown,
+): Promise<Result<{ withdrawn: number }>> {
+  const ids = pickedIds(teamIds);
+  if (!isId(programId) || !ids) return { ok: false, message: "Pick at least one team." };
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      if (!(await isProgramsDirector(q, viewer))) throw new ProgramError(programsOnly);
+      const p = await q.query("select 1 from scenic_programs where id = $1 for share", [programId]);
+      if (!p.rowCount) throw new ProgramError("That program no longer exists.");
+      const r = await q.query("delete from scenic_registrations where program_id = $1 and team_id = any($2::bigint[])", [
+        programId,
+        ids,
+      ]);
+      return { withdrawn: r.rowCount ?? 0 };
     }),
   );
 }

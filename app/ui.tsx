@@ -10,7 +10,9 @@ export const primaryBtn =
 // A toggle pill (gender, grade, level choices).
 export const pillCls = (on: boolean) =>
   `rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-    on ? "bg-thunder-blue text-white shadow-sm" : "bg-zinc-100 text-zinc-600 hover:text-zinc-900 dark:bg-zinc-800 dark:text-zinc-300"
+    on
+      ? "bg-thunder-blue text-white shadow-sm"
+      : "bg-zinc-100 text-zinc-600 hover:text-zinc-900 dark:bg-zinc-800 dark:text-zinc-300"
   }`;
 
 export const card = "rounded-2xl bg-white shadow-sm ring-1 ring-zinc-950/5 dark:bg-zinc-900 dark:ring-white/10";
@@ -19,7 +21,8 @@ type Tone = "blue" | "orange" | "green" | "amber" | "red" | "pink" | "zinc";
 const tones: Record<Tone, string> = {
   blue: "bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-400/30",
   orange: "bg-orange-50 text-orange-700 ring-orange-600/25 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-400/30",
-  green: "bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-400/30",
+  green:
+    "bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-400/30",
   amber: "bg-amber-50 text-amber-800 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/30",
   red: "bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-400/30",
   pink: "bg-pink-50 text-pink-700 ring-pink-600/20 dark:bg-pink-500/10 dark:text-pink-300 dark:ring-pink-400/30",
@@ -28,7 +31,9 @@ const tones: Record<Tone, string> = {
 
 export function Chip({ tone = "zinc", children }: { tone?: Tone; children: ReactNode }) {
   return (
-    <span className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${tones[tone]}`}>
+    <span
+      className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${tones[tone]}`}
+    >
       {children}
     </span>
   );
@@ -175,5 +180,16 @@ export function EmailLink({ email }: { email: string }) {
     <a href={`mailto:${email}`} className={`${linkCls} break-all`}>
       {email}
     </a>
+  );
+}
+
+// Simulated (DEV) teams (Scheduler's Simulation mode, development only) are highlighted purple wherever their name shows.
+export const isDevTeam = (name: string | null | undefined) => !!name?.endsWith("(DEV)");
+export const devTeamCls = "rounded bg-violet-200 px-1 text-violet-900 dark:bg-violet-500/30 dark:text-violet-100";
+export function TeamName({ name, className = "" }: { name: string; className?: string }) {
+  return isDevTeam(name) ? (
+    <span className={`${devTeamCls} ${className}`}>{name}</span>
+  ) : (
+    <span className={className}>{name}</span>
   );
 }

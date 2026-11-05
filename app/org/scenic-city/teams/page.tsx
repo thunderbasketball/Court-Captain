@@ -17,7 +17,7 @@ import { TZ } from "@/lib/time";
 import AppHeader from "../../../AppHeader";
 import AddTeamButton from "../../../AddTeam";
 import { ImportTeamsButton, UndoImportButton } from "../../../TeamImport";
-import { GroupCard, PageTitle, PhoneLink, card } from "../../../ui";
+import { GroupCard, PageTitle, PhoneLink, TeamName, card } from "../../../ui";
 import { DeleteTeam, TeamEditor } from "./TeamEditor";
 import { addClubTeam, importClubTeams, previewClubImport, undoClubImport } from "../actions";
 
@@ -95,7 +95,7 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
     <li key={t.id} className="flex items-start justify-between gap-3 px-4 py-3">
       <div className="min-w-0 text-sm">
         <p className="font-semibold">
-          {t.name}
+          <TeamName name={t.name} />
           {t.altName && <span className="font-normal text-zinc-500"> · {t.altName}</span>}{" "}
           <span className="font-normal text-zinc-500">
             · {t.gradeLabel} · {t.level}

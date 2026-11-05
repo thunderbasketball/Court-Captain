@@ -1,6 +1,7 @@
 import type { ScheduledGame } from "@/lib/scenic-games";
 import { shortDate } from "@/lib/program-options";
 import { timeLabel } from "@/lib/time";
+import { TeamName } from "./ui";
 
 // Where and when a League game is: "9:00 AM · East Hamilton High School · Main", or not set yet.
 export function GamePlace({ g }: { g: ScheduledGame }) {
@@ -12,6 +13,17 @@ export function GamePlace({ g }: { g: ScheduledGame }) {
     </span>
   ) : (
     <span className="block font-normal text-zinc-400 italic">Time and gym not set yet</span>
+  );
+}
+
+// Home or Away, as a small tag before the opponent.
+export function HomeAway({ home }: { home: boolean }) {
+  return (
+    <span
+      className={`rounded px-1 text-[10px] font-bold uppercase ${home ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300" : "bg-zinc-100 text-zinc-600 dark:bg-white/10 dark:text-zinc-300"}`}
+    >
+      {home ? "Home" : "Away"}
+    </span>
   );
 }
 
@@ -30,7 +42,7 @@ export function LeagueGames({ games, today }: { games: ScheduledGame[]; today: s
         {next && (
           <span className="text-zinc-500">
             {" "}
-            · next {shortDate(next.date)} vs {next.opponent}
+            · next {shortDate(next.date)} vs <TeamName name={next.opponent} />
             {next.starts && next.gym && `, ${timeLabel(next.starts)} at ${next.gym}`}
           </span>
         )}
@@ -40,7 +52,11 @@ export function LeagueGames({ games, today }: { games: ScheduledGame[]; today: s
           <li key={i} className={`flex gap-2 ${g.date < today ? "opacity-50" : ""}`}>
             <span className="w-12 shrink-0 text-zinc-500">{shortDate(g.date)}</span>
             <span className="min-w-0">
-              <span className="font-medium">vs {g.opponent}</span> <span className="text-zinc-500">{g.opponentGroup}</span>
+              <HomeAway home={g.home} />{" "}
+              <span className="font-medium">
+                vs <TeamName name={g.opponent} />
+              </span>{" "}
+              <span className="text-zinc-500">{g.opponentGroup}</span>
               {games.some((x) => x.programId !== g.programId) && <span className="text-zinc-500"> · {g.program}</span>}
               <GamePlace g={g} />
             </span>
