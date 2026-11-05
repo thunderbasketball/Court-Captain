@@ -1,16 +1,23 @@
 // Team naming rules, shared by the server and the New team form.
 export const GRADES = ["K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"] as const;
 export const LEVELS = ["REC", "COMP"] as const;
-export const gradeSort = (g: string) => (g === "K" ? 0 : Number(g));
+// Scenic City Leagues also have Pre-K (ages 3 and 4; grade -1): organizations' teams can be Pre-K, always Coed and REC.
+export const PREK = "PK";
+export type Gender = "Boys" | "Girls" | "Coed";
+export const gradeSort = (g: string) => (g === PREK ? -1 : g === "K" ? 0 : Number(g));
+export const gradeNum = gradeSort;
+export const gradeStr = (n: number) => (n === -1 ? PREK : n === 0 ? "K" : String(n));
 
-// "4G Epps", "KB Harper"; a multi-grade team takes its top grade.
-export function teamName(gender: "Boys" | "Girls", grades: string[], headLastName: string): string {
+// "4G Epps", "KB Harper", "PKC Lee" (Pre-K Coed); a multi-grade team takes its top grade.
+export function teamName(gender: Gender, grades: string[], headLastName: string): string {
   const top = [...grades].sort((a, b) => gradeSort(b) - gradeSort(a))[0];
   return `${top}${gender[0]} ${headLastName.trim()}`;
 }
 
-// One grade, or two next to each other (3rd/4th): what leagues place by. Grades as in GRADES ("K", "1" … "12").
-export function gradesOk(grades: string[]): boolean {
+// One grade, or two next to each other (3rd/4th): what leagues place by. Grades as in GRADES ("K", "1" … "12"), and
+// Pre-K ("PK", on its own) where `preK` allows it.
+export function gradesOk(grades: string[], preK = false): boolean {
+  if (preK && grades.length === 1 && grades[0] === PREK) return true;
   if (!grades.length || grades.length > 2 || !grades.every((g) => (GRADES as readonly string[]).includes(g))) return false;
   if (grades.length === 1) return true;
   const [a, b] = grades.map(gradeSort).sort((x, y) => x - y);
@@ -83,7 +90,17 @@ export function existingTeams(teams: { name: string; level: string }[]) {
 }
 
 // With no Head Coach yet: "4G TBD" (numbered when there's another).
-export const tbdBase = (gender: "Boys" | "Girls", grades: string[]) => teamName(gender, grades, "TBD");
+export const tbdBase = (gender: Gender, grades: string[]) => teamName(gender, grades, "TBD");
+
+// Pre-K teams are Coed and REC, and Coed teams are Pre-K. The problem to show, or null.
+export function preKProblem(gender: Gender, grades: string[], level: string): string | null {
+  const preK = grades.includes(PREK);
+  if (preK && gender !== "Coed") return "Pre-K teams are Coed.";
+  if (!preK && gender === "Coed") return "Only Pre-K teams are Coed; pick Boys or Girls.";
+  if (preK && level !== "REC") return "Pre-K teams are REC.";
+  return null;
+}
+export const isGender = (v: unknown): v is Gender => v === "Boys" || v === "Girls" || v === "Coed";
 
 // A team's name in a league: its organization's Abbreviation first ("ER 5B Harris").
 export const leagueName = (abbr: string, name: string) => `${abbr} ${name}`;

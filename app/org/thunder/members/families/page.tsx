@@ -3,7 +3,8 @@ import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { listFamilies, type Family } from "@/lib/families";
 import { ordinal } from "@/lib/grades";
-import { hasArea } from "@/lib/org-admin";
+import { hasArea, seesWho } from "@/lib/org-admin";
+import { db } from "@/lib/db";
 import { formatCell } from "@/lib/phone";
 import { easternDate } from "@/lib/time";
 import AppHeader from "../../../../AppHeader";
@@ -32,6 +33,7 @@ async function Families() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   if (!hasArea(user, "players", "teams")) redirect("/");
+  const who = await seesWho(db, user, "thunder"); // Owners and Admins see who did it
   const families = await listFamilies(user);
   const today = easternDate(new Date());
   const connected = families.filter((f) => f.connected);
@@ -64,7 +66,7 @@ async function Families() {
             {(c.uniformSize || c.uniformNumber) &&
               ` · ${[c.uniformSize, c.uniformNumber && `#${c.uniformNumber}`].filter(Boolean).join(" ")}`}
             {c.addedInApp && " · added in app"}
-            {c.feesWaivedBy && ` · fees waived by ${c.feesWaivedBy}`}
+            {c.feesWaivedBy && ` · fees waived${who ? ` by ${c.feesWaivedBy}` : ""}`}
           </Chip>
         ))}
       </div>

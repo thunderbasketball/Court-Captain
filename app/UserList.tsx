@@ -134,7 +134,11 @@ export default async function UserList({
               )}
             {thunder && admin && u.joinTeamListed && <ApproveJoinButton coachId={u.coachId} label="Approve onto team" />}
             {thunder && admin && (
-              <EditUserButton user={u} isSelf={u.coachId === viewer.coachId} deleteBlocker={deleteBlocker(u, viewer)} />
+              <EditUserButton
+                user={admin ? u : { ...u, updatedBy: null }}
+                isSelf={u.coachId === viewer.coachId}
+                deleteBlocker={deleteBlocker(u, viewer)}
+              />
             )}
           </div>
         </div>

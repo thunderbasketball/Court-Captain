@@ -56,6 +56,15 @@ describe("teams for a registered organization", () => {
       createOrgTeam(deps(), jo, org, { level: "REC", headCoach: "none", ...input } as Parameters<typeof createOrgTeam>[3]);
     expect(await add({ gender: "Girls", grades: ["5"] })).toMatchObject({ ok: true, name: "5G TBD" });
     expect(await add({ gender: "Girls", grades: ["5"] })).toMatchObject({ ok: true, name: "5G TBD 2" }); // the 1st is "5G TBD 1"
+    // Pre-K (ages 3 and 4, for Scenic City Leagues): Coed and REC, on its own.
+    expect(await add({ gender: "Coed", grades: ["PK"] })).toMatchObject({ ok: true, name: "PKC TBD" });
+    expect(await add({ gender: "Boys", grades: ["PK"] })).toEqual({ ok: false, message: "Pre-K teams are Coed." });
+    expect(await add({ gender: "Coed", grades: ["3"] })).toEqual({
+      ok: false,
+      message: "Only Pre-K teams are Coed; pick Boys or Girls.",
+    });
+    expect(await add({ gender: "Coed", grades: ["PK"], level: "COMP" })).toEqual({ ok: false, message: "Pre-K teams are REC." });
+    expect(await add({ gender: "Coed", grades: ["PK", "K"] })).toMatchObject({ ok: false });
     const b = await add({
       gender: "Boys",
       grades: ["4", "3"],
@@ -89,11 +98,12 @@ describe("teams for a registered organization", () => {
     const list = (await listOrgTeams(deps(), jo, org))!;
     expect(list.canManage).toBe(true);
     expect(list.teams.map((t) => `${t.gender} ${t.grade} ${t.level} ${t.name}${t.altName ? ` · ${t.altName}` : ""}`)).toEqual([
+      "Coed Pre-K REC PKC TBD",
       "Boys 3rd/4th COMP 4B Lee · Bolts",
       "Girls 5th REC 5G Kim",
       "Girls 5th REC 5G TBD", // left alone, it dropped its number
     ]);
-    expect(list.teams[0].coaches.map((c) => `${c.name} ${c.role} by ${c.addedBy}`)).toEqual([
+    expect(list.teams.find((t) => t.name === "4B Lee")!.coaches.map((c) => `${c.name} ${c.role} by ${c.addedBy}`)).toEqual([
       "Sam Lee HeadCoach by Jordan Harris",
       "Pat Lee AsstCoach by Jordan Harris",
     ]);

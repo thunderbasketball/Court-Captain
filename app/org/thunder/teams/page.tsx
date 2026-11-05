@@ -21,7 +21,7 @@ import { ContactChip, TextTeamsButton } from "../../../Contacts";
 import ChatLink from "../../../ChatLink";
 import NotifyButton from "../../../NotifyButton";
 import RosterCountButton from "./RosterCountButton";
-import { hasArea } from "@/lib/org-admin";
+import { hasArea, seesWho } from "@/lib/org-admin";
 
 export default function TeamsPage({ searchParams }: PageProps<"/org/thunder/teams">) {
   return (
@@ -36,6 +36,7 @@ async function Teams({ searchParams }: { searchParams: PageProps<"/org/thunder/t
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   await requireFeature("thunder", "team-building");
   if (!hasArea(user, "teams")) redirect("/");
+  const who = await seesWho(db, user, "thunder"); // Owners and Admins see who did it
 
   const teams = await listTeams({ pool: db, now: () => new Date() }, user);
   // Who can be a Head Coach: app users, and registration volunteers (their login is made when added).
@@ -111,7 +112,10 @@ async function Teams({ searchParams }: { searchParams: PageProps<"/org/thunder/t
                   ))}
                   actions={
                     <>
-                      <RosterCountButton team={t} />
+                      <RosterCountButton
+                        team={who ? t : { ...t, players: t.players.map((p) => ({ ...p, rosteredBy: "" })) }}
+                        who={who}
+                      />
                       {t.staff.length > 0 && (
                         <ChatLink chatKey={`staff-${user.coachId}-${t.id}`} label={`Chat with ${t.name} staff`} popup />
                       )}
@@ -131,8 +135,13 @@ async function Teams({ searchParams }: { searchParams: PageProps<"/org/thunder/t
               {imports.map((i) => (
                 <li key={i.id} className="flex items-center justify-between gap-3 py-2 text-sm">
                   <span className={i.undoneBy || !i.left ? "text-zinc-400" : ""}>
-                    {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"} · by {i.importedBy}
-                    {i.undoneBy ? ` · undone by ${i.undoneBy}` : i.left < i.teams ? ` · ${i.left} still here` : ""}
+                    {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"}
+                    {who && ` · by ${i.importedBy}`}
+                    {i.undoneBy
+                      ? ` · undone${who ? ` by ${i.undoneBy}` : ""}`
+                      : i.left < i.teams
+                        ? ` · ${i.left} still here`
+                        : ""}
                   </span>
                   {!i.undoneBy && i.left > 0 && (
                     <UndoImportButton

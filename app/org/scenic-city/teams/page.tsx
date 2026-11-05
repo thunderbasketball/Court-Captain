@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { currentScenic } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
+import { seesWho } from "@/lib/org-admin";
 import { requireFeature } from "@/lib/features-server";
 import { formatCell } from "@/lib/phone";
 import { MustBeEntered } from "../../../TeamRow";
@@ -42,6 +43,7 @@ const divisionOf = (t: ScenicTeam) =>
 const orgOf = (t: ScenicTeam) => t.partnerName ?? `Solo · ${t.ownerName}`;
 // Gender, division, grade, level, name: the order inside every group.
 const byTeam = (a: ScenicTeam, b: ScenicTeam) =>
+  Number(b.gender === "Coed") - Number(a.gender === "Coed") || // Pre-K (Coed) first, the youngest
   a.gender.localeCompare(b.gender) ||
   (a.divisionLow ?? NO_DIVISION) - (b.divisionLow ?? NO_DIVISION) ||
   a.grade - b.grade ||
@@ -70,6 +72,7 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
   );
   const today = easternDate(new Date());
   const director = scenic.role === "Director";
+  const who = await seesWho(db, user, "scenic-city"); // Owners and Admins see who did it
   const [clubs, people, imports] = director
     ? await Promise.all([outsideClubs(db), scenicCoachOptions(db), listClubImports(deps, user)])
     : [[], [], null];
@@ -80,7 +83,7 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
   // "Boys · K–1st" lines inside.
   const groups =
     view === "division"
-      ? ["Boys", "Girls"].flatMap((g) =>
+      ? ["Coed", "Boys", "Girls"].flatMap((g) =>
           [...new Set(teams.filter((t) => t.gender === g).map(divisionOf))].map((d) => ({
             gender: g,
             title: `${g} · ${d}`,
@@ -124,10 +127,12 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
           </span>
         )}
         <LeagueGames games={games[t.id] ?? []} today={today} />
-        <p className="text-xs text-zinc-500">
-          Added by {t.createdBy}
-          {t.updatedBy !== t.createdBy && ` · last changed by ${t.updatedBy}`}
-        </p>
+        {who && (
+          <p className="text-xs text-zinc-500">
+            Added by {t.createdBy}
+            {t.updatedBy !== t.createdBy && ` · last changed by ${t.updatedBy}`}
+          </p>
+        )}
       </div>
       {t.canEdit && (
         <div className="flex shrink-0 gap-2">
@@ -161,6 +166,7 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
                   people={people}
                   clubs={clubs.map((c) => ({ value: c.id, label: c.name, abbr: c.abbr }))}
                   create={addClubTeam}
+                  preK
                 />
               </>
             )}
@@ -218,8 +224,13 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
               {imports.map((i) => (
                 <li key={i.id} className="flex items-center justify-between gap-3 py-2 text-sm">
                   <span className={i.undoneBy || !i.left ? "text-zinc-400" : ""}>
-                    {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"} · by {i.importedBy}
-                    {i.undoneBy ? ` · undone by ${i.undoneBy}` : i.left < i.teams ? ` · ${i.left} still here` : ""}
+                    {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"}
+                    {who && ` · by ${i.importedBy}`}
+                    {i.undoneBy
+                      ? ` · undone${who ? ` by ${i.undoneBy}` : ""}`
+                      : i.left < i.teams
+                        ? ` · ${i.left} still here`
+                        : ""}
                   </span>
                   {!i.undoneBy && i.left > 0 && (
                     <UndoImportButton

@@ -7,7 +7,7 @@ import type { Pool } from "pg";
 import type { SessionUser } from "../auth/service";
 import { TZ, localParts, weekOf, zonedTime } from "../time";
 import { limitCheck, upcomingInWeek } from "./booking";
-import { hasArea } from "../org-admin";
+import { hasArea, seesWho } from "../org-admin";
 
 type Deps = { pool: Pool; now: () => Date };
 
@@ -35,7 +35,12 @@ export type WeekGrid = {
   team: TeamWeek | null;
   counts: { open: number; booked: number; blocked: number };
 };
-export type GymWithCourts = { id: string; name: string; active: boolean; courts: { id: string; name: string; active: boolean }[] };
+export type GymWithCourts = {
+  id: string;
+  name: string;
+  active: boolean;
+  courts: { id: string; name: string; active: boolean }[];
+};
 
 const isoOf = (d: Date) => {
   const p = localParts(d);
@@ -55,9 +60,10 @@ export async function pickWeek(deps: Deps, asked: string | undefined): Promise<D
   const w = weekOf(now);
   const here = await deps.pool.query("select 1 from slots where starts_at >= $1 and starts_at < $2 limit 1", [w.start, w.end]);
   if (here.rows[0]) return w.start;
-  const next = await deps.pool.query<{ starts_at: Date }>("select starts_at from slots where starts_at > $1 order by starts_at limit 1", [
-    now,
-  ]);
+  const next = await deps.pool.query<{ starts_at: Date }>(
+    "select starts_at from slots where starts_at > $1 order by starts_at limit 1",
+    [now],
+  );
   return next.rows[0] ? weekOf(next.rows[0].starts_at).start : w.start;
 }
 
@@ -102,6 +108,7 @@ export async function weekGrid(
     };
   }
 
+  const who = !team && (await seesWho(deps.pool, viewer, "thunder")); // who booked: Owners and Admins only
   const r = await deps.pool.query<{
     id: string;
     startsAt: Date;
@@ -164,7 +171,7 @@ export async function weekGrid(
       court: row.court,
       teamId: row.teamId,
       team: row.team,
-      bookedBy: team ? null : row.bookedBy, // who booked is shown to the Director only
+      bookedBy: who ? row.bookedBy : null,
       blackout: row.blackout,
       note: row.note,
       past,

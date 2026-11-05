@@ -5,7 +5,7 @@ import { hasFeature } from "@/lib/features";
 import { requireFeature } from "@/lib/features-server";
 import { db } from "@/lib/db";
 import { gradeLabel } from "@/lib/grades";
-import { hasArea } from "@/lib/org-admin";
+import { hasArea, seesWho } from "@/lib/org-admin";
 import { formatCell } from "@/lib/phone";
 import { listPlayersByGrade, type MemberPlayer } from "@/lib/players";
 import AppHeader from "../../../../AppHeader";
@@ -38,6 +38,7 @@ async function Players() {
   if (!hasArea(user, "players", "teams")) redirect("/");
   const { groups, total, boys, girls, importedAt, importedBy, sync } = await listPlayersByGrade(user);
   const evaluations = await hasFeature(db, "thunder", "team-building"); // with Team Management only
+  const who = await seesWho(db, user, "thunder"); // Owners and Admins see who did it
   const canAdd = hasArea(user, "players"); // Owners, Admins and Directors of Players add players (fees can be waived)
 
   const row = (p: MemberPlayer, rostered: boolean) => (
@@ -78,8 +79,8 @@ async function Players() {
       {p.addedBy && (
         <div className="flex items-end justify-between gap-2 text-xs text-zinc-500">
           <span>
-            Added by {p.addedBy}
-            {p.feesWaivedBy && ` · fees waived by ${p.feesWaivedBy}`}
+            {who ? `Added by ${p.addedBy}` : "Added in the app"}
+            {who && p.feesWaivedBy && ` · fees waived by ${p.feesWaivedBy}`}
           </span>
           {canAdd && !rostered && <RemoveAddedPlayer registrantId={p.registrantId} name={`${p.firstName} ${p.lastName}`} />}
         </div>
@@ -104,7 +105,8 @@ async function Players() {
             subtitle={
               importedAt && (
                 <>
-                  From TeamSnap (and added in the app), updated {when(importedAt)} by {importedBy}
+                  From TeamSnap (and added in the app), updated {when(importedAt)}
+                  {who && ` by ${importedBy}`}
                   {sync?.checkedAt && sync.ok && <> · sheet checked {when(sync.checkedAt)}</>}
                 </>
               )

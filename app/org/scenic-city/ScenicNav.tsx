@@ -64,6 +64,7 @@ export async function FacilitiesNav({ user, current }: { user: SessionUser; curr
     : [];
   const links = [
     { key: "game-days", href: "/org/scenic-city/game-days", label: "Game days" },
+    ...(director ? [{ key: "courts", href: "/org/scenic-city/courts", label: "Courts" }] : []),
     ...sites.map((p) => ({ key: p.id, href: `/org/scenic-city/partners/${p.id}`, label: p.name })),
     ...(director ? [{ key: "all", href: "/org/scenic-city/partners", label: "All sites" }] : []),
   ];

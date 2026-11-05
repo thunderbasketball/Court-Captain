@@ -74,7 +74,9 @@ describe("Scenic City teams", () => {
   });
 
   it("grades: one grade or two in a row, listed with the higher grade", () => {
-    expect(GRADE_CHOICES.slice(0, 4).map((g) => g.label)).toEqual(["K", "K/1st", "1st", "1st/2nd"]);
+    expect(GRADE_CHOICES.slice(0, 5).map((g) => g.label)).toEqual(["Pre-K (Coed)", "K", "K/1st", "1st", "1st/2nd"]);
+    expect(parseGrade("PK")).toEqual({ low: -1, grade: -1 });
+    expect(gradeLabel(-1, -1)).toBe("Pre-K");
     expect(GRADE_CHOICES.at(-1)).toEqual({ value: "12", label: "12th" });
     expect(parseGrade("3-4")).toEqual({ low: 3, grade: 4 });
     expect(parseGrade("4")).toEqual({ low: 4, grade: 4 });
@@ -192,7 +194,7 @@ describe("Scenic City teams", () => {
     });
     expect(await createScenicTeam(deps(), pat, { ...team({ gender: "Coed" }), for: baylor })).toEqual({
       ok: false,
-      message: "Pick Boys or Girls.",
+      message: "Only Pre-K teams are Coed; pick Boys or Girls.",
     });
     expect(await createScenicTeam(deps(), pat, { ...team({ level: "ELITE" }), for: baylor })).toEqual({
       ok: false,

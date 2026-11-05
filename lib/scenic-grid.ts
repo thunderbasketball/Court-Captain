@@ -7,11 +7,13 @@ import type { SessionUser } from "./auth/service";
 import { isScheduler } from "./scenic-programs";
 import { withTx } from "./sql";
 import { timeLabel } from "./time";
+import { courtDivisions } from "./scenic-courts";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
 
-export type GridCourt = { id: string; name: string; starts: string; ends: string }; // "HH:MM" Eastern
+// starts/ends: "HH:MM" Eastern. divisions: the only divisions allowed on it (Facilities → Courts), or null: any.
+export type GridCourt = { id: string; name: string; starts: string; ends: string; divisions: string[] | null };
 // hostId: the partner hosting it; teams from that partner are its home teams.
 export type GridGym = { key: string; name: string; host: string; hostId: string; address: string | null; courts: GridCourt[] };
 export type DayGrid = { minutes: number; setBy: string | null; gyms: GridGym[] };
@@ -64,6 +66,7 @@ export async function dayGrid(deps: Deps, viewer: SessionUser, day: unknown): Pr
      order by 3, 2, 7`,
     [d.rows[0].id, day],
   );
+  const allowed = await courtDivisions(deps.pool, day);
   const gyms = new Map<string, GridGym>();
   for (const r of rows.rows) {
     const g = gyms.get(r.gymKey) ?? {
@@ -74,7 +77,7 @@ export async function dayGrid(deps: Deps, viewer: SessionUser, day: unknown): Pr
       address: r.address,
       courts: [],
     };
-    g.courts.push({ id: r.id, name: r.court, starts: r.starts, ends: r.ends });
+    g.courts.push({ id: r.id, name: r.court, starts: r.starts, ends: r.ends, divisions: allowed.get(r.id) ?? null });
     gyms.set(r.gymKey, g);
   }
   // Partners' courts in number order ("Court 2" before "Court 10"); organizations' courts in the order they were added
@@ -182,8 +185,9 @@ export async function placeGame(
     return { ok: false, message: "Pick a game slot." };
   if (!(await isScheduler(deps.pool, viewer)))
     return { ok: false, message: "Only a Scenic City Admin or Director of Scheduling can do that." };
-  const m = await deps.pool.query<{ day: string; a: string; b: string | null }>(
-    "select day::text, team_a::text as a, team_b::text as b from scenic_matchups where id = $1",
+  const m = await deps.pool.query<{ day: string; a: string; b: string | null; division: string }>(
+    `select day::text, team_a::text as a, team_b::text as b, division_id::text as division
+       from scenic_matchups where id = $1`,
     [matchupId],
   );
   const game = m.rows[0];
@@ -199,6 +203,8 @@ export async function placeGame(
   const grid = await dayGrid(deps, viewer, game.day);
   const court = grid?.gyms.flatMap((g) => g.courts.map((c) => ({ ...c, gym: g.name }))).find((c) => c.id === slot.court);
   if (!grid || !court) return { ok: false, message: "That court isn't open for games that day." };
+  if (court.divisions && !court.divisions.includes(game.division))
+    return { ok: false, message: `${court.gym} ${court.name} isn't approved for this division (Facilities → Courts).` };
   const starts = slot.starts as string;
   const start = toMin(starts);
   if (start < toMin(court.starts) || start + grid.minutes > toMin(court.ends))

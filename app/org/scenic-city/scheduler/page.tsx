@@ -4,12 +4,13 @@ import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { currentScenic } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
+import { seesWho } from "@/lib/org-admin";
 import { requireFeature } from "@/lib/features-server";
 import { shortDate } from "@/lib/program-options";
 import { dayGrid, gameLength, gridBlocks, type DayGrid } from "@/lib/scenic-grid";
 import { gameDaySchedule, type DateTeam, type ScheduleDay } from "@/lib/scenic-programs";
 import AppHeader from "../../../AppHeader";
-import { PageTitle, TeamName, card } from "../../../ui";
+import { CoachBadge, LevelTag, PageTitle, TeamName, card, type CoachTag } from "../../../ui";
 import { TeamOffButton } from "../programs/ProgramTools";
 import { MatchupBoard } from "./MatchupBoard";
 import { GamePlace, HomeAway } from "../../../LeagueGames";
@@ -17,6 +18,7 @@ import type { ScheduledGame } from "@/lib/scenic-games";
 import { GameLengthInput } from "./GameLengthInput";
 import { GridBoard } from "./GridBoard";
 import { SimulationToggle } from "./SimulationToggle";
+import { CreateAllMatchups } from "./CreateAllMatchups";
 import { simulatedTeams } from "@/lib/dev-teams";
 
 export default function SchedulerPage({ searchParams }: PageProps<"/org/scenic-city/scheduler">) {
@@ -56,6 +58,7 @@ async function Scheduler({ searchParams }: { searchParams: PageProps<"/org/sceni
   if (!scenic || scenic.role !== "Director") redirect("/");
   const s = await gameDaySchedule({ pool: db, now: () => new Date() }, user);
   if (!s) redirect("/org/scenic-city");
+  const who = await seesWho(db, user, "scenic-city"); // Owners and Admins see who did it
   const q = await searchParams;
   // Only a listed Game Day or view is used; anything else falls back to the next Game Day's Teams.
   const day = s.days.find((d) => d.date === q.day) ?? s.days.find((d) => d.date >= s.today) ?? s.days[0];
@@ -111,7 +114,12 @@ async function Scheduler({ searchParams }: { searchParams: PageProps<"/org/sceni
                 </p>
               </div>
               {length && (
-                <GameLengthInput day={day.date} label={weekday(day.date)} minutes={length.minutes} setBy={length.setBy} />
+                <GameLengthInput
+                  day={day.date}
+                  label={weekday(day.date)}
+                  minutes={length.minutes}
+                  setBy={who ? length.setBy : null}
+                />
               )}
               <nav aria-label="Game Day views" className="mx-4 mt-3 flex rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800">
                 {VIEWS.map((v) => (
@@ -131,11 +139,11 @@ async function Scheduler({ searchParams }: { searchParams: PageProps<"/org/sceni
               </nav>
               <div className="px-4 py-3">
                 {view === "teams" ? (
-                  <Teams day={day} />
+                  <Teams day={day} coaches={coachTags(day)} who={who} />
                 ) : view === "matchups" ? (
-                  <Matchups day={day} />
+                  <Matchups day={day} coaches={coachTags(day)} who={who} />
                 ) : grid ? (
-                  <Grid day={day} grid={grid} />
+                  <Grid day={day} grid={grid} coaches={coachTags(day)} />
                 ) : (
                   <p className="py-6 text-center text-sm text-zinc-500">This Game Day&apos;s grid isn&apos;t available.</p>
                 )}
@@ -155,9 +163,39 @@ function byDivision(teams: DateTeam[]): [string, DateTeam[]][] {
   return [...groups];
 }
 
+// The coaches with more than one team playing that day (every League): each gets a color (in name order) and a tag on
+// each of their teams naming the coach and their other teams.
+function coachTags(day: ScheduleDay): Map<string, CoachTag> {
+  const teams = day.programs.filter((p) => !p.bracket).flatMap((p) => p.teams.filter((t) => !t.removedBy && !t.out));
+  const by = new Map<string, DateTeam[]>();
+  for (const t of teams) if (t.coachKey) by.set(t.coachKey, [...(by.get(t.coachKey) ?? []), t]);
+  const multi = [...by.values()]
+    .filter((list) => list.length > 1)
+    .sort((x, y) => (x[0].coachName ?? "").localeCompare(y[0].coachName ?? "") || x[0].teamId.localeCompare(y[0].teamId));
+  const tags = new Map<string, CoachTag>();
+  multi.forEach((list, color) => {
+    const name = list[0].coachName ?? "Their coach";
+    const initials = name
+      .split(/\s+/)
+      .map((w) => w[0]?.toUpperCase() ?? "")
+      .join("")
+      .slice(0, 3);
+    for (const t of list)
+      tags.set(t.teamId, {
+        color,
+        initials,
+        title: `Coach ${name} also coaches ${list
+          .filter((x) => x !== t)
+          .map((x) => x.name)
+          .join(", ")}`,
+      });
+  });
+  return tags;
+}
+
 // Teams: each League's teams that day by division (each with its grade group and where it's from) with 1GG/2GG;
 // Remove/Restore as on the program page.
-function Teams({ day }: { day: ScheduleDay }) {
+function Teams({ day, coaches, who }: { day: ScheduleDay; coaches: Map<string, CoachTag>; who: boolean }) {
   return (
     <div className="space-y-3">
       {day.programs.map((p) => (
@@ -188,7 +226,8 @@ function Teams({ day }: { day: ScheduleDay }) {
                           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
                             <span className={`min-w-0 ${t.removedBy || t.out ? "text-zinc-400 line-through" : ""}`}>
                               <span className="mr-1 inline-block text-zinc-400 transition group-open:rotate-90">›</span>
-                              <TeamName name={t.name} className="font-medium" />{" "}
+                              <TeamName name={t.name} className="font-medium" /> <CoachBadge tag={coaches.get(t.teamId)} />{" "}
+                              <LevelTag level={t.level} />{" "}
                               <span className="text-xs text-zinc-500">
                                 {t.group} · {t.from}
                               </span>
@@ -205,7 +244,7 @@ function Teams({ day }: { day: ScheduleDay }) {
                               {t.note}
                             </span>
                           </summary>
-                          {!p.bracket && <TeamGames team={t} date={p.date} games={p.teamGames[t.teamId] ?? []} />}
+                          {!p.bracket && <TeamGames team={t} date={p.date} games={p.teamGames[t.teamId] ?? []} who={who} />}
                         </details>
                         {!t.removedBy && (
                           <TeamOffButton
@@ -235,11 +274,12 @@ function Teams({ day }: { day: ScheduleDay }) {
 // Matchups: each League's divisions playing that day, expandable. Each has Create matchups (Admins and Directors of
 // Scheduling; the page is theirs only), its games (a vs b, by grade group), pairs that also meet on another Game Day,
 // and teams still short of their games guaranteed.
-function Matchups({ day }: { day: ScheduleDay }) {
+function Matchups({ day, coaches, who }: { day: ScheduleDay; coaches: Map<string, CoachTag>; who: boolean }) {
   const leagues = day.programs.filter((p) => !p.bracket);
   if (!leagues.length) return <p className="py-6 text-center text-sm text-zinc-500">The Brackets are set up separately.</p>;
   return (
     <div className="space-y-4">
+      <CreateAllMatchups day={day.date} label={weekday(day.date)} created={leagues.some((p) => p.matchups.length > 0)} />
       {leagues.map((p) => (
         <div key={p.programId}>
           {day.programs.length > 1 && (
@@ -288,15 +328,23 @@ function Matchups({ day }: { day: ScheduleDay }) {
                       day={p.date}
                       divisionId={divisionId}
                       division={division}
-                      teams={playing.map((t) => ({ id: t.teamId, name: t.name, group: t.group, need: t.entry!.perDate[p.date] }))}
-                      initial={games.map((m) => ({
-                        a: m.ta && !m.ta.removedBy && !m.ta.out ? m.a : null,
-                        b: m.tb && !m.tb.removedBy && !m.tb.out ? m.b : null,
-                        home: m.home,
+                      teams={playing.map((t) => ({
+                        id: t.teamId,
+                        name: t.name,
+                        group: t.group,
+                        level: t.level,
+                        coach: coaches.get(t.teamId),
+                        need: t.entry!.perDate[p.date],
                       }))}
+                      // The home team always on the left (a TBD game whose team is away: TBD on the left).
+                      initial={games.map((m) => {
+                        const a = m.ta && !m.ta.removedBy && !m.ta.out ? m.a : null;
+                        const b = m.tb && !m.tb.removedBy && !m.tb.out ? m.b : null;
+                        return m.home === "b" ? { a: b, b: a, home: "a" as const } : { a, b, home: "a" as const };
+                      })}
                       otherDays={p.otherDays}
                     />
-                    {games.length > 0 && <p className="mt-2 text-xs text-zinc-500">Last saved by {games[0].createdBy}</p>}
+                    {who && games.length > 0 && <p className="mt-2 text-xs text-zinc-500">Last saved by {games[0].createdBy}</p>}
                   </div>
                 </details>
               );
@@ -310,7 +358,7 @@ function Matchups({ day }: { day: ScheduleDay }) {
 
 // A team's matchups on each Game Day it plays in this League, by date (this day highlighted): its opponents, or
 // "No matchup yet" for each game guaranteed without one; days it's out of say so.
-function TeamGames({ team, date, games }: { team: DateTeam; date: string; games: ScheduledGame[] }) {
+function TeamGames({ team, date, games, who }: { team: DateTeam; date: string; games: ScheduledGame[]; who: boolean }) {
   const days = [...new Set([...Object.keys(team.entry?.perDate ?? {}), ...games.map((g) => g.date)])].sort();
   if (!days.length) return <p className="mt-1 ml-4 text-xs text-zinc-500">No Game Days.</p>;
   return (
@@ -326,7 +374,7 @@ function TeamGames({ team, date, games }: { team: DateTeam; date: string; games:
             </span>
             <span className="min-w-0">
               {off ? (
-                <span className="text-zinc-400">Out (by {off})</span>
+                <span className="text-zinc-400">Out{who && ` (by ${off})`}</span>
               ) : (
                 <>
                   {on.map((g) => (
@@ -354,7 +402,7 @@ function TeamGames({ team, date, games }: { team: DateTeam; date: string; games:
 // Grid: the game length at the top, then each gym open that Game Day (collapsed: host, courts, hours, games).
 // Expanded: rows of game blocks from when the gym opens, a column per court; a court's blocks outside its hours are
 // closed.
-function Grid({ day, grid }: { day: ScheduleDay; grid: DayGrid }) {
+function Grid({ day, grid, coaches }: { day: ScheduleDay; grid: DayGrid; coaches: Map<string, CoachTag> }) {
   // The day's games (both teams still playing), each League's divisions in order, with their slot on the grid.
   const team = (t: DateTeam) => ({
     id: t.teamId,
@@ -364,6 +412,8 @@ function Grid({ day, grid }: { day: ScheduleDay; grid: DayGrid }) {
     division: t.divisionName,
     from: t.from,
     grade: t.groupGrade,
+    level: t.level,
+    coach: coaches.get(t.teamId),
   });
   const games = day.programs
     .filter((p) => !p.bracket)
@@ -382,6 +432,7 @@ function Grid({ day, grid }: { day: ScheduleDay; grid: DayGrid }) {
         return [
           {
             id: m.id,
+            divisionId: m.divisionId,
             home: home ? team(home) : null,
             away: away ? team(away) : null,
             league: day.programs.length > 1 ? p.programName : null,
@@ -413,7 +464,16 @@ function Grid({ day, grid }: { day: ScheduleDay; grid: DayGrid }) {
           No gyms are open this Game Day yet. Hosting sites add their hours under Facilities.
         </p>
       )}
-      <GridBoard gyms={gyms} games={games} minutes={grid.minutes} />
+      <GridBoard
+        gyms={gyms}
+        games={games}
+        minutes={grid.minutes}
+        divisions={Object.fromEntries(
+          day.programs.flatMap((p) =>
+            p.teams.map((t) => [t.divisionId, day.programs.length > 1 ? `${t.divisionName} (${p.programName})` : t.divisionName]),
+          ),
+        )}
+      />
     </div>
   );
 }

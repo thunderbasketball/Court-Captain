@@ -186,8 +186,8 @@ export function Card({
       <p className="mt-1 text-xs text-zinc-400">
         {saving > 0
           ? "Saving…"
-          : saved.by && saved.at
-            ? `Saved by ${saved.by} · ${new Date(saved.at).toLocaleString("en-US", { timeZone: TZ, month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })}`
+          : saved.at
+            ? `Saved${saved.by ? ` by ${saved.by}` : ""} · ${new Date(saved.at).toLocaleString("en-US", { timeZone: TZ, month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" })}`
             : "Not rated yet"}
       </p>
     </article>

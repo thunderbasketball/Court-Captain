@@ -117,6 +117,9 @@ export type RegisteredTeam = {
   partnerId: string | null; // the school or organization it comes from (its home gyms on the Scheduler Grid)
   coach: string | null; // an organization's team may have no Head Coach yet
   coachCell: string | null;
+  // Who coaches it (a login, or a coach's name waiting for a cell), the same for each team one coach has; null: none.
+  coachKey: string | null;
+  coachName: string | null;
   registeredBy: string;
   movedBy: string | null;
   paid: boolean;
@@ -130,7 +133,7 @@ export type PoolView = { id: string; name: string; teams: RegisteredTeam[] };
 export type GradeGroup = { id: string; grade: number; level: Level; label: string; pools: PoolView[] };
 export type DivisionView = {
   id: string;
-  gender: "Boys" | "Girls";
+  gender: "Boys" | "Girls" | "Coed";
   gradeLow: number;
   gradeHigh: number;
   label: string;
@@ -169,9 +172,9 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
        where pg.program_id = $1 order by g.day`,
       [id],
     ),
-    deps.pool.query<{ id: string; gender: "Boys" | "Girls"; gradeLow: number; gradeHigh: number }>(
+    deps.pool.query<{ id: string; gender: "Boys" | "Girls" | "Coed"; gradeLow: number; gradeHigh: number }>(
       `select id::text, gender, grade_low as "gradeLow", grade_high as "gradeHigh" from scenic_divisions
-       where program_id = $1 order by gender, grade_low`,
+       where program_id = $1 order by grade_low = -1 desc, gender, grade_low`,
       [id],
     ),
     deps.pool.query<{ id: string; divisionId: string; grade: number; level: Level }>(
@@ -196,6 +199,8 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
       owner: string | null;
       coach: string;
       coach_cell: string;
+      coach_key: string | null;
+      coach_name: string | null;
       registered_by: string;
       moved_by: string | null;
       paid: boolean;
@@ -205,6 +210,9 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
     }>(
       `select r.pool_id::text, t.id::text as team_id, t.name, t.grade_low, t.grade, t.level, p.name as partner, t.partner_id::text,
               o.first_name || ' ' || o.last_name as owner, c.first_name || ' ' || c.last_name as coach, c.cell as coach_cell,
+              coalesce('u:' || t.coach_id, 'w:' || coalesce(t.partner_id::text, t.owner_coach_id) || ':' ||
+                       lower(t.coach_first || ' ' || t.coach_last)) as coach_key,
+              coalesce(c.first_name || ' ' || c.last_name, t.coach_first || ' ' || t.coach_last) as coach_name,
               r.registered_by, r.moved_by, r.paid, r.paid_set_by, r.removed_by,
               coalesce((select json_object_agg(x.off, x.set_by) from scenic_team_off x
                         where x.program_id = r.program_id and x.team_id = r.team_id), '{}') as off
@@ -231,6 +239,8 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
     partnerId: r.partner_id,
     coach: r.coach,
     coachCell: r.coach_cell,
+    coachKey: r.coach_key,
+    coachName: r.coach_name,
     registeredBy: r.registered_by,
     movedBy: r.moved_by,
     paid: r.paid,
@@ -640,15 +650,19 @@ export async function addDivision(
   input: DivisionInput,
 ): Promise<Result<{ label: string }>> {
   if (!isId(programId)) return { ok: false, message: "That program no longer exists." };
-  const gender = input.gender === "Boys" || input.gender === "Girls" ? input.gender : null;
+  const gender = input.gender === "Boys" || input.gender === "Girls" || input.gender === "Coed" ? input.gender : null;
   const levels = Array.isArray(input.levels) ? LEVELS.filter((l) => (input.levels as unknown[]).includes(l)) : [];
-  const grade = (v: unknown) => (Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 12 ? (v as number) : null);
+  const grade = (v: unknown) => (Number.isInteger(v) && (v as number) >= -1 && (v as number) <= 12 ? (v as number) : null);
   const from = grade(input.from);
   const to = grade(input.to);
-  if (!gender) return { ok: false, message: "Pick Boys or Girls." };
+  if (!gender) return { ok: false, message: "Pick Boys, Girls or Coed." };
   if (from === null || to === null) return { ok: false, message: "Pick the grades." };
   if (to < from) return { ok: false, message: "The last grade is before the first." };
   if (!levels.length) return { ok: false, message: "Pick COMP, REC or both." };
+  // Pre-K (ages 3 and 4) is its own division: Coed, REC only. Coed is only for Pre-K.
+  if ((gender === "Coed") !== (from === -1) || (from === -1 && to !== -1))
+    return { ok: false, message: "Pre-K is its own Coed division (Pre-K only); Boys and Girls divisions start at K." };
+  if (from === -1 && levels.some((l) => l !== "REC")) return { ok: false, message: "Pre-K is REC only." };
   return run(() =>
     withTx(deps.pool, async (q) => {
       if (!(await isProgramsDirector(q, viewer))) throw new ProgramError(programsOnly);
@@ -694,7 +708,7 @@ export async function copyDivisions(
         throw new ProgramError("That program no longer exists.");
       const from = await q.query<{ id: string; gender: string; gradeLow: number; gradeHigh: number }>(
         `select id::text, gender, grade_low as "gradeLow", grade_high as "gradeHigh" from scenic_divisions
-         where program_id = $1 order by gender, grade_low`,
+         where program_id = $1 order by grade_low = -1 desc, gender, grade_low`,
         [fromProgramId],
       );
       if (!from.rows.length) throw new ProgramError("That program has no divisions to copy.");

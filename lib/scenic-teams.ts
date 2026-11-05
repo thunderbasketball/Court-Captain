@@ -25,7 +25,8 @@ export type Level = (typeof LEVELS)[number];
 
 // ---- Grades: one grade, or two in a row (3rd/4th), listed and played with the higher grade ----
 
-const ordinal = (g: number) => (g === 0 ? "K" : g === 1 ? "1st" : g === 2 ? "2nd" : g === 3 ? "3rd" : `${g}th`);
+const ordinal = (g: number) =>
+  g === -1 ? "Pre-K" : g === 0 ? "K" : g === 1 ? "1st" : g === 2 ? "2nd" : g === 3 ? "3rd" : `${g}th`;
 
 export function gradeLabel(low: number, grade: number): string {
   return low === grade ? ordinal(grade) : `${ordinal(low)}/${ordinal(grade)}`;
@@ -36,14 +37,18 @@ export function gradeRange(low: number, high: number): string {
   return low === high ? ordinal(high) : `${ordinal(low)}–${ordinal(high)}`;
 }
 
-// The choices, youngest first: K, K/1st, 1st, 1st/2nd, … 12th. Value "3" or "3-4".
-export const GRADE_CHOICES: { value: string; label: string }[] = Array.from({ length: 13 }, (_, g) => [
-  { value: String(g), label: ordinal(g) },
-  ...(g < 12 ? [{ value: `${g}-${g + 1}`, label: gradeLabel(g, g + 1) }] : []),
-]).flat();
+// The choices, youngest first: Pre-K (Coed only), K, K/1st, 1st, 1st/2nd, … 12th. Value "PK", "3" or "3-4".
+export const GRADE_CHOICES: { value: string; label: string }[] = [
+  { value: "PK", label: "Pre-K (Coed)" },
+  ...Array.from({ length: 13 }, (_, g) => [
+    { value: String(g), label: ordinal(g) },
+    ...(g < 12 ? [{ value: `${g}-${g + 1}`, label: gradeLabel(g, g + 1) }] : []),
+  ]).flat(),
+];
 
 export function parseGrade(v: unknown): { low: number; grade: number } | null {
   if (typeof v !== "string") return null;
+  if (v === "-1" || v === "PK") return { low: -1, grade: -1 }; // Pre-K (organizations' League teams)
   const m = /^(\d{1,2})(?:-(\d{1,2}))?$/.exec(v);
   if (!m) return null;
   const low = Number(m[1]);
@@ -78,7 +83,7 @@ async function canEdit(q: Queryable, viewer: SessionUser, t: { partner_id: strin
 export type ScenicTeam = {
   id: string;
   name: string;
-  gender: "Boys" | "Girls";
+  gender: "Boys" | "Girls" | "Coed";
   level: Level;
   gradeLow: number;
   grade: number;
@@ -171,12 +176,16 @@ function cleanTeam(input: TeamInput) {
   // Team names: letters, numbers, spaces and . ' & - , ( ) # /, starting with a letter or number (never a formula).
   const name = cleanPlaceName(input.name);
   if (!name) throw new TeamError("Enter a team name: letters, numbers and simple punctuation, up to 60 characters.");
-  const gender = input.gender === "Boys" || input.gender === "Girls" ? input.gender : null;
-  if (!gender) throw new TeamError("Pick Boys or Girls.");
+  const gender = input.gender === "Boys" || input.gender === "Girls" || input.gender === "Coed" ? input.gender : null;
+  if (!gender) throw new TeamError("Pick Boys, Girls or Coed.");
   const level = LEVELS.find((l) => l === input.level);
   if (!level) throw new TeamError("Pick COMP or REC.");
   const grade = parseGrade(input.grade);
   if (!grade) throw new TeamError("Pick a grade.");
+  // Pre-K (ages 3 and 4) teams are Coed and REC; Coed teams are Pre-K.
+  if (grade.grade === -1 && gender !== "Coed") throw new TeamError("Pre-K teams are Coed.");
+  if (grade.grade !== -1 && gender === "Coed") throw new TeamError("Only Pre-K teams are Coed; pick Boys or Girls.");
+  if (grade.grade === -1 && level !== "REC") throw new TeamError("Pre-K teams are REC.");
   const first = cleanName(input.coachFirst);
   const last = cleanName(input.coachLast);
   if (!first || !last) throw new TeamError("Enter the coach's first and last name (letters only).");
@@ -332,9 +341,16 @@ export async function deleteScenicTeam(deps: Deps, viewer: SessionUser, id: unkn
 export async function teamsICanManage(
   q: Queryable,
   viewer: SessionUser,
-): Promise<{ id: string; name: string; gender: "Boys" | "Girls"; level: Level; gradeLow: number; grade: number }[]> {
+): Promise<{ id: string; name: string; gender: "Boys" | "Girls" | "Coed"; level: Level; gradeLow: number; grade: number }[]> {
   const all = await isTeamsDirector(q, viewer);
-  const r = await q.query<{ id: string; name: string; gender: "Boys" | "Girls"; level: Level; gradeLow: number; grade: number }>(
+  const r = await q.query<{
+    id: string;
+    name: string;
+    gender: "Boys" | "Girls" | "Coed";
+    level: Level;
+    gradeLow: number;
+    grade: number;
+  }>(
     `select t.id::text, t.name, t.gender, t.level, t.grade_low as "gradeLow", t.grade from scenic_teams t
      where $2
         or (has_role($1, 'scenic-city', 'Partner') and t.partner_id in (select partner_id from partner_contacts where coach_id = $1))

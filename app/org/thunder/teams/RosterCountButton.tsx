@@ -6,7 +6,7 @@ import type { TeamListItem } from "@/lib/teams";
 import { CloseButton, dialogCls } from "../../../client-ui";
 
 // Team card: how many players are rostered; tapping it pops up the roster.
-export default function RosterCountButton({ team }: { team: Pick<TeamListItem, "name" | "players"> }) {
+export default function RosterCountButton({ team, who }: { team: Pick<TeamListItem, "name" | "players">; who: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const close = () => dialog.current?.close();
   const n = team.players.length;
@@ -39,7 +39,8 @@ export default function RosterCountButton({ team }: { team: Pick<TeamListItem, "
                   {p.first} <span className="font-semibold">{p.last}</span>
                 </span>
                 <span className="block text-xs text-zinc-400">
-                  {gradeLabel(p.grade)} · Rostered by {p.rosteredBy}
+                  {gradeLabel(p.grade)}
+                  {who && ` · Rostered by ${p.rosteredBy}`}
                 </span>
               </li>
             ))}

@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
+import { seesWho } from "@/lib/org-admin";
 import { canHost, facilitiesView } from "@/lib/facilities";
 import { hostingOffers } from "@/lib/org-partnerships";
 import { orgInfo } from "@/lib/org-registry";
@@ -36,6 +37,7 @@ async function OrgFacilities({ params }: { params: PageProps<"/org/[slug]/facili
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   const { slug } = await params;
+  const who = await seesWho(db, user, slug); // Owners and Admins see who did it
   await followRename(slug, (s) => `/org/${s}/facilities`);
   const o = isOrgSlug(slug) && slug !== "thunder" ? await orgInfo(db, slug) : null;
   if (!o || !(await canHost(db, slug))) notFound();
@@ -97,7 +99,7 @@ async function OrgFacilities({ params }: { params: PageProps<"/org/[slug]/facili
                         {STATUS[x.status][0]}
                       </span>
                       Asked by {x.requestedBy}
-                      {x.decidedBy && ` · ${x.status === "approved" ? "approved" : "declined"} by ${x.decidedBy}`}
+                      {x.decidedBy && ` · ${x.status === "approved" ? "approved" : "declined"}${who ? ` by ${x.decidedBy}` : ""}`}
                     </p>
                   )}
                 </div>

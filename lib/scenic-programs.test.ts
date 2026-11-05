@@ -24,8 +24,9 @@ import {
   withdrawTeams,
 } from "./scenic-programs";
 import { listGameDays } from "./scenic-partners";
-import { createMatchups, saveMatchups } from "./scenic-matchups";
+import { createDayMatchups, createMatchups, saveMatchups } from "./scenic-matchups";
 import { placeGame, setGameLength } from "./scenic-grid";
+import { listCourts, setCourtDivisions } from "./scenic-courts";
 import { scheduledGames } from "./scenic-games";
 import { createScenicTeam } from "./scenic-teams";
 import { createTestDb, grant } from "./testing/db";
@@ -179,7 +180,10 @@ describe("Scenic City programs", () => {
     expect(await div(id, "Girls", 2, 3, ["REC"])).toMatchObject({ ok: true }); // Girls stay separate
     expect(await div(id, "Boys", 3, 4, ["REC"])).toEqual({ ok: false, message: "That overlaps Boys 2nd–3rd." });
     expect(await div(id, "Boys", 6, 5, ["REC"])).toEqual({ ok: false, message: "The last grade is before the first." });
-    expect(await div(id, "Coed", 6, 6, ["REC"])).toEqual({ ok: false, message: "Pick Boys or Girls." });
+    expect(await div(id, "Coed", 6, 6, ["REC"])).toEqual({
+      ok: false,
+      message: "Pre-K is its own Coed division (Pre-K only); Boys and Girls divisions start at K.",
+    });
     expect(await div(id, "Boys", 6, 6, [])).toEqual({ ok: false, message: "Pick COMP, REC or both." });
     expect(await addDivision(deps(), fay, id, { gender: "Boys", from: 7, to: 8, levels: ["REC"] })).toMatchObject({ ok: false });
 
@@ -522,6 +526,52 @@ describe("Scenic City programs", () => {
     now = new Date("2027-01-12T15:00:00Z");
     expect((await gameDaySchedule(deps(), fay))!.days.map((d) => d.date)).toEqual(["2027-01-16", "2027-03-06"]);
   });
+  it("Create all matchups: every division that day; a coach's teams are all home or all away", async () => {
+    const id = await newLeague();
+    await saveProgramDates(deps(), dee, id, { add: ["2027-01-09"], addBrackets: [], remove: [] });
+    await div(id, "Boys", 3, 4, ["COMP"]);
+    await div(id, "Girls", 3, 4, ["COMP"]);
+    // Coach Cy has a Boys and a Girls team at Baylor; Sam's teams each have their own coach.
+    const make = async (who: SessionUser, forWhom: string, name: string, gender: string, first: string, cell: string) => {
+      const t = (
+        (await createScenicTeam(deps(), who, {
+          for: forWhom,
+          name,
+          gender,
+          level: "COMP",
+          grade: "4",
+          coachFirst: first,
+          coachLast: "Coach",
+          coachCell: cell,
+        })) as { id: string }
+      ).id;
+      expect(await registerTeam(deps(), who, id, t, ALL)).toMatchObject({ ok: true });
+      return t;
+    };
+    const b1 = await make(pat, baylor, "Baylor 4B", "Boys", "Cy", "4235550003");
+    await make(sam, "solo", "Sam 4B", "Boys", "Ann", "4235550005");
+    const g1 = await make(pat, baylor, "Baylor 4G", "Girls", "Cy", "4235550003");
+    await make(sam, "solo", "Sam 4G", "Girls", "Bo", "4235550006");
+    expect(await createDayMatchups(deps(), fay, "2027-01-09")).toMatchObject({ ok: false });
+    await db.pool.query(
+      "insert into director_areas (coach_id, org, area, granted_by) values ('5550004', 'scenic-city', 'scheduling', 'test')",
+    );
+    expect(await createDayMatchups(deps(), fay, "bad")).toEqual({ ok: false, message: "Pick a Game Day." });
+    expect(await createDayMatchups(deps(), fay, "2027-01-09")).toEqual({ ok: true, created: 2, divisions: 2, notes: [] });
+    const home = async () => {
+      const m = (await gameDaySchedule(deps(), fay))!.days[0].programs[0].matchups;
+      const isHome = (t: string) => m.some((x) => (x.a === t && x.home === "a") || (x.b === t && x.home === "b"));
+      return [isHome(b1), isHome(g1)];
+    };
+    // Without the coach, Baylor would split its two games (one home, one away); Cy's teams go together instead.
+    const [x, y] = await home();
+    expect(x).toBe(y);
+    // Again: replaces the day's matchups, still together.
+    expect(await createDayMatchups(deps(), fay, "2027-01-09")).toMatchObject({ ok: true, created: 2 });
+    const [x2, y2] = await home();
+    expect(x2).toBe(y2);
+  });
+
   it("the Scheduler creates a division's matchups, keeping pairs new across Game Days", async () => {
     const id = await newLeague();
     await saveProgramDates(deps(), dee, id, { add: ["2027-01-09", "2027-01-16"], addBrackets: [], remove: [] });
@@ -678,6 +728,24 @@ describe("Scenic City programs", () => {
       message: "Main Gym Court 1 is open 9:00 AM–12:00 PM; a game doesn't fit then.",
     });
     expect(await placeGame(deps(), fay, g1, { court: "999", starts: "09:00" })).toMatchObject({ ok: false });
+    // Facilities → Courts: a court approved only for other divisions refuses this division's games.
+    await div(id, "Girls", 3, 4, ["COMP"]);
+    const girls = (await getProgram(deps(), dee, id))!.divisionList.find((x) => x.gender === "Girls")!.id;
+    expect(await setCourtDivisions(deps(), dee, court, [girls])).toMatchObject({ ok: false }); // not Facilities
+    expect(await setCourtDivisions(deps(), fay, "bad", [girls])).toEqual({ ok: false, message: "Pick a court." });
+    expect(await setCourtDivisions(deps(), fay, court, ["999"])).toEqual({
+      ok: false,
+      message: "A division isn't in a current League.",
+    });
+    expect(await setCourtDivisions(deps(), fay, court, [girls])).toEqual({ ok: true, divisions: 1 });
+    expect(await placeGame(deps(), fay, g1, { court, starts: "09:00" })).toEqual({
+      ok: false,
+      message: "Main Gym Court 1 isn't approved for this division (Facilities → Courts).",
+    });
+    expect(await setCourtDivisions(deps(), fay, court, [girls, divisionId])).toEqual({ ok: true, divisions: 2 });
+    const listed = (await listCourts(deps(), fay))!.gyms.flatMap((g) => g.courts).find((c) => c.key === court)!;
+    expect([...listed.divisions].sort()).toEqual([girls, divisionId].sort());
+    expect(listed.setBy).toBe("Fay X");
     expect(await placeGame(deps(), fay, g1, { court, starts: "09:00" })).toEqual({ ok: true });
     expect(await placeGame(deps(), fay, g2, { court, starts: "09:00" })).toEqual({
       ok: false,

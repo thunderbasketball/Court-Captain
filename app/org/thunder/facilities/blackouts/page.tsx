@@ -10,7 +10,7 @@ import { Chip, PageTitle, card } from "../../../../ui";
 import FacilitiesNav from "../FacilitiesNav";
 import { BlackoutButton } from "../../practice/PracticeTools";
 import { DeleteRuleButton } from "./DeleteRuleButton";
-import { hasArea } from "@/lib/org-admin";
+import { hasArea, seesWho } from "@/lib/org-admin";
 
 export default function BlackoutsPage() {
   return (
@@ -36,6 +36,7 @@ async function Blackouts() {
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   await requireFeature("thunder", "practice");
   if (!hasArea(user, "practices")) redirect("/");
+  const who = await seesWho(db, user, "thunder"); // Owners and Admins see who did it
   const now = new Date();
   const [{ upcoming, rules }, gyms] = await Promise.all([listBlackouts(db, now), listGyms({ pool: db })]);
 
@@ -63,7 +64,8 @@ async function Blackouts() {
                     <p className="font-medium">{r.reason ?? "Blackout"}</p>
                     <p className="text-sm text-zinc-500">{r.label}</p>
                     <p className="text-xs text-zinc-400">
-                      {r.gym ?? "All gyms"} · {timeLabel(r.minute)} · added by {r.createdBy}
+                      {r.gym ?? "All gyms"} · {timeLabel(r.minute)}
+                      {who && ` · added by ${r.createdBy}`}
                     </p>
                   </div>
                   <DeleteRuleButton ruleId={r.id} label={r.reason ?? r.label} />

@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import { resettable } from "@/lib/login-reset";
-import { directorsPanel } from "@/lib/org-admin";
+import { directorsPanel, seesWho } from "@/lib/org-admin";
 import { formatCell } from "@/lib/phone";
 import { currentScenic } from "@/lib/contexts-server";
 import { listScenicPeople } from "@/lib/scenic";
@@ -34,6 +34,7 @@ async function ScenicUsers() {
   const people = await listScenicPeople({ pool: db, now: () => new Date() }, user);
   if (!people) redirect("/org/scenic-city");
   const { requests, members } = people;
+  const who = await seesWho(db, user, "scenic-city"); // Owners and Admins see who gave a role
   // Admins only: Directors' roles and areas, shown in their rows.
   const panel = await directorsPanel({ pool: db, now: () => new Date() }, user, "scenic-city");
   const active = members.filter((m) => m.active);
@@ -155,7 +156,7 @@ async function ScenicUsers() {
                 )}
                 {contact(m)}
                 <div className="flex items-end justify-between gap-2 pt-1">
-                  <p className="text-xs text-zinc-500">{m.grantedBy && `Last role from ${m.grantedBy}`}</p>
+                  <p className="text-xs text-zinc-500">{who && m.grantedBy && `Last role from ${m.grantedBy}`}</p>
                   <EditScenicRoles coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} roles={m.roles} />
                 </div>
               </PersonRow>

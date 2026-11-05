@@ -5,7 +5,7 @@ import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { HEIGHTS, NOTES_MAX, POSITIONS, SPEEDS, type Fields } from "./evaluation-fields";
 import { withTx } from "./sql";
-import { hasArea } from "./org-admin";
+import { hasArea, seesWho } from "./org-admin";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -20,10 +20,10 @@ const cantEvaluate = { ok: false as const, message: "Only this team's coaches ca
 export async function canEvaluate(q: Pick<Pool, "query">, viewer: SessionUser, teamId: string): Promise<boolean> {
   if (!isId(teamId)) return false;
   if (hasArea(viewer, "teams")) return true;
-  const r = await q.query("select 1 from team_staff where team_id = $1 and coach_id = $2 and role in ('HeadCoach', 'AsstCoach')", [
-    teamId,
-    viewer.coachId,
-  ]);
+  const r = await q.query(
+    "select 1 from team_staff where team_id = $1 and coach_id = $2 and role in ('HeadCoach', 'AsstCoach')",
+    [teamId, viewer.coachId],
+  );
   return r.rows.length > 0;
 }
 
@@ -71,7 +71,12 @@ export async function listEvaluations(deps: Deps, viewer: SessionUser, teamId: s
      order by p.grade_sort desc, lower(p.last_name), lower(p.first_name)`,
     [teamId],
   );
-  return r.rows;
+  return hideWho(deps, viewer, r.rows);
+}
+
+// Who saved a card shows only to Owners and Admins.
+async function hideWho<T extends { updatedBy: string | null }>(deps: Deps, viewer: SessionUser, rows: T[]): Promise<T[]> {
+  return (await seesWho(deps.pool, viewer, "thunder")) ? rows : rows.map((x) => ({ ...x, updatedBy: null }));
 }
 
 export type TeamEvalCard = { teamId: string; teamName: string; card: EvalCard };
@@ -100,7 +105,7 @@ export async function playerEvaluations(deps: Deps, viewer: SessionUser, registr
               t.level = 'COMP' desc, t.grade_sort, lower(t.name)`,
     [registrantId],
   );
-  return r.rows.map(({ teamId, teamName, ...card }) => ({ teamId, teamName, card }));
+  return (await hideWho(deps, viewer, r.rows)).map(({ teamId, teamName, ...card }) => ({ teamId, teamName, card }));
 }
 
 // For the team page: how many players this team has rated and marked Interested.
@@ -143,7 +148,8 @@ export async function saveEvaluation(
   registrantId: unknown,
   changes: unknown,
 ): Promise<Result<{ updatedBy: string | null; updatedAt: Date | null }>> {
-  if (!isId(teamId) || !isRegistrant(registrantId)) return { ok: false, message: "That player can't be evaluated for this team." };
+  if (!isId(teamId) || !isRegistrant(registrantId))
+    return { ok: false, message: "That player can't be evaluated for this team." };
   const patch: Partial<Fields> = {};
   for (const [k, v] of Object.entries(changes && typeof changes === "object" ? changes : {})) {
     const c = clean(k, v);
@@ -192,6 +198,6 @@ export async function saveEvaluation(
          where team_id = $9 and registrant_id = $10`,
         vals,
       );
-    return { ok: true as const, updatedBy: by, updatedAt: at };
+    return { ok: true as const, updatedBy: (await seesWho(q, viewer, "thunder")) ? by : null, updatedAt: at };
   });
 }

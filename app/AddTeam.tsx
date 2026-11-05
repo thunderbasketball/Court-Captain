@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { GRADES, LEVELS, gradeSort, teamName } from "@/lib/team-names";
+import { GRADES, LEVELS, PREK, gradeSort, teamName, type Gender } from "@/lib/team-names";
 import { Alert, PopUp } from "./client-ui";
 import { fieldLabel, inputCls, pillCls, primaryBtn } from "./ui";
 
@@ -15,16 +15,19 @@ type Create = (input: Input) => Promise<{ ok: true; id: string; name: string } |
 // for you: top grade + gender + Head Coach's last name ("4G Epps"; "4G TBD" until a coach). Grades: one, or two next to
 // each other. `create` is the server's (it checks everything again); `href` + id opens the new team (none: stay here).
 // `clubs` (Scenic City): pick which outside club the team is for, or type a new one; its Abbreviation leads the name.
+// `preK` (teams for Scenic City Leagues, not Thunder's): Pre-K is offered too, always Coed and REC ("PKC Lee").
 export default function AddTeamButton({
   people,
   create,
   href,
   clubs,
+  preK = false,
 }: {
   people: Person[];
   create: Create;
   href?: string;
   clubs?: Club[];
+  preK?: boolean;
 }) {
   const router = useRouter();
   return (
@@ -37,6 +40,7 @@ export default function AddTeamButton({
         <AddTeamForm
           people={people}
           clubs={clubs}
+          preK={preK}
           create={create}
           onAdded={(id) => {
             if (href) return router.push(`${href}${id}`);
@@ -54,17 +58,19 @@ const NEW = "new";
 function AddTeamForm({
   people,
   clubs,
+  preK,
   create,
   onAdded,
 }: {
   people: Person[];
   clubs?: Club[];
+  preK: boolean;
   create: Create;
   onAdded: (id: string) => void;
 }) {
   const [club, setClub] = useState("");
   const [newClub, setNewClub] = useState({ name: "", abbr: "" });
-  const [gender, setGender] = useState<"Boys" | "Girls" | "">("");
+  const [gender, setGender] = useState<Gender | "">("");
   const [grades, setGrades] = useState<string[]>([]);
   const [level, setLevel] = useState<string>("REC");
   const [coach, setCoach] = useState("");
@@ -74,12 +80,29 @@ function AddTeamForm({
   const [busy, start] = useTransition();
 
   // One grade, or two next to each other: tapping a grade that doesn't fit starts over from it.
-  const tapGrade = (g: string) =>
+  const tapGrade = (g: string) => {
+    // Pre-K is on its own, Coed and REC; leaving Pre-K leaves Coed too.
+    if (g === PREK) {
+      setGrades(grades.includes(PREK) ? [] : [PREK]);
+      setGender("Coed");
+      setLevel("REC");
+      return;
+    }
+    if (gender === "Coed") setGender("");
     setGrades((cur) => {
+      if (cur.includes(PREK)) return [g];
       if (cur.includes(g)) return cur.filter((x) => x !== g);
       if (cur.length === 1 && Math.abs(gradeSort(cur[0]) - gradeSort(g)) === 1) return [...cur, g];
       return [g];
     });
+  };
+  const pickGender = (g: Gender) => {
+    setGender(g);
+    if (g === "Coed") {
+      setGrades([PREK]);
+      setLevel("REC");
+    } else if (grades.includes(PREK)) setGrades([]);
+  };
   const last =
     coach === NEW ? person.last.trim() : coach === "none" ? "TBD" : (people.find((p) => p.value === coach)?.lastName ?? "");
   const abbr = !clubs
@@ -150,9 +173,9 @@ function AddTeamForm({
       <div>
         <span className={fieldLabel}>Gender</span>
         <div className="flex gap-2">
-          {(["Boys", "Girls"] as const).map((g) => (
-            <button key={g} type="button" className={pillCls(gender === g)} onClick={() => setGender(g)}>
-              {g}
+          {(preK ? (["Boys", "Girls", "Coed"] as const) : (["Boys", "Girls"] as const)).map((g) => (
+            <button key={g} type="button" className={pillCls(gender === g)} onClick={() => pickGender(g)}>
+              {g === "Coed" ? "Coed (Pre-K)" : g}
             </button>
           ))}
         </div>
@@ -160,9 +183,14 @@ function AddTeamForm({
       <div>
         <span className={fieldLabel}>Grade (one, or two next to each other)</span>
         <div className="grid grid-cols-7 gap-1.5">
-          {GRADES.map((g) => (
-            <button key={g} type="button" className={pillCls(grades.includes(g))} onClick={() => tapGrade(g)}>
-              {g}
+          {(preK ? [PREK, ...GRADES] : GRADES).map((g) => (
+            <button
+              key={g}
+              type="button"
+              className={`${pillCls(grades.includes(g))} ${g === PREK ? "col-span-2" : ""}`}
+              onClick={() => tapGrade(g)}
+            >
+              {g === PREK ? "Pre-K" : g}
             </button>
           ))}
         </div>
@@ -171,7 +199,13 @@ function AddTeamForm({
         <span className={fieldLabel}>Level</span>
         <div className="flex gap-2">
           {LEVELS.map((l) => (
-            <button key={l} type="button" className={pillCls(level === l)} onClick={() => setLevel(l)}>
+            <button
+              key={l}
+              type="button"
+              disabled={grades.includes(PREK) && l !== "REC"}
+              className={`${pillCls(level === l)} disabled:opacity-40`}
+              onClick={() => setLevel(l)}
+            >
               {l}
             </button>
           ))}

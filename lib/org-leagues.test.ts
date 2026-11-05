@@ -66,9 +66,7 @@ describe("an organization's teams in Scenic City programs", () => {
       })) as { id: string }
     ).id;
     await addDivision(deps(), dee, pid, { gender: "Boys", from: 3, to: 4, levels: ["REC"] });
-    const tid = (
-      (await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: ["4"], level: "REC" })) as { id: string }
-    ).id;
+    const tid = ((await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: ["4"], level: "REC" })) as { id: string }).id;
 
     // No approval needed, and no coach yet: it shows "no coach" in Scenic City until one is added.
     const progs = (await teamPrograms(deps(), jo, org, tid))!;
@@ -93,7 +91,9 @@ describe("an organization's teams in Scenic City programs", () => {
 
     // Scenic City sees it under East Ridge, read-only, in the program.
     const scenic = (await listScenicTeams(deps(), dee, "Director"))!;
-    expect(scenic.teams.map((t) => `${t.name} ${t.partnerName} ${t.canEdit}`)).toEqual(["ER 4B Coach East Ridge Parks & Rec false"]); // renamed with its Head Coach
+    expect(scenic.teams.map((t) => `${t.name} ${t.partnerName} ${t.canEdit}`)).toEqual([
+      "ER 4B Coach East Ridge Parks & Rec false",
+    ]); // renamed with its Head Coach
     expect(scenic.addFor.map((a) => a.label)).not.toContain("East Ridge Parks & Rec");
     const copy = scenic.teams[0].id;
     expect(
@@ -119,6 +119,37 @@ describe("an organization's teams in Scenic City programs", () => {
     // Deleting the team takes it out of Scenic City too.
     expect(await deleteOrgTeam(deps(), jo, org, tid)).toEqual({ ok: true });
     expect((await listScenicTeams(deps(), dee, "Director"))!.teams).toEqual([]);
+  });
+
+  it("a Pre-K Coed team registers into the League's Coed Pre-K division (REC only)", async () => {
+    const pid = (
+      (await saveProgram(deps(), dee, null, {
+        kind: "League",
+        name: "Winter League 2027",
+        startsOn: "2027-01-09",
+        endsOn: "2027-03-06",
+        regOpens: "2026-11-01",
+        regCloses: "2026-12-15",
+        fee: "$150",
+      })) as { id: string }
+    ).id;
+    expect(await addDivision(deps(), dee, pid, { gender: "Coed", from: -1, to: -1, levels: ["COMP"] })).toEqual({
+      ok: false,
+      message: "Pre-K is REC only.",
+    });
+    expect(await addDivision(deps(), dee, pid, { gender: "Coed", from: 0, to: 1, levels: ["REC"] })).toMatchObject({ ok: false });
+    expect(await addDivision(deps(), dee, pid, { gender: "Boys", from: -1, to: 0, levels: ["REC"] })).toMatchObject({
+      ok: false,
+    });
+    expect(await addDivision(deps(), dee, pid, { gender: "Coed", from: -1, to: -1, levels: ["REC"] })).toEqual({
+      ok: true,
+      label: "Coed Pre-K",
+    });
+    const tid = ((await createOrgTeam(deps(), jo, org, { gender: "Coed", grades: ["PK"], level: "REC" })) as { id: string }).id;
+    expect(await registerOrgTeam(deps(), jo, org, tid, pid, ALL)).toMatchObject({ ok: true });
+    const d = (await getProgram(deps(), dee, pid))!.divisionList[0];
+    expect(d).toMatchObject({ label: "Coed Pre-K", groups: [{ label: "Pre-K REC" }] });
+    expect(d.groups[0].pools[0].teams.map((t) => t.name)).toEqual(["ER PKC TBD"]);
   });
 
   it("registers all unregistered teams at once, each into its division (coach or not); skips ones with no division", async () => {
@@ -193,9 +224,7 @@ describe("an organization's teams in Scenic City programs", () => {
       remove: [],
     });
     await addDivision(deps(), dee, pid, { gender: "Boys", from: 2, to: 3, levels: ["REC"] });
-    const tid = (
-      (await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: ["2"], level: "REC" })) as { id: string }
-    ).id;
+    const tid = ((await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: ["2"], level: "REC" })) as { id: string }).id;
 
     expect(await registerOrgTeam(deps(), jo, org, tid, pid)).toMatchObject({ ok: false }); // must pick something
     expect(

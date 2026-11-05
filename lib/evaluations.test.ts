@@ -3,7 +3,7 @@ import type { SessionUser } from "./auth/service";
 import { evaluationCounts, listEvaluations, playerEvaluations, saveEvaluation } from "./evaluations";
 import { importEvaluations, parseEvaluationsTab } from "./evaluations-import";
 import { addPlayers } from "./rosters";
-import { createTestDb } from "./testing/db";
+import { createTestDb, grant } from "./testing/db";
 
 const person = (coachId: string, firstName: string, isDirector = false): SessionUser => ({
   coachId,
@@ -46,6 +46,11 @@ describe("evaluations", () => {
          ('4G A', 'Girls', '{4}', 4, 'REC', 'x'), ('4G B', 'Girls', '{4}', 4, 'REC', 'x') returning id::text`,
     );
     [A, B] = t.rows.map((r) => r.id);
+    // Dee is a Thunder Admin: Owners and Admins see who saved a card; coaches don't.
+    await db.pool.query(
+      "insert into users (coach_id, first_name, last_name, cell) values ('9913694', 'Dee', 'X', '4235559999') on conflict do nothing",
+    );
+    await grant(db.pool, "9913694 thunder Director", "9913694 thunder Admin");
     await db.pool.query(
       `insert into team_staff (team_id, coach_id, role, added_by) values
          ($1, '5550001', 'HeadCoach', 'x'), ($1, '5550002', 'AsstCoach', 'x'), ($1, '5550003', 'Manager', 'x'), ($2, '5550004', 'HeadCoach', 'x')`,
@@ -78,18 +83,33 @@ describe("evaluations", () => {
   });
 
   it("saves only the changed fields and records who; each team sees only its own cards", async () => {
-    expect(await saveEvaluation(deps(), hc, A, "r1", { position: "Guard", score: 4 })).toMatchObject({ ok: true, updatedBy: "Hal X" });
+    expect(await saveEvaluation(deps(), hc, A, "r1", { position: "Guard", score: 4 })).toMatchObject({
+      ok: true,
+      updatedBy: null,
+    });
     now = new Date("2026-11-10T13:00:00Z");
     expect(await saveEvaluation(deps(), ac, A, "r1", { speed: "Fast", notes: "  Great hands  " })).toMatchObject({
       ok: true,
-      updatedBy: "Amy X",
+      updatedBy: null, // a coach doesn't see who saved
     });
     const card = (await listEvaluations(deps(), hc, A))?.find((c) => c.registrantId === "r1");
-    expect(card).toMatchObject({ position: "Guard", score: 4, speed: "Fast", height: null, notes: "Great hands", updatedBy: "Amy X" });
+    expect(card).toMatchObject({
+      position: "Guard",
+      score: 4,
+      speed: "Fast",
+      height: null,
+      notes: "Great hands",
+      updatedBy: null,
+    });
     expect(card?.updatedAt).toEqual(now);
+    // An Admin sees who saved it (it's always recorded).
+    expect((await listEvaluations(deps(), dir, A))?.find((c) => c.registrantId === "r1")).toMatchObject({ updatedBy: "Amy X" });
 
     await saveEvaluation(deps(), other, B, "r1", { score: 2 });
-    expect((await listEvaluations(deps(), other, B))?.find((c) => c.registrantId === "r1")).toMatchObject({ score: 2, position: null });
+    expect((await listEvaluations(deps(), other, B))?.find((c) => c.registrantId === "r1")).toMatchObject({
+      score: 2,
+      position: null,
+    });
     expect(await saveEvaluation(deps(), other, A, "r1", { score: 1 })).toEqual({
       ok: false,
       message: "Only this team's coaches can evaluate players.",
@@ -139,20 +159,39 @@ describe("evaluations", () => {
       interestedTeams: ["4G A", "4G B"],
       rosteredOn: ["4G B"],
     });
-    expect(await saveEvaluation(deps(), hc, A, "r5", { interested: false })).toEqual({ ok: true, updatedBy: null, updatedAt: null });
+    expect(await saveEvaluation(deps(), hc, A, "r5", { interested: false })).toEqual({
+      ok: true,
+      updatedBy: null,
+      updatedAt: null,
+    });
     expect((await db.pool.query("select 1 from evaluations where team_id = $1", [A])).rows).toEqual([]);
   });
 
   it("keeps a team's card when the player leaves registrations", async () => {
     await saveEvaluation(deps(), hc, A, "r2", { score: 3 });
     await db.pool.query("delete from registrations where registrant_id = 'r2'");
-    expect((await listEvaluations(deps(), hc, A))?.find((c) => c.registrantId === "r2")).toMatchObject({ score: 3, registered: false });
+    expect((await listEvaluations(deps(), hc, A))?.find((c) => c.registrantId === "r2")).toMatchObject({
+      score: 3,
+      registered: false,
+    });
     expect(await saveEvaluation(deps(), hc, A, "r2", { score: 4 })).toMatchObject({ ok: true });
   });
 
   it("imports the Sheet's Evaluations tab once; a dry run changes nothing", async () => {
     const parsed = parseEvaluationsTab([
-      ["Player", "Grade", "Gender", "Team", "Coach", "Position", "Height", "Speed", "EvaluationScore", "EvaluationText", "Pickup"],
+      [
+        "Player",
+        "Grade",
+        "Gender",
+        "Team",
+        "Coach",
+        "Position",
+        "Height",
+        "Speed",
+        "EvaluationScore",
+        "EvaluationText",
+        "Pickup",
+      ],
       ["Ava Zed", "4th", "Girls", "4G A", "Hal X", "guard", "Average", "Fast", "5", "Lefty", "TRUE"],
       ["Bea Young", "3rd", "Girls", "4G A", "Hal X", "Point", "", "", "9", "", "FALSE"],
       ["Nobody Here", "4th", "Girls", "4G A", "Hal X", "", "", "", "", "", ""],
@@ -176,8 +215,8 @@ describe("evaluations", () => {
       score: 5,
       notes: "Lefty",
       interested: true,
-      updatedBy: "Hal X",
     });
+    expect((await listEvaluations(deps(), dir, A))?.find((c) => c.registrantId === "r1")).toMatchObject({ updatedBy: "Hal X" });
     expect((await importEvaluations(db.pool, parsed.items, { ...opts, dryRun: false }))[0].status).toBe("already");
   });
 });

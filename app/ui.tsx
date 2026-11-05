@@ -193,3 +193,53 @@ export function TeamName({ name, className = "" }: { name: string; className?: s
     <span className={className}>{name}</span>
   );
 }
+
+// Scheduler: REC or COMP, so a game's level is clear at a glance (COMP solid, REC outlined).
+export function LevelTag({ level, className = "" }: { level: string; className?: string }) {
+  return (
+    <span
+      className={`inline-block rounded px-1 text-[10px] leading-4 font-bold tracking-wide ${
+        level === "COMP"
+          ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900"
+          : "text-zinc-700 ring-1 ring-zinc-400 ring-inset dark:text-zinc-200 dark:ring-zinc-500"
+      } ${className}`}
+    >
+      {level}
+    </span>
+  );
+}
+
+// Scheduler: a coach with more than one team playing that day. Each such coach gets their own color (and initials, in
+// case two share a color); `title` names the coach and their other teams.
+export type CoachTag = { color: number; initials: string; title: string };
+const COACH_COLORS = [
+  "bg-orange-500 text-white",
+  "bg-teal-600 text-white",
+  "bg-indigo-600 text-white",
+  "bg-lime-500 text-zinc-900",
+  "bg-fuchsia-600 text-white",
+  "bg-cyan-500 text-zinc-900",
+  "bg-rose-600 text-white",
+  "bg-yellow-400 text-zinc-900",
+  "bg-blue-800 text-white",
+  "bg-green-700 text-white",
+  "bg-stone-600 text-white",
+  "bg-amber-800 text-white",
+];
+export function CoachBadge({ tag }: { tag: CoachTag | undefined }) {
+  if (!tag) return null;
+  return (
+    <span
+      title={tag.title}
+      aria-label={tag.title}
+      className={`inline-flex shrink-0 items-center gap-0.5 rounded-full px-1 align-middle text-[9px] leading-4 font-bold ${COACH_COLORS[tag.color % COACH_COLORS.length]}`}
+    >
+      <svg viewBox="0 0 16 16" className="size-2.5" fill="currentColor" aria-hidden="true">
+        <circle cx="5.5" cy="5" r="2.5" />
+        <circle cx="11" cy="5.5" r="2" />
+        <path d="M1 13.5c0-2.5 2-4.5 4.5-4.5S10 11 10 13.5V14H1zM10.8 14v-.5c0-1.3-.4-2.5-1.1-3.4.4-.2.8-.3 1.3-.3 2.2 0 4 1.8 4 4v.2z" />
+      </svg>
+      {tag.initials}
+    </span>
+  );
+}

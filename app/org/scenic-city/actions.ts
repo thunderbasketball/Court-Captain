@@ -12,6 +12,7 @@ import * as clubs from "@/lib/scenic-club-teams";
 import * as matchups from "@/lib/scenic-matchups";
 import * as grid from "@/lib/scenic-grid";
 import * as simulation from "@/lib/dev-teams";
+import * as courts from "@/lib/scenic-courts";
 import type { JoinInput } from "@/lib/scenic";
 
 const deps = { pool: db, now: () => new Date() };
@@ -152,6 +153,10 @@ export async function undoClubImport(id: string) {
 export async function createMatchups(programId: string, day: string, divisionId: string) {
   return guarded((u) => matchups.createMatchups(deps, u, programId, day, divisionId), "programs");
 }
+// Scheduler: Create all matchups for a Game Day (every League's divisions playing that day).
+export async function createDayMatchups(day: string) {
+  return guarded((u) => matchups.createDayMatchups(deps, u, day), "programs");
+}
 export async function saveMatchups(programId: string, day: string, divisionId: string, games: [string, string | null][]) {
   return guarded((u) => matchups.saveMatchups(deps, u, programId, day, divisionId, games), "programs");
 }
@@ -167,4 +172,9 @@ export async function placeGame(matchupId: string, slot: { court: string; starts
 // Simulation mode (development only): simulated (DEV) teams on or off.
 export async function setSimulation(on: boolean) {
   return guarded((u) => simulation.setSimulation(deps, u, on === true), "programs");
+}
+
+// Facilities → Courts: which divisions may play on a court (none: every division).
+export async function setCourtDivisions(courtKey: string, divisionIds: string[]) {
+  return guarded((u) => courts.setCourtDivisions(deps, u, courtKey, divisionIds), "hosting-partners");
 }

@@ -2,7 +2,7 @@
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import type { Role } from "./teams";
-import { hasArea } from "./org-admin";
+import { hasArea, seesWho } from "./org-admin";
 
 type Deps = { pool: Pool; now: () => Date };
 
@@ -10,7 +10,7 @@ export type PlayerTeam = {
   id: string;
   name: string;
   level: string;
-  rosteredBy: string;
+  rosteredBy: string | null; // Owners and Admins only
   rosteredAt: Date;
   staff: { role: Role; name: string; cell: string }[];
   practices: { at: Date; gym: string; court: string }[];
@@ -43,5 +43,6 @@ export async function playerTeam(deps: Deps, viewer: SessionUser, registrantId: 
       [team.id, deps.now()],
     ),
   ]);
-  return { ...team, staff: staff.rows, practices: practices.rows };
+  const who = await seesWho(deps.pool, viewer, "thunder");
+  return { ...team, rosteredBy: who ? team.rosteredBy : null, staff: staff.rows, practices: practices.rows };
 }

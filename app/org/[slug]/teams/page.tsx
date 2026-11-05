@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
+import { seesWho } from "@/lib/org-admin";
 import { orgPrograms } from "@/lib/org-leagues";
 import { listOrgCoaches, listOrgTeams, listTeamImports } from "@/lib/org-teams";
 import { TZ } from "@/lib/time";
@@ -36,6 +37,7 @@ async function OrgTeams({
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   const { slug } = await params;
+  const who = await seesWho(db, user, slug); // Owners and Admins see who did it
   await followRename(slug, (s) => `/org/${s}/teams`);
   const [o, list] = await Promise.all([orgInfo(db, slug), listOrgTeams({ pool: db, now: () => new Date() }, user, slug)]);
   if (!o || !list) notFound();
@@ -85,6 +87,7 @@ async function OrgTeams({
                   return { value: `user:${c.id}`, firstName, lastName: rest.join(" "), detail: "Coach" };
                 })}
                 create={addTeam.bind(null, slug)}
+                preK
                 href={`/org/${slug}/teams/`}
               />
             </div>
@@ -103,7 +106,7 @@ async function OrgTeams({
                   altName={t.altName}
                   gender={t.gender}
                   level={t.level}
-                  sub={`${t.grade} grade`}
+                  sub={t.grade === "Pre-K" ? "Pre-K (ages 3–4)" : `${t.grade} grade`}
                   hasCoach={t.coaches.some((c) => c.role === "HeadCoach")}
                   waitingCoach={t.waitingCoach && `${t.waitingCoach.first} ${t.waitingCoach.last}`}
                   needsEmail={t.coaches.some((c) => c.role === "HeadCoach" && !c.email)}
@@ -131,8 +134,13 @@ async function OrgTeams({
               {imports.map((i) => (
                 <li key={i.id} className="flex items-center justify-between gap-3 py-2 text-sm">
                   <span className={i.undoneBy || !i.left ? "text-zinc-400" : ""}>
-                    {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"} · by {i.importedBy}
-                    {i.undoneBy ? ` · undone by ${i.undoneBy}` : i.left < i.teams ? ` · ${i.left} still here` : ""}
+                    {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"}
+                    {who && ` · by ${i.importedBy}`}
+                    {i.undoneBy
+                      ? ` · undone${who ? ` by ${i.undoneBy}` : ""}`
+                      : i.left < i.teams
+                        ? ` · ${i.left} still here`
+                        : ""}
                   </span>
                   {!i.undoneBy && i.left > 0 && (
                     <UndoImportButton

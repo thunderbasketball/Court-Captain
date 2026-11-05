@@ -10,7 +10,7 @@ type Choice = { value: string; label: string };
 export type TeamFields = {
   id: string;
   name: string;
-  gender: "Boys" | "Girls";
+  gender: "Boys" | "Girls" | "Coed";
   level: "COMP" | "REC";
   gradeLow: number;
   grade: number;
@@ -33,7 +33,7 @@ export function TeamEditor({ addFor, grades, team }: { addFor?: Choice[]; grades
     name: t.name,
     gender: t.gender,
     level: t.level,
-    grade: t.gradeLow === t.grade ? String(t.grade) : `${t.gradeLow}-${t.grade}`,
+    grade: t.grade === -1 ? "PK" : t.gradeLow === t.grade ? String(t.grade) : `${t.gradeLow}-${t.grade}`,
     coachFirst: t.coachFirst ?? "",
     coachLast: t.coachLast ?? "",
     coachCell: t.coachCell ?? "",
@@ -123,6 +123,7 @@ export function TeamEditor({ addFor, grades, team }: { addFor?: Choice[]; grades
                 </option>
                 <option>Boys</option>
                 <option>Girls</option>
+                <option value="Coed">Coed (Pre-K)</option>
               </select>
             </label>
             <label className="block text-sm font-medium">

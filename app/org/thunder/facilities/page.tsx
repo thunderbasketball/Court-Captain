@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import { hasArea } from "@/lib/org-admin";
+import { hasArea, seesWho } from "@/lib/org-admin";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import { facilitiesView } from "@/lib/facilities";
@@ -35,6 +35,7 @@ async function Facilities() {
   const view = await facilitiesView(deps, user);
   // A Director of Practices only (no Facilities): Gyms and Blackouts.
   if (!view) redirect(hasArea(user, "practices") ? "/org/thunder/facilities/gyms" : "/");
+  const who = await seesWho(db, user, "thunder"); // Owners and Admins see who did it
   const offers = (await hasFeature(db, "thunder", "hosting-available")) ? await hostingOffers(deps, user, "thunder") : null;
 
   return (
@@ -72,7 +73,8 @@ async function Facilities() {
                           {STATUS[o.status][0]}
                         </span>
                         Asked by {o.requestedBy}
-                        {o.decidedBy && ` · ${o.status === "approved" ? "approved" : "declined"} by ${o.decidedBy}`}
+                        {o.decidedBy &&
+                          ` · ${o.status === "approved" ? "approved" : "declined"}${who ? ` by ${o.decidedBy}` : ""}`}
                       </p>
                     )}
                   </div>

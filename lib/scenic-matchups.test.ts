@@ -32,12 +32,20 @@ describe("planning matchups", () => {
   });
 
   it("same organization only when nothing else is left, even if other pairs are further apart in grade", () => {
-    // Pairing across organizations costs grade and level differences; pairing X with X costs nothing else.
-    const teams = [t("1", 1, "X", 3), t("2", 1, "X", 3), t("3", 1, "Y", 6, "COMP"), t("4", 1, "Z", 6, "COMP")];
+    // Pairing across organizations costs grade differences; pairing X with X costs nothing else.
+    const teams = [t("1", 1, "X", 3), t("2", 1, "X", 3), t("3", 1, "Y", 6), t("4", 1, "Z", 6)];
     expect(pairs(planMatchups(teams, new Map()))).not.toContain(k("1", "2"));
     // Once both X teams have met Y and Z on other Game Days, X vs X (new) comes before a repeat.
     const met = new Map([k("1", "3"), k("1", "4"), k("2", "3"), k("2", "4")].map((x) => [x, 1]));
     expect(pairs(planMatchups(teams, met))).toEqual([k("1", "2"), k("3", "4")].sort());
+  });
+
+  it("never pairs a REC team with a COMP team, even if that leaves teams short", () => {
+    const p = planMatchups([t("1", 1, "X", 4, "REC"), t("2", 1, "Y", 4, "COMP"), t("3", 1, "Z", 4, "REC")], new Map());
+    expect(pairs(p)).toEqual([k("1", "3")]);
+    expect(p.short).toEqual([{ id: "2", games: 1 }]);
+    const alone = planMatchups([t("1", 1, "X", 4, "REC"), t("2", 1, "Y", 4, "COMP")], new Map());
+    expect(alone.pairs).toEqual([]);
   });
 
   it("an odd number of games leaves one team short", () => {
@@ -94,5 +102,32 @@ describe("planning matchups", () => {
     expect(assignHome(games, fresh, today).filter((x) => x === "a")).toHaveLength(1);
     // A side kept from before isn't changed.
     expect(assignHome([{ a: "1", b: "2", fixed: "a" }], teams)).toEqual(["a"]);
+  });
+
+  it("a coach with several teams: all home or all away, even over alternating", () => {
+    const h = (club: string, last: HomeTeam["last"], coach?: string): HomeTeam => ({ club, last, homeGames: 0, coach });
+    // Coach C has teams 1 and 3. Team 1 was away last time (so home now); team 3 was home last time but goes with it.
+    const teams = new Map([
+      ["1", h("X", "A", "C")],
+      ["2", h("Y", null)],
+      ["3", h("X", "H", "C")],
+      ["4", h("Y", null)],
+    ]);
+    const games = [
+      { a: "1", b: "2" },
+      { a: "3", b: "4" },
+    ];
+    expect(assignHome(games, teams)).toEqual(["a", "a"]);
+    // The coach's team in another division is already away today: this one is away too.
+    expect(assignHome([{ a: "1", b: "2" }], teams, new Map(), new Map([["C", "A"]]))).toEqual(["b"]);
+  });
+
+  it("a coach's teams play the same organization where they can", () => {
+    // Coach C's other team plays GPS today; team 1 (C's) picks the GPS team over the others of the same grade.
+    const teams = [{ ...t("1", 1, "McCallie"), coach: "C" }, t("2", 1, "Baylor"), t("3", 1, "GPS"), t("4", 1, "Lookout")];
+    const p = planMatchups(teams, new Map(), 300, new Map([["C", new Set(["GPS"])]]));
+    expect(pairs(p)).toContain(k("1", "3"));
+    // Without the coach's other game, nothing prefers GPS, but every team still gets its game.
+    expect(planMatchups(teams, new Map()).short).toEqual([]);
   });
 });

@@ -151,9 +151,11 @@ export function PlayerTeamButton({ registrantId, name }: { registrantId: string;
                   <p className="text-sm text-zinc-500">None booked.</p>
                 )}
               </section>
-              <p className="text-xs text-zinc-400">
-                Rostered by {team.rosteredBy}, {new Date(team.rosteredAt).toLocaleDateString("en-US", { timeZone: TZ })}
-              </p>
+              {team.rosteredBy && (
+                <p className="text-xs text-zinc-400">
+                  Rostered by {team.rosteredBy}, {new Date(team.rosteredAt).toLocaleDateString("en-US", { timeZone: TZ })}
+                </p>
+              )}
             </>
           )}
         </div>

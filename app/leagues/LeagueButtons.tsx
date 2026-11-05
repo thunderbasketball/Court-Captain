@@ -195,6 +195,7 @@ export function DateChips({
   off,
   teamOff,
   canChange,
+  who,
 }: {
   org: string;
   teamId: string;
@@ -206,6 +207,7 @@ export function DateChips({
   off: Record<string, string>;
   teamOff: string[];
   canChange: boolean;
+  who: boolean; // Owners and Admins see who took a team out
 }) {
   const router = useRouter();
   const [busy, start] = useTransition();
@@ -248,7 +250,7 @@ export function DateChips({
             {note}
           </button>
         ) : (
-          <span className={cls} title={off[what] && !mine ? `Taken out by ${off[what]}` : undefined}>
+          <span className={cls} title={who && off[what] && !mine ? `Taken out by ${off[what]}` : undefined}>
             {text}
             {note}
           </span>

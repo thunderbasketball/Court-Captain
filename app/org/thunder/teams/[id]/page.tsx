@@ -28,7 +28,7 @@ import { scheduledGames } from "@/lib/scenic-games";
 import { easternDate } from "@/lib/time";
 import { LeagueGames } from "../../../../LeagueGames";
 import { AddStaffButton, DeleteTeamButton, RemoveStaffButton, TeamEditForm } from "./TeamEditor";
-import { hasArea, isThunderAdmin } from "@/lib/org-admin";
+import { hasArea, isThunderAdmin, seesWho } from "@/lib/org-admin";
 
 export default function TeamPage({ params, searchParams }: PageProps<"/org/thunder/teams/[id]">) {
   return (
@@ -69,6 +69,8 @@ async function Team({
     canEvaluate(db, user, team.id),
   ]);
   const players = roster ?? [];
+  // Who did it (Created by, Added by, Rostered by, booked by) shows only to Owners and Admins.
+  const who = await seesWho(db, user, "thunder");
   // Every parent's cell and email once, for one group text or email to the team's families.
   const parentCells = [...new Set(players.flatMap((p) => p.parents.flatMap((g) => (g.cell ? [g.cell] : []))))];
   const parentEmails = [...new Set(players.flatMap((p) => p.parents.flatMap((g) => (g.email ? [g.email.toLowerCase()] : []))))];
@@ -168,7 +170,7 @@ async function Team({
                 {team.practiceLocations.length > 0 && (
                   <p className="text-sm text-zinc-500 dark:text-zinc-400">Practices: {team.practiceLocations.join(", ")}</p>
                 )}
-                <p className="mt-1 text-xs text-zinc-400">Created by {team.createdBy}</p>
+                {who && <p className="mt-1 text-xs text-zinc-400">Created by {team.createdBy}</p>}
                 {!team.staff.some((x) => x.role === "HeadCoach") && !team.waitingCoach && <MustBeEntered what="COACH INFO" />}
                 {team.waitingCoach && <MustBeEntered what="COACH CELL" />}
                 {(team.waitingCoach || team.staff.some((x) => x.role === "HeadCoach" && !x.email)) && (
@@ -263,7 +265,7 @@ async function Team({
                     )
                   )}
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs">Added by {s.addedBy}</p>
+                    <p className="text-xs">{who && `Added by ${s.addedBy}`}</p>
                     {canEditStaff && (s.role !== "HeadCoach" || asDirector) && (
                       <RemoveStaffButton
                         teamId={team.id}
@@ -317,7 +319,8 @@ async function Team({
                       {p.firstName} <span className="font-semibold">{p.lastName}</span>
                     </span>
                     <span className="block text-xs text-zinc-400">
-                      {gradeLabel(p.grade)} · Rostered by {p.rosteredBy}
+                      {gradeLabel(p.grade)}
+                      {who && ` · Rostered by ${p.rosteredBy}`}
                       {!p.registered && <span className="text-amber-700 dark:text-amber-400"> · no longer in registrations</span>}
                     </span>
                     {p.parents.map((g, i) => (
@@ -362,7 +365,7 @@ async function Team({
                 {uniforms.some((u) => u.late) && " ✱ Uniform added after registration."}
               </p>
             </div>
-            <UniformsBoard teamId={team.id} rows={uniforms} />
+            <UniformsBoard teamId={team.id} rows={who ? uniforms : uniforms.map((r) => ({ ...r, updatedBy: null }))} who={who} />
           </section>
         )}
         {show("practices") && (
@@ -390,7 +393,7 @@ async function Team({
                   </Link>
                   <span className="text-right text-zinc-500">
                     {p.gym} {p.court}
-                    {p.bookedBy && <span className="block text-xs text-zinc-400">by {p.bookedBy}</span>}
+                    {who && p.bookedBy && <span className="block text-xs text-zinc-400">by {p.bookedBy}</span>}
                   </span>
                 </li>
               ))}

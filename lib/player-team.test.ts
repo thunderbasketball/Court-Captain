@@ -37,7 +37,9 @@ describe("player team", () => {
       `insert into teams (name, gender, grades, grade_sort, level, created_by) values ('4G Coach', 'Girls', '{4}', 4, 'REC', 'x') returning id::text`,
     );
     const team = t.rows[0].id;
-    await db.pool.query(`insert into team_staff (team_id, coach_id, role, added_by) values ($1, '5550001', 'HeadCoach', 'x')`, [team]);
+    await db.pool.query(`insert into team_staff (team_id, coach_id, role, added_by) values ($1, '5550001', 'HeadCoach', 'x')`, [
+      team,
+    ]);
     await db.pool.query(
       `insert into team_players (team_id, registrant_id, first_name, last_name, gender, grade, grade_sort, rostered_by, rostered_at)
        values ($1, 'R1', 'Amy', 'P', 'Girls', '4', 4, 'Dee X', now())`,
@@ -56,7 +58,15 @@ describe("player team", () => {
 
   it("shows the player's team, its staff and upcoming practices only", async () => {
     const r = await playerTeam(deps(), dir, "R1");
-    expect(r).toMatchObject({ name: "4G Coach", level: "REC", rosteredBy: "Dee X", staff: [{ role: "HeadCoach", name: "Cal Coach" }] });
+    // A Director (not an Admin) doesn't see who rostered the player; an Owner or Admin does.
+    expect(r).toMatchObject({
+      name: "4G Coach",
+      level: "REC",
+      rosteredBy: null,
+      staff: [{ role: "HeadCoach", name: "Cal Coach" }],
+    });
+    await grant(db.pool, "9913694 thunder Admin");
+    expect(await playerTeam(deps(), dir, "R1")).toMatchObject({ rosteredBy: "Dee X" });
     expect(r?.practices).toHaveLength(1); // the past one and the open slot are left out
     expect(r?.practices[0]).toMatchObject({ gym: "Action Church", court: "North" });
   });

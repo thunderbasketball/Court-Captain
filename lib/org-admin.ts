@@ -62,6 +62,16 @@ export async function isOrgAdmin(pool: Pick<Queryable, "query">, coachId: string
   return r.rows[0].ok;
 }
 
+// Who did it (Added by, Rostered by, Set by, Booked by, changed by…) shows only to the organization's Owners and Admins
+// (Owners also hold Admin; CourtCaptain staff pass too). It's still recorded for everyone.
+export async function seesWho(
+  pool: Pick<Queryable, "query">,
+  viewer: Pick<SessionUser, "coachId">,
+  org: OrgSlug,
+): Promise<boolean> {
+  return isOrgAdmin(pool, viewer.coachId, org);
+}
+
 // The areas this organization offers: those whose features it has.
 export async function orgAreas(pool: Pick<Queryable, "query">, org: OrgSlug) {
   const has = await orgFeatures(pool, org);

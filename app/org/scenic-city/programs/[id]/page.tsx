@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { currentScenic } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
+import { seesWho } from "@/lib/org-admin";
 import { REG_OPTIONS, entryLine, money } from "@/lib/program-options";
 import { requireFeature } from "@/lib/features-server";
 import { formatCell } from "@/lib/phone";
@@ -49,6 +50,7 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
   const p = await getProgram({ pool: db, now: () => new Date() }, user, (await params).id);
   if (!p) notFound();
   const manage = p.canManage && scenic.role === "Director";
+  const who = await seesWho(db, user, "scenic-city"); // Owners and Admins see who did it
   const schedule = p.canSchedule && scenic.role === "Director";
   const pick = schedule || manage; // check boxes by teams, for one action on many
   // Other programs with divisions, to copy from when adding divisions.
@@ -121,10 +123,12 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
               {p.teams} in {p.divisionList.length} division{p.divisionList.length === 1 ? "" : "s"}
             </dd>
           </dl>
-          <p className="mt-2 text-xs text-zinc-400">
-            Created by {p.createdBy}
-            {p.updatedBy !== p.createdBy && ` · last changed by ${p.updatedBy}`}
-          </p>
+          {who && (
+            <p className="mt-2 text-xs text-zinc-400">
+              Created by {p.createdBy}
+              {p.updatedBy !== p.createdBy && ` · last changed by ${p.updatedBy}`}
+            </p>
+          )}
           {manage && (
             <div className="mt-3 flex items-center gap-2">
               <ProgramEditor program={p} />
@@ -190,18 +194,18 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
         )}
 
         <PickTeams programId={p.id} canRemove={schedule} canWithdraw={manage}>
-          {(["Boys", "Girls"] as const).map((gender) => {
+          {(["Coed", "Boys", "Girls"] as const).map((gender) => {
             const mine = shown.filter((d) => d.gender === gender);
             if (!mine.length) return null;
             return (
               <section
                 key={gender}
-                className={`space-y-3 rounded-2xl p-3 ${gender === "Boys" ? "bg-sky-100/70 dark:bg-sky-500/10" : "bg-pink-100/70 dark:bg-pink-500/10"}`}
+                className={`space-y-3 rounded-2xl p-3 ${gender === "Boys" ? "bg-sky-100/70 dark:bg-sky-500/10" : gender === "Coed" ? "bg-lime-100/70 dark:bg-lime-500/10" : "bg-pink-100/70 dark:bg-pink-500/10"}`}
               >
                 <h2
-                  className={`px-1 text-sm font-semibold tracking-wide uppercase ${gender === "Boys" ? "text-sky-800 dark:text-sky-300" : "text-pink-800 dark:text-pink-300"}`}
+                  className={`px-1 text-sm font-semibold tracking-wide uppercase ${gender === "Boys" ? "text-sky-800 dark:text-sky-300" : gender === "Coed" ? "text-lime-800 dark:text-lime-300" : "text-pink-800 dark:text-pink-300"}`}
                 >
-                  {gender}
+                  {gender === "Coed" ? "Coed Pre-K" : gender}
                 </h2>
                 {mine.map((d) => (
                   <GroupCard key={d.id} title={d.label} count={d.teams} defaultOpen={false}>
@@ -251,10 +255,13 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
                                             </p>
                                           )}
                                           <p className="text-xs text-zinc-500">
-                                            Registered by {t.registeredBy}
-                                            {t.movedBy && ` · moved by ${t.movedBy}`}
-                                            {manage && t.paidSetBy && ` · ${t.paid ? "paid" : "unpaid"} per ${t.paidSetBy}`}
-                                            {t.removedBy && ` · taken out of the program by ${t.removedBy}`}
+                                            {who ? `Registered by ${t.registeredBy}` : "Registered"}
+                                            {t.movedBy && ` · moved${who ? ` by ${t.movedBy}` : ""}`}
+                                            {manage &&
+                                              who &&
+                                              t.paidSetBy &&
+                                              ` · ${t.paid ? "paid" : "unpaid"} per ${t.paidSetBy}`}
+                                            {t.removedBy && ` · taken out of the program${who ? ` by ${t.removedBy}` : ""}`}
                                           </p>
                                         </div>
                                         <div className="flex shrink-0 flex-col items-end gap-2">

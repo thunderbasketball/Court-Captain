@@ -28,7 +28,7 @@ export default function TeamRow({
   href: string;
   name: string;
   altName: string | null;
-  gender: "Boys" | "Girls";
+  gender: "Boys" | "Girls" | "Coed";
   level: string;
   sub: string; // e.g. "2nd Grade · Action Church"
   hasCoach: boolean;
@@ -43,7 +43,7 @@ export default function TeamRow({
       <Link href={href} className="-mx-2 flex gap-3 rounded-xl px-2 py-1 hover:bg-zinc-50 dark:hover:bg-white/5">
         <span
           className={`flex size-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white ${
-            gender === "Boys" ? "bg-thunder-blue" : "bg-pink-600"
+            gender === "Boys" ? "bg-thunder-blue" : gender === "Coed" ? "bg-emerald-600" : "bg-pink-600"
           }`}
         >
           {name.split(" ")[0]}
@@ -92,6 +92,7 @@ export const TEAM_GROUPS = [
   { key: "rec-girls", label: "REC – Girls", level: "REC", gender: "Girls" },
   { key: "comp-boys", label: "COMP – Boys", level: "COMP", gender: "Boys" },
   { key: "comp-girls", label: "COMP – Girls", level: "COMP", gender: "Girls" },
+  { key: "prek-coed", label: "Pre-K – Coed", level: "REC", gender: "Coed" }, // Scenic City Leagues' Pre-K teams
 ] as const;
 
 export function teamTabs<T extends { level: string; gender: string }>(teams: T[], view: unknown, register: boolean) {

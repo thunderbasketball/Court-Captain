@@ -14,6 +14,10 @@ import {
   baseName,
   existingTeams,
   gradesOk,
+  gradeNum,
+  isGender,
+  preKProblem,
+  type Gender,
   leagueName,
   namePlanner,
   placeName,
@@ -102,13 +106,7 @@ async function clubFor(q: Pick<Queryable, "query">, viewer: SessionUser, v: unkn
 }
 
 // The team's name by the rule, with the club's Abbreviation first, unique within the club. Lock the club first.
-async function clubTeamName(
-  q: Pick<Queryable, "query">,
-  club: Club,
-  gender: "Boys" | "Girls",
-  grades: string[],
-  last: string | null,
-) {
+async function clubTeamName(q: Pick<Queryable, "query">, club: Club, gender: Gender, grades: string[], last: string | null) {
   await q.query("select pg_advisory_xact_lock(hashtext('scenic-club:' || $1))", [club.id]);
   const teams = (await q.query<NamedTeam>("select id::text, name from scenic_teams where partner_id = $1", [club.id])).rows;
   // Numbered, with any of the club's teams already named that ("RA 3G Campbell 1", "RA 3G Campbell 2").
@@ -147,7 +145,7 @@ async function insertTeam(
     waiting?: { first: string; last: string } | null; // a Head Coach named without a cell yet
   },
 ) {
-  const nums = t.grades.map((g) => (g === "K" ? 0 : Number(g))).sort((a, b) => a - b);
+  const nums = t.grades.map(gradeNum).sort((a, b) => a - b);
   const r = await q.query<{ id: string }>(
     `insert into scenic_teams (name, gender, grade_low, grade, level, partner_id, coach_id, created_by, created_at, updated_by, updated_at, alt_name, import_id, coach_first, coach_last)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $8, $9, $10, $11, $12, $13) returning id::text`,
@@ -193,12 +191,14 @@ export async function addClubTeam(
 ): Promise<Result<{ id: string; name: string }>> {
   return run(async () => {
     await mustDirect(deps.pool, viewer);
-    const gender = input.gender === "Boys" || input.gender === "Girls" ? input.gender : null;
-    if (!gender) throw new TeamError("Pick Boys or Girls.");
+    const gender = isGender(input.gender) ? input.gender : null;
+    if (!gender) throw new TeamError("Pick Boys, Girls or Coed.");
     const grades = Array.isArray(input.grades) ? [...new Set(input.grades as string[])] : [];
-    if (!gradesOk(grades)) throw new TeamError("Pick one grade, or two next to each other.");
+    if (!gradesOk(grades, true)) throw new TeamError("Pick one grade, or two next to each other.");
     const level = LEVELS.find((l) => l === input.level);
     if (!level) throw new TeamError("Pick COMP or REC.");
+    const preK = preKProblem(gender, grades, level);
+    if (preK) throw new TeamError(preK);
     const alt = altOf(input.altName);
     return withTx(deps.pool, async (q) => {
       const club = await clubFor(q, viewer, input.club);

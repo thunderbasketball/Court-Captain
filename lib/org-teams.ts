@@ -16,6 +16,11 @@ import {
   baseName,
   existingTeams,
   gradesOk,
+  gradeNum,
+  gradeStr,
+  isGender,
+  preKProblem,
+  type Gender,
   namePlanner,
   placeName,
   settleName,
@@ -49,7 +54,7 @@ export type OrgTeamCoach = { id: string; name: string; cell: string; email: stri
 export type OrgTeam = {
   id: string;
   name: string;
-  gender: "Boys" | "Girls";
+  gender: Gender;
   grade: string; // "3rd" or "3rd/4th"
   level: "COMP" | "REC";
   altName: string | null; // e.g. "Bolts"
@@ -63,7 +68,7 @@ async function teams(q: Pick<Queryable, "query">, org: string, onlyFor: string |
   const r = await q.query<{
     id: string;
     name: string;
-    gender: "Boys" | "Girls";
+    gender: Gender;
     grade_low: number;
     grade: number;
     level: "COMP" | "REC";
@@ -83,7 +88,7 @@ async function teams(q: Pick<Queryable, "query">, org: string, onlyFor: string |
      from org_teams t
      where t.org = $1 and ($2::text is null or exists (select 1 from org_team_coaches c where c.team_id = t.id and c.coach_id = $2))
        and ($3::bigint is null or t.id = $3)
-     order by t.gender, t.grade, t.grade_low, lower(t.name)`,
+     order by t.grade = -1 desc, t.gender, t.grade, t.grade_low, lower(t.name)`,
     [org, onlyFor, id],
   );
   return r.rows.map((t) => ({
@@ -171,9 +176,6 @@ async function mustManage(q: Pick<Queryable, "query">, viewer: SessionUser, org:
 // active user, or a new person { first, last, cell }) and an optional Alternate name. The name is made from them.
 export type OrgTeamInput = { gender: unknown; grades: unknown; level: unknown; headCoach?: unknown; altName?: unknown };
 
-const gradeNum = (g: string) => (g === "K" ? 0 : Number(g));
-const gradeStr = (n: number) => (n === 0 ? "K" : String(n));
-
 // An optional Alternate name ("Bolts"): letters, numbers and simple punctuation, never a formula. Blank: none.
 function cleanAlt(v: unknown): string | null {
   if (typeof v !== "string" || !v.trim()) return null;
@@ -206,7 +208,7 @@ export async function resolveHead(q: PoolClient, v: unknown, now: Date): Promise
 async function ruleName(
   q: Pick<Queryable, "query">,
   org: string,
-  gender: "Boys" | "Girls",
+  gender: Gender,
   grades: string[],
   last: string | null,
   exceptId: string | null,
@@ -250,7 +252,7 @@ const lockTeams = (q: Pick<Queryable, "query">, org: string) =>
 // follows ("ER 5B Harris").
 async function renameOrgTeam(q: PoolClient, org: string, teamId: string) {
   await lockTeams(q, org);
-  const t = await q.query<{ name: string; gender: "Boys" | "Girls"; grade_low: number; grade: number; last: string | null }>(
+  const t = await q.query<{ name: string; gender: Gender; grade_low: number; grade: number; last: string | null }>(
     `select t.name, t.gender, t.grade_low, t.grade, coalesce(u.last_name, t.coach_last) as last from org_teams t
      left join org_team_coaches c on c.team_id = t.id and c.role = 'HeadCoach' left join users u on u.coach_id = c.coach_id
      where t.id = $1`,
@@ -272,12 +274,14 @@ export async function createOrgTeam(
 ): Promise<Result<{ id: string; name: string }>> {
   return run(async () => {
     const o = await mustManage(deps.pool, viewer, org);
-    const gender = input.gender === "Boys" || input.gender === "Girls" ? input.gender : null;
-    if (!gender) throw new TeamError("Pick Boys or Girls.");
+    const gender = isGender(input.gender) ? input.gender : null;
+    if (!gender) throw new TeamError("Pick Boys, Girls or Coed.");
     const grades = Array.isArray(input.grades) ? [...new Set(input.grades as string[])] : [];
-    if (!gradesOk(grades)) throw new TeamError("Pick one grade, or two next to each other.");
+    if (!gradesOk(grades, true)) throw new TeamError("Pick one grade, or two next to each other.");
     const level = LEVELS.find((l) => l === input.level);
     if (!level) throw new TeamError("Pick COMP or REC.");
+    const preK = preKProblem(gender, grades, level);
+    if (preK) throw new TeamError(preK);
     const alt = cleanAlt(input.altName);
     return withTx(deps.pool, async (q) => {
       await lockTeams(q, o);

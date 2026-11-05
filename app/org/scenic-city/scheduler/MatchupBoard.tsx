@@ -1,12 +1,13 @@
 "use client";
 
-import { TeamName, isDevTeam } from "../../../ui";
+import { CoachBadge, LevelTag, TeamName, isDevTeam, type CoachTag } from "../../../ui";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, useConfirm } from "../../../client-ui";
 import { createMatchups, saveMatchups } from "../actions";
 
-export type BoardTeam = { id: string; name: string; group: string; need: number };
+// group: "4th REC"; level: REC or COMP; coach: set when its coach has another team playing that day.
+export type BoardTeam = { id: string; name: string; group: string; level: string; coach?: CoachTag; need: number };
 // A game: two sides; one empty side is TBD (no opponent yet). home: the home side as saved (unknown once changed).
 type Game = { key: string; a: string | null; b: string | null; home: Side | null };
 export type BoardGame = { a: string | null; b: string | null; home: Side | null };
@@ -105,6 +106,15 @@ export function MatchupBoard({
         back[fromSlot[1]] = was && back[fromSlot[1] === "a" ? "b" : "a"] !== was ? was : null;
       }
     }
+    // REC never plays COMP (a swap can't make one either).
+    const mixed = list.find((g) => g.a && g.b && team.get(g.a)?.level !== team.get(g.b)?.level);
+    if (mixed) {
+      const [x, y] = [team.get(mixed.a!)!, team.get(mixed.b!)!];
+      return setNote({
+        tone: "red",
+        lines: [`${x.name} is ${x.level} and ${y.name} is ${y.level}: REC and COMP teams never play each other.`],
+      });
+    }
     list = list.filter((g) => g.a || g.b);
     setGames(list);
   }
@@ -167,9 +177,13 @@ export function MatchupBoard({
                   : "bg-white ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/15"
         }`}
       >
-        <span className="block truncate font-medium">{t ? <TeamName name={t.name} /> : "A removed team"}</span>
+        <span className="flex items-center gap-1 font-medium">
+          <span className="min-w-0 truncate">{t ? <TeamName name={t.name} /> : "A removed team"}</span>
+          <CoachBadge tag={t?.coach} />
+        </span>
         <span className={`block text-[11px] ${on || dragging === id ? "text-white/80" : "text-zinc-500"}`}>
-          {t?.group}
+          {t && <LevelTag level={t.level} className="mr-1" />}
+          {t?.group.replace(/ (REC|COMP)$/, "")}
           {today && <span className="ml-1 font-semibold text-red-700 dark:text-red-300">· Plays today</span>}
           {before && (
             <span className="ml-1 font-semibold text-amber-800 dark:text-amber-300">
@@ -232,11 +246,17 @@ export function MatchupBoard({
           const met = g.a && g.b ? otherDays[pairKey(g.a, g.b)] : undefined;
           const twice = (g.a || g.b) && dupes.has(gameKey(g));
           const one = !g.a !== !g.b; // one team: plays TBD
+          const mixed = g.a && g.b && team.get(g.a)?.level !== team.get(g.b)?.level;
           return (
             <li key={g.key} className="rounded-lg bg-zinc-50 p-1 dark:bg-white/5">
-              {/* A tag only when something needs attention: the pair meets on another Game Day, or twice today. */}
-              {(met || twice) && (
+              {/* A tag only when something needs attention: REC against COMP (an old game: no longer allowed), the pair meets on another Game Day, or twice today. */}
+              {(met || twice || mixed) && (
                 <div className="mb-0.5 flex justify-end gap-2 px-1 text-[11px]">
+                  {mixed && (
+                    <span className="rounded-full bg-red-100 px-1.5 font-semibold text-red-800 dark:bg-red-500/15 dark:text-red-300">
+                      REC vs COMP: not allowed, change it
+                    </span>
+                  )}
                   {met && (
                     <span className="rounded-full bg-amber-100 px-1.5 font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">
                       Also {met.map(shortDay).join(", ")}

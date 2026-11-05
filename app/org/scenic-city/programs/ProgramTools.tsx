@@ -23,7 +23,8 @@ import RegisterChoices from "./RegisterChoices";
 
 const KINDS = ["League", "Circuit", "Tournament"] as const;
 const GRADES = Array.from({ length: 13 }, (_, g) => g);
-const gradeName = (g: number) => (g === 0 ? "K" : g === 1 ? "1st" : g === 2 ? "2nd" : g === 3 ? "3rd" : `${g}th`);
+const gradeName = (g: number) =>
+  g === -1 ? "Pre-K" : g === 0 ? "K" : g === 1 ? "1st" : g === 2 ? "2nd" : g === 3 ? "3rd" : `${g}th`;
 const navyBtn =
   "rounded-full bg-scenic-navy px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-scenic-navy";
 const smallBtn = "rounded-full px-3 py-1 text-xs font-medium ring-1 disabled:opacity-50";
@@ -529,57 +530,75 @@ export function AddDivision({
           )}
           <p className="text-sm text-zinc-500">
             A division is a gender and a group of grades (e.g. Boys K–1st). Each grade gets a group for each level you pick, each
-            with Pool A. A registering team goes to the smallest pool of its grade and level (a 3rd/4th team plays as 4th).
+            with Pool A. A registering team goes to the smallest pool of its grade and level (a 3rd/4th team plays as 4th). Coed
+            Pre-K (ages 3 and 4) is its own division, REC only.
           </p>
           <div className="flex flex-wrap gap-2">
             {["Boys", "Girls"].map((g) => (
-              <button key={g} type="button" className={pillCls(f.gender === g)} onClick={() => setF({ ...f, gender: g })}>
+              <button
+                key={g}
+                type="button"
+                className={pillCls(f.gender === g)}
+                onClick={() => setF({ ...f, gender: g, ...(f.gender === "Coed" ? { from: "", to: "" } : {}) })}
+              >
                 {g}
               </button>
             ))}
+            <button
+              type="button"
+              className={pillCls(f.gender === "Coed")}
+              onClick={() => setF({ gender: "Coed", from: "-1", to: "", levels: ["REC"] })}
+            >
+              Coed Pre-K
+            </button>
             <span className="w-2" />
             {["REC", "COMP"].map((l) => (
               <button
                 key={l}
                 type="button"
-                className={pillCls(f.levels.includes(l))}
+                disabled={f.gender === "Coed" && l === "COMP"}
+                className={`${pillCls(f.levels.includes(l))} disabled:opacity-40`}
                 onClick={() => setF({ ...f, levels: f.levels.includes(l) ? f.levels.filter((x) => x !== l) : [...f.levels, l] })}
               >
                 {l}
               </button>
             ))}
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block">
-              <span className={fieldLabel}>From grade</span>
-              <select
-                className={inputCls}
-                value={f.from}
-                onChange={(e) => setF({ ...f, from: e.target.value, to: f.to && f.to < e.target.value ? "" : f.to })}
-                required
-              >
-                <option value="" disabled>
-                  Pick…
-                </option>
-                {GRADES.map((g) => (
-                  <option key={g} value={g}>
-                    {gradeName(g)}
+          {f.gender === "Coed" ? (
+            <p className="text-sm text-zinc-600 dark:text-zinc-300">Pre-K (ages 3 and 4), Coed, REC.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className={fieldLabel}>From grade</span>
+                <select
+                  className={inputCls}
+                  value={f.from}
+                  onChange={(e) => setF({ ...f, from: e.target.value, to: f.to && f.to < e.target.value ? "" : f.to })}
+                  required
+                >
+                  <option value="" disabled>
+                    Pick…
                   </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className={fieldLabel}>To grade</span>
-              <select className={inputCls} value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })}>
-                <option value="">Same</option>
-                {GRADES.filter((g) => f.from === "" || g > Number(f.from)).map((g) => (
-                  <option key={g} value={g}>
-                    {gradeName(g)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+                  {GRADES.map((g) => (
+                    <option key={g} value={g}>
+                      {gradeName(g)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className={fieldLabel}>To grade</span>
+                <select className={inputCls} value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })}>
+                  <option value="">Same</option>
+                  {GRADES.filter((g) => f.from === "" || g > Number(f.from)).map((g) => (
+                    <option key={g} value={g}>
+                      {gradeName(g)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
           {error && <p className="text-sm text-red-600">{error}</p>}
           <div className="flex items-center gap-3">
             <button type="submit" disabled={busy || !f.gender || !f.levels.length || f.from === ""} className={navyBtn}>

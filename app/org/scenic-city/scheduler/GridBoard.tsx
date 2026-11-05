@@ -1,6 +1,6 @@
 "use client";
 
-import { TeamName } from "../../../ui";
+import { CoachBadge, LevelTag, TeamName, type CoachTag } from "../../../ui";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Alert } from "../../../client-ui";
@@ -14,9 +14,12 @@ export type GridTeam = {
   division: string;
   from: string;
   grade: number; // its grade group's grade, for sorting youngest first
+  level: string; // REC or COMP
+  coach?: CoachTag; // its coach has another team playing that day
 };
 export type GridGame = {
   id: string;
+  divisionId: string;
   home: GridTeam | null; // the home team: the game belongs at its school's or organization's gym (null: TBD)
   away: GridTeam | null; // null: TBD (one of the two is always a team)
   league: string | null;
@@ -31,15 +34,25 @@ export type GridGymView = {
   address: string | null;
   opens: string;
   closes: string;
-  courts: { id: string; name: string; starts: string; ends: string }[];
+  courts: { id: string; name: string; starts: string; ends: string; divisions: string[] | null }[]; // divisions: only these (null: any)
   blocks: [string, string][];
 };
 
-// Boys' games blue, Girls' pink (the division name starts with the gender).
-const genderCls = (x: GridGame) =>
-  (x.home ?? x.away)!.division.startsWith("Girls")
+// Boys' games blue, Girls' pink, Coed (Pre-K) lime (the division name starts with the gender).
+const genderCls = (x: GridGame) => {
+  const d = (x.home ?? x.away)!.division;
+  return d.startsWith("Girls")
     ? "bg-pink-50 ring-pink-300 dark:bg-pink-500/15 dark:ring-pink-400/40"
-    : "bg-sky-50 ring-sky-300 dark:bg-sky-500/15 dark:ring-sky-400/40";
+    : d.startsWith("Coed")
+      ? "bg-lime-50 ring-lime-400 dark:bg-lime-500/15 dark:ring-lime-400/40"
+      : "bg-sky-50 ring-sky-300 dark:bg-sky-500/15 dark:ring-sky-400/40";
+};
+// The game's level: REC or COMP, or both (orange) when a REC team plays a COMP team.
+function GameLevel({ x }: { x: GridGame }) {
+  const levels = [...new Set([x.home, x.away].flatMap((t) => (t ? [t.level] : [])))];
+  if (levels.length === 1) return <LevelTag level={levels[0]} />;
+  return <span className="inline-block rounded bg-orange-500 px-1 text-[10px] leading-4 font-bold text-white">REC/COMP</span>;
+}
 const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
 const label = (t: string) => {
   const [h, m] = t.split(":").map(Number);
@@ -50,7 +63,17 @@ const label = (t: string) => {
 // game (or tap it, then tap where it goes) from the gym's selection area (its home games not yet placed; when none,
 // the games with no home gym) into an open slot, between slots, or back to a selection area to take it off the grid.
 // Each move is saved at once, and checked on the server (open, free, neither team already playing then).
-export function GridBoard({ gyms, games: initial, minutes }: { gyms: GridGymView[]; games: GridGame[]; minutes: number }) {
+export function GridBoard({
+  gyms,
+  games: initial,
+  minutes,
+  divisions,
+}: {
+  gyms: GridGymView[];
+  games: GridGame[];
+  minutes: number;
+  divisions: Record<string, string>; // division id → "Boys 3rd–4th"
+}) {
   const router = useRouter();
   const [games, setGames] = useState(initial);
   // After a save the page refreshes with the server's games: take them in without starting over, so open gyms stay
@@ -75,6 +98,11 @@ export function GridBoard({ gyms, games: initial, minutes }: { gyms: GridGymView
   const onGrid = (x: GridGame) => !!x.court && !!x.starts && !!courts.get(x.court)?.gym.blocks.some(([s]) => s === x.starts);
   const homeless = (x: GridGame) => !hosts.has(x.home?.partnerId ?? "");
   const isHome = (x: GridGame, hostId: string) => !!x.home && x.home.partnerId === hostId;
+  // The court takes this game's division (Facilities → Courts; a court with none set takes any).
+  const fits = (x: GridGame, court: string) => {
+    const d = courts.get(court)?.divisions;
+    return !d || d.includes(x.divisionId);
+  };
   const at = (court: string, s: string) => games.find((x) => x.court === court && x.starts === s && onGrid(x));
   const ids = (x: GridGame) => [x.home, x.away].flatMap((t) => (t ? [t.id] : []));
   const shares = (x: GridGame, y: GridGame) => ids(x).some((n) => ids(y).includes(n));
@@ -93,6 +121,12 @@ export function GridBoard({ gyms, games: initial, minutes }: { gyms: GridGymView
     const g = games.find((x) => x.id === id);
     if (!g) return;
     if (slot && at(slot.court, slot.starts)) return setError("That slot already has a game. Move that game first.");
+    if (slot && !fits(g, slot.court)) {
+      const c = courts.get(slot.court)!;
+      return setError(
+        `${c.gym.name} ${c.name} isn't approved for ${divisions[g.divisionId] ?? "this division"} (Facilities → Courts).`,
+      );
+    }
     if (!slot && !onGrid(g)) return;
     const before = games;
     setGames(games.map((x) => (x.id === id ? { ...x, court: slot?.court ?? null, starts: slot?.starts ?? null } : x)));
@@ -127,6 +161,7 @@ export function GridBoard({ gyms, games: initial, minutes }: { gyms: GridGymView
       const placedAt = (x: GridGame) =>
         plan.has(x.id) ? plan.get(x.id) : onGrid(x) ? { court: x.court!, starts: x.starts! } : null;
       for (const g of moving) {
+        if (!fits(g, slot.court)) continue; // that court isn't approved for its division
         const free = times.find((t) => {
           const holder = games.find((y) => y.id !== g.id && placedAt(y)?.court === slot.court && placedAt(y)?.starts === t);
           if (holder) return false;
@@ -215,12 +250,12 @@ export function GridBoard({ gyms, games: initial, minutes }: { gyms: GridGymView
         }`}
       >
         <span className="block truncate">
-          <TeamName name={h.name} className="font-semibold" />
+          <GameLevel x={x} /> <TeamName name={h.name} className="font-semibold" /> <CoachBadge tag={x.home?.coach} />
           {hostId && isHome(x, hostId) && (
             <span className={`font-semibold ${on ? "" : "text-emerald-700 dark:text-emerald-300"}`}> (H)</span>
           )}
           <span className={on ? "text-white/80" : "text-zinc-500"}> vs </span>
-          <TeamName name={v.name} className="font-semibold" />
+          <TeamName name={v.name} className="font-semibold" /> <CoachBadge tag={x.away?.coach} />
           <span className={`text-[11px] ${on ? "text-white/80" : "text-zinc-500"}`}>
             {" "}
             · {h.group === v.group ? h.group : `${h.group}/${v.group}`}
@@ -255,7 +290,8 @@ export function GridBoard({ gyms, games: initial, minutes }: { gyms: GridGymView
       {active && (
         <p className="text-xs text-zinc-500">
           Tap or drop on an open slot. <span className="font-semibold text-red-600 dark:text-red-400">Red</span>: a team in this
-          game already plays then. Drop on a selection area to take it off the grid.
+          game already plays then. <span className="font-semibold text-red-700 dark:text-red-300">Dark red</span>: that court
+          isn&apos;t approved for this game&apos;s division. Drop on a selection area to take it off the grid.
         </p>
       )}
       {gyms.map((g) => {
@@ -315,6 +351,11 @@ export function GridBoard({ gyms, games: initial, minutes }: { gyms: GridGymView
                               {label(c.starts)} – {label(c.ends)}
                             </span>
                           )}
+                          {c.divisions && (
+                            <span className="block max-w-48 font-normal whitespace-normal text-zinc-500">
+                              Only {c.divisions.map((d) => divisions[d] ?? "another division").join(", ")}
+                            </span>
+                          )}
                         </th>
                       ))}
                     </tr>
@@ -336,19 +377,38 @@ export function GridBoard({ gyms, games: initial, minutes }: { gyms: GridGymView
                               </td>
                             );
                           const here = at(c.id, b[0]);
+                          const moving = active ? games.find((x) => x.id === active) : undefined;
+                          const barred = !here && !!moving && !fits(moving, c.id);
+                          const clash = !here && !barred && !!active && busy(b[0]);
+                          // Why a slot can't take the game: shown in the slot (a tooltip doesn't show while dragging) and on hover.
+                          const why = barred
+                            ? `${c.name} doesn't support ${divisions[moving!.divisionId] ?? "this division"}`
+                            : clash
+                              ? "A team in this game already plays then"
+                              : undefined;
                           return (
                             <td key={c.id} className="px-1 py-0.5">
                               <div
                                 {...target(key, { court: c.id, starts: b[0] })}
-                                className={`h-8 rounded-md ${here ? "" : "border border-dashed"} ${
-                                  !here && active && busy(b[0])
-                                    ? "border-red-400 bg-red-50 dark:bg-red-500/10"
-                                    : here
-                                      ? ""
-                                      : "border-emerald-400/60 bg-emerald-50/60 dark:border-emerald-400/30 dark:bg-emerald-500/5"
+                                title={why}
+                                className={`flex h-8 items-center justify-center rounded-md ${here ? "" : "border border-dashed"} ${
+                                  barred
+                                    ? "border-red-500 bg-red-200 dark:border-red-400 dark:bg-red-500/30"
+                                    : clash
+                                      ? "border-red-400 bg-red-50 dark:bg-red-500/10"
+                                      : here
+                                        ? ""
+                                        : "border-emerald-400/60 bg-emerald-50/60 dark:border-emerald-400/30 dark:bg-emerald-500/5"
                                 } ${over === key ? "ring-2 ring-scenic-navy dark:ring-white" : ""}`}
                               >
                                 {here && card(here, g.hostId, true)}
+                                {why && (
+                                  <span
+                                    className={`truncate px-1 text-[10px] font-semibold ${barred ? "text-red-900 dark:text-red-100" : "text-red-700 dark:text-red-300"}`}
+                                  >
+                                    {why}
+                                  </span>
+                                )}
                               </div>
                             </td>
                           );
@@ -404,9 +464,10 @@ export function GridBoard({ gyms, games: initial, minutes }: { gyms: GridGymView
                     className={`my-1 flex items-center justify-between gap-3 rounded-md px-2 py-1 ring-1 ${genderCls(x)}`}
                   >
                     <span className="min-w-0">
-                      <TeamName name={x.home?.name ?? "TBD"} className="font-medium" />
+                      <GameLevel x={x} /> <TeamName name={x.home?.name ?? "TBD"} className="font-medium" />{" "}
+                      <CoachBadge tag={x.home?.coach} />
                       <span className="text-zinc-500"> (H) vs </span>
-                      <TeamName name={x.away?.name ?? "TBD"} className="font-medium" />
+                      <TeamName name={x.away?.name ?? "TBD"} className="font-medium" /> <CoachBadge tag={x.away?.coach} />
                       <span className="block text-xs text-zinc-500">
                         {(x.home ?? x.away)!.division} · {[x.home, x.away].flatMap((t) => (t ? [t.from] : ["TBD"])).join(" vs ")}
                       </span>

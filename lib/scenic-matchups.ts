@@ -2,7 +2,9 @@
 // of Scheduling tap Create matchups: the division's teams playing that day are paired, each getting its games
 // guaranteed (1GG = one game, 2GG = two), never the same pair twice that day. Pairs that already met on the League's
 // other Game Days are avoided first, then teams from the same club, then teams from different grade groups.
-// Creating again replaces that division's matchups for the day.
+// Creating again replaces that division's matchups for the day. Create all matchups does every division that day.
+// A coach with more than one team: their teams are all home or all away that day, and play the same organization
+// where it can be (so an away coach goes to one gym).
 import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { getProgram, isScheduler, teamsByDate, type DateTeam } from "./scenic-programs";
@@ -12,7 +14,16 @@ type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
 
 // hadTbd: it already played TBD on another Game Day this season, so it shouldn't be the one left without an opponent.
-export type MatchTeam = { id: string; need: number; club: string; grade: number; level: string; hadTbd?: boolean };
+// coach: set when its coach has another team playing that day.
+export type MatchTeam = {
+  id: string;
+  need: number;
+  club: string;
+  grade: number;
+  level: string;
+  hadTbd?: boolean;
+  coach?: string;
+};
 export type Plan = { pairs: [string, string][]; short: { id: string; games: number }[] };
 
 const key = (a: string, b: string) => (BigInt(a) < BigInt(b) ? `${a}-${b}` : `${b}-${a}`);
@@ -27,17 +38,28 @@ function random(seed: number) {
   };
 }
 
-// Pairs teams for one day. `met`: how many times each pair (key a-b) already played on other days.
+// Pairs teams for one day. `met`: how many times each pair (key a-b) already played on other days. `coachOpp`: for a
+// coach with several teams, the organizations their teams already play that day (in other divisions).
 // Tries many orders and keeps the plan with the fewest games missing, then the fewest left short who already played TBD
 // this season, then the lowest cost.
-export function planMatchups(teams: MatchTeam[], met: Map<string, number>, tries = 300): Plan {
+export function planMatchups(
+  teams: MatchTeam[],
+  met: Map<string, number>,
+  tries = 300,
+  coachOpp: Map<string, Set<string>> = new Map(),
+): Plan {
   // In order of importance, each outweighing everything after it over a whole day's plan: a pair that already met on
-  // another Game Day, then two teams from the same organization (club), then grade and level differences.
+  // another Game Day, then two teams from the same organization (club), then grade differences, then a coach's team
+  // playing a different organization than their other teams. REC never plays COMP (not offered at all).
+  let opp = coachOpp;
+  const apart = (x: MatchTeam, other: MatchTeam) =>
+    x.coach && opp.get(x.coach)?.size && !opp.get(x.coach)!.has(other.club) ? 15 : 0;
   const cost = (a: MatchTeam, b: MatchTeam) =>
     (met.get(key(a.id, b.id)) ?? 0) * 1_000_000 +
     (a.club === b.club ? 10_000 : 0) +
     Math.abs(a.grade - b.grade) * 20 +
-    (a.level === b.level ? 0 : 10);
+    apart(a, b) +
+    apart(b, a);
   const rand = random(teams.length * 7919 + 17);
   let best: { pairs: [string, string][]; missing: number; tbd: number; cost: number; need: Map<string, number> } | null = null;
   for (let t = 0; t < tries; t++) {
@@ -46,12 +68,14 @@ export function planMatchups(teams: MatchTeam[], met: Map<string, number>, tries
       .sort((p, q) => p.r - q.r)
       .map((p) => p.x);
     const need = new Map(order.map((x) => [x.id, x.need]));
+    opp = new Map([...coachOpp].map(([k, v]) => [k, new Set(v)]));
     const today = new Set<string>();
     const pairs: [string, string][] = [];
     let total = 0;
     for (;;) {
       const open = order.filter((x) => need.get(x.id)! > 0);
-      const options = (a: MatchTeam) => open.filter((b) => b.id !== a.id && !today.has(key(a.id, b.id)));
+      // Never REC against COMP: a team only plays teams of its own level.
+      const options = (a: MatchTeam) => open.filter((b) => b.id !== a.id && b.level === a.level && !today.has(key(a.id, b.id)));
       // The team with the most games left goes first; then the one with the fewest possible opponents.
       const a = open
         .filter((x) => options(x).length)
@@ -63,6 +87,11 @@ export function planMatchups(teams: MatchTeam[], met: Map<string, number>, tries
       need.set(b.id, need.get(b.id)! - 1);
       pairs.push([a.id, b.id]);
       total += cost(a, b);
+      for (const [x, y] of [
+        [a, b],
+        [b, a],
+      ])
+        if (x.coach) opp.set(x.coach, (opp.get(x.coach) ?? new Set()).add(y.club));
     }
     const missing = [...need.values()].reduce((n, v) => n + v, 0);
     const tbd = teams.filter((x) => x.hadTbd && need.get(x.id)! > 0).length;
@@ -82,16 +111,36 @@ export function planMatchups(teams: MatchTeam[], met: Map<string, number>, tries
 
 // Home and away. Each team alternates: home on its last Game Day means away now, and away means home. Where that
 // doesn't decide it, each organization (club) gets about half its games at home that day (counting its games already
-// set in other divisions, `today`), then the team with fewer home games this season is home.
+// set in other divisions, `today`), then the team with fewer home games this season is home. Before all that, a coach
+// with several teams keeps them together: all home or all away (`coachSide`: what their teams already are that day).
 // A game: two teams, or one team against TBD (b null; side "a" = the team is home). `fixed`: a side already set
 // (a matchup kept from before), counted but not changed. Returns each game's home side.
-export type HomeTeam = { club: string; last: "H" | "A" | null; homeGames: number };
+export type HomeTeam = { club: string; last: "H" | "A" | null; homeGames: number; coach?: string };
 export function assignHome(
   games: { a: string; b: string | null; fixed?: "a" | "b" }[],
   teams: Map<string, HomeTeam>,
   today: Map<string, { home: number; total: number }> = new Map(),
+  coachSide: Map<string, "H" | "A"> = new Map(),
 ): ("a" | "b")[] {
   const org = new Map([...today].map(([k, v]) => [k, { ...v }]));
+  const coachAt = new Map(coachSide);
+  const setCoach = (g: { a: string; b: string | null }, side: "a" | "b") => {
+    for (const [id, s] of [
+      [g.a, "a"],
+      [g.b, "b"],
+    ] as const) {
+      const c = id && teams.get(id)?.coach;
+      if (c && !coachAt.has(c)) coachAt.set(c, s === side ? "H" : "A");
+    }
+  };
+  for (const g of games) if (g.fixed) setCoach(g, g.fixed);
+  // Splitting a coach: this side's home team's coach is away elsewhere that day, or its away team's coach is home.
+  const splits = (g: { a: string; b: string | null }, side: "a" | "b") => {
+    const [h, v] = side === "a" ? [g.a, g.b] : [g.b, g.a];
+    const ch = h && teams.get(h)?.coach;
+    const cv = v && teams.get(v)?.coach;
+    return (ch && coachAt.get(ch) === "A" ? 1 : 0) + (cv && coachAt.get(cv) === "H" ? 1 : 0);
+  };
   const count = (id: string | null, home: boolean, total: boolean) => {
     const c = id && teams.get(id)?.club;
     if (!c) return;
@@ -126,12 +175,14 @@ export function assignHome(
   for (const { g, i } of order) {
     const score = (side: "a" | "b") => {
       const h = side === "a" ? g.a : g.b;
-      return [breaks(g, side), -owed(g, side), h ? (teams.get(h)?.homeGames ?? 0) : 0];
+      return [splits(g, side), breaks(g, side), -owed(g, side), h ? (teams.get(h)?.homeGames ?? 0) : 0];
     };
     const [x, y] = [score("a"), score("b")];
-    const side = x[0] !== y[0] ? (x[0] < y[0] ? "a" : "b") : x[1] !== y[1] ? (x[1] < y[1] ? "a" : "b") : x[2] <= y[2] ? "a" : "b";
+    const at = x.findIndex((v, k) => v !== y[k]);
+    const side = at < 0 || x[at] < y[at] ? "a" : "b";
     out[i] = side;
     count(side === "a" ? g.a : g.b, true, false);
+    setCoach(g, side);
   }
   return out;
 }
@@ -169,8 +220,16 @@ async function keepSlots(q: PoolClient, programId: string, day: string, division
 // What home and away need to know: each of the division's teams' organization, whether it was home or away on its last
 // Game Day before this one, its home games this season and its TBD games (dates); pairs already played on other Game
 // Days; and each organization's games already set in the League's other divisions that day.
-async function history(q: PoolClient, programId: string, day: string, divisionId: string, teams: DateTeam[]) {
+async function history(
+  q: PoolClient,
+  programId: string,
+  day: string,
+  divisionId: string,
+  teams: DateTeam[],
+  skip: string[] = [],
+) {
   const club = new Map(teams.map((t) => [t.teamId, t.from]));
+  const coach = coachesOf(teams);
   const rows = (
     await q.query<{ a: string; b: string | null; side: "a" | "b" | null; day: string; division: string }>(
       `select team_a::text as a, team_b::text as b, home_side as side, day::text, division_id::text as division
@@ -181,12 +240,27 @@ async function history(q: PoolClient, programId: string, day: string, divisionId
   const met = new Map<string, number>();
   const metOn = new Map<string, string[]>();
   const tbdOn = new Map<string, string>();
-  const home = new Map<string, HomeTeam>(teams.map((t) => [t.teamId, { club: t.from, last: null, homeGames: 0 }]));
+  const home = new Map<string, HomeTeam>(
+    teams.map((t) => [t.teamId, { club: t.from, last: null, homeGames: 0, coach: coach.get(t.teamId) }]),
+  );
   const today = new Map<string, { home: number; total: number }>();
+  const coachSide = new Map<string, "H" | "A">();
+  const coachOpp = new Map<string, Set<string>>();
   for (const r of rows) {
     const side = r.side ?? "a";
     if (r.day === day) {
-      if (r.division === divisionId) continue;
+      if (r.division === divisionId || skip.includes(r.division)) continue;
+      // A coach's teams already set in other divisions that day: home or away, and against which organizations.
+      for (const [id, s, other] of [
+        [r.a, "a", r.b],
+        [r.b, "b", r.a],
+      ] as const) {
+        const c = id && coach.get(id);
+        if (!c) continue;
+        if (!coachSide.has(c)) coachSide.set(c, side === s ? "H" : "A");
+        const o = other && club.get(other);
+        if (o) coachOpp.set(c, (coachOpp.get(c) ?? new Set()).add(o));
+      }
       for (const [id, s] of [
         [r.a, "a"],
         [r.b, "b"],
@@ -214,7 +288,14 @@ async function history(q: PoolClient, programId: string, day: string, divisionId
       if (r.day < day) t.last = side === s ? "H" : "A"; // rows are in date order: the latest earlier Game Day wins
     }
   }
-  return { met, metOn, tbdOn, home, today };
+  return { met, metOn, tbdOn, home, today, coach, coachSide, coachOpp };
+}
+
+// The coaches with more than one team playing that day (not taken out): team id → its coach.
+export function coachesOf(teams: DateTeam[]): Map<string, string> {
+  const by = new Map<string, string[]>();
+  for (const t of teams) if (t.coachKey && !t.removedBy && !t.out) by.set(t.coachKey, [...(by.get(t.coachKey) ?? []), t.teamId]);
+  return new Map([...by].filter(([, ids]) => ids.length > 1).flatMap(([c, ids]) => ids.map((id) => [id, c] as const)));
 }
 
 // Saves a division's games for the day: each [a, b] (b null: TBD) with its home side, team_a the lower id.
@@ -256,6 +337,7 @@ export async function createMatchups(
   programId: unknown,
   day: unknown,
   divisionId: unknown,
+  skip: string[] = [], // divisions about to be created again (Create all): their games that day don't count
 ): Promise<Result<{ created: number; short: string[]; repeats: string[]; tbd: string[] }>> {
   if (!isId(programId) || !isDate(day) || !isId(divisionId)) return { ok: false, message: "Pick a division on a Game Day." };
   if (!(await isScheduler(deps.pool, viewer)))
@@ -274,7 +356,7 @@ export async function createMatchups(
   return withTx(deps.pool, async (q) => {
     // One Scheduler at a time per League, so two taps can't mix two plans.
     await q.query("select pg_advisory_xact_lock(hashtext('scenic-matchups:' || $1))", [programId]);
-    const h = await history(q, programId, day, divisionId, event.teams);
+    const h = await history(q, programId, day, divisionId, event.teams, skip);
     const plan = planMatchups(
       teams.map((t) => ({
         id: t.teamId,
@@ -283,8 +365,11 @@ export async function createMatchups(
         grade: t.groupGrade,
         level: t.level,
         hadTbd: h.tbdOn.has(t.teamId),
+        coach: h.coach.get(t.teamId),
       })),
       h.met,
+      300,
+      h.coachOpp,
     );
     // One TBD game for a team left short (never twice in a day), unless it already played TBD this season.
     const tbd = plan.short.filter((x) => !h.tbdOn.has(x.id)).map((x) => x.id);
@@ -292,7 +377,7 @@ export async function createMatchups(
       ...plan.pairs.map(([a, b]) => ({ a, b })),
       ...tbd.map((a) => ({ a, b: null })),
     ];
-    const sides = assignHome(games, h.home, h.today);
+    const sides = assignHome(games, h.home, h.today, h.coachSide);
     const kept = await keepSlots(q, programId, day, divisionId);
     await q.query("delete from scenic_matchups where program_id = $1 and day = $2::date and division_id = $3", [
       programId,
@@ -362,6 +447,11 @@ export async function saveMatchups(
     if (!ta || tb === undefined)
       return { ok: false, message: "A team in those matchups isn't playing in this division that day." };
     if (a === b) return { ok: false, message: `${ta.name} can't play itself.` };
+    if (tb && tb.level !== ta.level)
+      return {
+        ok: false,
+        message: `${ta.name} is ${ta.level} and ${tb.name} is ${tb.level}: REC and COMP teams never play each other.`,
+      };
     const k = b === null ? `${a}-TBD` : key(a, b);
     if (seen.has(k))
       return { ok: false, message: b === null ? `${ta.name} plays TBD twice.` : `${ta.name} vs ${tb!.name} is in there twice.` };
@@ -389,6 +479,7 @@ export async function saveMatchups(
       list.map((g, i) => ({ ...g, fixed: fixed[i] })),
       h.home,
       h.today,
+      h.coachSide,
     );
     await q.query("delete from scenic_matchups where program_id = $1 and day = $2::date and division_id = $3", [
       programId,
@@ -407,4 +498,51 @@ export async function saveMatchups(
     await kept.restore();
     return { ok: true as const, saved: list.length };
   });
+}
+
+// Create all matchups for one Game Day: every League's divisions playing that day, in the League's order, each created again
+// as Create matchups does (a coach's teams in an earlier division guide the later ones). Admins and Directors of
+// Scheduling only.
+export async function createDayMatchups(
+  deps: Deps,
+  viewer: SessionUser,
+  day: unknown,
+): Promise<Result<{ created: number; divisions: number; notes: string[] }>> {
+  if (!isDate(day)) return { ok: false, message: "Pick a Game Day." };
+  if (!(await isScheduler(deps.pool, viewer)))
+    return { ok: false, message: "Only a Scenic City Admin or Director of Scheduling can do that." };
+  const ids = (
+    await deps.pool.query<{ id: string }>(
+      "select id::text from scenic_programs where kind = 'League' and ends_on >= $1::date order by starts_on, lower(name)",
+      [day],
+    )
+  ).rows;
+  let created = 0;
+  let divisions = 0;
+  const notes: string[] = [];
+  for (const { id } of ids) {
+    const p = await getProgram(deps, viewer, id);
+    const event = p && teamsByDate(p).find((e) => !e.bracket && e.date === day);
+    if (!p || !event) continue;
+    const todo = p.divisionList.filter((d) => playingTeams(event.teams, d.id).length);
+    for (const [i, d] of todo.entries()) {
+      const r = await createMatchups(
+        deps,
+        viewer,
+        id,
+        day,
+        d.id,
+        todo.slice(i + 1).map((x) => x.id),
+      );
+      if (!r.ok) {
+        notes.push(`${d.label}: ${r.message}`);
+        continue;
+      }
+      created += r.created;
+      divisions++;
+      notes.push(...[...r.tbd, ...r.short, ...r.repeats.map((x) => `Played before: ${x}`)].map((x) => `${d.label}: ${x}`));
+    }
+  }
+  if (!divisions && !notes.length) return { ok: false, message: "No teams are playing that day." };
+  return { ok: true, created, divisions, notes };
 }

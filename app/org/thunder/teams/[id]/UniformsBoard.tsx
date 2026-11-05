@@ -13,7 +13,7 @@ const field =
 // Uniforms tab: a number for every rostered player, and a size for those who need a uniform. A player whose family didn't
 // order one gets a "Needs a uniform" box: ticking it brings the size, and lists them on Home for the Director of Uniforms
 // to add to the TeamSnap order. Each change saves at once.
-export default function UniformsBoard({ teamId, rows: initial }: { teamId: string; rows: UniformRow[] }) {
+export default function UniformsBoard({ teamId, rows: initial, who }: { teamId: string; rows: UniformRow[]; who: boolean }) {
   const router = useRouter();
   const [rows, setRows] = useState(initial);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -188,7 +188,7 @@ export default function UniformsBoard({ teamId, rows: initial }: { teamId: strin
                   ⚠ #{r.number} is used by another player on this team.
                 </p>
               )}
-              {r.updatedBy && <p className="mt-1 text-xs text-zinc-400">Set by {r.updatedBy}</p>}
+              {who && r.updatedBy && <p className="mt-1 text-xs text-zinc-400">Set by {r.updatedBy}</p>}
             </li>
           );
         })}

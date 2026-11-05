@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
+import { seesWho } from "@/lib/org-admin";
 import { db } from "@/lib/db";
 import { teamPrograms } from "@/lib/org-leagues";
 import { scheduledGames } from "@/lib/scenic-games";
@@ -43,6 +44,7 @@ async function OrgTeam({
   const found = await getOrgTeam({ pool: db, now: () => new Date() }, user, slug, id);
   if (!found) notFound();
   const { team: t, canManage } = found;
+  const who = await seesWho(db, user, slug); // Owners and Admins see who did it
   const tab = (await searchParams).tab === "roster" ? "roster" : "staff";
   const roster = await listOrgRoster({ pool: db, now: () => new Date() }, user, slug, t.id);
   const today = easternDate(new Date());
@@ -88,7 +90,7 @@ async function OrgTeam({
           <div className="flex items-start gap-3">
             <span
               className={`flex size-12 shrink-0 items-center justify-center rounded-xl text-base font-bold text-white ${
-                t.gender === "Boys" ? "bg-thunder-blue" : "bg-pink-600"
+                t.gender === "Boys" ? "bg-thunder-blue" : t.gender === "Coed" ? "bg-emerald-600" : "bg-pink-600"
               }`}
             >
               {t.name.split(" ")[0]}
@@ -102,9 +104,9 @@ async function OrgTeam({
                 <Chip tone={t.level === "COMP" ? "orange" : "zinc"}>{t.level}</Chip>
               </div>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                {t.gender} · {t.grade} grade
+                {t.gender} · {t.grade === "Pre-K" ? "Pre-K" : `${t.grade} grade`}
               </p>
-              <p className="mt-1 text-xs text-zinc-400">Created by {t.createdBy}</p>
+              {who && <p className="mt-1 text-xs text-zinc-400">Created by {t.createdBy}</p>}
               {!hasHead && !t.waitingCoach && <MustBeEntered what="COACH INFO" />}
               {t.waitingCoach && <MustBeEntered what="COACH CELL" />}
               {(t.waitingCoach || t.coaches.some((c) => c.role === "HeadCoach" && !c.email)) && (
@@ -145,7 +147,8 @@ async function OrgTeam({
                       {p.first} <span className="font-semibold">{p.last}</span>
                     </span>
                     <span className="block text-xs text-zinc-400">
-                      {p.grade === 0 ? "K" : `Grade ${p.grade}`} · added by {p.addedBy}
+                      {p.grade === 0 ? "K" : `Grade ${p.grade}`}
+                      {who && ` · added by ${p.addedBy}`}
                     </span>
                   </span>
                   {roster.canManage && (
@@ -185,7 +188,8 @@ async function OrgTeam({
                     <span>
                       <span className="block text-sm font-medium">{c.name}</span>
                       <span className="block text-xs text-zinc-500">
-                        {roleName(c.role)} · added by {c.addedBy}
+                        {roleName(c.role)}
+                        {who && ` · added by ${c.addedBy}`}
                       </span>
                       {c.role === "HeadCoach" && !c.email && (
                         <span className="mt-1 flex items-center gap-2">
@@ -220,12 +224,13 @@ async function OrgTeam({
                           {p.registered ? (
                             <>
                               <p className="text-emerald-700 dark:text-emerald-400">
-                                Registered: {p.registered.where} · by {p.registered.by}
+                                Registered: {p.registered.where}
+                                {who && ` · by ${p.registered.by}`}
                                 {p.registered.paid ? " · Paid" : ""}
                               </p>
                               {p.registered.removedBy && (
                                 <p className="font-semibold text-red-600 dark:text-red-400">
-                                  Taken out of this program by {p.registered.removedBy}
+                                  Taken out of this program{who && ` by ${p.registered.removedBy}`}
                                 </p>
                               )}
                               {p.entry && (
@@ -243,9 +248,14 @@ async function OrgTeam({
                                     bracket={p.entry.bracket}
                                     today={today}
                                     removedBy={p.registered.removedBy}
-                                    off={p.registered.off}
+                                    off={
+                                      who
+                                        ? p.registered.off
+                                        : Object.fromEntries(Object.keys(p.registered.off).map((k) => [k, "-"]))
+                                    }
                                     teamOff={p.registered.teamOff}
                                     canChange={progs.canRegister}
+                                    who={who}
                                   />
                                   <LeagueGames games={games.filter((g) => g.programId === p.id)} today={today} />
                                 </div>
