@@ -5,10 +5,17 @@ import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import { orgInfo } from "@/lib/org-registry";
 import { isOrgSlug } from "@/lib/orgs";
+import type { Metadata } from "next";
+import { orgMetadata } from "@/lib/org-metadata";
 import OrgLogo from "../../OrgLogo";
 import LoginFlow from "../LoginFlow";
 import { card } from "../../ui";
 import { followRename } from "@/lib/org-rename";
+
+// The organization's logo as the tab icon (and on a phone's home screen) and its name in the tab title.
+export async function generateMetadata({ params }: PageProps<"/login/[org]">): Promise<Metadata> {
+  return orgMetadata((await params).org);
+}
 
 export default function OrgLoginPage({ params }: PageProps<"/login/[org]">) {
   return (
