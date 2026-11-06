@@ -2,11 +2,14 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
+import type { SessionUser } from "@/lib/auth/service";
 import { currentScenic } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
 import { orgFeatures, type Feature } from "@/lib/features";
 import { directorAreas, isOrgAdmin, type Area } from "@/lib/org-admin";
 import { OrgSearchButton } from "../../OrgSearch";
+import { scheduleAnalysis } from "@/lib/scenic-analysis";
+import { ScheduleAnalysis } from "./ScheduleAnalysis";
 import AppHeader from "../../AppHeader";
 import { card } from "../../ui";
 
@@ -132,7 +135,19 @@ async function Scenic() {
             );
           })}
         </div>
+        {director && features.has("programs") && (
+          // Loads after the page shows, so Home stays fast.
+          <Suspense fallback={<p className="mt-6 text-sm text-zinc-500">Loading schedule analysis…</p>}>
+            <Analysis user={user} />
+          </Suspense>
+        )}
       </main>
     </>
   );
+}
+
+// Schedule analysis: Admins and Directors of Scheduling (null for anyone else, checked in the lib).
+async function Analysis({ user }: { user: SessionUser }) {
+  const days = await scheduleAnalysis({ pool: db, now: () => new Date() }, user);
+  return days && <ScheduleAnalysis days={days} />;
 }
