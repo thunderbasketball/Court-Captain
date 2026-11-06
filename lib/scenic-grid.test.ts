@@ -1,6 +1,17 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
-import { dayGrid, gridBlocks, setGameLength } from "./scenic-grid";
+import {
+  clearDayOverride,
+  dayGrid,
+  gameLength,
+  gridBlocks,
+  gymBlocks,
+  slotsFromBreaks,
+  programGameLength,
+  setDayOverride,
+  setGameLength,
+  setProgramGameLength,
+} from "./scenic-grid";
 import { createTestDb, grant } from "./testing/db";
 
 describe("Scheduler grid blocks", () => {
@@ -15,6 +26,37 @@ describe("Scheduler grid blocks", () => {
       ["14:15", "15:00"],
     ]);
     expect(gridBlocks("09:00", "09:30", 55)).toEqual([]);
+  });
+});
+
+describe("Scheduler grid blocks with Custom times (break points)", () => {
+  it("games run back to back from the first break point; from each break point on, the next game takes its length", () => {
+    const slots = slotsFromBreaks(
+      [
+        { start: "12:00", minutes: 55 },
+        { start: "09:00", minutes: 50 },
+        { start: "14:00", minutes: 60 },
+      ],
+      "16:30",
+    );
+    expect(slots.map((x) => `${x.start}/${x.minutes}`)).toEqual([
+      "09:00/50",
+      "09:50/50",
+      "10:40/50",
+      "11:30/50", // starts before 12:00: keeps 50
+      "12:20/55", // the next game takes the new length (no gap)
+      "13:15/55",
+      "14:10/60",
+      "15:10/60", // 16:10 + 60 would run past 16:30
+    ]);
+    // A gym uses the slots its hours fit.
+    expect(gymBlocks({ minutes: 50, slots }, "09:30", "14:00")).toEqual([
+      ["09:50", "10:40"],
+      ["10:40", "11:30"],
+      ["11:30", "12:20"],
+      ["12:20", "13:15"],
+    ]);
+    expect(gymBlocks({ minutes: 55, slots: null }, "09:00", "11:00")).toEqual(gridBlocks("09:00", "11:00", 55));
   });
 });
 
@@ -119,5 +161,95 @@ describe("Scheduler grid", () => {
     );
     const goals = (await dayGrid(deps(), fay, "2027-01-16"))!.gyms.find((g) => g.name === "Goal Gym")!;
     expect(goals.courts.map((c) => c.name)).toEqual(["Main"]);
+  });
+
+  it("game length is the program's unless the day overrides it (its own length or time slots); Cancel goes back", async () => {
+    await db.pool.query(
+      "insert into director_areas (coach_id, org, area, granted_by) values ('5550004', 'scenic-city', 'scheduling', 'test')",
+    );
+    const prog = (
+      await db.pool.query<{ id: string }>(
+        `insert into scenic_programs (kind, name, starts_on, ends_on, reg_opens, reg_closes, created_by, updated_by)
+         values ('League', 'Winter', '2027-01-01', '2027-03-01', '2026-11-01', '2026-12-15', 't', 't') returning id::text`,
+      )
+    ).rows[0].id;
+    await db.pool.query("insert into program_game_days (program_id, game_day_id, added_by) select $1, id, 't' from game_days", [
+      prog,
+    ]);
+    expect(await programGameLength(deps(), fay, prog)).toEqual({ minutes: 55, setBy: null });
+    // Program-wide: every Game Day without an override.
+    expect(await setProgramGameLength(deps(), fay, prog, 10)).toMatchObject({ ok: false });
+    expect(await setProgramGameLength(deps(), fay, "x", 60)).toEqual({ ok: false, message: "Pick a program." });
+    expect(await setProgramGameLength(deps(), fay, prog, 60)).toEqual({ ok: true, moved: 0, off: [] });
+    expect(await programGameLength(deps(), fay, prog)).toEqual({ minutes: 60, setBy: "Fay X" });
+    expect(await gameLength(deps(), fay, "2027-01-09")).toMatchObject({
+      minutes: 60,
+      override: false,
+      breaks: null,
+      programMinutes: 60,
+      programName: "Winter",
+      opens: "09:00",
+      closes: "12:00",
+    });
+    // The day's own game length.
+    expect(await setDayOverride(deps(), fay, "2027-01-09", { minutes: 10 })).toMatchObject({ ok: false });
+    expect(await setDayOverride(deps(), fay, "2027-01-09", { minutes: 40 })).toEqual({ ok: true, moved: 0, off: [] });
+    expect(await gameLength(deps(), fay, "2027-01-09")).toMatchObject({ minutes: 40, override: true, breaks: null });
+    // Custom times: break points, within the hosts' availability (courts open 9:00–12:00 that day).
+    const set = (breaks: unknown) => setDayOverride(deps(), fay, "2027-01-09", { breaks });
+    expect(await set([{ start: "9am", minutes: 50 }])).toEqual({
+      ok: false,
+      message: "Each break point needs a time and a slot length of 20 to 180 minutes.",
+    });
+    expect(await set([{ start: "09:00", minutes: 10 }])).toMatchObject({ ok: false });
+    expect(await set([])).toEqual({ ok: false, message: "Give 1 to 20 break points." });
+    expect(
+      await set([
+        { start: "09:00", minutes: 50 },
+        { start: "09:00", minutes: 60 },
+      ]),
+    ).toEqual({ ok: false, message: "Two break points have the same time." });
+    expect(
+      await set([
+        { start: "08:00", minutes: 50 },
+        { start: "11:30", minutes: 45 },
+      ]),
+    ).toEqual({ ok: false, message: "No host is open for a whole slot at 8:00 AM (50 min), 11:30 AM (45 min)." });
+    expect(
+      await set([
+        { start: "10:30", minutes: 30 },
+        { start: "09:00", minutes: 45 },
+      ]),
+    ).toEqual({ ok: true, moved: 0, off: [] });
+    expect(await gameLength(deps(), fay, "2027-01-09")).toMatchObject({
+      minutes: 45, // the first break point's
+      override: true,
+      breaks: [
+        { start: "09:00", minutes: 45 },
+        { start: "10:30", minutes: 30 },
+      ],
+      setBy: "Fay X",
+    });
+    const grid = (await dayGrid(deps(), fay, "2027-01-09"))!;
+    expect(grid.slots!.map((x) => `${x.start}/${x.minutes}`)).toEqual([
+      "09:00/45",
+      "09:45/45",
+      "10:30/30", // from 10:30 on, 30-minute slots
+      "11:00/30",
+      "11:30/30",
+    ]);
+    // The program's length no longer changes that day; the other day follows it.
+    expect(await setProgramGameLength(deps(), fay, prog, 70)).toMatchObject({ ok: true });
+    expect((await gameLength(deps(), fay, "2027-01-09"))!.minutes).toBe(45);
+    expect((await gameLength(deps(), fay, "2027-01-16"))!.minutes).toBe(70);
+    // Cancel: back to the program's setting.
+    expect(await clearDayOverride(deps(), fay, "2027-01-09")).toEqual({ ok: true, moved: 0, off: [] });
+    expect(await gameLength(deps(), fay, "2027-01-09")).toMatchObject({
+      minutes: 70,
+      override: false,
+      breaks: null,
+      slots: null,
+      setBy: null,
+    });
   });
 });

@@ -105,6 +105,10 @@ export function GridBoard({
     const d = courts.get(court)?.divisions;
     return !d || d.includes(x.divisionId);
   };
+  // Each game lasts its slot's length (Custom times can mix lengths); two games overlap when their times cross.
+  const lengths = new Map(gyms.flatMap((g) => g.blocks.map(([b, e]) => [b, toMin(e) - toMin(b)] as const)));
+  const lenOf = (s: string) => lengths.get(s) ?? minutes;
+  const overlaps = (a: string, b: string) => toMin(a) < toMin(b) + lenOf(b) && toMin(b) < toMin(a) + lenOf(a);
   const at = (court: string, s: string) => games.find((x) => x.court === court && x.starts === s && onGrid(x));
   const ids = (x: GridGame) => [x.home, x.away].flatMap((t) => (t ? [t.id] : []));
   const people = (x: GridGame) => [x.home, x.away].flatMap((t) => t?.people ?? []);
@@ -116,7 +120,7 @@ export function GridBoard({
   const busy = (s: string): "team" | "coach" | null => {
     const g = active && games.find((x) => x.id === active);
     if (!g) return null;
-    const near = games.filter((y) => y.id !== g.id && onGrid(y) && Math.abs(toMin(y.starts!) - toMin(s)) < minutes);
+    const near = games.filter((y) => y.id !== g.id && onGrid(y) && overlaps(y.starts!, s));
     return near.some((y) => sharesTeam(g, y)) ? "team" : near.some((y) => sharesCoach(g, y)) ? "coach" : null;
   };
 
@@ -162,7 +166,7 @@ export function GridBoard({
       if (!c) return;
       const times = c.gym.blocks
         .map(([b]) => b)
-        .filter((b) => b >= slot.starts && toMin(b) >= toMin(c.starts) && toMin(b) + minutes <= toMin(c.ends));
+        .filter((b) => b >= slot.starts && toMin(b) >= toMin(c.starts) && toMin(b) + lenOf(b) <= toMin(c.ends));
       // Where every game is once the planned moves are made.
       const placedAt = (x: GridGame) =>
         plan.has(x.id) ? plan.get(x.id) : onGrid(x) ? { court: x.court!, starts: x.starts! } : null;
@@ -173,7 +177,7 @@ export function GridBoard({
           if (holder) return false;
           return !games.some((y) => {
             const p = y.id === g.id ? null : placedAt(y);
-            return p && shares(g, y) && Math.abs(toMin(p.starts) - toMin(t)) < minutes;
+            return p && shares(g, y) && overlaps(p.starts, t);
           });
         });
         if (!free) break;

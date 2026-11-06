@@ -1,31 +1,47 @@
 "use client";
 
-// Simulation mode (development only): a switch at the top of the Scheduler. On fills the League with random (DEV) teams
-// (0–2 per grade per organization); New random set replaces them; Off deletes them all.
+// Simulation mode (development only): a switch at the top of the Scheduler, for the League picked there. On fills it with
+// random (DEV) teams (0–2 per grade per organization); New random set replaces them; Off deletes them all. They're in one
+// League at a time: turning it on for another League moves them there.
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { setSimulation } from "../actions";
 import { Alert, useConfirm } from "../../../client-ui";
 
-export function SimulationToggle({ teams }: { teams: number }) {
+export function SimulationToggle({
+  teams,
+  inProgram,
+  inProgramName,
+  programId,
+  programName,
+}: {
+  teams: number; // (DEV) teams now
+  inProgram: string | null; // the League they're in
+  inProgramName: string | null;
+  programId: string; // the League being scheduled
+  programName: string;
+}) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [confirm, confirmDialog] = useConfirm();
-  const on = teams > 0;
+  const on = teams > 0 && inProgram === programId;
+  const elsewhere = teams > 0 && !on;
   const run = (value: boolean) =>
     start(async () => {
       setError(null);
-      const r = await setSimulation(value);
+      const r = await setSimulation(value, programId);
       if (r.ok) router.refresh();
       else setError(r.message);
     });
   const replace = async () =>
     (await confirm({
-      title: on ? "Make a new random set?" : "Turn on Simulation mode?",
+      title: on ? "Make a new random set?" : `Turn on Simulation mode for ${programName}?`,
       message: on
         ? "Every (DEV) team is deleted, with its matchups and grid slots, and a new random set is made."
-        : "Random (DEV) teams (0–2 per grade from each organization, 125 at most) are added to the League, registered ALL Season.",
+        : `Random (DEV) teams (0–2 per grade from each organization, 125 at most) are added to ${programName}, registered ALL Season.${
+            elsewhere ? ` The ${teams} (DEV) teams in ${inProgramName ?? "another League"} are deleted first.` : ""
+          }`,
       confirmLabel: on ? "New set" : "Turn on",
     })) && run(true);
 
@@ -54,10 +70,12 @@ export function SimulationToggle({ teams }: { teams: number }) {
         </button>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-            Simulation mode {busy ? "· working…" : on ? `· On · ${teams} (DEV) teams` : "· Off"}
+            Simulation mode · {programName} {busy ? "· working…" : on ? `· On · ${teams} (DEV) teams` : "· Off"}
           </p>
           <p className="text-xs text-amber-800/80 dark:text-amber-200/70">
-            Development only: random practice teams for scheduling.
+            {elsewhere
+              ? `On in ${inProgramName ?? "another League"} (${teams} teams). Turning it on here moves it.`
+              : "Development only: random practice teams for scheduling this program."}
           </p>
         </div>
         {on && (

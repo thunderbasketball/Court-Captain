@@ -1,12 +1,22 @@
 "use client";
 
-// Scheduler Matchups: one button to create every division's matchups for the Game Day (every League playing that day).
+// Scheduler Matchups: one button to create every division's matchups for the Game Day, in the program being scheduled.
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createDayMatchups } from "../actions";
 import { Alert, useConfirm } from "../../../client-ui";
 
-export function CreateAllMatchups({ day, label, created }: { day: string; label: string; created: boolean }) {
+export function CreateAllMatchups({
+  day,
+  programId,
+  label,
+  created,
+}: {
+  day: string;
+  programId: string;
+  label: string;
+  created: boolean;
+}) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [note, setNote] = useState<{ tone: "green" | "red"; lines: string[] } | null>(null);
@@ -25,7 +35,7 @@ export function CreateAllMatchups({ day, label, created }: { day: string; label:
       return;
     start(async () => {
       setNote(null);
-      const r = await createDayMatchups(day);
+      const r = await createDayMatchups(day, programId);
       if (!r.ok) return setNote({ tone: "red", lines: [r.message] });
       setNote({
         tone: "green",

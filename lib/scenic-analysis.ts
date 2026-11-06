@@ -5,7 +5,7 @@
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { gameDaySchedule } from "./scenic-programs";
-import { dayGrid, gridBlocks } from "./scenic-grid";
+import { dayGrid, gymBlocks } from "./scenic-grid";
 
 type Deps = { pool: Pool; now: () => Date };
 
@@ -111,7 +111,7 @@ export async function scheduleAnalysis(deps: Deps, viewer: SessionUser): Promise
 
       // Game slots: each court's blocks within its own hours (as on the Grid); a game is placed when it sits on one.
       const open = new Set<string>(); // "court@HH:MM"
-      const allGyms = grids.flatMap((grid) => grid.gyms.map((g) => ({ ...g, minutes: grid.minutes })));
+      const allGyms = grids.flatMap((grid) => grid.gyms.map((g) => ({ ...g, grid })));
       const seenGym = new Set<string>();
       const seenCourt = new Set<string>();
       for (const g of allGyms) {
@@ -123,7 +123,7 @@ export async function scheduleAnalysis(deps: Deps, viewer: SessionUser): Promise
         for (const c of g.courts) {
           if (!seenCourt.has(c.id)) o.courts++;
           seenCourt.add(c.id);
-          for (const [b, e] of gridBlocks(opens, closes, g.minutes))
+          for (const [b, e] of gymBlocks(g.grid, opens, closes))
             if (toMin(c.starts) <= toMin(b) && toMin(e) <= toMin(c.ends)) {
               open.add(`${c.id}@${b}`);
               o.slots++;

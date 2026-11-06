@@ -155,8 +155,8 @@ export async function createMatchups(programId: string, day: string, divisionId:
   return guarded((u) => matchups.createMatchups(deps, u, programId, day, divisionId), "programs");
 }
 // Scheduler: Create all matchups for a Game Day (every League's divisions playing that day).
-export async function createDayMatchups(day: string) {
-  return guarded((u) => matchups.createDayMatchups(deps, u, day), "programs");
+export async function createDayMatchups(day: string, programId: string) {
+  return guarded((u) => matchups.createDayMatchups(deps, u, day, programId), "programs");
 }
 export async function saveMatchups(programId: string, day: string, divisionId: string, games: [string, string | null][]) {
   return guarded((u) => matchups.saveMatchups(deps, u, programId, day, divisionId, games), "programs");
@@ -165,14 +165,25 @@ export async function saveMatchups(programId: string, day: string, divisionId: s
 export async function setGameLength(day: string, minutes: number) {
   return guarded((u) => grid.setGameLength(deps, u, day, minutes), "programs");
 }
+// A Game Day's override (its own game length, or Custom times: break points for every gym) and cancelling it.
+export async function setDayOverride(day: string, minutes: number | null, breaks: { start: string; minutes: number }[] | null) {
+  return guarded((u) => grid.setDayOverride(deps, u, day, { minutes, breaks }), "programs");
+}
+export async function clearDayOverride(day: string) {
+  return guarded((u) => grid.clearDayOverride(deps, u, day), "programs");
+}
+// A program's game length, for its Game Days without an override.
+export async function setProgramGameLength(programId: string, minutes: number) {
+  return guarded((u) => grid.setProgramGameLength(deps, u, programId, minutes), "programs");
+}
 // Scheduler Grid: put a game in a slot (court and start time), move it, or take it off the grid (null).
 export async function placeGame(matchupId: string, slot: { court: string; starts: string } | null) {
   return guarded((u) => grid.placeGame(deps, u, matchupId, slot), "programs");
 }
 
 // Simulation mode (development only): simulated (DEV) teams on or off.
-export async function setSimulation(on: boolean) {
-  return guarded((u) => simulation.setSimulation(deps, u, on === true), "programs");
+export async function setSimulation(on: boolean, programId: string) {
+  return guarded((u) => simulation.setSimulation(deps, u, on === true, programId), "programs");
 }
 
 // Facilities → Courts: which divisions may play on a court (none: every division).

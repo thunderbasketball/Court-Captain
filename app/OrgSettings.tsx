@@ -287,9 +287,10 @@ function LogoForm({ org, logo, onSaved }: { org: string; logo: ReactNode; onSave
   );
 }
 
-function GearIcon() {
+// The gear used for settings pop-ups (an organization's, a Game Day's).
+export function GearIcon({ className = "size-6" }: { className?: string } = {}) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-6" aria-hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className={className} aria-hidden>
       <path
         strokeLinecap="round"
         strokeLinejoin="round"

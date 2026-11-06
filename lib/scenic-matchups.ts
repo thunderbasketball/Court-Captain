@@ -507,14 +507,17 @@ export async function createDayMatchups(
   deps: Deps,
   viewer: SessionUser,
   day: unknown,
+  programId?: unknown, // the program being scheduled (every League playing that day when left out)
 ): Promise<Result<{ created: number; divisions: number; notes: string[] }>> {
   if (!isDate(day)) return { ok: false, message: "Pick a Game Day." };
+  if (programId !== undefined && !isId(programId)) return { ok: false, message: "Pick a program." };
   if (!(await isScheduler(deps.pool, viewer)))
     return { ok: false, message: "Only a Scenic City Admin or Director of Scheduling can do that." };
   const ids = (
     await deps.pool.query<{ id: string }>(
-      "select id::text from scenic_programs where kind = 'League' and ends_on >= $1::date order by starts_on, lower(name)",
-      [day],
+      `select id::text from scenic_programs where kind = 'League' and ends_on >= $1::date and ($2::bigint is null or id = $2)
+        order by starts_on, lower(name)`,
+      [day, programId ?? null],
     )
   ).rows;
   let created = 0;

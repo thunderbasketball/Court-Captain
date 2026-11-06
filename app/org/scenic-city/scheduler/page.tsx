@@ -10,7 +10,7 @@ import { BindPicker, UnbindButton } from "./BindingsBoard";
 import { seesWho } from "@/lib/org-admin";
 import { requireFeature } from "@/lib/features-server";
 import { shortDate } from "@/lib/program-options";
-import { dayGrid, gameLength, gridBlocks, type DayGrid } from "@/lib/scenic-grid";
+import { dayGrid, gameLength, gymBlocks, programGameLength, type DayGrid } from "@/lib/scenic-grid";
 import { gameDaySchedule, type DateTeam, type ScheduleDay } from "@/lib/scenic-programs";
 import AppHeader from "../../../AppHeader";
 import { CoachBadge, LevelTag, PageTitle, TeamName, card, type CoachTag } from "../../../ui";
@@ -18,7 +18,7 @@ import { TeamOffButton } from "../programs/ProgramTools";
 import { MatchupBoard } from "./MatchupBoard";
 import { GamePlace, HomeAway } from "../../../LeagueGames";
 import type { ScheduledGame } from "@/lib/scenic-games";
-import { GameLengthInput } from "./GameLengthInput";
+import { GameDayGear, ProgramGear } from "./GameLengthInput";
 import { GridBoard } from "./GridBoard";
 import { SimulationToggle } from "./SimulationToggle";
 import { CreateAllMatchups } from "./CreateAllMatchups";
@@ -50,7 +50,8 @@ const VIEWS = [
   { key: "bindings", label: "Bindings" },
 ] as const;
 type View = (typeof VIEWS)[number]["key"];
-const href = (day: string, view: View) => `/org/scenic-city/scheduler?day=${day}${view === "teams" ? "" : `&view=${view}`}`;
+const href = (program: string, day: string, view: View) =>
+  `/org/scenic-city/scheduler?program=${program}&day=${day}${view === "teams" ? "" : `&view=${view}`}`;
 
 // Scenic City's Scheduler (Admins and Directors of Scheduling, on the Director chip; SPEC.md section 13, step 7).
 // A tab for each upcoming Game Day (the next one first picked), and inside it Teams, Matchups, Grid and Bindings.
@@ -65,7 +66,30 @@ async function Scheduler({ searchParams }: { searchParams: PageProps<"/org/sceni
   const who = await seesWho(db, user, "scenic-city"); // Owners and Admins see who did it
   const q = await searchParams;
   // Only a listed Game Day or view is used; anything else falls back to the next Game Day's Teams.
-  const day = s.days.find((d) => d.date === q.day) ?? s.days.find((d) => d.date >= s.today) ?? s.days[0];
+  // The program being scheduled (picked at the top; the soonest League first): only its Game Days and teams show.
+  const programs = [
+    ...new Map(
+      s.days.flatMap((d) => d.programs.map((p) => [p.programId, { id: p.programId, name: p.programName }] as const)),
+    ).values(),
+  ];
+  const program = programs.find((p) => p.id === q.program) ?? programs[0];
+  const days = s.days
+    .map((d) => {
+      const mine = d.programs.filter((p) => p.programId === program?.id);
+      return {
+        ...d,
+        programs: mine,
+        playing: mine.reduce((n, p) => n + p.playing, 0),
+        games: mine.reduce((n, p) => n + p.games, 0),
+      };
+    })
+    .filter((d) => d.programs.length);
+  const [sim, programLength] = await Promise.all([
+    simulatedTeams(db),
+    program ? programGameLength({ pool: db, now: () => new Date() }, user, program.id) : null,
+  ]);
+  const simOn = !!program && sim.teams > 0 && sim.programId === program.id;
+  const day = days.find((d) => d.date === q.day) ?? days.find((d) => d.date >= s.today) ?? days[0];
   const view: View = VIEWS.find((v) => v.key === q.view)?.key ?? "teams";
   const grid = day && view === "grid" ? await dayGrid({ pool: db, now: () => new Date() }, user, day.date) : null;
   const length = day ? await gameLength({ pool: db, now: () => new Date() }, user, day.date) : null;
@@ -74,91 +98,158 @@ async function Scheduler({ searchParams }: { searchParams: PageProps<"/org/sceni
   return (
     <>
       <AppHeader user={user} context={scenic.key} tab="scheduler" />
-      <main className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 py-6">
-        <PageTitle title="Scheduler" subtitle="Each Game Day across every League: its teams, matchups and grid." />
-        <SimulationToggle teams={await simulatedTeams(db)} />
-        {!day ? (
-          <p className={`${card} px-4 py-3 text-sm text-zinc-500`}>
-            No upcoming Game Days. A Director of Programs adds them on each League&apos;s page.
-          </p>
-        ) : (
-          <>
-            <nav
-              aria-label="Game Days"
-              className="-mx-4 flex gap-1 overflow-x-auto border-b border-zinc-200 px-4 dark:border-white/10"
-            >
-              {s.days.map((d) => (
-                <Link
-                  key={d.date}
-                  href={href(d.date, view)}
-                  aria-current={d.date === day.date ? "page" : undefined}
-                  className={`shrink-0 border-b-2 px-3 py-2 text-center text-sm font-semibold whitespace-nowrap ${
-                    d.date === day.date
-                      ? "border-scenic-navy text-zinc-900 dark:border-white dark:text-white"
-                      : "border-transparent text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
-                  }`}
-                >
-                  {weekday(d.date)}
-                  <span className="block text-[11px] font-normal">
-                    {d.programs.some((p) => p.bracket) ? "Brackets" : plural(d.playing, "team")}
-                  </span>
-                </Link>
-              ))}
-            </nav>
-            <section className={`${card} overflow-hidden`}>
-              <div className="flex items-start justify-between gap-3 px-4 pt-4">
-                <div className="min-w-0">
-                  <h2 className="font-semibold">{weekday(day.date, true)}</h2>
-                  <p className="text-xs text-zinc-500">
-                    {day.programs.map((p) => (p.bracket ? `${p.programName} Brackets` : p.programName)).join(" · ")}
-                  </p>
-                </div>
-                <p className="shrink-0 text-right text-xs text-zinc-500">
-                  {plural(day.playing, "team")}
-                  {day.games > 0 && <span className="block">{plural(day.games, "game")} guaranteed</span>}
-                </p>
-              </div>
-              {length && (
-                <GameLengthInput
-                  day={day.date}
-                  label={weekday(day.date)}
-                  minutes={length.minutes}
-                  setBy={who ? length.setBy : null}
+      {/* Yellow while the program being scheduled is in Simulation mode. */}
+      <div className={`flex flex-1 flex-col ${simOn ? "bg-amber-100 dark:bg-amber-950/40" : ""}`}>
+        <main className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 py-6">
+          <PageTitle title="Scheduler" subtitle="Each Game Day across every League: its teams, matchups and grid." />
+          {program && (
+            <div className="flex items-start justify-between gap-3">
+              <nav aria-label="Program" className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">Scheduling for</span>
+                {programs.length === 1 ? (
+                  <span className="text-sm">{program.name}</span>
+                ) : (
+                  programs.map((p) => (
+                    <Link
+                      key={p.id}
+                      href={`/org/scenic-city/scheduler?program=${p.id}`}
+                      aria-current={p.id === program.id ? "page" : undefined}
+                      className={`rounded-full px-3 py-1.5 text-sm font-medium ${
+                        p.id === program.id
+                          ? "bg-scenic-navy text-white dark:bg-white dark:text-zinc-900"
+                          : "text-zinc-600 ring-1 ring-zinc-950/10 hover:bg-zinc-50 dark:text-zinc-300 dark:ring-white/15"
+                      }`}
+                    >
+                      {p.name}
+                    </Link>
+                  ))
+                )}
+                {programLength && <span className="text-xs text-zinc-500">· {programLength.minutes}-min games</span>}
+              </nav>
+              {programLength && (
+                <ProgramGear
+                  programId={program.id}
+                  programName={program.name}
+                  minutes={programLength.minutes}
+                  setBy={who ? programLength.setBy : null}
+                  simulation={
+                    <SimulationToggle
+                      teams={sim.teams}
+                      inProgram={sim.programId}
+                      inProgramName={sim.programName}
+                      programId={program.id}
+                      programName={program.name}
+                    />
+                  }
                 />
               )}
-              <nav aria-label="Game Day views" className="mx-4 mt-3 flex rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800">
-                {VIEWS.map((v) => (
+            </div>
+          )}
+          {simOn && (
+            <p className="rounded-xl border border-dashed border-amber-500 bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900 dark:border-amber-400/60 dark:bg-amber-500/15 dark:text-amber-200">
+              Simulation mode · {sim.teams} (DEV) teams in {program!.name}. Turn it off in the gear.
+            </p>
+          )}
+          {!day ? (
+            <p className={`${card} px-4 py-3 text-sm text-zinc-500`}>
+              No upcoming Game Days. A Director of Programs adds them on each League&apos;s page.
+            </p>
+          ) : (
+            <>
+              <nav
+                aria-label="Game Days"
+                className="-mx-4 flex gap-1 overflow-x-auto border-b border-zinc-200 px-4 dark:border-white/10"
+              >
+                {days.map((d) => (
                   <Link
-                    key={v.key}
-                    href={href(day.date, v.key)}
-                    aria-current={v.key === view ? "page" : undefined}
-                    className={`flex-1 rounded-md py-1.5 text-center text-sm font-semibold ${
-                      v.key === view
-                        ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-white"
-                        : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+                    key={d.date}
+                    href={href(program!.id, d.date, view)}
+                    aria-current={d.date === day.date ? "page" : undefined}
+                    className={`shrink-0 border-b-2 px-3 py-2 text-center text-sm font-semibold whitespace-nowrap ${
+                      d.date === day.date
+                        ? "border-scenic-navy text-zinc-900 dark:border-white dark:text-white"
+                        : "border-transparent text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
                     }`}
                   >
-                    {v.label}
+                    {weekday(d.date)}
+                    <span className="block text-[11px] font-normal">
+                      {d.programs.some((p) => p.bracket) ? "Brackets" : plural(d.playing, "team")}
+                    </span>
                   </Link>
                 ))}
               </nav>
-              <div className="px-4 py-3">
-                {view === "teams" ? (
-                  <Teams day={day} coaches={coachTags(day)} who={who} />
-                ) : view === "matchups" ? (
-                  <Matchups day={day} coaches={coachTags(day)} who={who} />
-                ) : view === "bindings" ? (
-                  <Bindings day={day} coaches={coachTags(day)} bound={bound ?? []} who={who} />
-                ) : grid ? (
-                  <Grid day={day} grid={grid} coaches={coachTags(day)} />
-                ) : (
-                  <p className="py-6 text-center text-sm text-zinc-500">This Game Day&apos;s grid isn&apos;t available.</p>
-                )}
-              </div>
-            </section>
-          </>
-        )}
-      </main>
+              <section className={`${card} overflow-hidden`}>
+                <div className="flex items-start justify-between gap-3 px-4 pt-4">
+                  <div className="min-w-0">
+                    <h2 className="font-semibold">{weekday(day.date, true)}</h2>
+                    <p className="text-xs text-zinc-500">
+                      {day.programs.map((p) => (p.bracket ? `${p.programName} Brackets` : p.programName)).join(" · ")}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-start gap-1">
+                    <p className="text-right text-xs text-zinc-500">
+                      {plural(day.playing, "team")}
+                      {day.games > 0 && <span className="block">{plural(day.games, "game")} guaranteed</span>}
+                      {length && (
+                        <span className="block">
+                          {length.breaks ? "Custom times" : `${length.minutes}-min games`}
+                          {length.override && (
+                            <span className="font-semibold text-amber-700 dark:text-amber-300"> · override</span>
+                          )}
+                        </span>
+                      )}
+                    </p>
+                    {length && (
+                      <GameDayGear
+                        day={day.date}
+                        label={weekday(day.date)}
+                        minutes={length.minutes}
+                        programMinutes={length.programMinutes}
+                        programName={length.programName}
+                        override={length.override}
+                        breaks={length.breaks}
+                        opens={length.opens}
+                        closes={length.closes}
+                        setBy={who ? length.setBy : null}
+                      />
+                    )}
+                  </div>
+                </div>
+
+                <nav aria-label="Game Day views" className="mx-4 mt-3 flex rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800">
+                  {VIEWS.map((v) => (
+                    <Link
+                      key={v.key}
+                      href={href(program!.id, day.date, v.key)}
+                      aria-current={v.key === view ? "page" : undefined}
+                      className={`flex-1 rounded-md py-1.5 text-center text-sm font-semibold ${
+                        v.key === view
+                          ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-white"
+                          : "text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+                      }`}
+                    >
+                      {v.label}
+                    </Link>
+                  ))}
+                </nav>
+                <div className="px-4 py-3">
+                  {view === "teams" ? (
+                    <Teams day={day} coaches={coachTags(day)} who={who} />
+                  ) : view === "matchups" ? (
+                    <Matchups day={day} coaches={coachTags(day)} who={who} />
+                  ) : view === "bindings" ? (
+                    <Bindings day={day} coaches={coachTags(day)} bound={bound ?? []} who={who} />
+                  ) : grid ? (
+                    <Grid day={day} grid={grid} coaches={coachTags(day)} />
+                  ) : (
+                    <p className="py-6 text-center text-sm text-zinc-500">This Game Day&apos;s grid isn&apos;t available.</p>
+                  )}
+                </div>
+              </section>
+            </>
+          )}
+        </main>
+      </div>
     </>
   );
 }
@@ -398,7 +489,12 @@ function Matchups({ day, coaches, who }: { day: ScheduleDay; coaches: Map<string
   if (!leagues.length) return <p className="py-6 text-center text-sm text-zinc-500">The Brackets are set up separately.</p>;
   return (
     <div className="space-y-4">
-      <CreateAllMatchups day={day.date} label={weekday(day.date)} created={leagues.some((p) => p.matchups.length > 0)} />
+      <CreateAllMatchups
+        day={day.date}
+        programId={day.programs[0].programId}
+        label={weekday(day.date)}
+        created={leagues.some((p) => p.matchups.length > 0)}
+      />
       {leagues.map((p) => (
         <div key={p.programId}>
           {day.programs.length > 1 && (
@@ -575,7 +671,7 @@ function Grid({ day, grid, coaches }: { day: ScheduleDay; grid: DayGrid; coaches
   const gyms = grid.gyms.map((g) => {
     const opens = g.courts.reduce((m, c) => (c.starts < m ? c.starts : m), "23:59");
     const closes = g.courts.reduce((m, c) => (c.ends > m ? c.ends : m), "00:00");
-    return { ...g, opens, closes, blocks: gridBlocks(opens, closes, grid.minutes) };
+    return { ...g, opens, closes, blocks: gymBlocks(grid, opens, closes) };
   });
   return (
     <div className="space-y-3">

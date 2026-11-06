@@ -1,5 +1,5 @@
 // Simulation mode (development only, temporary): simulated teams for building the Scheduler. Turning it on fills the
-// current League with 0–2 random teams per grade (Boys and Girls; 125 teams at most) from every organization except Scenic City, named
+// League being scheduled (picked on the Scheduler; one League at a time, so turning it on for another moves it) with 0–2 random teams per grade (Boys and Girls; 125 teams at most) from every organization except Scenic City, named
 // "<abbr> <grade><B|G> <name> (DEV)", each registered ALL Season. Grades with COMP pick COMP or REC at random; K–1st are
 // REC. They're Scenic City teams under the organization's partner (its gyms are their home gyms), not on the
 // organization's own Teams page. Each has a made-up Head Coach (a name only, no login); about a third of an
@@ -43,13 +43,29 @@ const MAX = 125; // simulated teams at most
 const DEV = "% (DEV)";
 const schedulerOnly = { ok: false as const, message: "Only a Scenic City Admin or Director of Scheduling can do that." };
 
-// How many simulated teams there are now (0: Simulation mode is off).
-export async function simulatedTeams(pool: Pick<Pool, "query">): Promise<number> {
-  return (await pool.query<{ n: number }>("select count(*)::int as n from scenic_teams where name like $1", [DEV])).rows[0].n;
+// How many simulated teams there are now (0: Simulation mode is off), and the League they're in.
+export async function simulatedTeams(
+  pool: Pick<Pool, "query">,
+): Promise<{ teams: number; programId: string | null; programName: string | null }> {
+  const r = await pool.query<{ teams: number; programId: string | null; programName: string | null }>(
+    `select (select count(*)::int from scenic_teams where name like $1) as teams, p.id::text as "programId", p.name as "programName"
+       from (select 1) one
+       left join lateral (select r.program_id from scenic_registrations r join scenic_teams t on t.id = r.team_id
+                           where t.name like $1 group by 1 order by count(*) desc limit 1) x on true
+       left join scenic_programs p on p.id = x.program_id`,
+    [DEV],
+  );
+  return r.rows[0];
 }
 
-// Turn Simulation mode on (a new random set, replacing any there) or off (none).
-export async function setSimulation(deps: Deps, viewer: SessionUser, on: boolean): Promise<Result<{ teams: number }>> {
+// Turn Simulation mode on for a League (a new random set, replacing any there or in another League) or off (none).
+export async function setSimulation(
+  deps: Deps,
+  viewer: SessionUser,
+  on: boolean,
+  programId?: unknown,
+): Promise<Result<{ teams: number }>> {
+  if (on && (typeof programId !== "string" || !/^\d{1,18}$/.test(programId))) return { ok: false, message: "Pick a League." };
   if (!(await isScheduler(deps.pool, viewer))) return schedulerOnly;
   const rand = deps.random ?? Math.random;
   const by = `${viewer.firstName} ${viewer.lastName}`;
@@ -59,11 +75,11 @@ export async function setSimulation(deps: Deps, viewer: SessionUser, on: boolean
     if (!on) return { ok: true as const, teams: 0 };
     const league = (
       await q.query<{ id: string }>(
-        "select id::text from scenic_programs where kind = 'League' and ends_on >= $1::date order by starts_on, id limit 1",
-        [deps.now().toISOString().slice(0, 10)],
+        "select id::text from scenic_programs where id = $2 and kind = 'League' and ends_on >= $1::date",
+        [deps.now().toISOString().slice(0, 10), programId],
       )
     ).rows[0];
-    if (!league) return { ok: false as const, message: "There's no current League to fill." };
+    if (!league) return { ok: false as const, message: "Pick a current League to fill." };
     const orgs = (
       await q.query<{ abbr: string; partner: string }>(
         `select coalesce(o.abbr, o.short_name) as abbr, p.id::text as partner
