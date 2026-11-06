@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Alert } from "../../../client-ui";
 import { placeGame } from "../actions";
+import { useTouchDrag } from "../../../touch-drag";
 
 export type GridTeam = {
   id: string;
@@ -16,6 +17,7 @@ export type GridTeam = {
   grade: number; // its grade group's grade, for sorting youngest first
   level: string; // REC or COMP
   coach?: CoachTag; // its coach has another team playing that day
+  people?: string[]; // its coaches (Head and Assistant): one person is never at two games at once
 };
 export type GridGame = {
   id: string;
@@ -105,13 +107,17 @@ export function GridBoard({
   };
   const at = (court: string, s: string) => games.find((x) => x.court === court && x.starts === s && onGrid(x));
   const ids = (x: GridGame) => [x.home, x.away].flatMap((t) => (t ? [t.id] : []));
-  const shares = (x: GridGame, y: GridGame) => ids(x).some((n) => ids(y).includes(n));
-  // A team in the game being moved already plays within a game length of this time.
-  const busy = (s: string) => {
+  const people = (x: GridGame) => [x.home, x.away].flatMap((t) => t?.people ?? []);
+  const sharesTeam = (x: GridGame, y: GridGame) => ids(x).some((n) => ids(y).includes(n));
+  const sharesCoach = (x: GridGame, y: GridGame) => people(x).some((n) => people(y).includes(n));
+  const shares = (x: GridGame, y: GridGame) => sharesTeam(x, y) || sharesCoach(x, y);
+  // Why the game being moved can't start then: one of its teams, or one of its coaches (Head or Assistant), already
+  // has a game within a game length of this time.
+  const busy = (s: string): "team" | "coach" | null => {
     const g = active && games.find((x) => x.id === active);
-    return (
-      !!g && games.some((y) => y.id !== g.id && onGrid(y) && shares(g, y) && Math.abs(toMin(y.starts!) - toMin(s)) < minutes)
-    );
+    if (!g) return null;
+    const near = games.filter((y) => y.id !== g.id && onGrid(y) && Math.abs(toMin(y.starts!) - toMin(s)) < minutes);
+    return near.some((y) => sharesTeam(g, y)) ? "team" : near.some((y) => sharesCoach(g, y)) ? "coach" : null;
   };
 
   function move(id: string, slot: { court: string; starts: string } | null) {
@@ -200,7 +206,32 @@ export function GridBoard({
     });
   }
 
+  // Phones: press and hold a game, slide it to a slot (or a selection area) and lift (app/touch-drag).
+  const slotOf = (key: string | null) => {
+    if (!key) return undefined; // not on a drop area
+    if (key.startsWith("pool:")) return null;
+    const [court, starts] = key.split("@");
+    return { court, starts };
+  };
+  const touch = useTouchDrag({
+    onStart: (data) => {
+      if (!data.includes(",")) setSelected([]);
+      setPicked(null);
+      setDragging(data.split(",")[0]);
+    },
+    onOver: (key) => setOver(key),
+    onDrop: (data, key) => {
+      setDragging(null);
+      const slot = slotOf(key);
+      if (slot === undefined) return;
+      if (data.includes(",")) moveMany(data.split(","), slot);
+      else move(data, slot);
+    },
+    onCancel: () => setDragging(null),
+  });
+
   const target = (key: string, slot: { court: string; starts: string } | null) => ({
+    "data-drop": key,
     onDragOver: (e: React.DragEvent) => {
       e.preventDefault();
       setOver(key);
@@ -213,7 +244,11 @@ export function GridBoard({
       if (/^\d+$/.test(data)) move(data, slot);
       else if (/^\d+(,\d+)+$/.test(data)) moveMany(data.split(","), slot);
     },
-    onClick: () => (selected.length ? moveMany(selected, slot) : picked && move(picked, slot)),
+    onClick: () => {
+      if (touch.justDropped()) return;
+      if (selected.length) moveMany(selected, slot);
+      else if (picked) move(picked, slot);
+    },
   });
 
   function card(x: GridGame, hostId?: string, full = false) {
@@ -233,9 +268,11 @@ export function GridBoard({
           setDragging(x.id);
         }}
         onDragEnd={() => setDragging(null)}
+        {...touch.source(selected.includes(x.id) && selected.length > 1 ? selected.join(",") : x.id, `${h.name} vs ${v.name}`)}
         title={`${h.name} vs ${v.name} · ${h.division} · ${h.group === v.group ? h.group : `${h.group}/${v.group}`}`}
         onClick={(e) => {
           e.stopPropagation();
+          if (touch.justDropped()) return;
           if (e.shiftKey || e.metaKey || e.ctrlKey) {
             setPicked(null);
             const base = selected.length ? selected : picked ? [picked] : [];
@@ -245,7 +282,7 @@ export function GridBoard({
           setSelected([]);
           setPicked(on ? null : x.id);
         }}
-        className={`${full ? "block h-full w-full" : "max-w-full"} cursor-grab rounded-md px-2 py-1.5 text-left text-xs shadow-sm ring-1 active:cursor-grabbing ${
+        className={`${full ? "block h-full w-full" : "max-w-full"} cursor-grab touch-manipulation rounded-md px-2 py-1.5 text-left text-xs shadow-sm ring-1 select-none [-webkit-touch-callout:none] active:cursor-grabbing ${
           on ? "bg-scenic-navy text-white ring-scenic-navy" : genderCls(x)
         }`}
       >
@@ -276,6 +313,7 @@ export function GridBoard({
   const noHome = games.filter(homeless);
   return (
     <div className="space-y-3">
+      {touch.ghost}
       {error && <Alert tone="red">{error}</Alert>}
       {selected.length > 1 && (
         <p className="flex items-center justify-between gap-2 rounded-md bg-scenic-navy/10 px-2 py-1 text-xs font-semibold text-scenic-navy dark:bg-white/10 dark:text-white">
@@ -286,12 +324,18 @@ export function GridBoard({
           </button>
         </p>
       )}
-      {!active && <p className="text-xs text-zinc-500">Hold Shift and click games to pick several and move them together.</p>}
+      {!active && (
+        <p className="text-xs text-zinc-500">
+          On a phone, press and hold a game, then slide it to a slot (or tap a game, then a slot). On a computer, hold Shift and
+          click games to pick several and move them together.
+        </p>
+      )}
       {active && (
         <p className="text-xs text-zinc-500">
           Tap or drop on an open slot. <span className="font-semibold text-red-600 dark:text-red-400">Red</span>: a team in this
-          game already plays then. <span className="font-semibold text-red-700 dark:text-red-300">Dark red</span>: that court
-          isn&apos;t approved for this game&apos;s division. Drop on a selection area to take it off the grid.
+          game or one of its coaches (Head or Assistant) already has a game then.{" "}
+          <span className="font-semibold text-red-700 dark:text-red-300">Dark red</span>: that court isn&apos;t approved for this
+          game&apos;s division. Drop on a selection area to take it off the grid.
         </p>
       )}
       {gyms.map((g) => {
@@ -383,9 +427,11 @@ export function GridBoard({
                           // Why a slot can't take the game: shown in the slot (a tooltip doesn't show while dragging) and on hover.
                           const why = barred
                             ? `${c.name} doesn't support ${divisions[moving!.divisionId] ?? "this division"}`
-                            : clash
+                            : clash === "team"
                               ? "A team in this game already plays then"
-                              : undefined;
+                              : clash === "coach"
+                                ? "A coach (or bound team) already has a game then"
+                                : undefined;
                           return (
                             <td key={c.id} className="px-1 py-0.5">
                               <div

@@ -5,6 +5,7 @@ import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import { orgFeatures } from "@/lib/features";
 import { hasArea, isThunderAdmin } from "@/lib/org-admin";
+import { OrgSearchButton } from "../../OrgSearch";
 import { orgMetrics } from "@/lib/org-metrics";
 import { visitStats } from "@/lib/site-visits";
 import { uniformRequests } from "@/lib/uniforms";
@@ -79,9 +80,12 @@ async function ThunderHome() {
     <>
       <AppHeader user={user} context="director" tab="thunder-home" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <p className="mb-4 text-sm text-zinc-500 dark:text-zinc-400">
-          Welcome, {user.firstName} · {owner ? "Owner" : admin ? "Admin" : "Director"}
-        </p>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Welcome, {user.firstName} · {owner ? "Owner" : admin ? "Admin" : "Director"}
+          </p>
+          {user.isDirector && <OrgSearchButton org="thunder" orgName="Thunder" />}
+        </div>
         {requests && <UniformRequests list={requests} />}
         {metrics && (
           <OrgMetrics m={metrics} visits={visits} base="/org/thunder" thunder now={now} roster={hasArea(user, "teams")} />

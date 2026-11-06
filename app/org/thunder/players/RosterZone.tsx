@@ -8,7 +8,8 @@ import type { BoardPlayer } from "@/lib/rosters";
 export type Pick = { id: string; from: string };
 
 // One drop area of a roster board: "Not on a team" or a team. Drag a player onto it, or (on a phone) tap a player, then
-// tap the area. Each player shows their coach request, and their grade when it isn't the board's.
+// tap the area. Each player shows their coach request, and their grade when it isn't the board's. A team's area can be
+// collapsed (▸) to just its name and count, and still takes players dropped or tapped onto it.
 export function RosterZone({
   id,
   title,
@@ -31,6 +32,7 @@ export function RosterZone({
   onMove: (p: Pick, to: string) => void;
 }) {
   const [over, setOver] = useState(false);
+  const [shut, setShut] = useState(!free); // teams start collapsed; Not rostered stays open
   const target = picked !== null && picked.from !== id;
   return (
     <section
@@ -58,9 +60,28 @@ export function RosterZone({
             : "ring-zinc-950/10 dark:ring-white/15"
       } ${free && !over ? "bg-zinc-50 dark:bg-white/5" : ""}`}
     >
-      <div className="mb-2 flex items-baseline justify-between gap-2">
+      <div className={`flex items-baseline justify-between gap-2 ${shut ? "" : "mb-2"}`}>
         <h3 className="text-sm font-semibold">
-          {title} <span className="font-normal text-zinc-500 tabular-nums">({players.length})</span>
+          {free ? (
+            <>
+              {title} <span className="font-normal text-zinc-500 tabular-nums">({players.length})</span>
+            </>
+          ) : (
+            <button
+              type="button"
+              aria-expanded={!shut}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShut(!shut);
+              }}
+              className="-m-1 flex items-baseline gap-1 rounded p-1 text-left hover:bg-zinc-100 dark:hover:bg-white/10"
+            >
+              <span aria-hidden className={`inline-block w-3 text-zinc-500 transition-transform ${shut ? "" : "rotate-90"}`}>
+                ▸
+              </span>
+              {title} <span className="font-normal text-zinc-500 tabular-nums">({players.length})</span>
+            </button>
+          )}
         </h3>
         {target ? (
           <span className="text-xs font-semibold text-thunder-blue dark:text-blue-400">Tap to move here</span>
@@ -68,8 +89,10 @@ export function RosterZone({
           sub && <span className="text-xs text-zinc-500">{sub}</span>
         )}
       </div>
-      {!players.length && <p className="text-xs text-zinc-400">{free ? "Everyone here is on a team." : "Drop players here."}</p>}
-      <div className="flex flex-wrap gap-1.5">
+      {!shut && !players.length && (
+        <p className="text-xs text-zinc-400">{free ? "Everyone here is on a team." : "Drop players here."}</p>
+      )}
+      <div className={`flex flex-wrap gap-1.5 ${shut ? "hidden" : ""}`}>
         {players.map((p) => {
           const on = picked?.id === p.registrantId && picked.from === id;
           return (

@@ -13,6 +13,7 @@ import * as matchups from "@/lib/scenic-matchups";
 import * as grid from "@/lib/scenic-grid";
 import * as simulation from "@/lib/dev-teams";
 import * as courts from "@/lib/scenic-courts";
+import * as bindings from "@/lib/scenic-bindings";
 import type { JoinInput } from "@/lib/scenic";
 
 const deps = { pool: db, now: () => new Date() };
@@ -177,4 +178,12 @@ export async function setSimulation(on: boolean) {
 // Facilities → Courts: which divisions may play on a court (none: every division).
 export async function setCourtDivisions(courtKey: string, divisionIds: string[]) {
   return guarded((u) => courts.setCourtDivisions(deps, u, courtKey, divisionIds), "hosting-partners");
+}
+
+// Scheduler → Bindings: bind teams by hand (or undo one). Admins and Directors of Scheduling (checked in the lib).
+export async function bindTeams(teamIds: string[], reason: string) {
+  return guarded((u) => bindings.bindTeams(deps, u, teamIds, reason), "programs");
+}
+export async function unbindTeams(id: string) {
+  return guarded((u) => bindings.unbind(deps, u, id), "programs");
 }

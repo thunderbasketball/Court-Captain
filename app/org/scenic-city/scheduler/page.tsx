@@ -4,6 +4,9 @@ import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { currentScenic } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
+import { coachGroups, sharedCoaches } from "@/lib/coach-groups";
+import { listBindings, type Binding } from "@/lib/scenic-bindings";
+import { BindPicker, UnbindButton } from "./BindingsBoard";
 import { seesWho } from "@/lib/org-admin";
 import { requireFeature } from "@/lib/features-server";
 import { shortDate } from "@/lib/program-options";
@@ -44,12 +47,13 @@ const VIEWS = [
   { key: "teams", label: "Teams" },
   { key: "matchups", label: "Matchups" },
   { key: "grid", label: "Grid" },
+  { key: "bindings", label: "Bindings" },
 ] as const;
 type View = (typeof VIEWS)[number]["key"];
 const href = (day: string, view: View) => `/org/scenic-city/scheduler?day=${day}${view === "teams" ? "" : `&view=${view}`}`;
 
 // Scenic City's Scheduler (Admins and Directors of Scheduling, on the Director chip; SPEC.md section 13, step 7).
-// A tab for each upcoming Game Day (the next one first picked), and inside it Teams, Matchups and Grid.
+// A tab for each upcoming Game Day (the next one first picked), and inside it Teams, Matchups, Grid and Bindings.
 async function Scheduler({ searchParams }: { searchParams: PageProps<"/org/scenic-city/scheduler">["searchParams"] }) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
@@ -65,6 +69,7 @@ async function Scheduler({ searchParams }: { searchParams: PageProps<"/org/sceni
   const view: View = VIEWS.find((v) => v.key === q.view)?.key ?? "teams";
   const grid = day && view === "grid" ? await dayGrid({ pool: db, now: () => new Date() }, user, day.date) : null;
   const length = day ? await gameLength({ pool: db, now: () => new Date() }, user, day.date) : null;
+  const bound = day && view === "bindings" ? await listBindings({ pool: db, now: () => new Date() }, user) : null;
 
   return (
     <>
@@ -142,6 +147,8 @@ async function Scheduler({ searchParams }: { searchParams: PageProps<"/org/sceni
                   <Teams day={day} coaches={coachTags(day)} who={who} />
                 ) : view === "matchups" ? (
                   <Matchups day={day} coaches={coachTags(day)} who={who} />
+                ) : view === "bindings" ? (
+                  <Bindings day={day} coaches={coachTags(day)} bound={bound ?? []} who={who} />
                 ) : grid ? (
                   <Grid day={day} grid={grid} coaches={coachTags(day)} />
                 ) : (
@@ -163,18 +170,19 @@ function byDivision(teams: DateTeam[]): [string, DateTeam[]][] {
   return [...groups];
 }
 
-// The coaches with more than one team playing that day (every League): each gets a color (in name order) and a tag on
-// each of their teams naming the coach and their other teams.
+// Teams playing that day (every League) that share a coach, Head or Assistant: each group gets a color (in name order)
+// and a tag on each of its teams naming who coaches which other teams.
 function coachTags(day: ScheduleDay): Map<string, CoachTag> {
   const teams = day.programs.filter((p) => !p.bracket).flatMap((p) => p.teams.filter((t) => !t.removedBy && !t.out));
-  const by = new Map<string, DateTeam[]>();
-  for (const t of teams) if (t.coachKey) by.set(t.coachKey, [...(by.get(t.coachKey) ?? []), t]);
-  const multi = [...by.values()]
-    .filter((list) => list.length > 1)
-    .sort((x, y) => (x[0].coachName ?? "").localeCompare(y[0].coachName ?? "") || x[0].teamId.localeCompare(y[0].teamId));
+  const multi = coachGroups(teams)
+    .map((list) => ({ list, people: sharedCoaches(list) }))
+    .sort(
+      (x, y) =>
+        (x.people[0]?.name ?? "").localeCompare(y.people[0]?.name ?? "") || x.list[0].teamId.localeCompare(y.list[0].teamId),
+    );
   const tags = new Map<string, CoachTag>();
-  multi.forEach((list, color) => {
-    const name = list[0].coachName ?? "Their coach";
+  multi.forEach(({ list, people }, color) => {
+    const name = people[0]?.name ?? "Their coach";
     const initials = name
       .split(/\s+/)
       .map((w) => w[0]?.toUpperCase() ?? "")
@@ -184,13 +192,124 @@ function coachTags(day: ScheduleDay): Map<string, CoachTag> {
       tags.set(t.teamId, {
         color,
         initials,
-        title: `Coach ${name} also coaches ${list
-          .filter((x) => x !== t)
-          .map((x) => x.name)
-          .join(", ")}`,
+        // "Sam Lee (Asst) also coaches 3B Lee · Ann Fox also coaches 5G Fox"
+        title:
+          people
+            .filter((c) => c.teams.includes(t.teamId))
+            .map((c) => {
+              const asst = !t.coaches.find((x) => x.key === c.key)?.head;
+              const others = list.filter((x) => x !== t && c.teams.includes(x.teamId)).map((x) => x.name);
+              if (c.key.startsWith("b:")) return `Bound by hand to ${others.join(", ")} (${c.name})`;
+              return `${c.name}${asst ? " (Asst)" : ""} also coaches ${others.join(", ")}`;
+            })
+            .join(" · ") ||
+          `Shares coaches with ${list
+            .filter((x) => x !== t)
+            .map((x) => x.name)
+            .join(", ")}`,
       });
   });
   return tags;
+}
+
+// Bindings: every group of teams playing that day that are bound (they share a Head or Assistant Coach, or were bound
+// by hand), with what binds them; then binding teams by hand (pick 2+ teams, an optional reason) and every binding made
+// by hand (Unbind). Bound teams are all home or all away and never play at the same time.
+function Bindings({
+  day,
+  coaches,
+  bound,
+  who,
+}: {
+  day: ScheduleDay;
+  coaches: Map<string, CoachTag>;
+  bound: Binding[];
+  who: boolean;
+}) {
+  const teams = day.programs.filter((p) => !p.bracket).flatMap((p) => p.teams.filter((t) => !t.removedBy && !t.out));
+  const byId = new Map(bound.map((b) => [`b:${b.id}`, b]));
+  const groups = coachGroups(teams)
+    .map((list) => ({ list, people: sharedCoaches(list) }))
+    .sort((x, y) => (coaches.get(x.list[0].teamId)?.color ?? 0) - (coaches.get(y.list[0].teamId)?.color ?? 0));
+  const role = (t: DateTeam, key: string) => (t.coaches.find((c) => c.key === key)?.head ? "Head Coach" : "Assistant Coach");
+  const names = (b: Binding) => b.teams.map((t) => t.name).join(", ");
+  return (
+    <div className="space-y-4">
+      <section>
+        <h3 className="text-sm font-semibold">Bound teams playing this day ({groups.reduce((n, g) => n + g.list.length, 0)})</h3>
+        {!groups.length && <p className="mt-1 text-sm text-zinc-500">No bound teams this day.</p>}
+        <ul className="mt-2 space-y-2">
+          {groups.map(({ list, people }) => (
+            <li key={list[0].teamId} className="rounded-xl p-3 ring-1 ring-zinc-950/10 dark:ring-white/15">
+              <ul className="flex flex-wrap gap-1.5">
+                {list.map((t) => (
+                  <li key={t.teamId} className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs dark:bg-white/10">
+                    <TeamName name={t.name} className="font-semibold" /> <CoachBadge tag={coaches.get(t.teamId)} />{" "}
+                    <LevelTag level={t.level} /> <span className="text-zinc-500">· {t.divisionName}</span>
+                  </li>
+                ))}
+              </ul>
+              <ul className="mt-2 space-y-1 text-sm">
+                {people.map((c) => {
+                  const on = list.filter((t) => c.teams.includes(t.teamId));
+                  const b = byId.get(c.key);
+                  return (
+                    <li key={c.key} className="flex items-start justify-between gap-2">
+                      {c.key.startsWith("b:") ? (
+                        <span>
+                          <span className="font-semibold">Bound by hand</span>
+                          {b?.reason && <>: {b.reason}</>} · {on.map((t) => t.name).join(", ")}
+                          {who && b && <span className="block text-xs text-zinc-500">by {b.setBy}</span>}
+                        </span>
+                      ) : (
+                        <span>
+                          <span className="font-semibold">{c.name}</span>:{" "}
+                          {(["Head Coach", "Assistant Coach"] as const)
+                            .map((r) => [r, on.filter((t) => role(t, c.key) === r).map((t) => t.name)] as const)
+                            .filter(([, ts]) => ts.length)
+                            .map(([r, ts]) => `${r} of ${ts.join(", ")}`)
+                            .join(" · ")}
+                        </span>
+                      )}
+                      {b && <UnbindButton id={b.id} teams={names(b)} />}
+                    </li>
+                  );
+                })}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      </section>
+      <section>
+        <h3 className="text-sm font-semibold">Bind teams by hand</h3>
+        <p className="mb-2 text-xs text-zinc-500">
+          Pick two or more teams playing this day. Bound teams are kept all home or all away (away: the same organization if
+          possible), share one badge, and never play at the same time, on every Game Day until unbound.
+        </p>
+        <BindPicker
+          teams={teams
+            .map((t) => ({ id: t.teamId, name: t.name, division: t.divisionName, from: t.from }))
+            .sort((a, b) => a.name.localeCompare(b.name))}
+        />
+      </section>
+      <section>
+        <h3 className="text-sm font-semibold">All bindings made by hand ({bound.length})</h3>
+        {!bound.length && <p className="mt-1 text-sm text-zinc-500">None yet.</p>}
+        <ul className="mt-1 divide-y divide-zinc-100 dark:divide-white/5">
+          {bound.map((b) => (
+            <li key={b.id} className="flex items-start justify-between gap-2 py-2 text-sm">
+              <span>
+                {names(b)}
+                {b.reason && <span className="text-zinc-500"> · {b.reason}</span>}
+                {who && <span className="block text-xs text-zinc-500">by {b.setBy}</span>}
+              </span>
+              <UnbindButton id={b.id} teams={names(b)} />
+            </li>
+          ))}
+        </ul>
+      </section>
+    </div>
+  );
 }
 
 // Teams: each League's teams that day by division (each with its grade group and where it's from) with 1GG/2GG;
@@ -414,6 +533,7 @@ function Grid({ day, grid, coaches }: { day: ScheduleDay; grid: DayGrid; coaches
     grade: t.groupGrade,
     level: t.level,
     coach: coaches.get(t.teamId),
+    people: t.coaches.map((c) => c.key),
   });
   const games = day.programs
     .filter((p) => !p.bracket)

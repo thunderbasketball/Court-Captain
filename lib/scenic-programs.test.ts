@@ -26,6 +26,7 @@ import {
 import { listGameDays } from "./scenic-partners";
 import { createDayMatchups, createMatchups, saveMatchups } from "./scenic-matchups";
 import { placeGame, setGameLength } from "./scenic-grid";
+import { bindTeams, listBindings, unbind } from "./scenic-bindings";
 import { listCourts, setCourtDivisions } from "./scenic-courts";
 import { scheduledGames } from "./scenic-games";
 import { createScenicTeam } from "./scenic-teams";
@@ -570,6 +571,177 @@ describe("Scenic City programs", () => {
     expect(await createDayMatchups(deps(), fay, "2027-01-09")).toMatchObject({ ok: true, created: 2 });
     const [x2, y2] = await home();
     expect(x2).toBe(y2);
+  });
+
+  it("Assistant Coaches count too: they link teams for home/away and never have two games at once", async () => {
+    const id = await newLeague();
+    await saveProgramDates(deps(), dee, id, { add: ["2027-01-09"], addBrackets: [], remove: [] });
+    await div(id, "Boys", 3, 4, ["COMP"]);
+    await div(id, "Girls", 3, 4, ["COMP"]);
+    const make = async (who: SessionUser, forWhom: string, name: string, gender: string, first: string, cell: string) => {
+      const t = (
+        (await createScenicTeam(deps(), who, {
+          for: forWhom,
+          name,
+          gender,
+          level: "COMP",
+          grade: "4",
+          coachFirst: first,
+          coachLast: "Coach",
+          coachCell: cell,
+        })) as { id: string }
+      ).id;
+      expect(await registerTeam(deps(), who, id, t, ALL)).toMatchObject({ ok: true });
+      return t;
+    };
+    // Cy is the Head Coach of Baylor 4B and an Assistant Coach of Baylor 4G (its Thunder team's staff); Eve is 4G's Head.
+    const b1 = await make(pat, baylor, "Baylor 4B", "Boys", "Cy", "4235550003");
+    await make(sam, "solo", "Sam 4B", "Boys", "Ann", "4235550005");
+    const g1 = await make(pat, baylor, "Baylor 4G", "Girls", "Eve", "4235550007");
+    await make(sam, "solo", "Sam 4G", "Girls", "Bo", "4235550006");
+    const cy = (await db.pool.query<{ id: string }>("select coach_id as id from users where cell = '4235550003'")).rows[0].id;
+    const th = await db.pool.query<{ id: string }>(
+      `insert into teams (name, gender, grades, grade_sort, level, created_by) values ('4G Coach', 'Girls', '{4}', 4, 'COMP', 'x')
+       returning id::text`,
+    );
+    await db.pool.query("insert into team_staff (team_id, coach_id, role, added_by) values ($1, $2, 'AsstCoach', 'x')", [
+      th.rows[0].id,
+      cy,
+    ]);
+    await db.pool.query("update scenic_teams set thunder_team_id = $1 where id = $2", [th.rows[0].id, g1]);
+    await db.pool.query(
+      "insert into director_areas (coach_id, org, area, granted_by) values ('5550004', 'scenic-city', 'scheduling', 'test')",
+    );
+    const day = () => gameDaySchedule(deps(), fay).then((s) => s!.days[0].programs[0]);
+    const coaches = (await day()).teams.find((t) => t.teamId === g1)!.coaches;
+    expect(coaches.map((c) => [c.name, c.head])).toEqual([
+      ["Eve Coach", true],
+      ["Cy Coach", false],
+    ]);
+    // Without Cy as assistant, Baylor would split its two games; linked, they're both home or both away.
+    expect(await createDayMatchups(deps(), fay, "2027-01-09")).toMatchObject({ ok: true, created: 2 });
+    const m = (await day()).matchups;
+    const isHome = (t: string) => m.some((x) => (x.a === t && x.home === "a") || (x.b === t && x.home === "b"));
+    expect(isHome(b1)).toBe(isHome(g1));
+
+    // Grid: two courts; Cy's two games can't overlap.
+    const gym = await db.pool.query<{ id: string }>(
+      "insert into partner_gyms (partner_id, name, created_by) values ($1, 'Main Gym', 't') returning id::text",
+      [baylor],
+    );
+    const courts = (
+      await db.pool.query<{ id: string }>(
+        "insert into partner_courts (gym_id, name, created_by) values ($1, 'Court 1', 't'), ($1, 'Court 2', 't') returning id::text",
+        [gym.rows[0].id],
+      )
+    ).rows.map((r) => r.id);
+    await db.pool.query(
+      `insert into court_hours (court_id, game_day_id, starts, ends, set_by)
+       select c, g.id, '09:00', '12:00', 't' from unnest($1::bigint[]) c, game_days g where g.day = '2027-01-09'`,
+      [courts],
+    );
+    const gameOf = (t: string) => m.find((x) => x.a === t || x.b === t)!.id;
+    expect(await placeGame(deps(), fay, gameOf(b1), { court: courts[0], starts: "09:00" })).toEqual({ ok: true });
+    expect(await placeGame(deps(), fay, gameOf(g1), { court: courts[1], starts: "09:00" })).toEqual({
+      ok: false,
+      message: "Cy Coach already coaches a game then (one coach, one game at a time).",
+    });
+    expect(await placeGame(deps(), fay, gameOf(g1), { court: courts[1], starts: "09:55" })).toEqual({ ok: true });
+  });
+
+  it("Bindings by hand: Schedulers bind teams with a reason; bound teams go together and never play at once; Unbind", async () => {
+    const id = await newLeague();
+    await saveProgramDates(deps(), dee, id, { add: ["2027-01-09"], addBrackets: [], remove: [] });
+    await div(id, "Boys", 3, 4, ["COMP"]);
+    await div(id, "Girls", 3, 4, ["COMP"]);
+    const make = async (who: SessionUser, forWhom: string, name: string, gender: string, first: string, cell: string) => {
+      const t = (
+        (await createScenicTeam(deps(), who, {
+          for: forWhom,
+          name,
+          gender,
+          level: "COMP",
+          grade: "4",
+          coachFirst: first,
+          coachLast: "Coach",
+          coachCell: cell,
+        })) as { id: string }
+      ).id;
+      expect(await registerTeam(deps(), who, id, t, ALL)).toMatchObject({ ok: true });
+      return t;
+    };
+    // Four different coaches: nothing links Baylor 4B and Baylor 4G until they're bound.
+    const b1 = await make(pat, baylor, "Baylor 4B", "Boys", "Cy", "4235550003");
+    await make(sam, "solo", "Sam 4B", "Boys", "Ann", "4235550005");
+    const g1 = await make(pat, baylor, "Baylor 4G", "Girls", "Eve", "4235550007");
+    await make(sam, "solo", "Sam 4G", "Girls", "Bo", "4235550006");
+    expect(await bindTeams(deps(), fay, [b1, g1], "Same family")).toEqual({
+      ok: false,
+      message: "Only a Scenic City Admin or Director of Scheduling can do that.",
+    });
+    await db.pool.query(
+      "insert into director_areas (coach_id, org, area, granted_by) values ('5550004', 'scenic-city', 'scheduling', 'test')",
+    );
+    expect(await bindTeams(deps(), fay, [b1], "")).toEqual({ ok: false, message: "Pick at least two teams to bind." });
+    expect(await bindTeams(deps(), fay, [b1, "x"], "")).toEqual({ ok: false, message: "Pick the teams to bind." });
+    expect(await bindTeams(deps(), fay, [b1, "999999"], "")).toEqual({
+      ok: false,
+      message: "A team was removed. Reload the page.",
+    });
+    expect(await bindTeams(deps(), fay, [b1, g1], "x".repeat(81))).toMatchObject({ ok: false });
+    const bound = await bindTeams(deps(), fay, [b1, g1, b1], "  Same   family ");
+    expect(bound).toMatchObject({ ok: true });
+    const list = await listBindings(deps(), fay);
+    expect(list).toEqual([
+      expect.objectContaining({
+        reason: "Same family",
+        setBy: "Fay X",
+        teams: [
+          { id: b1, name: "Baylor 4B" },
+          { id: g1, name: "Baylor 4G" },
+        ],
+      }),
+    ]);
+    expect(await listBindings(deps(), pat)).toBeNull();
+    // On each team as a "coach" named by its reason, so the Scheduler links them.
+    const day = () => gameDaySchedule(deps(), fay).then((s) => s!.days[0].programs[0]);
+    expect((await day()).teams.find((t) => t.teamId === g1)!.coaches).toContainEqual({
+      key: `b:${list![0].id}`,
+      name: "Same family",
+      head: false,
+    });
+    expect(await createDayMatchups(deps(), fay, "2027-01-09")).toMatchObject({ ok: true, created: 2 });
+    const m = (await day()).matchups;
+    const isHome = (t: string) => m.some((x) => (x.a === t && x.home === "a") || (x.b === t && x.home === "b"));
+    expect(isHome(b1)).toBe(isHome(g1));
+    // Grid: bound teams never play at the same time.
+    const gym = await db.pool.query<{ id: string }>(
+      "insert into partner_gyms (partner_id, name, created_by) values ($1, 'Main Gym', 't') returning id::text",
+      [baylor],
+    );
+    const courts = (
+      await db.pool.query<{ id: string }>(
+        "insert into partner_courts (gym_id, name, created_by) values ($1, 'Court 1', 't'), ($1, 'Court 2', 't') returning id::text",
+        [gym.rows[0].id],
+      )
+    ).rows.map((r) => r.id);
+    await db.pool.query(
+      `insert into court_hours (court_id, game_day_id, starts, ends, set_by)
+       select c, g.id, '09:00', '12:00', 't' from unnest($1::bigint[]) c, game_days g where g.day = '2027-01-09'`,
+      [courts],
+    );
+    const gameOf = (t: string) => m.find((x) => x.a === t || x.b === t)!.id;
+    expect(await placeGame(deps(), fay, gameOf(b1), { court: courts[0], starts: "09:00" })).toEqual({ ok: true });
+    expect(await placeGame(deps(), fay, gameOf(g1), { court: courts[1], starts: "09:00" })).toEqual({
+      ok: false,
+      message: "A team bound to this game (Same family) already plays then: bound teams never play at the same time.",
+    });
+    // Unbind: Schedulers only; then they're free again.
+    expect(await unbind(deps(), pat, list![0].id)).toMatchObject({ ok: false });
+    expect(await unbind(deps(), fay, list![0].id)).toEqual({ ok: true });
+    expect(await unbind(deps(), fay, list![0].id)).toEqual({ ok: false, message: "That binding was already removed." });
+    expect(await listBindings(deps(), fay)).toEqual([]);
+    expect(await placeGame(deps(), fay, gameOf(g1), { court: courts[1], starts: "09:00" })).toEqual({ ok: true });
   });
 
   it("the Scheduler creates a division's matchups, keeping pairs new across Game Days", async () => {

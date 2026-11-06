@@ -4,7 +4,7 @@
 // (55 minutes unless changed), starting when the gym opens.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
-import { isScheduler } from "./scenic-programs";
+import { TEAM_COACHES, isScheduler } from "./scenic-programs";
 import { withTx } from "./sql";
 import { timeLabel } from "./time";
 import { courtDivisions } from "./scenic-courts";
@@ -229,6 +229,26 @@ export async function placeGame(
     const c = clash.rows[0];
     if (c?.taken) return { ok: false as const, message: "That slot already has a game. Move that game first." };
     if (c) return { ok: false as const, message: `${c.name} is already playing then.` };
+    // No one coaches two games at once: a Head or Assistant Coach of either team with another game that close.
+    const coach = await q.query<{ name: string; key: string }>(
+      `select x.c->>'name' as name, x.c->>'key' as key
+         from scenic_matchups m
+         join scenic_teams t on t.id in (m.team_a, m.team_b)
+         cross join lateral json_array_elements(${TEAM_COACHES}) x(c)
+        where m.day = $1::date and m.id <> $2 and m.court_key is not null
+          and abs(extract(epoch from (m.starts - $3::time)) / 60) < $6
+          and x.c->>'key' in (select y.c->>'key' from scenic_teams t cross join lateral json_array_elements(${TEAM_COACHES}) y(c)
+                               where t.id in ($4::bigint, $5::bigint))
+        limit 1`,
+      [game.day, matchupId, starts, game.a, game.b, grid.minutes],
+    );
+    if (coach.rows[0])
+      return {
+        ok: false as const,
+        message: coach.rows[0].key.startsWith("b:")
+          ? `A team bound to this game (${coach.rows[0].name}) already plays then: bound teams never play at the same time.`
+          : `${coach.rows[0].name} already coaches a game then (one coach, one game at a time).`,
+      };
     await q.query("update scenic_matchups set court_key = $2, starts = $3::time, placed_by = $4, placed_at = $5 where id = $1", [
       matchupId,
       slot.court,

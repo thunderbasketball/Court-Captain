@@ -6,6 +6,7 @@ import { currentScenic } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
 import { orgFeatures, type Feature } from "@/lib/features";
 import { directorAreas, isOrgAdmin, type Area } from "@/lib/org-admin";
+import { OrgSearchButton } from "../../OrgSearch";
 import AppHeader from "../../AppHeader";
 import { card } from "../../ui";
 
@@ -92,9 +93,12 @@ async function Scenic() {
     <>
       <AppHeader user={user} context={scenic.key} tab="scenic-home" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <p className="mb-4 text-sm text-zinc-500 dark:text-zinc-400">
-          Welcome, {user.firstName} · {scenic.role}
-        </p>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Welcome, {user.firstName} · {scenic.role}
+          </p>
+          {director && <OrgSearchButton org="scenic-city" orgName="Scenic City" />}
+        </div>
         <div className="grid gap-3 sm:grid-cols-2">
           {parts.map((p) => {
             const body = (

@@ -55,7 +55,7 @@ export async function listRoster(deps: Deps, viewer: SessionUser, teamId: string
 }
 
 // A parent from registration; a cell only when it's a real 10-digit number, an email only when it looks like one.
-function parent(first: string | null, last: string | null, cell: string | null, email: string | null): Parent | null {
+export function parent(first: string | null, last: string | null, cell: string | null, email: string | null): Parent | null {
   const c = cell ? normalizeCell(cell) : null;
   const e = email?.trim() && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ? email.trim() : null;
   const name = [first, last]

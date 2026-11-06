@@ -11,6 +11,8 @@ import { isOrgSlug } from "@/lib/orgs";
 import AppHeader from "../../AppHeader";
 import { card } from "../../ui";
 import { followRename } from "@/lib/org-rename";
+import { orgShort } from "@/lib/org-registry";
+import { OrgSearchButton } from "../../OrgSearch";
 import { orgMetrics } from "@/lib/org-metrics";
 import { visitStats } from "@/lib/site-visits";
 import OrgMetrics from "../../OrgMetrics";
@@ -51,6 +53,9 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
       [slug, user.coachId],
     ),
   ]);
+  // 🔍 search: Owners, Admins and Directors.
+  const search = (await db.query<{ ok: boolean }>("select acts_as($1, $2, 'Director') as ok", [user.coachId, slug])).rows[0].ok;
+  const orgName = await orgShort(db, slug);
   const role = admin ? "Admin" : teamsArea || coachesArea || facilities ? "Director" : "Coach";
   // Owners and Admins: the organization's metrics above the cards.
   const now = new Date();
@@ -88,9 +93,12 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
     <>
       <AppHeader user={user} context={`org:${slug}`} tab="org-home" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <p className="mb-4 text-sm text-zinc-500 dark:text-zinc-400">
-          Welcome, {user.firstName} · {role}
-        </p>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Welcome, {user.firstName} · {role}
+          </p>
+          {search && <OrgSearchButton org={slug} orgName={orgName} />}
+        </div>
         {metrics && <OrgMetrics m={metrics} visits={visits} base={`/org/${slug}`} thunder={false} now={now} />}
         {!parts.length && <p className="text-sm text-zinc-500">Nothing to show here yet.</p>}
         <div className="grid gap-3 sm:grid-cols-2">

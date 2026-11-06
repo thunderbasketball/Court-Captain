@@ -9,6 +9,7 @@ import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { getProgram, isScheduler, teamsByDate, type DateTeam } from "./scenic-programs";
 import { withTx } from "./sql";
+import { coachGroups } from "./coach-groups";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -291,11 +292,10 @@ async function history(
   return { met, metOn, tbdOn, home, today, coach, coachSide, coachOpp };
 }
 
-// The coaches with more than one team playing that day (not taken out): team id → its coach.
+// Teams playing that day (not taken out) that share a coach, Head or Assistant: team id → its group (lib/coach-groups).
 export function coachesOf(teams: DateTeam[]): Map<string, string> {
-  const by = new Map<string, string[]>();
-  for (const t of teams) if (t.coachKey && !t.removedBy && !t.out) by.set(t.coachKey, [...(by.get(t.coachKey) ?? []), t.teamId]);
-  return new Map([...by].filter(([, ids]) => ids.length > 1).flatMap(([c, ids]) => ids.map((id) => [id, c] as const)));
+  const groups = coachGroups(teams.filter((t) => !t.removedBy && !t.out));
+  return new Map(groups.flatMap((g) => g.map((t) => [t.teamId, `g:${g[0].teamId}`] as const)));
 }
 
 // Saves a division's games for the day: each [a, b] (b null: TBD) with its home side, team_a the lower id.

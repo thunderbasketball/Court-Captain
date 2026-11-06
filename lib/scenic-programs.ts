@@ -108,6 +108,32 @@ const divisionLabel = (d: { gender: string; gradeLow: number; gradeHigh: number 
   `${d.gender} ${gradeRange(d.gradeLow, d.gradeHigh)}`;
 const groupLabel = (g: { grade: number; level: string }) => `${ordinal(g.grade)} ${g.level}`;
 
+export type TeamCoach = { key: string; name: string; head: boolean };
+
+// A Scenic City team's coaches (for alias t), as JSON: its Head Coach ("u:<coach id>", or "w:<club>:<name>" while they
+// wait for a cell), the Head and Assistant Coaches of the Thunder or organization team it comes from, and each binding
+// made by hand on the Scheduler ("b:<binding id>", named by its reason), which links teams the same way. The Scheduler
+// links teams that share anyone here and never has one person at two games at once.
+export const TEAM_COACHES = `coalesce((select json_agg(k order by k.head desc, k.name) from (
+    select distinct on (x.key) x.key, x.name, x.head from (
+      select 'u:' || u.coach_id as key, u.first_name || ' ' || u.last_name as name, p.role = 'HeadCoach' as head
+        from (select t.coach_id as id, 'HeadCoach' as role where t.coach_id is not null
+              union all
+              select s.coach_id, s.role from team_staff s
+               where s.team_id = t.thunder_team_id and s.role in ('HeadCoach', 'AsstCoach')
+              union all
+              select oc.coach_id, oc.role from org_team_coaches oc where oc.team_id = t.org_team_id) p
+        join users u on u.coach_id = p.id
+      union all
+      select 'w:' || coalesce(t.partner_id::text, t.owner_coach_id) || ':' || lower(t.coach_first || ' ' || t.coach_last),
+             t.coach_first || ' ' || t.coach_last, true
+       where t.coach_id is null and t.coach_first is not null
+      union all
+      select 'b:' || bt.binding_id, coalesce(b.reason, 'Bound by hand'), false
+        from scenic_binding_teams bt join scenic_bindings b on b.id = bt.binding_id where bt.team_id = t.id
+    ) x order by x.key, x.head desc
+  ) k), '[]')`;
+
 export type RegisteredTeam = {
   teamId: string;
   name: string;
@@ -117,9 +143,9 @@ export type RegisteredTeam = {
   partnerId: string | null; // the school or organization it comes from (its home gyms on the Scheduler Grid)
   coach: string | null; // an organization's team may have no Head Coach yet
   coachCell: string | null;
-  // Who coaches it (a login, or a coach's name waiting for a cell), the same for each team one coach has; null: none.
-  coachKey: string | null;
-  coachName: string | null;
+  // Everyone who coaches it: its Head Coach (a login, or a name waiting for a cell) and the Assistant Coaches of the
+  // Thunder or organization team it comes from. A key is the same on each team one person coaches.
+  coaches: TeamCoach[];
   registeredBy: string;
   movedBy: string | null;
   paid: boolean;
@@ -199,8 +225,7 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
       owner: string | null;
       coach: string;
       coach_cell: string;
-      coach_key: string | null;
-      coach_name: string | null;
+      coaches: TeamCoach[];
       registered_by: string;
       moved_by: string | null;
       paid: boolean;
@@ -210,9 +235,7 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
     }>(
       `select r.pool_id::text, t.id::text as team_id, t.name, t.grade_low, t.grade, t.level, p.name as partner, t.partner_id::text,
               o.first_name || ' ' || o.last_name as owner, c.first_name || ' ' || c.last_name as coach, c.cell as coach_cell,
-              coalesce('u:' || t.coach_id, 'w:' || coalesce(t.partner_id::text, t.owner_coach_id) || ':' ||
-                       lower(t.coach_first || ' ' || t.coach_last)) as coach_key,
-              coalesce(c.first_name || ' ' || c.last_name, t.coach_first || ' ' || t.coach_last) as coach_name,
+              ${TEAM_COACHES} as coaches,
               r.registered_by, r.moved_by, r.paid, r.paid_set_by, r.removed_by,
               coalesce((select json_object_agg(x.off, x.set_by) from scenic_team_off x
                         where x.program_id = r.program_id and x.team_id = r.team_id), '{}') as off
@@ -239,8 +262,7 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
     partnerId: r.partner_id,
     coach: r.coach,
     coachCell: r.coach_cell,
-    coachKey: r.coach_key,
-    coachName: r.coach_name,
+    coaches: r.coaches,
     registeredBy: r.registered_by,
     movedBy: r.moved_by,
     paid: r.paid,
