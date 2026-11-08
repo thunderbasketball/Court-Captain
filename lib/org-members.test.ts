@@ -36,7 +36,7 @@ describe("a registered organization's Members", () => {
          ('5550002', 'Bo', 'X', '4235550002'), ('5550003', 'Cy', 'X', '4235550003')`,
     );
     const input = { name: "East Ridge Parks & Rec", short: "East Ridge", kind: "Organization", color: "#0f766e" };
-    await createOrganization(deps(), owner, { ...input, features: ["team-building"] }, null);
+    await createOrganization(deps(), owner, { ...input, features: ["court-org"] }, null);
     await db.pool.query("select set_role('5550002', $1, 'Director', true, 'test')", [org]);
     await db.pool.query("insert into director_areas (coach_id, org, area, granted_by) values ('5550002', $1, 'teams', 'test')", [
       org,

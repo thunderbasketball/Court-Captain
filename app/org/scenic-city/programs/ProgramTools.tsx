@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   addDivision,
@@ -16,7 +16,7 @@ import {
   setTeamOff,
   withdrawTeam,
 } from "../actions";
-import { Alert, CloseButton, PopUp, Toast, dialogCls, useConfirm } from "../../../client-ui";
+import { Alert, CloseButton, OnPage, PopUp, Toast, dialogCls, useConfirm } from "../../../client-ui";
 import { fieldLabel, inputCls, pillCls } from "../../../ui";
 import { REG_OPTIONS, type ProgramOption } from "@/lib/program-options";
 import RegisterChoices from "./RegisterChoices";
@@ -327,7 +327,7 @@ export function TeamOffButton({
   name: string;
   what: string; // a date, "brackets" or "program"
   label: string; // "Dec 5", "the Brackets", "the program"
-  out: boolean; // taken out now
+  out: boolean; // sitting out now
 }) {
   const router = useRouter();
   const [busy, start] = useTransition();
@@ -343,87 +343,22 @@ export function TeamOffButton({
           if (
             !out &&
             !(await confirm({
-              title: `Take ${name} out of ${label}?`,
-              message: "They stay listed (crossed out). You can restore them.",
-              confirmLabel: "Take out",
+              title: `${name}: sit out ${label}?`,
+              message: "They stay listed (crossed out) and aren't scheduled. Back in puts them back.",
+              confirmLabel: "Sit out",
             }))
           )
             return;
           start(async () => {
             const r = await setTeamOff(programId, teamId, what, !out);
-            setMsg(r.ok ? `${name} ${out ? "restored to" : "taken out of"} ${label}.` : r.message);
+            setMsg(r.ok ? `${name} ${out ? "back in" : "sitting out"} ${label}.` : r.message);
             if (r.ok) router.refresh();
           });
         }}
       >
-        {out ? "Restore" : "Remove"}
+        {out ? "Back in" : "Sit out"}
       </button>
       {msg && <Toast key={msg} message={msg} />}
-      {confirmDialog}
-    </>
-  );
-}
-
-export function PaidButton({ programId, teamId, paid }: { programId: string; teamId: string; paid: boolean }) {
-  const router = useRouter();
-  const [busy, start] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <>
-      <button
-        type="button"
-        disabled={busy}
-        title={paid ? "Mark unpaid" : "Mark paid"}
-        onClick={() =>
-          start(async () => {
-            const r = await setPaid(programId, teamId, !paid);
-            if (r.ok) router.refresh();
-            else setError(r.message);
-          })
-        }
-        className={`${smallBtn} ${
-          paid
-            ? "bg-emerald-50 text-emerald-700 ring-emerald-600/30 dark:bg-emerald-500/10 dark:text-emerald-300"
-            : "text-amber-700 ring-amber-600/30 dark:text-amber-300"
-        }`}
-      >
-        {paid ? "✓ Paid" : "Unpaid"}
-      </button>
-      {error && <Toast key={error} message={error} />}
-    </>
-  );
-}
-
-export function WithdrawTeam({ programId, teamId, name }: { programId: string; teamId: string; name: string }) {
-  const router = useRouter();
-  const [busy, start] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const [confirm, confirmDialog] = useConfirm();
-  return (
-    <>
-      <button
-        type="button"
-        disabled={busy}
-        className={`${smallBtn} text-red-600 ring-red-600/30 hover:bg-red-50 dark:ring-red-400/30 dark:hover:bg-red-500/10`}
-        onClick={async () => {
-          if (
-            !(await confirm({
-              title: `Withdraw ${name}?`,
-              message: "Are you sure? It comes out of this program.",
-              confirmLabel: "Withdraw",
-            }))
-          )
-            return;
-          start(async () => {
-            const r = await withdrawTeam(programId, teamId);
-            if (r.ok) router.refresh();
-            else setError(r.message);
-          });
-        }}
-      >
-        Withdraw
-      </button>
-      {error && <Toast key={error} message={error} />}
       {confirmDialog}
     </>
   );
@@ -735,5 +670,156 @@ export function MoveTeam({
       </select>
       {error && <Toast key={error} message={error} />}
     </>
+  );
+}
+
+const menuItem =
+  "block w-full rounded-xl px-3 py-2.5 text-left text-sm hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800";
+
+// A registered team's "⋯" menu on the program page: Sit out / Back in (Admins and Directors of Scheduling: stays listed,
+// crossed out, not scheduled) and Withdraw (Directors of Programs, or the team's own coach while registration is open:
+// its registration is deleted). Each asks first; the server checks the role again.
+export function TeamMenu({
+  programId,
+  teamId,
+  name,
+  canSitOut,
+  out,
+  canWithdraw,
+  paid,
+}: {
+  programId: string;
+  teamId: string;
+  name: string;
+  canSitOut: boolean;
+  out: boolean; // sitting out now
+  canWithdraw: boolean;
+  paid: boolean | null; // Directors of Programs, when the program charges: Mark paid / Mark unpaid (null: not shown)
+}) {
+  const router = useRouter();
+  // Where the menu shows (drawn on top of the page, under the ⋯ button, or above it near the bottom of the screen); null: closed.
+  const [at, setAt] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
+  const open = !!at;
+  const setOpen = (on: boolean) => {
+    const r = button.current?.getBoundingClientRect();
+    if (!on || !r) return setAt(null);
+    const right = window.innerWidth - r.right;
+    setAt(r.bottom + 180 > window.innerHeight ? { bottom: window.innerHeight - r.top + 6, right } : { top: r.bottom + 6, right });
+  };
+  const [busy, start] = useTransition();
+  const [msg, setMsg] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
+  const button = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) =>
+      !menu.current?.contains(e.target as Node) && !button.current?.contains(e.target as Node) && setAt(null);
+    const close = () => setAt(null);
+    document.addEventListener("pointerdown", away);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open]);
+  if (!canSitOut && !canWithdraw && paid === null) return null;
+
+  const togglePaid = () => {
+    setOpen(false);
+    start(async () => {
+      const r = await setPaid(programId, teamId, !paid);
+      setMsg(r.ok ? `${name} marked ${paid ? "unpaid" : "paid"}.` : r.message);
+      if (r.ok) router.refresh();
+    });
+  };
+
+  const sitOut = async () => {
+    setOpen(false);
+    if (
+      !out &&
+      !(await confirm({
+        title: `${name}: sit out the program?`,
+        message: "They stay listed (crossed out) with their registration, and aren't scheduled. Back in puts them back.",
+        confirmLabel: "Sit out",
+      }))
+    )
+      return;
+    start(async () => {
+      const r = await setTeamOff(programId, teamId, "program", !out);
+      setMsg(r.ok ? `${name} ${out ? "is back in" : "is sitting out"}.` : r.message);
+      if (r.ok) router.refresh();
+    });
+  };
+  const withdraw = async () => {
+    setOpen(false);
+    if (
+      !(await confirm({
+        title: `Withdraw ${name}?`,
+        message: "Its registration in this program is deleted: dates, pool and fee. To come back it registers again.",
+        confirmLabel: "Withdraw",
+        tone: "danger",
+      }))
+    )
+      return;
+    start(async () => {
+      const r = await withdrawTeam(programId, teamId);
+      setMsg(r.ok ? `${name} withdrawn.` : r.message);
+      if (r.ok) router.refresh();
+    });
+  };
+
+  return (
+    <div>
+      <button
+        ref={button}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`More for ${name}`}
+        disabled={busy}
+        onClick={() => setOpen(!open)}
+        className="rounded-full px-3 py-1 text-base leading-none font-semibold text-zinc-600 ring-1 ring-zinc-950/15 disabled:opacity-50 dark:text-zinc-300 dark:ring-white/20"
+      >
+        ⋯
+      </button>
+      {at && (
+        <OnPage>
+          <div
+            ref={menu}
+            role="menu"
+            style={at}
+            className="fixed z-50 w-64 max-w-[calc(100vw-2rem)] rounded-2xl bg-white p-1.5 shadow-lg ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/15"
+          >
+            {paid !== null && (
+              <button type="button" role="menuitem" className={menuItem} onClick={togglePaid}>
+                <span className="font-semibold">{paid ? "Mark unpaid" : "Mark paid"}</span>
+                <span className="block text-xs text-zinc-500">
+                  {paid ? "Paid now." : "UNPAID shows behind the team until it's paid."}
+                </span>
+              </button>
+            )}
+            {canSitOut && (
+              <button type="button" role="menuitem" className={menuItem} onClick={sitOut}>
+                <span className="font-semibold">{out ? "Back in" : "Sit out"}</span>
+                <span className="block text-xs text-zinc-500">
+                  {out ? "Put them back in the program to be scheduled." : "Stays listed, crossed out; not scheduled."}
+                </span>
+              </button>
+            )}
+            {canWithdraw && (
+              <button type="button" role="menuitem" className={menuItem} onClick={withdraw}>
+                <span className="font-semibold text-red-600 dark:text-red-400">Withdraw</span>
+                <span className="block text-xs text-zinc-500">Delete the registration: dates, pool and fee.</span>
+              </button>
+            )}
+          </div>
+        </OnPage>
+      )}
+      {msg && <Toast key={msg} message={msg} />}
+      {confirmDialog}
+    </div>
   );
 }

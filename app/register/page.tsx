@@ -29,6 +29,8 @@ export default function RegisterPage({ searchParams }: PageProps<"/register">) {
 // first, then the form.
 async function Register({ searchParams }: { searchParams: PageProps<"/register">["searchParams"] }) {
   const user = await currentUser();
+  // "Host games" from Get started arrives with ?need=court-sync ticked; "Register your organization's teams" with court-org.
+  const need = (await searchParams).need;
   if (!user)
     return (
       <>
@@ -36,7 +38,10 @@ async function Register({ searchParams }: { searchParams: PageProps<"/register">
           First, your own login: enter your cell number. New here? You&apos;ll create an account, then set up the organization.
         </p>
         <div className={`${card} p-5`}>
-          <LoginFlow join="new-org" next="/register" />
+          <LoginFlow
+            join="new-org"
+            next={typeof need === "string" && /^[a-z-]+$/.test(need) ? `/register?need=${need}` : "/register"}
+          />
         </div>
       </>
     );
@@ -47,8 +52,6 @@ async function Register({ searchParams }: { searchParams: PageProps<"/register">
     ready: READY_FOR_ANY_ORG.has(f.key),
   }));
   features.sort((a, b) => Number(b.ready) - Number(a.ready));
-  // "Host games" from Get started arrives with ?need=hosting-available ticked.
-  const need = (await searchParams).need;
   const preset = typeof need === "string" && features.some((f) => f.key === need) ? [need] : [];
   return (
     <div className={`${card} p-5`}>

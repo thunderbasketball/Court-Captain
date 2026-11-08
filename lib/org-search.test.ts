@@ -66,13 +66,7 @@ describe("Home search", () => {
     await createOrganization(
       deps(),
       jo,
-      {
-        name: "East Ridge Parks & Rec",
-        short: "East Ridge",
-        kind: "Organization",
-        color: "#0f766e",
-        features: ["team-building"],
-      },
+      { name: "East Ridge Parks & Rec", short: "East Ridge", kind: "Organization", color: "#0f766e", features: ["court-org"] },
       null,
     );
     const o = await db.pool.query<{ id: string }>(

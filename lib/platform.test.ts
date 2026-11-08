@@ -48,7 +48,7 @@ describe("CourtCaptain Admin", () => {
   it("only admins see the platform or change anything (a Director isn't enough)", async () => {
     const director = { ...other, isDirector: true };
     expect(await platformOverview(deps(), director)).toBeNull();
-    expect(await setOrgFeature(deps(), director, "thunder", "uniforms", false)).toEqual({
+    expect(await setOrgFeature(deps(), director, "thunder", "court-players", false)).toEqual({
       ok: false,
       message: "Only a CourtCaptain Admin can do that.",
     });
@@ -57,23 +57,23 @@ describe("CourtCaptain Admin", () => {
   });
 
   it("turns features on (free) and off; Alerts and unknown features are refused", async () => {
-    expect(await setOrgFeature(deps(), admin, "scenic-city", "chat", true)).toEqual({ ok: true });
+    expect(await setOrgFeature(deps(), admin, "scenic-city", "court-facility", true)).toEqual({ ok: true });
     const row = await db.pool.query(
-      "select source, turned_on_by from org_features where org = 'scenic-city' and feature = 'chat'",
+      "select source, turned_on_by from org_features where org = 'scenic-city' and feature = 'court-facility'",
     );
     expect(row.rows[0]).toEqual({ source: "comp", turned_on_by: "5550001" });
-    expect(await setOrgFeature(deps(), admin, "scenic-city", "chat", false)).toEqual({ ok: true });
-    expect(await hasFeature(db.pool, "scenic-city", "chat")).toBe(false);
+    expect(await setOrgFeature(deps(), admin, "scenic-city", "court-facility", false)).toEqual({ ok: true });
+    expect(await hasFeature(db.pool, "scenic-city", "practice")).toBe(false);
     expect(await setOrgFeature(deps(), admin, "thunder", "alerts", false)).toMatchObject({ ok: false });
     expect(await setOrgFeature(deps(), admin, "thunder", "rockets", true)).toMatchObject({ ok: false });
-    expect(await setOrgFeature(deps(), admin, "nowhere", "chat", true)).toMatchObject({ ok: false });
+    expect(await setOrgFeature(deps(), admin, "nowhere", "court-sync", true)).toMatchObject({ ok: false });
     // A registered organization only gets features that work for it today.
     await db.pool.query(
       "insert into organizations (slug, name, short_name, kind) values ('east-ridge', 'East Ridge', 'ER', 'Organization')",
     );
     try {
-      expect(await setOrgFeature(deps(), admin, "east-ridge", "uniforms", true)).toMatchObject({ ok: false });
-      expect(await setOrgFeature(deps(), admin, "east-ridge", "team-building", true)).toEqual({ ok: true });
+      expect(await setOrgFeature(deps(), admin, "east-ridge", "court-players", true)).toMatchObject({ ok: false });
+      expect(await setOrgFeature(deps(), admin, "east-ridge", "court-org", true)).toEqual({ ok: true });
     } finally {
       await db.pool.query("delete from organizations where slug = 'east-ridge'");
     }

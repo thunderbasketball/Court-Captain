@@ -16,6 +16,7 @@ Secrets live only in `.env.local` (never committed, never pasted into chat). The
 - `npm run db:migrate` — apply new `db/migrations/*.sql` files
 - `npm run user -- list | add <cell> <first> <last> [email] | director <cell> | admin <cell> | delete <cell>` — test accounts; `admin` makes a CourtCaptain Admin (platform page `/platform`)
 - `npm run import:teamsnap -- --sheet [--dry-run]` (or a `"data/import/<file>.csv"` path) — replace registrations from the Winter Registrations sheet's TeamSnapAPI tab (all columns kept; birthdates shifted +1 day when TeamSnap shows an evening time)
+- `npm run fastbreak -- [--dry-run | --preview <id>,<id>,... [--new-clubs]]` — add outside clubs' teams registered in FastBreak Compete to Scenic City's current League (rules in `lib/fastbreak/sync.ts`; `FASTBREAK_DOMAIN` + `FASTBREAK_API_KEY` in `.env.local`).
 - `npm run import:practice -- [--dry-run]` — import Gyms, PracticeSlots, BlackOuts tabs; safe to re-run (existing slots left alone). Booking rules live in `lib/practice/booking.ts`; times are Eastern via `lib/time.ts`.
 - `npm run import:evaluations -- [--dry-run]` — import the sheet's Evaluations tab; safe to re-run (cards already in the app left alone). Rules in `lib/evaluations.ts`.
 - `npm run import:teams -- [--dry-run]` — import the sheet's Teams tab; safe to re-run (keeps existing teams, adds staff who now exist). Staff matched by CoachID to users, else to a registration parent's cell (creates their login).

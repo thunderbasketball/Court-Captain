@@ -44,9 +44,9 @@ export type Step =
   | { step: "loggedIn"; token: string; expiresAt: Date }
   | { step: "error"; message: string };
 
-type Purpose = "signup" | "starter" | "verify" | "reset";
+type Purpose = "signup" | "starter" | "verify" | "reset" | "team";
 
-type UserRow = {
+export type UserRow = {
   coach_id: string;
   first_name: string;
   last_name: string;
@@ -137,7 +137,7 @@ function gate(u: UserRow): Step | null {
   return null;
 }
 
-function newPinError(pin1: unknown, pin2: unknown): string | null {
+export function newPinError(pin1: unknown, pin2: unknown): string | null {
   if (!isPin(pin1) || !isPin(pin2)) return MSG.badPin;
   if (pin1 !== pin2) return MSG.pinMismatch;
   if (pin1 === STARTER_PIN) return MSG.pinStarter;
@@ -150,13 +150,13 @@ async function findUser(q: PoolClient | Pool, cell: string): Promise<UserRow | n
 }
 
 // Serializes everything for one cell number (codes, PIN tries) inside a transaction.
-async function lockCell(q: PoolClient, cell: string) {
+export async function lockCell(q: PoolClient, cell: string) {
   await q.query("select pg_advisory_xact_lock(hashtext($1))", [cell]);
 }
 
 // ---- Email codes ----
 
-async function issueCode(
+export async function issueCode(
   deps: Deps,
   q: PoolClient,
   cell: string,
@@ -200,7 +200,7 @@ async function issueCode(
 type CodeRow = { id: string; email: string; payload: Record<string, unknown> };
 
 // Checks the newest live code. Wrong tries are counted (and committed) even though nothing else is saved.
-async function checkCode(
+export async function checkCode(
   deps: Deps,
   q: PoolClient,
   cell: string,
@@ -230,7 +230,7 @@ async function checkCode(
 
 // ---- PIN tries ----
 
-async function checkPin(deps: Deps, q: PoolClient, user: UserRow, pin: unknown): Promise<Step | null> {
+export async function checkPin(deps: Deps, q: PoolClient, user: UserRow, pin: unknown): Promise<Step | null> {
   const now = deps.now();
   await q.query("insert into pin_lockouts (cell) values ($1) on conflict do nothing", [user.cell]);
   const r = await q.query<{ failed_count: number; locked_until: Date | null }>(

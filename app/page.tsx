@@ -54,9 +54,9 @@ function GetStarted({ firstName }: { firstName: string }) {
       about: "A team of your own (Solo), to enter a league's programs.",
     },
     {
-      href: "/register?need=hosting-available",
+      href: "/register?need=court-sync",
       title: "Start a hosting program",
-      about: "Offer your gyms to host leagues' games: register with Hosting Sites Available.",
+      about: "Offer your gyms to host leagues' games: register with CourtSync.",
     },
   ];  return (
     <section className="space-y-4">

@@ -48,7 +48,7 @@ describe("teams for a registered organization", () => {
       "insert into users (coach_id, first_name, last_name, cell) values ('5550001', 'Jordan', 'Harris', '4235550001')",
     );
     const input = { name: "East Ridge Parks & Rec", short: "East Ridge", kind: "Organization", color: "#0f766e" };
-    await createOrganization(deps(), jo, { ...input, features: ["team-building"] }, null);
+    await createOrganization(deps(), jo, { ...input, features: ["court-org"] }, null);
   });
 
   it("teams are named Grade + Gender + Head Coach (TBD until one), numbered when the same; renamed when the Head Coach changes", async () => {
@@ -157,7 +157,7 @@ describe("teams for a registered organization", () => {
   });
 
   it("needs Team Management, and isn't for Thunder or Scenic City", async () => {
-    await db.pool.query("delete from org_features where org = $1 and feature = 'team-building'", [org]);
+    await db.pool.query("delete from org_features where org = $1 and feature = 'court-org'", [org]);
     expect(await listOrgTeams(deps(), jo, org)).toBeNull();
     expect(await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: ["4"], level: "REC" })).toMatchObject({ ok: false });
     expect(await listOrgTeams(deps(), jo, "thunder")).toBeNull();

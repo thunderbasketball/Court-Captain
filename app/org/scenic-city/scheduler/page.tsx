@@ -404,7 +404,7 @@ function Bindings({
 }
 
 // Teams: each League's teams that day by division (each with its grade group and where it's from) with 1GG/2GG;
-// Remove/Restore as on the program page.
+// Sit out / Back in as on the program page.
 function Teams({ day, coaches, who }: { day: ScheduleDay; coaches: Map<string, CoachTag>; who: boolean }) {
   return (
     <div className="space-y-3">

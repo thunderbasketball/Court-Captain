@@ -18,13 +18,12 @@ import {
   AddPool,
   DeleteProgram,
   MoveTeam,
-  PaidButton,
   ProgramEditor,
   RegisterTeam,
   TeamOffButton,
   RemoveDivision,
   RemovePool,
-  WithdrawTeam,
+  TeamMenu,
 } from "../ProgramTools";
 import ProgramDates from "../ProgramDates";
 import { RegisterAllButton } from "../../../../leagues/LeagueButtons";
@@ -60,6 +59,9 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
         .map((o) => ({ id: o.id, name: o.name, divisions: o.divisions }))
     : [];
   const fee = p.feeCents === null ? null : `$${(p.feeCents / 100).toFixed(2)}`;
+  // Paid / Unpaid (Directors of Programs, when the program charges): set in each team's ⋯ menu; unpaid shows behind the team.
+  const charges = manage && (!!fee || p.options.length > 0);
+  const unpaid = (t: { paid: boolean; removedBy: string | null }) => charges && !t.paid && !t.removedBy;
   const shown = manage ? p.divisionList : p.divisionList.filter((d) => d.teams);
   // A League's Game Days with their teams, then the Brackets (lib: teamsByDate, shared with the Scheduler).
   const byDate = teamsByDate(p).map((e) => ({
@@ -231,53 +233,84 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
                                   </div>
                                   <ul className="divide-y divide-zinc-200/70 dark:divide-white/5">
                                     {o.teams.map((t) => (
-                                      <li key={t.teamId} className="flex items-start justify-between gap-3 py-2">
+                                      <li
+                                        key={t.teamId}
+                                        className={`relative flex items-start justify-between gap-3 py-2 ${
+                                          unpaid(t)
+                                            ? "-mx-2 overflow-hidden rounded-lg bg-amber-50 px-2 dark:bg-amber-500/10"
+                                            : ""
+                                        }`}
+                                      >
+                                        {unpaid(t) && (
+                                          // UNPAID in the background (Directors of Programs, when the program charges).
+                                          // Scaled to the card's height (collapsed or open).
+                                          <svg
+                                            aria-hidden
+                                            viewBox="0 0 300 62"
+                                            preserveAspectRatio="xMidYMid meet"
+                                            className="pointer-events-none absolute inset-0 h-full w-full py-1 text-amber-500/10 select-none dark:text-amber-300/[0.08]"
+                                          >
+                                            <text
+                                              x="150"
+                                              y="60"
+                                              textAnchor="middle"
+                                              textLength="296"
+                                              lengthAdjust="spacingAndGlyphs"
+                                              fontSize="84"
+                                              fontWeight="900"
+                                              fill="currentColor"
+                                            >
+                                              UNPAID
+                                            </text>
+                                          </svg>
+                                        )}
+                                        {unpaid(t) && <span className="sr-only">Unpaid.</span>}
                                         {pick && <PickBox id={t.teamId} out={!!t.removedBy} name={t.name} />}
-                                        <div className={`min-w-0 flex-1 text-sm ${t.removedBy ? "line-through opacity-50" : ""}`}>
-                                          <p className="font-semibold">
-                                            <TeamName name={t.name} />{" "}
-                                            <span className="font-normal text-zinc-500">
-                                              · {t.gradeLabel} · {t.level}
+                                        {/* Collapsed by default: tap the name to see the coach, dates and who did it. */}
+                                        <details
+                                          className={`group/team relative min-w-0 flex-1 text-sm ${t.removedBy ? "line-through opacity-50" : ""}`}
+                                        >
+                                          <summary className="flex cursor-pointer list-none items-start gap-1 font-semibold [&::-webkit-details-marker]:hidden">
+                                            <span
+                                              aria-hidden
+                                              className="mt-0.5 text-xs text-zinc-400 transition group-open/team:rotate-90"
+                                            >
+                                              ▶
                                             </span>
-                                          </p>
-                                          <p className="text-zinc-600 dark:text-zinc-300">{t.from}</p>
-                                          {t.coach && t.coachCell ? (
-                                            <p>
-                                              Coach {t.coach} · <PhoneLink cell={t.coachCell} label={formatCell(t.coachCell)} />
+                                            <span>
+                                              <TeamName name={t.name} />
+                                              <span className="font-normal text-zinc-500"> ({t.tag})</span>{" "}
+                                              <span className="font-normal text-zinc-500">
+                                                · {t.gradeLabel} · {t.level}
+                                              </span>
+                                            </span>
+                                          </summary>
+                                          <div className="mt-1 pl-4">
+                                            {t.coach && t.coachCell ? (
+                                              <p>
+                                                Coach {t.coach} · <PhoneLink cell={t.coachCell} label={formatCell(t.coachCell)} />
+                                              </p>
+                                            ) : (
+                                              <p className="text-zinc-500">No coach yet</p>
+                                            )}
+                                            {t.entry && (
+                                              <p className="text-zinc-600 dark:text-zinc-300">
+                                                {entryLine(t.entry)}
+                                                {t.entry.bracket && " · Brackets"}
+                                              </p>
+                                            )}
+                                            <p className="text-xs text-zinc-500">
+                                              {who ? `Registered by ${t.registeredBy}` : "Registered"}
+                                              {t.movedBy && ` · moved${who ? ` by ${t.movedBy}` : ""}`}
+                                              {manage &&
+                                                who &&
+                                                t.paidSetBy &&
+                                                ` · ${t.paid ? "paid" : "unpaid"} per ${t.paidSetBy}`}
+                                              {t.removedBy && ` · sitting out${who ? ` (by ${t.removedBy})` : ""}`}
                                             </p>
-                                          ) : (
-                                            <p className="text-zinc-500">No coach yet</p>
-                                          )}
-                                          {t.entry && (
-                                            <p className="text-zinc-600 dark:text-zinc-300">
-                                              {entryLine(t.entry)}
-                                              {t.entry.bracket && " · Brackets"}
-                                            </p>
-                                          )}
-                                          <p className="text-xs text-zinc-500">
-                                            {who ? `Registered by ${t.registeredBy}` : "Registered"}
-                                            {t.movedBy && ` · moved${who ? ` by ${t.movedBy}` : ""}`}
-                                            {manage &&
-                                              who &&
-                                              t.paidSetBy &&
-                                              ` · ${t.paid ? "paid" : "unpaid"} per ${t.paidSetBy}`}
-                                            {t.removedBy && ` · taken out of the program${who ? ` by ${t.removedBy}` : ""}`}
-                                          </p>
-                                        </div>
+                                          </div>
+                                        </details>
                                         <div className="flex shrink-0 flex-col items-end gap-2">
-                                          {manage && (fee || p.options.length > 0) ? (
-                                            <PaidButton programId={p.id} teamId={t.teamId} paid={t.paid} />
-                                          ) : null}
-                                          {schedule && (
-                                            <TeamOffButton
-                                              programId={p.id}
-                                              teamId={t.teamId}
-                                              name={t.name}
-                                              what="program"
-                                              label="the program"
-                                              out={!!t.removedBy}
-                                            />
-                                          )}
                                           {manage && g.pools.length > 1 && (
                                             <MoveTeam
                                               programId={p.id}
@@ -285,7 +318,15 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
                                               pools={g.pools.filter((x) => x.id !== o.id)}
                                             />
                                           )}
-                                          {t.canWithdraw && <WithdrawTeam programId={p.id} teamId={t.teamId} name={t.name} />}
+                                          <TeamMenu
+                                            programId={p.id}
+                                            teamId={t.teamId}
+                                            name={t.name}
+                                            canSitOut={schedule}
+                                            out={!!t.removedBy}
+                                            canWithdraw={t.canWithdraw}
+                                            paid={charges ? t.paid : null}
+                                          />
                                         </div>
                                       </li>
                                     ))}
@@ -334,10 +375,9 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
                       {d.teams.map((t) => (
                         <li key={t.teamId} className="flex items-center justify-between gap-3">
                           <span className={`min-w-0 ${t.removedBy || t.out ? "text-zinc-400 line-through" : ""}`}>
-                            <TeamName name={t.name} className="font-medium" />{" "}
-                            <span className="text-xs text-zinc-500">
-                              {t.division} · {t.from}
-                            </span>
+                            <TeamName name={t.name} className="font-medium" />
+                            <span className="text-xs text-zinc-500"> ({t.tag})</span>{" "}
+                            <span className="text-xs text-zinc-500">{t.division}</span>
                           </span>
                           <span
                             className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${

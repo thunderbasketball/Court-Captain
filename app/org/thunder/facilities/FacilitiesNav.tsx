@@ -4,6 +4,7 @@ const LINKS = [
   { key: "availability", href: "/org/thunder/facilities", label: "Availability" },
   { key: "gyms", href: "/org/thunder/facilities/gyms", label: "Gyms" },
   { key: "blackouts", href: "/org/thunder/facilities/blackouts", label: "Blackouts" },
+  { key: "rentals", href: "/org/thunder/facilities/rentals", label: "Rentals" }, // coming soon
 ] as const;
 
 // The links inside Facilities (Admins and Directors of Facilities): Thunder's, or (`links`) another organization's

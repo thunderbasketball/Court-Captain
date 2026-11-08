@@ -3,7 +3,7 @@
 // turned on; the others are recorded as requested.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
-import { FEATURES, READY_FOR_ANY_ORG, type Feature } from "./features";
+import { FEATURES, READY_FOR_ANY_ORG, type FeatureKey } from "./features";
 import { slugFor } from "./org-slug";
 import { withTx } from "./sql";
 
@@ -52,7 +52,7 @@ export async function createOrganization(
   viewer: SessionUser,
   input: NewOrgInput,
   logo: Logo,
-): Promise<Result<{ slug: string; on: Feature[]; requested: Feature[] }>> {
+): Promise<Result<{ slug: string; on: FeatureKey[]; requested: FeatureKey[] }>> {
   const name = cleanOrgName(input.name, 60);
   if (!name) return { ok: false, message: "Enter the organization's name: letters, numbers and simple punctuation." };
   const short =
@@ -62,7 +62,7 @@ export async function createOrganization(
   if (!kind) return { ok: false, message: "Choose School, Club, League or Organization." };
   const color = ORG_COLORS.find((c) => c === input.color) ?? ORG_COLORS[0];
   const picked = Array.isArray(input.features)
-    ? [...new Set(input.features)].filter((f): f is Feature => FEATURES.some((x) => x.key === f) && f !== "alerts")
+    ? [...new Set(input.features)].filter((f): f is FeatureKey => FEATURES.some((x) => x.key === f) && f !== "alerts")
     : [];
   if (!picked.length) return { ok: false, message: "Choose at least one thing you need." };
   if (logo) {

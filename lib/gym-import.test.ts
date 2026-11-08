@@ -51,7 +51,7 @@ describe("importing gyms", () => {
       "insert into users (coach_id, first_name, last_name, cell) values ('5550001', 'Jo', 'X', '4235550001'), ('9913694', 'Earl', 'Epps', '4239913694')",
     );
     const input = { name: "East Ridge Parks & Rec", short: "East Ridge", kind: "Organization", color: "#0f766e" };
-    await createOrganization(deps(), jo, { ...input, features: ["hosting-available"] }, null);
+    await createOrganization(deps(), jo, { ...input, features: ["court-sync"] }, null);
   });
 
   it("previews (new, already a gym, problems) and adds the new ones; Thunder's too", async () => {

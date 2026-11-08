@@ -14,6 +14,8 @@ import * as grid from "@/lib/scenic-grid";
 import * as simulation from "@/lib/dev-teams";
 import * as courts from "@/lib/scenic-courts";
 import * as bindings from "@/lib/scenic-bindings";
+import * as fastbreak from "@/lib/fastbreak/orgs";
+import { fastbreakClient } from "@/lib/fastbreak/client";
 import type { JoinInput } from "@/lib/scenic";
 
 const deps = { pool: db, now: () => new Date() };
@@ -148,6 +150,14 @@ export async function importClubTeams(text: string) {
 }
 export async function undoClubImport(id: string) {
   return guarded((u) => clubs.undoClubImport(deps, u, id), "team-registration");
+}
+
+// FastBreak page (Directors of Teams; checked in lib/fastbreak/orgs).
+export async function setFastbreakOrg(fbOrgId: string, pick: unknown) {
+  return guarded((u) => fastbreak.setFastbreakOrg(deps, u, fbOrgId, pick), "team-registration");
+}
+export async function syncFastbreakNow() {
+  return guarded((u) => fastbreak.syncFastbreakNow({ ...deps, client: fastbreakClient }, u), "team-registration");
 }
 
 // Scheduler: create (or create again) one division's matchups on a Game Day (Admins and Directors of Scheduling).

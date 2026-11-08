@@ -11,6 +11,8 @@ import OrgLogo from "../../OrgLogo";
 import LoginFlow from "../LoginFlow";
 import { card } from "../../ui";
 import { followRename } from "@/lib/org-rename";
+import { hasFeature } from "@/lib/features";
+import Link from "next/link";
 
 // The organization's logo as the tab icon (and on a phone's home screen) and its name in the tab title.
 export async function generateMetadata({ params }: PageProps<"/login/[org]">): Promise<Metadata> {
@@ -36,6 +38,8 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
   if (!o) notFound();
   const into = `/switch?org=${org}`;
   if (await currentUser()) redirect(into);
+  // Outside teams register here while Team Registrations is on (Scenic City's League teams).
+  const teamSignup = org === "scenic-city" && (await hasFeature(db, org, "team-registration"));
   return (
     <>
       <div className="mb-7 flex flex-col items-center gap-2 text-center">
@@ -56,6 +60,24 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
         {/* Thunder asks a new account why they're joining; any other organization's new account logs straight in. */}
         <LoginFlow join={org === "thunder" ? undefined : org} next={into} />
       </div>
+      {teamSignup && (
+        <Link
+          href={`/register-team/${org}`}
+          className="mt-4 block rounded-xl px-4 py-3 text-center font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:hover:bg-white/5"
+        >
+          Register a team
+        </Link>
+      )}
+      {teamSignup && (
+        // CourtOrg: an organization registering several teams. It signs up (organization name required, CourtOrg
+        // ticked), then adds its teams on its Teams tab and registers them into the programs.
+        <Link
+          href="/register?need=court-org"
+          className="mt-3 block rounded-xl px-4 py-3 text-center font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:hover:bg-white/5"
+        >
+          Register your organization&apos;s teams
+        </Link>
+      )}
     </>
   );
 }

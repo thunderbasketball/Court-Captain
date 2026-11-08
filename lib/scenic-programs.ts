@@ -10,6 +10,7 @@ import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { orgHasArea } from "./org-admin";
 import { REG_OPTIONS, planChoice, type Choice, type ChoiceResult, type ProgramOption, type SingleKind } from "./program-options";
+import { clubAbbr } from "./scenic-club-teams";
 import { cleanPlaceName } from "./scenic-partners";
 import { LEVELS, gradeLabel, gradeRange, teamsICanManage, type Level } from "./scenic-teams";
 import { withTx, type Queryable } from "./sql";
@@ -140,6 +141,7 @@ export type RegisteredTeam = {
   gradeLabel: string;
   level: Level;
   from: string; // partner name, or "Solo · owner"
+  tag: string; // shown in parentheses after the name: its organization's or club's Abbreviation, or "Solo"
   partnerId: string | null; // the school or organization it comes from (its home gyms on the Scheduler Grid)
   coach: string | null; // an organization's team may have no Head Coach yet
   coachCell: string | null;
@@ -221,6 +223,7 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
       grade: number;
       level: Level;
       partner: string | null;
+      partner_abbr: string | null;
       partner_id: string | null;
       owner: string | null;
       coach: string;
@@ -233,14 +236,15 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
       removed_by: string | null;
       off: Record<string, string>;
     }>(
-      `select r.pool_id::text, t.id::text as team_id, t.name, t.grade_low, t.grade, t.level, p.name as partner, t.partner_id::text,
+      `select r.pool_id::text, t.id::text as team_id, t.name, t.grade_low, t.grade, t.level, p.name as partner, coalesce(og.abbr, p.abbr) as partner_abbr, t.partner_id::text,
               o.first_name || ' ' || o.last_name as owner, c.first_name || ' ' || c.last_name as coach, c.cell as coach_cell,
               ${TEAM_COACHES} as coaches,
               r.registered_by, r.moved_by, r.paid, r.paid_set_by, r.removed_by,
               coalesce((select json_object_agg(x.off, x.set_by) from scenic_team_off x
                         where x.program_id = r.program_id and x.team_id = r.team_id), '{}') as off
        from scenic_registrations r join scenic_teams t on t.id = r.team_id left join users c on c.coach_id = t.coach_id
-       left join partners p on p.id = t.partner_id left join users o on o.coach_id = t.owner_coach_id
+       left join partners p on p.id = t.partner_id left join organizations og on og.slug = p.org_slug
+       left join users o on o.coach_id = t.owner_coach_id
        where r.program_id = $1 order by lower(t.name)`,
       [id],
     ),
@@ -259,6 +263,7 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
     gradeLabel: gradeLabel(r.grade_low, r.grade),
     level: r.level,
     from: r.partner ?? `Solo · ${r.owner}`,
+    tag: r.partner ? (r.partner_abbr ?? clubAbbr(r.partner)) : "Solo",
     partnerId: r.partner_id,
     coach: r.coach,
     coachCell: r.coach_cell,
@@ -962,7 +967,7 @@ const SINGLE: readonly SingleKind[] = ["single_1", "single_2nd", "single_2"];
 export type Entry = Choice & ChoiceResult; // what it picked, and what that gives it
 
 // The choice as sent from the browser, checked: ALL Season (true/false) and Single Day options on dates.
-function parseChoice(v: unknown): Choice | null {
+export function parseChoice(v: unknown): Choice | null {
   const c = v as { allSeason?: unknown; days?: unknown } | null;
   if (!c || typeof c !== "object" || !Array.isArray(c.days) || c.days.length > 200) return null;
   const days: Choice["days"] = [];

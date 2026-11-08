@@ -54,7 +54,7 @@ export async function requestHosting(deps: Deps, viewer: SessionUser, hostOrg: u
     if (!(await facilities(q, viewer, hostOrg)))
       return { ok: false as const, message: `Only a ${await orgShort(q, hostOrg)} Admin or Director of Facilities can do that.` };
     if (!(await canHost(q, hostOrg)))
-      return { ok: false as const, message: `${await orgName(q, hostOrg)} doesn't have Hosting Sites Available.` };
+      return { ok: false as const, message: `${await orgName(q, hostOrg)} doesn't have CourtSync Host.` };
     if (!(await hasFeature(q, forOrg, "hosting-partners")))
       return { ok: false as const, message: `${await orgName(q, forOrg)} isn't looking for hosting sites.` };
     const r = await q.query(

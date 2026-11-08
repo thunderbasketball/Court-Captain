@@ -42,7 +42,8 @@ export default function RegisterOrgForm({
           setError(null);
           const r = await registerOrganization(form);
           if (!r.ok) return setError(r.message);
-          router.push(`/org/${r.slug}`); // the server made it the role in use (switch back from the logo menu)
+          // The server made it the role in use (switch back from the logo menu). With CourtOrg: straight to its Teams.
+          router.push(picked.includes("court-org") ? `/org/${r.slug}/teams` : `/org/${r.slug}`);
         });
       }}
     >

@@ -28,12 +28,14 @@ export default function RegisterChoices({
   today,
   entry,
   save,
+  saveLabel,
 }: {
   options: ProgramOption[];
   gameDates: string[];
   today: string;
   entry: (Choice & ChoiceResult) | null;
   save: (choice: Choice) => Promise<{ ok: true } | { ok: false; message: string }>;
+  saveLabel?: string; // the button (default Register, or Add to registration)
 }) {
   const had: Choice = entry ? { allSeason: entry.allSeason, days: entry.days } : { allSeason: false, days: [] };
   const [all, setAll] = useState(false);
@@ -183,7 +185,7 @@ export default function RegisterChoices({
           })
         }
       >
-        {busy ? "Saving…" : entry ? "Add to registration" : "Register"}
+        {busy ? "Saving…" : (saveLabel ?? (entry ? "Add to registration" : "Register"))}
       </button>
     </div>
   );

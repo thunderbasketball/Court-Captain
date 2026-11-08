@@ -69,7 +69,7 @@ export async function outsideClubs(q: Pick<Queryable, "query">): Promise<Club[]>
 }
 
 // The club picked (its id), or a new one typed in ({ name, abbr }): made if new. A club on CourtCaptain is refused.
-async function clubFor(q: Pick<Queryable, "query">, viewer: SessionUser, v: unknown): Promise<Club> {
+export async function clubFor(q: Pick<Queryable, "query">, viewer: SessionUser, v: unknown): Promise<Club> {
   if (isId(v)) {
     const r = await q.query<Club & { abbr: string | null }>(
       "select id::text, name, abbr from partners where id = $1 and org_slug is null and registers_teams and approved for share",
@@ -106,7 +106,13 @@ async function clubFor(q: Pick<Queryable, "query">, viewer: SessionUser, v: unkn
 }
 
 // The team's name by the rule, with the club's Abbreviation first, unique within the club. Lock the club first.
-async function clubTeamName(q: Pick<Queryable, "query">, club: Club, gender: Gender, grades: string[], last: string | null) {
+export async function clubTeamName(
+  q: Pick<Queryable, "query">,
+  club: Club,
+  gender: Gender,
+  grades: string[],
+  last: string | null,
+) {
   await q.query("select pg_advisory_xact_lock(hashtext('scenic-club:' || $1))", [club.id]);
   const teams = (await q.query<NamedTeam>("select id::text, name from scenic_teams where partner_id = $1", [club.id])).rows;
   // Numbered, with any of the club's teams already named that ("RA 3G Campbell 1", "RA 3G Campbell 2").
@@ -129,9 +135,9 @@ const altOf = (v: unknown) => {
   return a;
 };
 
-async function insertTeam(
+export async function insertTeam(
   q: Pick<Queryable, "query">,
-  viewer: SessionUser,
+  who: string, // who added it, recorded on the team
   now: Date,
   t: {
     name: string;
@@ -157,7 +163,7 @@ async function insertTeam(
       t.level,
       t.club.id,
       t.coachId,
-      by(viewer),
+      who,
       now,
       t.alt,
       t.importId ?? null,
@@ -166,11 +172,7 @@ async function insertTeam(
     ],
   );
   if (t.coachId)
-    await q.query("select set_role($1, $2, 'Coach', true, $3), set_role($1, $2, 'Request', false, $3)", [
-      t.coachId,
-      ORG,
-      by(viewer),
-    ]);
+    await q.query("select set_role($1, $2, 'Coach', true, $3), set_role($1, $2, 'Request', false, $3)", [t.coachId, ORG, who]);
   return r.rows[0].id;
 }
 
@@ -204,7 +206,7 @@ export async function addClubTeam(
       const club = await clubFor(q, viewer, input.club);
       const head = await resolveHead(q, input.headCoach, deps.now());
       const name = await clubTeamName(q, club, gender, grades, head?.lastName ?? null);
-      const id = await insertTeam(q, viewer, deps.now(), {
+      const id = await insertTeam(q, by(viewer), deps.now(), {
         name,
         gender,
         grades,
@@ -355,7 +357,7 @@ export async function importClubTeams(
           const waiting = r.coach && !r.coach.cell ? { first: r.coach.first, last: r.coach.last } : null;
           const grades = importGrades(r.grade!);
           const name = await clubTeamName(q, club, r.gender!, grades, head?.lastName ?? waiting?.last ?? null);
-          await insertTeam(q, viewer, deps.now(), {
+          await insertTeam(q, by(viewer), deps.now(), {
             name,
             gender: r.gender!,
             grades,

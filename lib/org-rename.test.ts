@@ -38,7 +38,7 @@ describe("renaming an organization", () => {
     const made = await createOrganization(
       deps(),
       owner,
-      { name: "Esst Hamilton High Dchool", short: "East Ham", kind: "School", color: "#1d4ed8", features: ["team-building"] },
+      { name: "Esst Hamilton High Dchool", short: "East Ham", kind: "School", color: "#1d4ed8", features: ["court-org"] },
       null,
     );
     expect(made).toMatchObject({ ok: true, slug: "esst-hamilton-high-dchool" });
@@ -63,7 +63,9 @@ describe("renaming an organization", () => {
     expect(await has("select has_role('5550001', $1, 'Owner') and has_role('5550002', $1, 'Admin') as ok")).toBe(true);
     expect(await has("select count(*) = 1 as ok from org_teams where org = $1")).toBe(true);
     expect(await has("select count(*) = 1 as ok from org_features where org = $1")).toBe(true);
-    expect(await has("select not exists (select 1 from org_roles where org = 'esst-hamilton-high-dchool') and $1 <> '' as ok")).toBe(true);
+    expect(
+      await has("select not exists (select 1 from org_roles where org = 'esst-hamilton-high-dchool') and $1 <> '' as ok"),
+    ).toBe(true);
     expect(await renamedTo(db.pool, old)).toBe(now);
 
     // Changing only the short name keeps the address; Thunder keeps its address whatever its name.

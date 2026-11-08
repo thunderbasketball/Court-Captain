@@ -129,7 +129,7 @@ describe("Home metrics", () => {
   it("another organization: only what its features have (teams and coaches; no registrations, uniforms or practices)", async () => {
     const org = "east-ridge-parks-and-rec";
     const input = { name: "East Ridge Parks & Rec", short: "East Ridge", kind: "Organization", color: "#0f766e" };
-    await createOrganization(deps(), admin, { ...input, features: ["team-building"] }, null);
+    await createOrganization(deps(), admin, { ...input, features: ["court-org"] }, null);
     await createOrgTeam(deps(), admin, org, { gender: "Girls", grades: ["5"], level: "REC", headCoach: "none" } as Parameters<
       typeof createOrgTeam
     >[3]);

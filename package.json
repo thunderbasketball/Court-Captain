@@ -15,6 +15,7 @@
     "import:teams": "tsx --env-file=.env.local scripts/import-teams.ts",
     "import:practice": "tsx --env-file=.env.local scripts/import-practice.ts",
     "import:evaluations": "tsx --env-file=.env.local scripts/import-evaluations.ts",
+    "fastbreak": "tsx --conditions=react-server --env-file=.env.local scripts/fastbreak-sync.ts",
     "email:test": "tsx --conditions=react-server --env-file=.env.local scripts/test-email.ts"
   },
   "dependencies": {

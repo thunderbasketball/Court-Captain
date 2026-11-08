@@ -11,6 +11,7 @@ import { MustBeEntered } from "../../../TeamRow";
 import { HeadCoachEmailButton } from "../../../CoachContactTools";
 import { listClubImports, outsideClubs, scenicCoachOptions } from "@/lib/scenic-club-teams";
 import { scheduledGames } from "@/lib/scenic-games";
+import { STAFF_ROLES, teamStaff } from "@/lib/team-signup";
 import { easternDate } from "@/lib/time";
 import { LeagueGames } from "../../../LeagueGames";
 import { GRADE_CHOICES, gradeRange, listScenicTeams, type ScenicTeam } from "@/lib/scenic-teams";
@@ -70,6 +71,11 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
     db,
     teams.map((t) => t.id),
   );
+  // Assistant Coach, Manager, Team Parent (from team registration).
+  const staff = await teamStaff(
+    db,
+    teams.map((t) => t.id),
+  );
   const today = easternDate(new Date());
   const director = scenic.role === "Director";
   const who = await seesWho(db, user, "scenic-city"); // Owners and Admins see who did it
@@ -117,6 +123,12 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
         ) : (
           <MustBeEntered what="COACH INFO" />
         )}
+        {(staff[t.id] ?? []).map((s) => (
+          <p key={s.role}>
+            {STAFF_ROLES.find((r) => r.key === s.role)?.label} {s.first} {s.last} ·{" "}
+            <PhoneLink cell={s.cell} label={formatCell(s.cell)} />
+          </p>
+        ))}
         {t.waitingCoach && <MustBeEntered what="COACH CELL" />}
         {(t.waitingCoach || (t.coachId && !t.coachEmail)) && (
           <span className="flex items-center gap-2">
@@ -152,6 +164,14 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {director && (
               <>
+                {imports && ( // Directors of Teams
+                  <Link
+                    href="/org/scenic-city/teams/fastbreak"
+                    className="rounded-full px-3 py-1.5 text-sm font-semibold text-zinc-700 ring-1 ring-zinc-950/10 hover:bg-zinc-50 dark:text-zinc-200 dark:ring-white/15"
+                  >
+                    FastBreak
+                  </Link>
+                )}
                 <ImportTeamsButton
                   preview={previewClubImport}
                   named

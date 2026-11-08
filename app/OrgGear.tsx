@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { FEATURES } from "@/lib/features";
+import { FEATURES, syncPart } from "@/lib/features";
 import { isOrgAdmin, isOrgOwner } from "@/lib/org-admin";
 import { orgInfo } from "@/lib/org-registry";
 import { ORG_COLORS } from "@/lib/org-signup";
@@ -42,7 +42,10 @@ export default async function OrgGear({ org, coachId }: { org: string; coachId: 
             {have.map((f) => (
               <li key={f.key} className="flex items-start justify-between gap-3 px-3 py-2">
                 <span className="min-w-0 text-sm">
-                  <span className="font-medium">{f.name}</span>
+                  <span className="font-medium">
+                    {f.name}
+                    {f.key === "court-sync" && ` · ${syncPart(new Set(since.keys()))}`}
+                  </span>
                   <span className="block text-xs text-zinc-500">
                     {f.about}
                     {since.has(f.key) && ` · since ${date(since.get(f.key)!)}`}

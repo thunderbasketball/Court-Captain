@@ -13,7 +13,7 @@ import { matchOrCreateUser } from "./user-match";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
-class TeamError extends Error {}
+export class TeamError extends Error {}
 
 const ORG = "scenic-city";
 const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
@@ -172,7 +172,7 @@ export type TeamInput = {
   coachCell: unknown;
 };
 
-function cleanTeam(input: TeamInput) {
+export function cleanTeam(input: TeamInput) {
   // Team names: letters, numbers, spaces and . ' & - , ( ) # /, starting with a letter or number (never a formula).
   const name = cleanPlaceName(input.name);
   if (!name) throw new TeamError("Enter a team name: letters, numbers and simple punctuation, up to 60 characters.");

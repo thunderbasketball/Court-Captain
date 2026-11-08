@@ -1,13 +1,13 @@
 "use client";
 
-// Check boxes by a program's teams, then one action for all of them: Remove from the program (or Restore), for Admins
+// Check boxes by a program's teams, then one action for all of them: Sit out (or Back in), for Admins
 // and Directors of Scheduling; Withdraw, for Directors of Programs. The server checks the role and every team again.
 import { createContext, useContext, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { setTeamsOff, withdrawTeams } from "../../actions";
 import { Toast, useConfirm } from "../../../../client-ui";
 
-type Picked = Map<string, boolean>; // team id → taken out of the program now
+type Picked = Map<string, boolean>; // team id → sitting out now
 const Ctx = createContext<{ picked: Picked; set: (teams: { id: string; out: boolean }[], on: boolean) => void } | null>(null);
 
 export function PickTeams({
@@ -68,15 +68,15 @@ export function PickTeams({
               onClick={async () => {
                 if (
                   await confirm({
-                    title: `Take ${n(inIds.length)} out of the program?`,
-                    message: "They stay registered and listed (crossed out). You can restore them.",
-                    confirmLabel: "Take out",
+                    title: `Sit out ${n(inIds.length)}?`,
+                    message: "They stay registered and listed (crossed out), and aren't scheduled. Back in puts them back.",
+                    confirmLabel: "Sit out",
                   })
                 )
-                  act(() => setTeamsOff(programId, inIds, true), "# taken out of the program.");
+                  act(() => setTeamsOff(programId, inIds, true), "# sitting out.");
               }}
             >
-              Remove from program ({inIds.length})
+              Sit out ({inIds.length})
             </button>
           )}
           {canRemove && outIds.length > 0 && (
@@ -84,9 +84,9 @@ export function PickTeams({
               type="button"
               disabled={busy}
               className={`${btn} text-emerald-700 ring-emerald-600/40 dark:text-emerald-300`}
-              onClick={() => act(() => setTeamsOff(programId, outIds, false), "# restored.")}
+              onClick={() => act(() => setTeamsOff(programId, outIds, false), "# back in.")}
             >
-              Restore ({outIds.length})
+              Back in ({outIds.length})
             </button>
           )}
           {canWithdraw && (

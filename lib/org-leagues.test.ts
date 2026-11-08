@@ -49,7 +49,7 @@ describe("an organization's teams in Scenic City programs", () => {
     );
     await grant(db.pool, "9913694 scenic-city Director", "9913694 scenic-city Admin");
     const input = { name: "East Ridge Parks & Rec", short: "East Ridge", kind: "Organization", color: "#0f766e" };
-    await createOrganization(deps(), jo, { ...input, features: ["team-building"] }, null);
+    await createOrganization(deps(), jo, { ...input, features: ["court-org"] }, null);
   });
 
   it("registers a team (copy read-only in Scenic City), withdraws it", async () => {

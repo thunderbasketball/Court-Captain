@@ -3,7 +3,7 @@
 // The admin role belongs to no organization; it's re-read from `platform_admins` on every request.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
-import { FEATURES, READY_FOR_ANY_ORG, type Feature } from "./features";
+import { FEATURES, READY_FOR_ANY_ORG, syncPart, type FeatureKey } from "./features";
 import { listDirectors, type DirectorRow } from "./org-admin";
 import { BUILT_IN, isOrgSlug, type OrgSlug } from "./orgs";
 import { listOrgs, orgInfo, orgName } from "./org-registry";
@@ -53,7 +53,7 @@ export type PlatformOrg = {
   abbr: string; // shown before its team names in leagues ("ER 5B Harris")
   logo: string | null;
   color: string;
-  features: { key: Feature; name: string; on: boolean; always: boolean; source: string | null; since: Date | null }[];
+  features: { key: FeatureKey; name: string; on: boolean; always: boolean; source: string | null; since: Date | null }[];
   owners: { id: string; name: string; cell: string | null; email: string | null }[]; // contact info for support
   admins: { id: string; name: string }[]; // Admins who aren't Owners (shown; Owners choose them)
   directors: DirectorRow[]; // Directors who aren't Admins, with their areas (shown; Admins choose them)
@@ -172,7 +172,7 @@ export async function platformOverview(
         const row = mine.get(f.key);
         return {
           key: f.key,
-          name: f.name,
+          name: f.key === "court-sync" ? `CourtSync · ${syncPart(new Set(mine.keys()))}` : f.name,
           on: always || !!row,
           always,
           source: row?.source ?? null,

@@ -32,7 +32,7 @@ describe("registering an organization", () => {
     short: "Baylor",
     kind: "School",
     color: "#0f766e",
-    features: ["hosting-available", "practice"],
+    features: ["court-sync", "court-facility"],
   };
 
   beforeEach(async () => {
@@ -50,8 +50,8 @@ describe("registering an organization", () => {
     expect(await createOrganization(deps(), jo, input, { bytes: png, type: "image/png" })).toEqual({
       ok: true,
       slug: "baylor-school",
-      on: ["hosting-available"],
-      requested: ["practice"],
+      on: ["court-sync"],
+      requested: ["court-facility"],
     });
     const o = await orgInfo(db.pool, "baylor-school");
     expect(o).toMatchObject({
@@ -70,7 +70,7 @@ describe("registering an organization", () => {
     expect(roles.rows.map((r) => r.role)).toEqual(["Admin", "Director", "Owner"]);
     expect(await hasFeature(db.pool, "baylor-school", "hosting-available")).toBe(true);
     expect(await hasFeature(db.pool, "baylor-school", "practice")).toBe(false);
-    expect((await db.pool.query("select feature from org_feature_requests")).rows).toEqual([{ feature: "practice" }]);
+    expect((await db.pool.query("select feature from org_feature_requests")).rows).toEqual([{ feature: "court-facility" }]);
     expect((await userContexts(db.pool, jo)).find((c) => c.key === "org:baylor-school")).toEqual({
       key: "org:baylor-school",
       org: "baylor-school",
@@ -133,7 +133,7 @@ describe("registering an organization", () => {
     await createOrganization(
       deps(),
       jo,
-      { ...input, name: "East Ridge Parks & Rec", short: "East Ridge", features: ["hosting-available"] },
+      { ...input, name: "East Ridge Parks & Rec", short: "East Ridge", features: ["court-sync"] },
       null,
     );
     const org = "east-ridge-parks-and-rec";
@@ -158,10 +158,10 @@ describe("registering an organization", () => {
     expect(view.gyms.map((g) => `${g.name} (${g.short}): ${g.courts.join(", ")}`)).toEqual(["East Ridge MS (ERMS): Aux, Main"]);
     expect(view.uses).toEqual([]); // nothing until a league approves
     expect(view.partnerNote).toMatch(/approves East Ridge as a hosting site/);
-    // Event Management gives In-House Games.
-    await db.pool.query("insert into org_features (org, feature, source) values ($1, 'events', 'setup')", [org]);
+    // CourtPlayers (Event Management) gives In-House Games.
+    await db.pool.query("insert into org_features (org, feature, source) values ($1, 'court-players', 'setup')", [org]);
     expect((await availableUses(db.pool, org)).uses).toEqual(["in-house"]);
-    await db.pool.query("delete from org_features where org = $1 and feature = 'events'", [org]);
+    await db.pool.query("delete from org_features where org = $1 and feature = 'court-players'", [org]);
     const gym = view.gyms[0].id;
 
     // Hosting Sites Available is enough to ask; Scenic City approves.

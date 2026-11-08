@@ -1,10 +1,25 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { setOrgOwner, setOrgFeature, setPlatformAdmin } from "./actions";
 import { PopUp, Toast, useConfirm } from "../client-ui";
 import { inputCls } from "../ui";
+import { GearIcon } from "../OrgSettings";
+
+// The gear on an organization's card: its features in a pop-up (each with its switch).
+export function FeaturesGear({ orgName, children }: { orgName: string; children: ReactNode }) {
+  return (
+    <PopUp
+      label={<GearIcon className="size-5" />}
+      ariaLabel={`${orgName} features`}
+      title={`${orgName} features`}
+      className="grid size-9 shrink-0 place-items-center rounded-full text-zinc-500 ring-1 ring-zinc-950/10 hover:bg-zinc-50 hover:text-zinc-800 dark:ring-white/15 dark:hover:bg-white/5 dark:hover:text-zinc-100"
+    >
+      {() => children}
+    </PopUp>
+  );
+}
 
 // One feature's on/off switch for an organization (turning on is free here, until upgrades are paid for).
 export function FeatureSwitch({
