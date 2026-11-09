@@ -263,6 +263,8 @@ async function OrgTeam({
                             </>
                           ) : p.status === "upcoming" ? (
                             <p className="text-zinc-500">Registration opens soon</p>
+                          ) : p.recClosed ? (
+                            <p className="text-zinc-500">REC here is only for organizations Scenic City picked</p>
                           ) : !p.fits ? (
                             <p className="text-zinc-500">
                               No division for {t.gender} {t.grade} {t.level}

@@ -60,6 +60,8 @@ export async function joinStatus(deps: Deps, viewer: SessionUser): Promise<JoinS
   return r.rows.length ? "pending" : "none";
 }
 
+const SOLO_RETIRED =
+  "Stand-alone teams register on Scenic City's login page (Register → One team, their own CourtSolo account); organizations register with CourtOrg.";
 const PARTNER_RETIRED =
   "Schools and organizations join as their own organization on CourtCaptain (logo menu → + Create a new organization).";
 
@@ -69,30 +71,10 @@ export type JoinInput = {
   newPartner?: { name: unknown; kind: unknown; hostsGames: unknown; registersTeams: unknown };
 };
 
-// Logged in, no Scenic City role yet: ask to join as Solo. (The Partner role is retired: schools and organizations
-// create their own organization on CourtCaptain to host games or register teams.)
-export async function requestJoin(deps: Deps, viewer: SessionUser, input: JoinInput): Promise<Result> {
-  if (input.wants === "Partner") return { ok: false, message: PARTNER_RETIRED };
-  const wants = input.wants === "Solo" ? input.wants : null;
-  if (!wants) return { ok: false, message: "Choose Solo." };
-  return run(() =>
-    withTx(deps.pool, async (q) => {
-      await q.query("select pg_advisory_xact_lock(hashtext('user:' || $1))", [viewer.coachId]);
-      const status = await q.query<{ role: string }>("select role from org_roles where coach_id = $1 and org = $2", [
-        viewer.coachId,
-        ORG,
-      ]);
-      if (status.rows.some((x) => x.role !== "Request")) throw new ScenicError("You're already part of Scenic City.");
-      const partnerId = null; // Solo: no school
-      await q.query(
-        `insert into access_requests (coach_id, org, wants, partner_id, created_at) values ($1, $2, $3, $4, $5)
-         on conflict (coach_id, org) do update set wants = excluded.wants, partner_id = excluded.partner_id, created_at = excluded.created_at`,
-        [viewer.coachId, ORG, wants, partnerId, deps.now()],
-      );
-      await q.query("select set_role($1, $2, 'Request', true, $3)", [viewer.coachId, ORG, by(viewer)]);
-      return {};
-    }),
-  );
+// Joining Scenic City by request is retired: the Solo role (replaced by CourtSolo, Register a team) and the Partner role
+// (schools and organizations create their own organization on CourtCaptain) are both refused.
+export async function requestJoin(_deps: Deps, _viewer: SessionUser, input: JoinInput): Promise<Result> {
+  return { ok: false, message: input.wants === "Partner" ? PARTNER_RETIRED : SOLO_RETIRED };
 }
 
 // ---- Scenic City Users page (Directors) ----
@@ -167,6 +149,7 @@ export async function approveRequest(deps: Deps, viewer: SessionUser, coachId: u
   if (as === "Director")
     return { ok: false, message: "Approve them as another role; Admins add Directors in the Directors section." };
   if (as === "Partner") return { ok: false, message: PARTNER_RETIRED };
+  if (as === "Solo") return { ok: false, message: SOLO_RETIRED };
   return run(() =>
     withTx(deps.pool, async (q) => {
       if (!(await isOrgAdmin(q, viewer.coachId, ORG))) throw new ScenicError(directorOnly.message);
@@ -237,9 +220,10 @@ export async function setScenicRoles(deps: Deps, viewer: SessionUser, coachId: u
       if (!(await q.query("select 1 from users where coach_id = $1 for update", [coachId])).rows[0])
         throw new ScenicError("That user no longer exists.");
       // Director is left as it is: Admins choose Directors and their areas (lib/org-admin.ts).
-      // Director is Admins' (above); Partner is retired, so it's only ever taken away here.
+      // Director is Admins' (above); Partner and Solo are retired, so they're only ever taken away here.
       for (const role of SCENIC_ROLES)
-        if (role === "Partner") await q.query("select set_role($1, $2, 'Partner', false, $3)", [coachId, ORG, by(viewer)]);
+        if (role === "Partner" || role === "Solo")
+          await q.query("select set_role($1, $2, $3, false, $4)", [coachId, ORG, role, by(viewer)]);
         else if (role !== "Director")
           await q.query("select set_role($1, $2, $3, $4, $5)", [coachId, ORG, role, want.has(role), by(viewer)]);
       if (want.size) {

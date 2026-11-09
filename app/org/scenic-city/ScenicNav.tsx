@@ -51,7 +51,7 @@ export async function ProgramsNav({ current }: { current: string }) {
   return <SubNav label="Programs" links={links} current={current} />;
 }
 
-// Facilities: Game days (everyone), then each hosting site and All sites (Admins and Directors of Facilities).
+// Facilities (Admins and Directors of Facilities): Game days, Courts, each hosting site and All sites.
 // `current`: "game-days", a hosting site's id, or "all".
 export async function FacilitiesNav({ user, current }: { user: SessionUser; current: string }) {
   const director = await orgHasArea(db, user.coachId, ORG, "facilities");

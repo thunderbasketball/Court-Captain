@@ -49,9 +49,9 @@ function GetStarted({ firstName }: { firstName: string }) {
       about: "A group of teams: a club, school or league on CourtCaptain. You'll be its Owner.",
     },
     {
-      href: "/join/scenic-city",
+      href: "/login/scenic-city",
       title: "Register a stand-alone team",
-      about: "A team of your own (Solo), to enter a league's programs.",
+      about: "A team of your own (CourtSolo): pick an event and tap Register, then One team.",
     },
     {
       href: "/register?need=court-sync",

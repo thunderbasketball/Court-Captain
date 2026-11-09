@@ -27,6 +27,11 @@ export const FEATURES = [
     about: "Add your organization's teams and coaches, enter rosters, and register your teams into events.",
   },
   {
+    key: "court-solo",
+    name: "CourtSolo",
+    about: "A stand-alone team's own account: its team, coaches and roster, registering into events.",
+  },
+  {
     key: "court-scheduler",
     name: "CourtScheduler",
     about: "Leagues, circuits and tournaments with divisions, schedules and officials. Includes CourtSync Schedule and Chat.",
@@ -67,6 +72,7 @@ const GIVES: Record<FeatureKey, Feature[]> = {
   "court-players": ["player-registration", "uniforms", "events", "team-building"],
   "court-teams": ["team-registration", "chat"],
   "court-org": ["team-building"],
+  "court-solo": ["team-building"], // one team
   "court-scheduler": ["programs", "officials", "hosting-partners", "chat"],
   "court-sync": ["chat"], // and its Schedule or Host part, below
   "court-facility": ["practice"],
@@ -86,7 +92,7 @@ export function abilitiesFrom(stored: Iterable<string>): Set<Feature> {
 
 // Features that work for any organization today; the rest are built for Thunder or Scenic City so far, and a new
 // organization's sign-up records them as requested (SPEC.md section 14).
-export const READY_FOR_ANY_ORG = new Set<FeatureKey>(["court-sync", "court-org", "alerts"]);
+export const READY_FOR_ANY_ORG = new Set<FeatureKey>(["court-sync", "court-org", "court-solo", "alerts"]);
 
 // Keys stored before the CourtCaptain features were named (left in place for the live site until it gets this code;
 // ignored here). Delete those rows after pushing.

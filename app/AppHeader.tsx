@@ -205,7 +205,7 @@ export default async function AppHeader({
           { key: "scenic-home", href: "/org/scenic-city", label: "Home", icon: ICONS.home },
           // Teams (like every organization's), Programs, Facilities (Game days and hosting sites), Members (Staff,
           // hosting sites' Owners and Admins, Coaches). A Director sees the ones their areas cover; everyone else sees
-          // Teams, Programs and Facilities (Game days).
+          // Teams and Programs.
           ...(scenicRole !== "Director" || scenicAreas.includes("teams")
             ? [
                 {
@@ -240,13 +240,18 @@ export default async function AppHeader({
                 },
               ]
             : []),
-          {
-            key: "scenic-facilities",
-            href: "/org/scenic-city/game-days",
-            label: "Facilities",
-            icon: ICONS.facilities,
-            feature: "hosting-partners" as const,
-          },
+          // Facilities (Game days, Courts, hosting sites): Admins and Directors of Facilities, on the Director chip.
+          ...(scenicRole === "Director" && (scenicAdmin || scenicAreas.includes("facilities"))
+            ? [
+                {
+                  key: "scenic-facilities",
+                  href: "/org/scenic-city/game-days",
+                  label: "Facilities",
+                  icon: ICONS.facilities,
+                  feature: "hosting-partners" as const,
+                },
+              ]
+            : []),
           ...(scenicRole === "Director" &&
           (scenicAdmin || scenicAreas.some((a) => ["facilities", "teams", "programs"].includes(a)))
             ? [

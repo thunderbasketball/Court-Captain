@@ -82,3 +82,6 @@ export function entryLine(e: Choice & ChoiceResult): string {
   return [e.allSeason ? "ALL Season (1GG each Game Day)" : "", ...days].filter(Boolean).join(" · ");
 }
 export { shortDate };
+
+// Shown on a program's card (Programs, the login page's events, the public League page) when REC is limited.
+export const REC_LIMITED = "REC: invited organizations only";

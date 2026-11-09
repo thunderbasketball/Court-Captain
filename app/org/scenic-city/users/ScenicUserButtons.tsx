@@ -10,7 +10,7 @@ import { primaryBtn } from "../../../ui";
 const ABOUT: Record<ScenicRole, string> = {
   Director: "Runs Scenic City: programs, hosting sites, members",
   Partner: "Retired",
-  Solo: "Registers and manages their own teams",
+  Solo: "Retired (stand-alone teams have CourtSolo)",
   Coach: "Coaches a Scenic City team",
 };
 
@@ -124,7 +124,7 @@ export function EditScenicRoles({ coachId, name, roles }: { coachId: string; nam
             <CloseButton onClick={close} />
           </div>
           <div className="divide-y divide-zinc-100 dark:divide-white/5">
-            {SCENIC_ROLES.filter((r) => r !== "Director" && r !== "Partner").map((r) => {
+            {SCENIC_ROLES.filter((r) => r !== "Director" && r !== "Partner" && r !== "Solo").map((r) => {
               return (
                 <label key={r} className="flex items-center gap-3 py-3">
                   <input

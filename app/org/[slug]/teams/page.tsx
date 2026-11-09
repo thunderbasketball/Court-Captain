@@ -50,6 +50,7 @@ async function OrgTeams({
   // Tabs: one per level and gender it has teams for (youngest grade first), then Register (league programs).
   const register = !!progs && progs.programs.length > 0 && list.canManage;
   const tabs = teamTabs(list.teams, (await searchParams).view, register);
+  const solo = o.kind === "Team"; // a CourtSolo account: its one team, no Add or Import
 
   return (
     <>
@@ -73,28 +74,34 @@ async function OrgTeams({
                   headCells: t.coaches.filter((c) => c.role === "HeadCoach").map((c) => c.cell),
                 }))}
               />
-              <ImportTeamsButton
-                preview={previewImport.bind(null, slug)}
-                add={importTeams.bind(null, slug)}
-                example={
-                  "Gender,Grade,Level,Coach First,Coach Last,Coach Cell,Alternate Name\nBoys,3rd/4th,REC,Sam,Lee,423-555-0101,Bolts\nGirls,5th,COMP,,,,"
-                }
-                help="One team per row with its Gender, Grade and Level (REC or COMP), and if you have them the Head Coach's name, cell and email and an Alternate name, in any order. Each team is named from its Head Coach (like 4G Epps; 4G TBD until a coach is added; the same name twice gets numbers: 4G Epps 1 and 2). A coach without a cell is fine: add it later on the team. Paste from a spreadsheet or choose a CSV file. Next you'll check which column is which, then see exactly what will be added (we clean up things like 3 & 4 or R)."
-              />
-              <AddTeamButton
-                people={(coaches ?? []).map((c) => {
-                  const [firstName, ...rest] = c.name.split(" ");
-                  return { value: `user:${c.id}`, firstName, lastName: rest.join(" "), detail: "Coach" };
-                })}
-                create={addTeam.bind(null, slug)}
-                preK
-                href={`/org/${slug}/teams/`}
-              />
+              {!solo && (
+                <ImportTeamsButton
+                  preview={previewImport.bind(null, slug)}
+                  add={importTeams.bind(null, slug)}
+                  example={
+                    "Gender,Grade,Level,Coach First,Coach Last,Coach Cell,Alternate Name\nBoys,3rd/4th,REC,Sam,Lee,423-555-0101,Bolts\nGirls,5th,COMP,,,,"
+                  }
+                  help="One team per row with its Gender, Grade and Level (REC or COMP), and if you have them the Head Coach's name, cell and email and an Alternate name, in any order. Each team is named from its Head Coach (like 4G Epps; 4G TBD until a coach is added; the same name twice gets numbers: 4G Epps 1 and 2). A coach without a cell is fine: add it later on the team. Paste from a spreadsheet or choose a CSV file. Next you'll check which column is which, then see exactly what will be added (we clean up things like 3 & 4 or R)."
+                />
+              )}
+              {!solo && (
+                <AddTeamButton
+                  people={(coaches ?? []).map((c) => {
+                    const [firstName, ...rest] = c.name.split(" ");
+                    return { value: `user:${c.id}`, firstName, lastName: rest.join(" "), detail: "Coach" };
+                  })}
+                  create={addTeam.bind(null, slug)}
+                  preK
+                  href={`/org/${slug}/teams/`}
+                />
+              )}
             </div>
           )}
         </div>
         <TeamsTabs base={`/org/${slug}/teams`} current={tabs.current} groups={tabs.groups} register={register} />
-        {!list.teams.length && <p className="text-sm text-zinc-500">No teams yet. Tap “+ Add” (or Import) to create some.</p>}
+        {!list.teams.length && !solo && (
+          <p className="text-sm text-zinc-500">No teams yet. Tap “+ Add” (or Import) to create some.</p>
+        )}
         {tabs.group && (
           <section className={`${card} overflow-hidden`}>
             <ul className="divide-y divide-zinc-100 dark:divide-white/5">

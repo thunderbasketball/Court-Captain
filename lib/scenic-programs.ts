@@ -9,6 +9,7 @@
 import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { orgHasArea } from "./org-admin";
+import { logoType, type Logo } from "./org-signup";
 import { REG_OPTIONS, planChoice, type Choice, type ChoiceResult, type ProgramOption, type SingleKind } from "./program-options";
 import { clubAbbr } from "./scenic-club-teams";
 import { cleanPlaceName } from "./scenic-partners";
@@ -76,12 +77,19 @@ export type ProgramSummary = {
   status: RegStatus;
   divisions: number;
   teams: number;
+  logo: string | null; // its logo's link (PROGRAM_LOGO_SQL), when it has one
+  recLimited: boolean; // REC open only to the organizations picked (REC open to)
 };
+
+// A program's logo link; the ?v= changes when the logo does, so browsers can keep it. `p` is scenic_programs.
+export const PROGRAM_LOGO_SQL = `case when p.logo is not null
+    then '/program-logo/' || p.id || '?v=' || extract(epoch from p.logo_updated_at)::bigint end`;
 
 const SUMMARY = `select p.id::text, p.kind, p.name, p.starts_on::text as "startsOn", p.ends_on::text as "endsOn",
     p.reg_opens::text as "regOpens", p.reg_closes::text as "regCloses", p.fee_cents as "feeCents",
     (select count(*)::int from scenic_divisions d where d.program_id = p.id) as divisions,
-    (select count(*)::int from scenic_registrations r where r.program_id = p.id) as teams,
+    (select count(*)::int from scenic_registrations r where r.program_id = p.id) as teams, ${PROGRAM_LOGO_SQL} as logo,
+    p.rec_limited_by is not null as "recLimited",
     coalesce((select json_agg(json_build_object('kind', o.kind, 'feeCents', o.fee_cents)
                               order by array_position(array['all_season', 'single_1', 'single_2', 'single_2nd'], o.kind))
               from scenic_program_options o where o.program_id = p.id), '[]') as options
@@ -224,6 +232,7 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
       level: Level;
       partner: string | null;
       partner_abbr: string | null;
+      solo_account: boolean | null;
       partner_id: string | null;
       owner: string | null;
       coach: string;
@@ -236,7 +245,7 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
       removed_by: string | null;
       off: Record<string, string>;
     }>(
-      `select r.pool_id::text, t.id::text as team_id, t.name, t.grade_low, t.grade, t.level, p.name as partner, coalesce(og.abbr, p.abbr) as partner_abbr, t.partner_id::text,
+      `select r.pool_id::text, t.id::text as team_id, t.name, t.grade_low, t.grade, t.level, p.name as partner, coalesce(og.abbr, p.abbr) as partner_abbr, og.kind = 'Team' as solo_account, t.partner_id::text,
               o.first_name || ' ' || o.last_name as owner, c.first_name || ' ' || c.last_name as coach, c.cell as coach_cell,
               ${TEAM_COACHES} as coaches,
               r.registered_by, r.moved_by, r.paid, r.paid_set_by, r.removed_by,
@@ -251,6 +260,9 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
     isProgramsDirector(deps.pool, viewer),
     teamsICanManage(deps.pool, viewer),
   ]);
+  const rec = await recLimit(deps.pool, id);
+  const recOk = (t: { level: string; partnerId: string | null }) =>
+    t.level !== "REC" || !rec.limited || (!!t.partnerId && rec.partners.includes(t.partnerId));
   const mineIds = new Set(mine.map((t) => t.id));
   const registered = new Set(regs.rows.map((r) => r.team_id));
   const league = prog.kind === "League";
@@ -263,7 +275,7 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
     gradeLabel: gradeLabel(r.grade_low, r.grade),
     level: r.level,
     from: r.partner ?? `Solo · ${r.owner}`,
-    tag: r.partner ? (r.partner_abbr ?? clubAbbr(r.partner)) : "Solo",
+    tag: r.partner && !r.solo_account ? (r.partner_abbr ?? clubAbbr(r.partner)) : "Solo",
     partnerId: r.partner_id,
     coach: r.coach,
     coachCell: r.coach_cell,
@@ -303,7 +315,8 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
       if (registered.has(t.id)) continue;
       const d = divisionList.find((x) => x.gender === t.gender && t.grade >= x.gradeLow && t.grade <= x.gradeHigh);
       const g = d?.groups.find((x) => x.grade === t.grade && x.level === t.level);
-      if (d && g)
+      if (d && g && !recOk(t)) cantRegister.push({ name: t.name, why: "REC here is only for the organizations Scenic City picked" });
+      else if (d && g)
         canRegister.push({
           teamId: t.id,
           name: `${t.name} (${gradeLabel(t.gradeLow, t.grade)} ${t.level})`,
@@ -587,11 +600,41 @@ export async function deleteProgram(deps: Deps, viewer: SessionUser, id: unknown
   return run(() =>
     withTx(deps.pool, async (q) => {
       if (!(await isProgramsDirector(q, viewer))) throw new ProgramError(programsOnly);
+      // Never with teams registered (sitting out counts): withdraw them first.
+      const p = await q.query<{ teams: number }>(
+        `select (select count(*)::int from scenic_registrations r where r.program_id = p.id) as teams
+           from scenic_programs p where p.id = $1 for update`,
+        [id],
+      );
+      if (!p.rows[0]) throw new ProgramError("That program no longer exists.");
+      const n = p.rows[0].teams;
+      if (n) throw new ProgramError(`It has ${n} team${n === 1 ? "" : "s"} registered. Withdraw them first.`);
       const r = await q.query("delete from scenic_programs where id = $1", [id]);
       if (!r.rowCount) throw new ProgramError("That program no longer exists.");
       return {};
     }),
   );
+}
+
+// A program's logo (Directors of Programs): PNG, JPEG or WebP up to 512 KB, checked by its first bytes. null removes it.
+export async function setProgramLogo(deps: Deps, viewer: SessionUser, id: unknown, logo: Logo): Promise<Result> {
+  if (!isId(id)) return { ok: false, message: "That program no longer exists." };
+  if (logo) {
+    if (logo.bytes.length > 512 * 1024) return { ok: false, message: "The logo must be 512 KB or smaller." };
+    if (!logoType(logo.bytes)) return { ok: false, message: "The logo must be a PNG, JPEG or WebP image." };
+  }
+  if (!(await isProgramsDirector(deps.pool, viewer))) return { ok: false, message: programsOnly };
+  const r = await deps.pool.query(
+    "update scenic_programs set logo = $2, logo_type = $3, logo_updated_by = $4, logo_updated_at = $5 where id = $1",
+    [
+      id,
+      logo ? Buffer.from(logo.bytes) : null,
+      logo ? logoType(logo.bytes) : null,
+      `${viewer.firstName} ${viewer.lastName}`,
+      deps.now(),
+    ],
+  );
+  return r.rowCount ? { ok: true } : { ok: false, message: "That program no longer exists." };
 }
 
 // ---- Game dates (Directors of Programs) ----
@@ -790,6 +833,91 @@ export async function removeDivision(deps: Deps, viewer: SessionUser, divisionId
   );
 }
 
+export type GradeLevelInput = { gender: unknown; grade: unknown; level: unknown; on: unknown };
+
+// Grades accepted (Directors of Programs): turn one grade at one level on or off, Boys and Girls separately. On adds its
+// grade group (with Pool A) to the division holding that grade; off removes it, refused while teams are in it or when
+// it's the division's last grade group (remove the division instead). Coed is Pre-K REC only: on adds the Coed Pre-K
+// division, off removes it (refused while teams are in it).
+export async function setGradeLevel(deps: Deps, viewer: SessionUser, programId: unknown, input: GradeLevelInput): Promise<Result> {
+  if (!isId(programId)) return { ok: false, message: "That program no longer exists." };
+  const gender = input.gender === "Boys" || input.gender === "Girls" || input.gender === "Coed" ? input.gender : null;
+  const grade = Number.isInteger(input.grade) && (input.grade as number) >= -1 && (input.grade as number) <= 12 ? (input.grade as number) : null;
+  const level = LEVELS.find((l) => l === input.level);
+  if (!gender || grade === null || !level) return { ok: false, message: "Pick a grade and level." };
+  if ((gender === "Coed") !== (grade === -1)) return { ok: false, message: "Coed is Pre-K only; Boys and Girls start at K." };
+  if (gender === "Coed" && level !== "REC") return { ok: false, message: "Pre-K is REC only." };
+  const label = `${gender} ${gradeLabel(grade, grade)} ${level}`;
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      if (!(await isProgramsDirector(q, viewer))) throw new ProgramError(programsOnly);
+      if (gender === "Coed") {
+        if (!(await q.query("select 1 from scenic_programs where id = $1 for update", [programId])).rowCount)
+          throw new ProgramError("That program no longer exists.");
+        const pk = await q.query<{ id: string; teams: number }>(
+          `select d.id::text, (select count(*)::int from scenic_registrations r join scenic_pools o on o.id = r.pool_id
+                                join scenic_grade_groups g on g.id = o.group_id where g.division_id = d.id) as teams
+             from scenic_divisions d where d.program_id = $1 and d.gender = 'Coed'`,
+          [programId],
+        );
+        const have = pk.rows[0];
+        if (input.on === true) {
+          if (!have) {
+            const d = await q.query<{ id: string }>(
+              `insert into scenic_divisions (program_id, gender, grade_low, grade_high) values ($1, 'Coed', -1, -1) returning id::text`,
+              [programId],
+            );
+            await q.query(
+              `with g as (insert into scenic_grade_groups (division_id, grade, level) values ($1, -1, 'REC') returning id)
+               insert into scenic_pools (group_id, name) select id, 'Pool A' from g`,
+              [d.rows[0].id],
+            );
+          }
+          return {};
+        }
+        if (!have) return {};
+        if (have.teams)
+          throw new ProgramError(`Coed Pre-K has ${have.teams} team${have.teams === 1 ? "" : "s"}. Withdraw them first.`);
+        await q.query("delete from scenic_divisions where id = $1", [have.id]);
+        return {};
+      }
+      const d = await q.query<{ id: string }>(
+        `select id::text from scenic_divisions where program_id = $1 and gender = $2 and grade_low <= $3 and grade_high >= $3
+         for update`,
+        [programId, gender, grade],
+      );
+      if (!d.rows[0]) throw new ProgramError(`No ${gender} division has ${gradeLabel(grade, grade)}. Add a division first.`);
+      const divisionId = d.rows[0].id;
+      const g = await q.query<{ id: string; teams: number }>(
+        `select g.id::text, (select count(*)::int from scenic_registrations r join scenic_pools o on o.id = r.pool_id
+                              where o.group_id = g.id) as teams
+           from scenic_grade_groups g where g.division_id = $1 and g.grade = $2 and g.level = $3`,
+        [divisionId, grade, level],
+      );
+      const have = g.rows[0];
+      if (input.on === true) {
+        if (!have)
+          await q.query(
+            `with g as (insert into scenic_grade_groups (division_id, grade, level) values ($1, $2, $3) returning id)
+             insert into scenic_pools (group_id, name) select id, 'Pool A' from g`,
+            [divisionId, grade, level],
+          );
+        return {};
+      }
+      if (!have) return {};
+      if (have.teams)
+        throw new ProgramError(`${label} has ${have.teams} team${have.teams === 1 ? "" : "s"}. Withdraw or move them first.`);
+      const left = await q.query("select 1 from scenic_grade_groups where division_id = $1 and id <> $2 limit 1", [
+        divisionId,
+        have.id,
+      ]);
+      if (!left.rowCount) throw new ProgramError(`${label} is its division's last grade. Remove the division instead.`);
+      await q.query("delete from scenic_grade_groups where id = $1", [have.id]);
+      return {};
+    }),
+  );
+}
+
 // Add the next pool to a grade group (Pool B, Pool C…).
 export async function addPool(deps: Deps, viewer: SessionUser, groupId: unknown): Promise<Result<{ name: string }>> {
   if (!isId(groupId)) return { ok: false, message: "That grade group no longer exists." };
@@ -936,6 +1064,85 @@ export async function registerAllScenicTeams(
 }
 
 // Put a team into a program's matching grade group, in its smallest pool. The caller has checked who may and when.
+// ---- REC open to (Directors of Programs) ----
+
+// SQL: true when a team of this level from this partner may register in the program (REC limited to picked organizations).
+export const recOpenSql = (program: string, level: string, partner: string) =>
+  `(${level} <> 'REC' or (select rec_limited_by from scenic_programs where id = ${program}) is null
+    or exists (select 1 from scenic_program_rec_partners x where x.program_id = ${program} and x.partner_id = ${partner}))`;
+
+async function recOpen(q: Pick<Queryable, "query">, programId: string, teamId: string): Promise<boolean> {
+  const r = await q.query<{ ok: boolean }>(
+    `select ${recOpenSql("$1", "t.level", "t.partner_id")} as ok from scenic_teams t where t.id = $2`,
+    [programId, teamId],
+  );
+  return r.rows[0]?.ok ?? false;
+}
+
+// The organizations REC can be limited to: those with CourtOrg (their own teams) and CourtSync. `p` is partners.
+const REC_CHOICE_SQL = `p.approved and p.org_slug is not null
+  and exists (select 1 from org_features f where f.org = p.org_slug and f.feature = 'court-org')
+  and exists (select 1 from org_features f where f.org = p.org_slug and f.feature = 'court-sync')`;
+
+export type RecLimit = {
+  limited: boolean;
+  by: string | null;
+  partners: string[]; // picked (partner ids)
+  choices: { id: string; name: string }[]; // organizations that can be picked (CourtOrg and CourtSync), by name
+};
+
+export async function recLimit(q: Pick<Queryable, "query">, programId: string): Promise<RecLimit> {
+  const [p, picked, choices] = await Promise.all([
+    q.query<{ by: string | null }>("select rec_limited_by as by from scenic_programs where id = $1", [programId]),
+    q.query<{ id: string }>("select partner_id::text as id from scenic_program_rec_partners where program_id = $1", [programId]),
+    q.query<{ id: string; name: string }>(
+      `select p.id::text, p.name from partners p where ${REC_CHOICE_SQL} order by lower(p.name)`,
+    ),
+  ]);
+  return { limited: !!p.rows[0]?.by, by: p.rows[0]?.by ?? null, partners: picked.rows.map((r) => r.id), choices: choices.rows };
+}
+
+// REC open to everyone, or only the organizations picked (at least one). Teams already registered stay.
+export async function setRecLimit(
+  deps: Deps,
+  viewer: SessionUser,
+  programId: unknown,
+  input: { limited: unknown; partners: unknown },
+): Promise<Result> {
+  if (!isId(programId)) return { ok: false, message: "That program no longer exists." };
+  const limited = input.limited === true;
+  const ids = Array.isArray(input.partners) ? [...new Set(input.partners)] : null;
+  if (!ids || ids.length > 500 || !ids.every(isId)) return { ok: false, message: "Pick organizations from the list." };
+  if (limited && !ids.length) return { ok: false, message: "Pick at least one organization, or open REC to everyone." };
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      if (!(await isProgramsDirector(q, viewer))) throw new ProgramError(programsOnly);
+      if (!(await q.query("select 1 from scenic_programs where id = $1 for update", [programId])).rowCount)
+        throw new ProgramError("That program no longer exists.");
+      const who = `${viewer.firstName} ${viewer.lastName}`;
+      await q.query("delete from scenic_program_rec_partners where program_id = $1", [programId]);
+      if (limited) {
+        const ok = await q.query(
+          `select 1 from partners p where p.id = any($1::bigint[]) and ${REC_CHOICE_SQL}`,
+          [ids],
+        );
+        if (ok.rowCount !== ids.length) throw new ProgramError("Pick organizations from the list.");
+        await q.query(
+          `insert into scenic_program_rec_partners (program_id, partner_id, added_by, added_at)
+           select $1, unnest($2::bigint[]), $3, $4`,
+          [programId, ids, who, deps.now()],
+        );
+      }
+      await q.query("update scenic_programs set rec_limited_by = $2, rec_limited_at = $3 where id = $1", [
+        programId,
+        limited ? who : null,
+        limited ? deps.now() : null,
+      ]);
+      return {};
+    }),
+  );
+}
+
 export async function addToPool(
   q: PoolClient,
   programId: string,
@@ -950,6 +1157,8 @@ export async function addToPool(
     )
   ).rows[0];
   if (!team) return { error: "That team no longer exists." };
+  if (!(await recOpen(q, programId, teamId)))
+    return { error: `REC in this program is only for the organizations Scenic City picked. COMP is open to all.` };
   const pool = await poolFor(q, programId, team);
   if (!pool) return { error: `This program has no ${team.gender} ${ordinal(team.grade)} ${team.level}.` };
   const ins = await q.query(

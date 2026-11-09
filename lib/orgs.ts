@@ -16,5 +16,5 @@ export const PLATFORM_BRAND = {
 };
 
 // Scenic City roles that give access (a Request alone doesn't), highest first.
-export const SCENIC_ROLES = ["Director", "Partner", "Solo", "Coach"] as const; // Partner: retired (no one holds it; not offered)
+export const SCENIC_ROLES = ["Director", "Partner", "Solo", "Coach"] as const; // Partner and Solo: retired (no one holds them; not offered)
 export type ScenicRole = (typeof SCENIC_ROLES)[number];

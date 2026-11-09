@@ -1,6 +1,7 @@
 // Teams for any registered organization (SPEC.md section 14, Team Management). Each team belongs to its organization.
 // Its Admins and Directors of Teams add and remove teams and coaches; a coach sees their own teams. A coach is named by
 // cell: that cell is their login (made if new), and they get the organization's Coach role.
+import { SOLO_KIND, leagueNameSql } from "./solo-names";
 import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { cleanEmail, cleanName } from "./auth/validate";
@@ -86,7 +87,7 @@ async function teams(q: Pick<Queryable, "query">, org: string, onlyFor: string |
                                       order by c.role desc, u.last_name, u.first_name)
                       from org_team_coaches c join users u on u.coach_id = c.coach_id where c.team_id = t.id), '[]') as coaches
      from org_teams t
-     where t.org = $1 and ($2::text is null or exists (select 1 from org_team_coaches c where c.team_id = t.id and c.coach_id = $2))
+     where t.org = $1 and t.archived_at is null and ($2::text is null or exists (select 1 from org_team_coaches c where c.team_id = t.id and c.coach_id = $2))
        and ($3::bigint is null or t.id = $3)
      order by t.grade = -1 desc, t.gender, t.grade, t.grade_low, lower(t.name)`,
     [org, onlyFor, id],
@@ -214,6 +215,9 @@ async function ruleName(
   exceptId: string | null,
   current: string | null = null,
 ): Promise<string> {
+  // A CourtSolo account's one team is named for the account ("Magic"), not by the rule.
+  const solo = await q.query<{ name: string }>("select name from organizations where slug = $1 and kind = $2", [org, SOLO_KIND]);
+  if (solo.rows[0]) return solo.rows[0].name;
   const base = last ? teamName(gender, grades, last) : tbdBase(gender, grades);
   if (current && (current.toLowerCase() === base.toLowerCase() || baseName(current).toLowerCase() === base.toLowerCase()))
     return current;
@@ -232,7 +236,7 @@ async function ruleName(
 async function setOrgTeamName(q: Pick<Queryable, "query">, org: string, teamId: string, name: string) {
   await q.query("update org_teams set name = $2 where id = $1", [teamId, name]);
   await q.query(
-    `update scenic_teams st set name = coalesce(o.abbr, upper(left(o.slug, 4))) || ' ' || $2
+    `update scenic_teams st set name = ${leagueNameSql("o", "$2")}
      from organizations o where st.org_team_id = $1 and o.slug = $3`,
     [teamId, name, org],
   );
@@ -245,6 +249,12 @@ async function settleOrgName(q: Pick<Queryable, "query">, org: string, base: str
   if (s) await setOrgTeamName(q, org, s.id, s.name);
 }
 
+// A CourtSolo account's one team is made with the account: it can't add or import teams.
+async function oneSoloTeam(q: Pick<Queryable, "query">, org: string) {
+  const r = await q.query("select 1 from organizations where slug = $1 and kind = $2", [org, SOLO_KIND]);
+  if (r.rowCount) throw new TeamError("A CourtSolo account has one team: it can't add or import teams.");
+}
+
 const lockTeams = (q: Pick<Queryable, "query">, org: string) =>
   q.query("select pg_advisory_xact_lock(hashtext('org-teams:' || $1))", [org]);
 
@@ -252,13 +262,21 @@ const lockTeams = (q: Pick<Queryable, "query">, org: string) =>
 // follows ("ER 5B Harris").
 async function renameOrgTeam(q: PoolClient, org: string, teamId: string) {
   await lockTeams(q, org);
-  const t = await q.query<{ name: string; gender: Gender; grade_low: number; grade: number; last: string | null }>(
-    `select t.name, t.gender, t.grade_low, t.grade, coalesce(u.last_name, t.coach_last) as last from org_teams t
+  const t = await q.query<{
+    name: string;
+    gender: Gender;
+    grade_low: number;
+    grade: number;
+    last: string | null;
+    own_name: boolean;
+  }>(
+    `select t.name, t.gender, t.grade_low, t.grade, coalesce(u.last_name, t.coach_last) as last, t.own_name from org_teams t
      left join org_team_coaches c on c.team_id = t.id and c.role = 'HeadCoach' left join users u on u.coach_id = c.coach_id
      where t.id = $1`,
     [teamId],
   );
   const r = t.rows[0];
+  if (r.own_name) return r.name; // a team with its own name (CourtSolo, or brought over from it) keeps it
   const grades = [...new Set([r.grade_low, r.grade])].map(gradeStr);
   const name = await ruleName(q, org, r.gender, grades, r.last, teamId, r.name);
   await setOrgTeamName(q, org, teamId, name);
@@ -285,6 +303,7 @@ export async function createOrgTeam(
     const alt = cleanAlt(input.altName);
     return withTx(deps.pool, async (q) => {
       await lockTeams(q, o);
+      await oneSoloTeam(q, o);
       const head = await resolveHead(q, input.headCoach, deps.now());
       const name = await ruleName(q, o, gender, grades, head?.lastName ?? null, null);
       const nums = grades.map(gradeNum).sort((a, b) => a - b);
@@ -558,6 +577,7 @@ export async function importTeams(
     if (text.length > 200_000) throw new TeamError("That's too much at once. Up to 200 teams.");
     return withTx(deps.pool, async (q) => {
       await q.query("select pg_advisory_xact_lock(hashtext('org-teams:' || $1))", [o]);
+      await oneSoloTeam(q, o);
       const { rows } = await previewRows(q, o, text);
       // The batch, so it can be undone.
       const batch = (

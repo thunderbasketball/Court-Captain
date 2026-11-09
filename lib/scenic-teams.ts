@@ -341,7 +341,9 @@ export async function deleteScenicTeam(deps: Deps, viewer: SessionUser, id: unkn
 export async function teamsICanManage(
   q: Queryable,
   viewer: SessionUser,
-): Promise<{ id: string; name: string; gender: "Boys" | "Girls" | "Coed"; level: Level; gradeLow: number; grade: number }[]> {
+): Promise<
+  { id: string; name: string; gender: "Boys" | "Girls" | "Coed"; level: Level; gradeLow: number; grade: number; partnerId: string | null }[]
+> {
   const all = await isTeamsDirector(q, viewer);
   const r = await q.query<{
     id: string;
@@ -350,8 +352,10 @@ export async function teamsICanManage(
     level: Level;
     gradeLow: number;
     grade: number;
+    partnerId: string | null;
   }>(
-    `select t.id::text, t.name, t.gender, t.level, t.grade_low as "gradeLow", t.grade from scenic_teams t
+    `select t.id::text, t.name, t.gender, t.level, t.grade_low as "gradeLow", t.grade, t.partner_id::text as "partnerId"
+       from scenic_teams t
      where $2
         or (has_role($1, 'scenic-city', 'Partner') and t.partner_id in (select partner_id from partner_contacts where coach_id = $1))
         or (has_role($1, 'scenic-city', 'Solo') and t.owner_coach_id = $1)

@@ -15,8 +15,8 @@ import * as simulation from "@/lib/dev-teams";
 import * as courts from "@/lib/scenic-courts";
 import * as bindings from "@/lib/scenic-bindings";
 import * as fastbreak from "@/lib/fastbreak/orgs";
+import * as publicLeague from "@/lib/public-league";
 import { fastbreakClient } from "@/lib/fastbreak/client";
-import type { JoinInput } from "@/lib/scenic";
 
 const deps = { pool: db, now: () => new Date() };
 
@@ -35,9 +35,6 @@ async function guarded<T>(fn: (user: NonNullable<Awaited<ReturnType<typeof curre
   }
 }
 
-export async function requestJoin(input: JoinInput) {
-  return guarded((u) => scenic.requestJoin(deps, u, input));
-}
 export async function approveRequest(coachId: string, as: string) {
   return guarded((u) => scenic.approveRequest(deps, u, coachId, as));
 }
@@ -92,6 +89,18 @@ export async function deleteScenicTeam(id: string) {
 export async function saveProgram(id: string | null, input: programs.ProgramInput) {
   return guarded((u) => programs.saveProgram(deps, u, id, input), "programs");
 }
+// A program's logo: the chosen image, or remove it (no file).
+export async function setProgramLogo(id: string, form: FormData) {
+  return guarded(async (u) => {
+    const f = form.get("logo");
+    const logo =
+      f instanceof File && f.size
+        ? { bytes: f.size > 600 * 1024 ? new Uint8Array(f.size) : new Uint8Array(await f.arrayBuffer()), type: f.type }
+        : null;
+    if (!logo && form.get("remove") !== "1") return { ok: false as const, message: "Choose an image." };
+    return programs.setProgramLogo(deps, u, id, logo);
+  }, "programs");
+}
 export async function deleteProgram(id: string) {
   return guarded((u) => programs.deleteProgram(deps, u, id), "programs");
 }
@@ -116,6 +125,9 @@ export async function withdrawTeams(programId: string, teamIds: string[]) {
 export async function setPaid(programId: string, teamId: string, paid: boolean) {
   return guarded((u) => programs.setPaid(deps, u, programId, teamId, paid === true), "programs");
 }
+export async function setSchedulePublished(programId: string, on: boolean) {
+  return guarded((u) => publicLeague.setSchedulePublished(deps, u, programId, on === true), "programs");
+}
 export async function copyDivisions(programId: string, fromProgramId: string) {
   return guarded((u) => programs.copyDivisions(deps, u, programId, fromProgramId), "programs");
 }
@@ -124,6 +136,12 @@ export async function addDivision(programId: string, input: programs.DivisionInp
 }
 export async function removeDivision(id: string) {
   return guarded((u) => programs.removeDivision(deps, u, id), "programs");
+}
+export async function setRecLimit(programId: string, limited: boolean, partners: string[]) {
+  return guarded((u) => programs.setRecLimit(deps, u, programId, { limited, partners }), "programs");
+}
+export async function setGradeLevel(programId: string, input: programs.GradeLevelInput) {
+  return guarded((u) => programs.setGradeLevel(deps, u, programId, input), "programs");
 }
 export async function addPool(groupId: string) {
   return guarded((u) => programs.addPool(deps, u, groupId), "programs");

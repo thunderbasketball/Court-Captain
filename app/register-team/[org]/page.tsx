@@ -17,11 +17,11 @@ export async function generateMetadata({ params }: PageProps<"/register-team/[or
   return orgMetadata((await params).org);
 }
 
-export default function RegisterTeamPage({ params }: PageProps<"/register-team/[org]">) {
+export default function RegisterTeamPage({ params, searchParams }: PageProps<"/register-team/[org]">) {
   return (
     <main className="mx-auto w-full max-w-md flex-1 px-4 py-10">
       <Suspense fallback={<p className="text-center text-zinc-500">Loading…</p>}>
-        <RegisterTeam params={params} />
+        <RegisterTeam params={params} searchParams={searchParams} />
       </Suspense>
     </main>
   );
@@ -29,7 +29,13 @@ export default function RegisterTeamPage({ params }: PageProps<"/register-team/[
 
 // Register a team (SPEC.md section 13), no login needed: linked from the organization's login page while it has Team
 // Registrations on. Scenic City only (its League teams).
-async function RegisterTeam({ params }: { params: PageProps<"/register-team/[org]">["params"] }) {
+async function RegisterTeam({
+  params,
+  searchParams,
+}: {
+  params: PageProps<"/register-team/[org]">["params"];
+  searchParams: PageProps<"/register-team/[org]">["searchParams"];
+}) {
   const { org } = await params;
   if (org !== "scenic-city" || !(await hasFeature(db, org, "team-registration"))) notFound();
   const o = await orgInfo(db, org);
@@ -44,7 +50,12 @@ async function RegisterTeam({ params }: { params: PageProps<"/register-team/[org
       </div>
       <div className={`${card} p-5`}>
         {programs.length ? (
-          <TeamSignupForm grades={GRADE_CHOICES} programs={programs} today={easternDate(new Date())} />
+          <TeamSignupForm
+            grades={GRADE_CHOICES}
+            programs={programs}
+            today={easternDate(new Date())}
+            preset={typeof (await searchParams).program === "string" ? ((await searchParams).program as string) : undefined}
+          />
         ) : (
           <p className="text-sm text-zinc-600 dark:text-zinc-300">Team registration isn&apos;t open right now.</p>
         )}

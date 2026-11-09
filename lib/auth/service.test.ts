@@ -118,7 +118,7 @@ describe("create account", () => {
 
   it("emails a code and saves nothing until it checks out", async () => {
     const s = await auth.startSignup(deps, form);
-    expect(s).toEqual({ step: "signupCode", maskedEmail: "e***@example.com" });
+    expect(s).toEqual({ step: "signupCode", maskedEmail: "e**l@example.com" });
     expect(mail.sent[0].to).toBe("earl@example.com");
     expect(await userRow()).toBeUndefined();
 
@@ -258,7 +258,7 @@ describe("starter PIN 1234", () => {
   it("with email on file: skips PIN, emails that address immediately", async () => {
     await addUser({ pin: "1234", verified: false });
     const s = await auth.lookupPhone(deps, CELL);
-    expect(s).toEqual({ step: "starterCode", maskedEmail: "e***@example.com" });
+    expect(s).toEqual({ step: "starterCode", maskedEmail: "e**l@example.com" });
     expect(mail.sent[0].to).toBe("earl@example.com");
   });
 
@@ -291,7 +291,7 @@ describe("starter PIN 1234", () => {
     expectError(await auth.sendStarterCode(deps, CELL, "bad"), MSG.badEmail);
     expect(await auth.sendStarterCode(deps, CELL, "New@Example.com")).toEqual({
       step: "starterCode",
-      maskedEmail: "n***@example.com",
+      maskedEmail: "n*w@example.com",
     });
     token(await auth.completeStarter(deps, CELL, mail.lastCode(), "2468", "2468"));
     expect(await userRow()).toMatchObject({ email: "new@example.com", verified_email: "new@example.com" });
@@ -380,7 +380,7 @@ describe("PIN only (until go-live)", () => {
 
   it("starter PIN 1234: email code, then Set Your PIN, then logged in with the email verified", async () => {
     await addUser({ pin: "1234", verified: false });
-    expect(await auth.lookupPhone(deps, CELL)).toEqual({ step: "starterCode", maskedEmail: "e***@example.com" });
+    expect(await auth.lookupPhone(deps, CELL)).toEqual({ step: "starterCode", maskedEmail: "e**l@example.com" });
     expect((await auth.submitPin(deps, CELL, "1234")).step).toBe("starterCode");
     expectError(await auth.completeStarter(deps, CELL, mail.lastCode(), "1234", "1234"), MSG.pinStarter);
     token(await auth.completeStarter(deps, CELL, mail.lastCode(), "2468", "2468"));
@@ -424,7 +424,7 @@ describe("PIN only (until go-live)", () => {
       purpose: "other",
       notes: "Helping out",
     });
-    expect(s).toEqual({ step: "signupCode", maskedEmail: "e***@example.com" });
+    expect(s).toEqual({ step: "signupCode", maskedEmail: "e*@example.com" });
     expect(mail.sent[0].to).toBe("e@example.com");
     expect(await userRow()).toBeUndefined();
     expect(await auth.completeSignup(deps, CELL, mail.lastCode())).toEqual({ step: "done", message: MSG.requested });
@@ -480,8 +480,8 @@ describe("PIN step", () => {
 describe("email not verified", () => {
   it("correct PIN asks to verify, code to email on file, then logged in", async () => {
     await addUser({ verified: false });
-    expect(await auth.submitPin(deps, CELL, "5678")).toEqual({ step: "verifyChoice", maskedEmail: "e***@example.com" });
-    expect(await auth.sendVerifyCode(deps, CELL, "5678", null)).toEqual({ step: "verifyCode", maskedEmail: "e***@example.com" });
+    expect(await auth.submitPin(deps, CELL, "5678")).toEqual({ step: "verifyChoice", maskedEmail: "e**l@example.com" });
+    expect(await auth.sendVerifyCode(deps, CELL, "5678", null)).toEqual({ step: "verifyCode", maskedEmail: "e**l@example.com" });
     expect(await userRow()).toMatchObject({ verified_email: null }); // nothing saved yet
     token(await auth.completeVerify(deps, CELL, "5678", mail.lastCode()));
     expect(await userRow()).toMatchObject({ email: "earl@example.com", verified_email: "earl@example.com" });
@@ -516,7 +516,7 @@ describe("Forgot PIN", () => {
     for (let i = 0; i < 5; i++) await auth.submitPin(deps, CELL, "0000");
     expectError(await auth.submitPin(deps, CELL, "5678"), MSG.locked);
 
-    expect(await auth.startForgot(deps, CELL)).toEqual({ step: "resetCode", maskedEmail: "e***@example.com" });
+    expect(await auth.startForgot(deps, CELL)).toEqual({ step: "resetCode", maskedEmail: "e**l@example.com" });
     expect(mail.sent[0].to).toBe("earl@example.com");
     expectError(await auth.completeReset(deps, CELL, mail.lastCode(), "1234", "1234"), MSG.pinStarter);
     token(await auth.completeReset(deps, CELL, mail.lastCode(), "9753", "9753"));

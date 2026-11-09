@@ -19,8 +19,8 @@ export async function GET(req: NextRequest) {
   const target = org
     ? (contexts.find((c) => c.org === org && c.key === remembered) ?? contexts.find((c) => c.org === org))
     : contexts.find((c) => c.key === to);
-  // No role there yet: Scenic City offers its join form; otherwise home (the role used last, pending, or request access).
-  if (!target) return NextResponse.redirect(new URL(org === "scenic-city" ? "/join/scenic-city" : "/", req.url));
+  // No role there yet: home (the role used last, pending, or getting started).
+  if (!target) return NextResponse.redirect(new URL("/", req.url));
   const res = NextResponse.redirect(new URL(target.href, req.url));
   res.cookies.set(CONTEXT_COOKIE, target.key, {
     httpOnly: true,

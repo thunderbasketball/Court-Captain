@@ -43,9 +43,10 @@ const PARTS: { title: string; about: string; who: string[]; href?: string; featu
   {
     title: "Game days",
     about: "The dates Scenic City plays, from each program (under Facilities).",
-    who: ["Director", "Solo", "Coach"],
+    who: ["Director"],
     href: "/org/scenic-city/game-days",
     feature: "hosting-partners",
+    area: "facilities",
   },
   {
     title: "Hosting Sites",

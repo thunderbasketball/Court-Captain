@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { currentScenic } from "@/lib/contexts-server";
@@ -7,7 +8,7 @@ import { seesWho } from "@/lib/org-admin";
 import { REG_OPTIONS, entryLine, money } from "@/lib/program-options";
 import { requireFeature } from "@/lib/features-server";
 import { formatCell } from "@/lib/phone";
-import { getProgram, listPrograms, teamsByDate } from "@/lib/scenic-programs";
+import { getProgram, listPrograms, recLimit, teamsByDate } from "@/lib/scenic-programs";
 import { dayLabel } from "@/lib/time";
 import { shortDate as shortDay } from "@/lib/program-options";
 import AppHeader from "../../../../AppHeader";
@@ -16,9 +17,9 @@ import { GroupCard, PhoneLink, TeamName, card } from "../../../../ui";
 import {
   AddDivision,
   AddPool,
-  DeleteProgram,
   MoveTeam,
-  ProgramEditor,
+  ProgramLogo,
+  ProgramSettings,
   RegisterTeam,
   TeamOffButton,
   RemoveDivision,
@@ -51,7 +52,10 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
   const manage = p.canManage && scenic.role === "Director";
   const who = await seesWho(db, user, "scenic-city"); // Owners and Admins see who did it
   const schedule = p.canSchedule && scenic.role === "Director";
-  const pick = schedule || manage; // check boxes by teams, for one action on many
+  const pick = schedule || manage;
+  const rec = manage ? await recLimit(db, p.id) : null; // REC open to (the gear)
+  // The Scheduler opens on this program: Directors of Scheduling, for a League that hasn't ended.
+  const scheduler = schedule && p.kind === "League" && p.endsOn >= p.today; // check boxes by teams, for one action on many
   // Other programs with divisions, to copy from when adding divisions.
   const others = manage
     ? ((await listPrograms({ pool: db, now: () => new Date() }, user))?.programs ?? [])
@@ -68,6 +72,32 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
     ...e,
     title: e.bracket ? `Brackets · ${p.bracketDates.map(shortDay).join(", ")}` : dayLabel(e.date),
   }));
+  // Grades accepted: Coed (Pre-K REC: its division on or off), then Boys and Girls, REC and COMP, each grade in that
+  // gender's divisions, on when it has a group.
+  const preK = p.divisionList.find((d) => d.gender === "Coed")?.groups.find((g) => g.grade === -1 && g.level === "REC");
+  const coedRow = {
+    gender: "Coed" as const,
+    level: "REC" as const,
+    grades: [{ grade: -1, on: !!preK, teams: preK ? preK.pools.reduce((n, o) => n + o.teams.length, 0) : 0 }],
+  };
+  const gradeRows = [coedRow, ...(["Boys", "Girls"] as const).flatMap((gender) =>
+    (["REC", "COMP"] as const).map((level) => ({
+      gender,
+      level,
+      grades: p.divisionList
+        .filter((d) => d.gender === gender)
+        .flatMap((d) =>
+          Array.from({ length: d.gradeHigh - d.gradeLow + 1 }, (_, i) => {
+            const g = d.groups.find((x) => x.grade === d.gradeLow + i && x.level === level);
+            return {
+              grade: d.gradeLow + i,
+              on: !!g,
+              teams: g ? g.pools.reduce((n, o) => n + o.teams.length, 0) : 0,
+            };
+          }))
+        .sort((a, b) => a.grade - b.grade),
+    })),
+  )];
   const nextDate = byDate.find((d) => d.date >= p.today)?.key;
 
   return (
@@ -77,11 +107,26 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
         <ProgramsNav current={p.id} />
         <section className={`${card} p-4`}>
           <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <ProgramLogo src={p.logo} className="size-14" />
             <div className="min-w-0">
               <p className="text-xs font-semibold tracking-wide text-scenic-navy uppercase dark:text-zinc-300">{p.kind}</p>
               <h1 className="text-xl font-semibold tracking-tight">{p.name}</h1>
             </div>
-            <RegBadge status={p.status} />
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <RegBadge status={p.status} />
+              {/* The gear, top right: Edit, Logo, Delete (Directors of Programs). */}
+              {manage && (
+                <ProgramSettings
+                  program={p}
+                  logo={p.logo}
+                  teams={p.teams}
+                  grades={p.divisionList.length ? gradeRows : null}
+                  rec={{ ...rec!, by: who ? rec!.by : null }}
+                />
+              )}
+            </div>
           </div>
           <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
             <dt className="text-zinc-500">Season</dt>
@@ -120,6 +165,12 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
                 </>
               )
             )}
+            {p.recLimited && (
+              <>
+                <dt className="text-zinc-500">REC</dt>
+                <dd className="text-amber-700 dark:text-amber-300">Invited organizations only</dd>
+              </>
+            )}
             <dt className="text-zinc-500">Teams</dt>
             <dd>
               {p.teams} in {p.divisionList.length} division{p.divisionList.length === 1 ? "" : "s"}
@@ -131,11 +182,17 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
               {p.updatedBy !== p.createdBy && ` · last changed by ${p.updatedBy}`}
             </p>
           )}
-          {manage && (
+          {(manage || scheduler) && (
             <div className="mt-3 flex items-center gap-2">
-              <ProgramEditor program={p} />
-              <DeleteProgram id={p.id} name={p.name} teams={p.teams} />
-              <AddDivision programId={p.id} others={others} />
+              {scheduler && (
+                <Link
+                  href={`/org/scenic-city/scheduler?program=${p.id}`}
+                  className="rounded-full px-3 py-1 text-xs font-medium text-scenic-navy ring-1 ring-scenic-navy/30 hover:bg-zinc-50 dark:text-zinc-200 dark:ring-white/20 dark:hover:bg-white/5"
+                >
+                  Scheduler
+                </Link>
+              )}
+              {manage && <AddDivision programId={p.id} others={others} />}
             </div>
           )}
         </section>
@@ -228,8 +285,12 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
                                     <p className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
                                       {o.name} · {o.teams.length} team{o.teams.length === 1 ? "" : "s"}
                                     </p>
-                                    {manage && !o.teams.length && g.pools.length > 1 && <RemovePool id={o.id} name={o.name} />}
-                                    {pick && <PickAll teams={o.teams.map((t) => ({ id: t.teamId, out: !!t.removedBy }))} />}
+                                    {manage && !o.teams.length && g.pools.length > 1 && (
+                                      <RemovePool id={o.id} name={o.name} />
+                                    )}
+                                    {pick && (
+                                      <PickAll teams={o.teams.map((t) => ({ id: t.teamId, out: !!t.removedBy }))} />
+                                    )}
                                   </div>
                                   <ul className="divide-y divide-zinc-200/70 dark:divide-white/5">
                                     {o.teams.map((t) => (
@@ -288,7 +349,8 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
                                           <div className="mt-1 pl-4">
                                             {t.coach && t.coachCell ? (
                                               <p>
-                                                Coach {t.coach} · <PhoneLink cell={t.coachCell} label={formatCell(t.coachCell)} />
+                                                Coach {t.coach} ·{" "}
+                                                <PhoneLink cell={t.coachCell} label={formatCell(t.coachCell)} />
                                               </p>
                                             ) : (
                                               <p className="text-zinc-500">No coach yet</p>

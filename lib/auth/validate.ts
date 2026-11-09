@@ -23,8 +23,12 @@ export function cleanEmail(v: unknown): string | null {
   return /^[a-z0-9][a-z0-9._%+-]*@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(s) ? s : null;
 }
 
-// "earl@gmail.com" -> "e***@gmail.com"
+// "earl.epps@gmail.com" -> "e*******s@gmail.com": the first and last letters, a star for each one between (so people
+// can tell which address it is). Short names: "ed@…" -> "e*@…", "e@…" -> "e*@…".
 export function maskEmail(email: string): string {
-  const [user, domain] = email.split("@");
-  return `${user[0]}***@${domain}`;
+  const at = email.lastIndexOf("@");
+  const user = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  const hidden = user.length <= 2 ? `${user[0]}*` : `${user[0]}${"*".repeat(user.length - 2)}${user.at(-1)}`;
+  return `${hidden}@${domain}`;
 }

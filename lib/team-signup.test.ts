@@ -1,8 +1,19 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { hashPin } from "./auth/crypto";
 import { getSessionUser, type Deps } from "./auth/service";
-import { registerTeam } from "./scenic-programs";
-import { teamSignupComplete, teamSignupLookup, teamSignupStart, type TeamSignupInput } from "./team-signup";
+
+import {
+  teamSignupComplete,
+  teamSignupForgot,
+  teamSignupGo,
+  teamSignupLookup,
+  teamSignupPin,
+  teamSignupReset,
+  teamSignupStart,
+  type TeamSignupInput,
+} from "./team-signup";
+import { makeSoloAccount } from "./court-solo";
+import { withTx } from "./sql";
 import { createTestDb, testClock, testMailer } from "./testing/db";
 
 describe("Register a team (outside coaches, no login yet)", () => {
@@ -17,6 +28,10 @@ describe("Register a team (outside coaches, no login yet)", () => {
 
   beforeEach(async () => {
     await db.reset();
+    // Organizations outlive a reset (CourtSolo accounts made here): clear them.
+    await db.pool.query("delete from org_features where org not in ('thunder', 'scenic-city')");
+    await db.pool.query("delete from org_role_types where org not in ('thunder', 'scenic-city')");
+    await db.pool.query("delete from organizations where slug not in ('thunder', 'scenic-city')");
     mail = testMailer();
     deps = { pool: db.pool, sendEmail: mail.sendEmail, now: testClock("2026-11-20T15:00:00Z").now };
     prog = (
@@ -90,7 +105,7 @@ describe("Register a team (outside coaches, no login yet)", () => {
 
     const team = (
       await db.pool.query(
-        "select name, gender, grade, level, owner_coach_id, coach_id, created_by from scenic_teams where id = $1",
+        "select name, gender, grade, level, owner_coach_id, coach_id, created_by, org_team_id is not null as in_account from scenic_teams where id = $1",
         [done.teamId],
       )
     ).rows[0];
@@ -99,10 +114,20 @@ describe("Register a team (outside coaches, no login yet)", () => {
       gender: "Boys",
       grade: 5,
       level: "COMP", // no Level asked: COMP where the grade has a COMP group
-      owner_coach_id: "5550101",
+      owner_coach_id: null, // moved into its CourtSolo account
       coach_id: "5550101",
       created_by: "Sam Lee",
+      in_account: true,
     });
+    // Its own CourtSolo account, named for the team, owned by its Head Coach.
+    expect(done.slug).toBe("5b-hixson-hoops");
+    expect((await db.pool.query("select name, kind from organizations where slug = $1", [done.slug])).rows[0]).toEqual({
+      name: "5B Hixson Hoops",
+      kind: "Team",
+    });
+    expect(
+      (await db.pool.query("select role from org_roles where coach_id = '5550101' and org = $1 order by role", [done.slug])).rows,
+    ).toEqual([{ role: "Admin" }, { role: "Coach" }, { role: "Director" }, { role: "Owner" }]);
     expect((await db.pool.query("select role, first_name, cell, email, added_by from scenic_team_staff")).rows).toEqual([
       { role: "AsstCoach", first_name: "Ann", cell: "4235550102", email: null, added_by: "Sam Lee" },
     ]);
@@ -123,9 +148,6 @@ describe("Register a team (outside coaches, no login yet)", () => {
     ).toEqual([{ all_season: false, registered_by: "Sam Lee", days: ["single_1"] }]);
     const me = await getSessionUser(deps, done.token);
     expect(me?.coachId).toBe("5550101");
-    expect(
-      await registerTeam(deps, me!, prog, done.teamId, { allSeason: false, days: [{ date: "2026-12-12", kind: "single_1" }] }),
-    ).toMatchObject({ ok: true });
 
     // Team names are unique in Scenic City, any capitals.
     expect(await teamSignupStart(deps, form({ name: "5b hixson HOOPS", cell: "4235550199", email: "x@example.com" }))).toEqual({
@@ -136,10 +158,21 @@ describe("Register a team (outside coaches, no login yet)", () => {
 
   it("a cell that already has a login enters its PIN (no new PIN); closed registration refuses", async () => {
     await db.pool.query(
-      "insert into users (coach_id, first_name, last_name, active, pin_hash, cell) values ('5550101', 'Sam', 'Lee', true, $1, '4235550101')",
+      "insert into users (coach_id, first_name, last_name, active, pin_hash, cell, email) values ('5550101', 'Samuel', 'Lee', true, $1, '4235550101', 'sam@old.com')",
       [await hashPin("2468")],
     );
-    expect(await teamSignupLookup(deps, "4235550101")).toEqual({ step: "form", existing: true });
+    // A cell with a login: its PIN first, then the Head Coach's information fills in from the login.
+    expect(await teamSignupLookup(deps, "4235550101")).toEqual({ step: "pin" });
+    expect(await teamSignupPin(deps, "4235550101", "1111")).toMatchObject({
+      step: "error",
+      message: expect.stringMatching(/^Wrong PIN/),
+    });
+    expect(await teamSignupPin(deps, "4235550101", "2468")).toEqual({
+      step: "form",
+      existing: true,
+      coach: { first: "Samuel", last: "Lee", email: "sam@old.com" },
+      accounts: { solo: [], orgs: [] },
+    });
     expect(await teamSignupStart(deps, form({ pin: "1111" }))).toMatchObject({
       step: "error",
       message: expect.stringMatching(/^Wrong PIN/),
@@ -149,7 +182,9 @@ describe("Register a team (outside coaches, no login yet)", () => {
     expect(await teamSignupStart(deps, form({ pin: "2468", grade: "4", name: "4B Lee" }))).toMatchObject({ step: "code" });
     const done = await teamSignupComplete(deps, "4235550101", mail.lastCode());
     expect(done).toMatchObject({ step: "loggedIn" });
-    expect((await db.pool.query("select level from scenic_teams where name = '4B Lee'")).rows).toEqual([{ level: "REC" }]);
+    expect((await db.pool.query("select level, created_by from scenic_teams where name = '4B Lee'")).rows).toEqual([
+      { level: "REC", created_by: "Samuel Lee" }, // the login's own name, whatever was typed
+    ]);
     expect((await db.pool.query("select verified_email from users where coach_id = '5550101'")).rows[0].verified_email).toBe(
       "sam@example.com",
     );
@@ -159,5 +194,71 @@ describe("Register a team (outside coaches, no login yet)", () => {
       step: "error",
       message: "Team registration isn't open right now.",
     });
+  }, 60_000);
+
+  it("Forgot PIN: a code to the login's confirmed email (masked), then a new PIN opens the form", async () => {
+    await db.pool.query(
+      `insert into users (coach_id, first_name, last_name, active, pin_hash, cell, email, verified_email)
+       values ('5550101', 'Earl', 'Epps', true, $1, '4235550101', 'earl.epps@gmail.com', 'earl.epps@gmail.com'),
+              ('5550102', 'No', 'Email', true, $1, '4235550102', null, null)`,
+      [await hashPin("2468")],
+    );
+    expect(await teamSignupForgot(deps, "4235550102")).toMatchObject({ step: "error" }); // no confirmed email
+    expect(await teamSignupForgot(deps, "4235550101")).toEqual({ step: "resetCode", maskedEmail: "e*******s@gmail.com" });
+    expect(mail.sent.at(-1)?.to).toBe("earl.epps@gmail.com");
+    expect(await teamSignupReset(deps, "4235550101", "000000", "1357", "1357")).toMatchObject({ step: "error" });
+    expect(await teamSignupReset(deps, "4235550101", mail.lastCode(), "1357", "1358")).toMatchObject({ step: "error" });
+    expect(await teamSignupReset(deps, "4235550101", mail.lastCode(), "1357", "1357")).toEqual({
+      step: "form",
+      existing: true,
+      coach: { first: "Earl", last: "Epps", email: "earl.epps@gmail.com" },
+      accounts: { solo: [], orgs: [] },
+    });
+    // The new PIN works; the old one doesn't.
+    expect(await teamSignupPin(deps, "4235550101", "2468")).toMatchObject({ step: "error" });
+    expect(await teamSignupPin(deps, "4235550101", "1357")).toMatchObject({ step: "form", existing: true });
+  }, 60_000);
+
+  it("a returning CourtSolo coach is asked first: register their team, archive it for a new one, or switch to CourtOrg", async () => {
+    await db.pool.query(
+      `insert into users (coach_id, first_name, last_name, active, pin_hash, cell, email, verified_email)
+       values ('5550101', 'Sam', 'Lee', true, $1, '4235550101', 'sam@example.com', 'sam@example.com')`,
+      [await hashPin("2468")],
+    );
+    const old = (
+      await db.pool.query<{ id: string }>(
+        `insert into scenic_teams (name, gender, grade_low, grade, level, owner_coach_id, coach_id, created_by, updated_by)
+         values ('Magic', 'Boys', 5, 5, 'COMP', '5550101', '5550101', 't', 't') returning id::text`,
+      )
+    ).rows[0].id;
+    const slug = await withTx(db.pool, (q) => makeSoloAccount(q, old, "t", new Date()));
+    expect(await teamSignupPin(deps, "4235550101", "2468")).toMatchObject({
+      step: "form",
+      accounts: { solo: [{ slug: "magic", teamName: "Magic", busyIn: null, inPrograms: [] }], orgs: [] },
+    });
+    // One active team: a new one must replace Magic, never a second account.
+    expect(await teamSignupStart(deps, form({ pin: "2468" }))).toEqual({
+      step: "error",
+      message: "You already have Magic: register it, or archive it to make a new team.",
+    });
+    expect(await teamSignupStart(deps, form({ pin: "2468", replace: slug }))).toMatchObject({ step: "code" });
+    const done = await teamSignupComplete(deps, "4235550101", mail.lastCode());
+    expect(done).toMatchObject({ step: "loggedIn", slug: "magic" });
+    expect((await db.pool.query("select name, archived_at is not null as archived from org_teams order by id")).rows).toEqual([
+      { name: "Magic", archived: true },
+      { name: "5B Hixson Hoops", archived: false },
+    ]);
+    expect((await db.pool.query("select name from organizations where slug = 'magic'")).rows[0].name).toBe("5B Hixson Hoops");
+
+    // Or: straight to their team's Register tab (PIN checked again), or switch to CourtOrg.
+    expect(await teamSignupGo(deps, "4235550101", "1111", { to: "register", slug })).toMatchObject({ step: "error" });
+    expect(await teamSignupGo(deps, "4235550101", "2468", { to: "register", slug })).toMatchObject({
+      step: "loggedIn",
+      next: "/org/magic/teams?view=register",
+    });
+    expect(await teamSignupGo(deps, "4235550101", "2468", { to: "org", slug })).toMatchObject({ step: "error" }); // not an organization
+    expect(
+      await teamSignupGo(deps, "4235550101", "2468", { to: "switch", slug, name: "Hixson Hoops", short: "Hixson" }),
+    ).toMatchObject({ step: "loggedIn", slug: "hixson-hoops", next: "/org/hixson-hoops/teams" });
   }, 60_000);
 });

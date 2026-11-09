@@ -8,8 +8,9 @@ import type { SessionUser } from "./auth/service";
 import { hasFeature } from "./features";
 import { orgName, orgShort } from "./org-registry";
 import { teamsManagerOf } from "./org-teams";
+import { leagueNameSql } from "./solo-names";
 import type { OrgSlug } from "./orgs";
-import { leagueEntry, programRegStatus, saveChoice, type Entry, type ProgramOption, type RegStatus } from "./scenic-programs";
+import { leagueEntry, programRegStatus, recOpenSql, saveChoice, type Entry, type ProgramOption, type RegStatus } from "./scenic-programs";
 import { gradeLabel, gradeRange } from "./scenic-teams";
 import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
@@ -51,7 +52,7 @@ export async function partnerFor(q: Pick<Queryable, "query">, org: OrgSlug, byNa
 async function copyOf(q: Pick<Queryable, "query">, orgTeamId: string, partnerId: string, byName: string, now: Date) {
   const r = await q.query<{ id: string }>(
     `insert into scenic_teams (name, gender, grade_low, grade, level, partner_id, coach_id, created_by, created_at, updated_by, updated_at, org_team_id)
-     select coalesce(org.abbr, upper(left(org.slug, 4))) || ' ' || t.name, t.gender, t.grade_low, t.grade, t.level, $2, c.coach_id, $3, $4, $3, $4, t.id
+     select ${leagueNameSql("org", "t.name")}, t.gender, t.grade_low, t.grade, t.level, $2, c.coach_id, $3, $4, $3, $4, t.id
      from org_teams t join organizations org on org.slug = t.org left join org_team_coaches c on c.team_id = t.id and c.role = 'HeadCoach' where t.id = $1
      on conflict (org_team_id) do update set name = excluded.name, gender = excluded.gender, grade_low = excluded.grade_low,
        grade = excluded.grade, level = excluded.level, partner_id = excluded.partner_id, coach_id = excluded.coach_id
@@ -89,7 +90,7 @@ export async function orgPrograms(
             p.reg_opens::text as "regOpens", p.reg_closes::text as "regCloses", p.fee_cents as "feeCents",
             count(r.team_id)::int as registered, (count(t.id) - count(r.team_id))::int as unregistered
      from scenic_programs p
-     left join org_teams t on t.org = $1
+     left join org_teams t on t.org = $1 and t.archived_at is null
      left join scenic_teams st on st.org_team_id = t.id
      left join scenic_registrations r on r.program_id = p.id and r.team_id = st.id
      where p.reg_closes >= $2::date
@@ -113,7 +114,8 @@ export type TeamProgram = {
   regCloses: string;
   feeCents: number | null;
   status: RegStatus;
-  fits: boolean; // has a grade group for this team's gender, grade and level
+  fits: boolean; // has a grade group for this team's gender, grade and level (and REC is open to it)
+  recClosed: boolean; // REC here is limited to organizations Scenic City picked, not this one
   // `removedBy`: taken out of the whole program; `off`: Game Days (YYYY-MM-DD) or "brackets" it was taken out of → by whom.
   // `teamOff`: the ones the team withdrew from itself (it can re-enter them).
   registered: {
@@ -150,6 +152,7 @@ export async function teamPrograms(
     regCloses: string;
     feeCents: number | null;
     fits: boolean;
+    recClosed: boolean;
     pool: string | null;
     gender: string | null;
     low: number | null;
@@ -166,6 +169,7 @@ export async function teamPrograms(
             p.reg_opens::text as "regOpens", p.reg_closes::text as "regCloses", p.fee_cents as "feeCents",
             exists (select 1 from scenic_divisions d join scenic_grade_groups g on g.division_id = d.id
                     where d.program_id = p.id and d.gender = t.gender and g.grade = t.grade and g.level = t.level) as fits,
+            not ${recOpenSql("p.id", "t.level", "(select pa.id from partners pa where pa.org_slug = t.org)")} as "recClosed",
             o.name as pool, d.gender, d.grade_low as low, d.grade_high as high, g.grade, g.level,
             r.registered_by as "regBy", r.paid, r.removed_by as "removedBy",
             coalesce((select json_object_agg(x.off, x.set_by) from scenic_team_off x
@@ -206,7 +210,8 @@ export async function teamPrograms(
       regCloses: p.regCloses,
       feeCents: p.feeCents,
       status: regOpen(today, p.regOpens, p.regCloses),
-      fits: p.fits,
+      fits: p.fits && !p.recClosed,
+      recClosed: p.recClosed,
       registered: p.pool
         ? {
             where: `${p.gender} ${gradeRange(p.low!, p.high!)} · ${gradeLabel(p.grade!, p.grade!)} ${p.level} · ${p.pool}`,
@@ -237,8 +242,11 @@ export async function registerOrgTeam(
     const status = await programRegStatus(q, programId, deps.now());
     if (!status) return { ok: false as const, message: "That program no longer exists." };
     if (status !== "open") return { ok: false as const, message: "Registration isn't open for this program." };
-    const t = await q.query("select 1 from org_teams where id = $1 and org = $2 for update", [orgTeamId, o]);
-    if (!t.rowCount) return { ok: false as const, message: "That team no longer exists." };
+    const t = await q.query("select 1 from org_teams where id = $1 and org = $2 and archived_at is null for update", [
+      orgTeamId,
+      o,
+    ]);
+    if (!t.rowCount) return { ok: false as const, message: "That team no longer exists (or is archived)." };
     const copy = await copyOf(q, orgTeamId, await partnerFor(q, o, by(viewer)), by(viewer), deps.now());
     const placed = await saveChoice(q, programId, copy, choice, by(viewer), deps.now());
     return "error" in placed ? { ok: false as const, message: placed.error } : { ok: true as const, ...placed };
@@ -262,7 +270,7 @@ export async function registerAllOrgTeams(
     if (status !== "open") return { ok: false as const, message: "Registration isn't open for this program." };
     const teams = await q.query<{ id: string; name: string }>(
       `select t.id::text, t.name from org_teams t
-       where t.org = $1 and not exists (select 1 from scenic_teams st join scenic_registrations r on r.team_id = st.id
+       where t.org = $1 and t.archived_at is null and not exists (select 1 from scenic_teams st join scenic_registrations r on r.team_id = st.id
                                         where st.org_team_id = t.id and r.program_id = $2)
        order by t.gender, t.grade, lower(t.name) for update`,
       [o, programId],

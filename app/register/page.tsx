@@ -7,6 +7,10 @@ import { ORG_COLORS, ORG_KINDS } from "@/lib/org-signup";
 import LoginFlow from "../login/LoginFlow";
 import { card } from "../ui";
 import RegisterOrgForm from "./RegisterOrgForm";
+import SwitchSolo from "./SwitchSolo";
+import { db } from "@/lib/db";
+import { myAccounts } from "@/lib/court-solo";
+import { easternDate } from "@/lib/time";
 
 export default function RegisterPage({ searchParams }: PageProps<"/register">) {
   return (
@@ -45,6 +49,37 @@ async function Register({ searchParams }: { searchParams: PageProps<"/register">
         </div>
       </>
     );
+  // Multiple teams (CourtOrg) from an event, by someone who already has an organization or a CourtSolo team: ask first.
+  const sp = await searchParams;
+  if (need === "court-org" && sp.new !== "1") {
+    const mine = await myAccounts(db, user.coachId, easternDate(new Date()));
+    if (mine.orgs.length || mine.solo.length)
+      return (
+        <div className={`${card} space-y-3 p-5`}>
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">Welcome back, {user.firstName}. What would you like to do?</p>
+          {mine.orgs.map((o) => (
+            <Link
+              key={o.slug}
+              href={`/org/${o.slug}/teams`}
+              className="block rounded-xl px-3 py-2.5 ring-1 ring-zinc-950/10 hover:bg-zinc-50 dark:ring-white/15 dark:hover:bg-white/5"
+            >
+              <span className="block font-semibold">Add teams to {o.name}</span>
+              <span className="block text-xs text-zinc-500">Its Teams page: add teams and register them.</span>
+            </Link>
+          ))}
+          {mine.solo.map((a) => (
+            <SwitchSolo key={a.slug} slug={a.slug} team={a.teamName ?? a.name} />
+          ))}
+          <Link
+            href="/register?need=court-org&new=1"
+            className="block rounded-xl px-3 py-2.5 ring-1 ring-zinc-950/10 hover:bg-zinc-50 dark:ring-white/15 dark:hover:bg-white/5"
+          >
+            <span className="block font-semibold">Create a new organization</span>
+            <span className="block text-xs text-zinc-500">A separate organization with its own teams.</span>
+          </Link>
+        </div>
+      );
+  }
   const features = FEATURES.filter((f) => f.key !== "alerts").map((f) => ({
     key: f.key,
     name: f.name,

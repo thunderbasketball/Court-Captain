@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
 import { CONTEXT_COOKIE } from "@/lib/contexts";
 import { db } from "@/lib/db";
+import { switchSoloToOrg } from "@/lib/court-solo";
 import { createOrganization, renameOrg, setOrgAbbr, setOrgColor, setOrgLogo, type Logo } from "@/lib/org-signup";
 
 const deps = { pool: db, now: () => new Date() };
@@ -108,4 +109,21 @@ export async function renameOrganization(org: string, name: string, short: strin
     console.error("Organization rename failed:", e);
     return { ok: false as const, message: "Something went wrong. Please try again." };
   }
+}
+
+// Switch the person's CourtSolo account to CourtOrg, bringing its team (lib/court-solo). Opens it on its Teams page.
+export async function switchSoloAccount(slug: string, name: string, short: string) {
+  const user = await currentUser();
+  if (!user) return { ok: false as const, message: "Please log in again." };
+  if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  const r = await switchSoloToOrg(deps, user, slug, { name, short: short || name.slice(0, 20) });
+  if (r.ok)
+    (await cookies()).set(CONTEXT_COOKIE, `org:${r.slug}`, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 365,
+    });
+  return r;
 }

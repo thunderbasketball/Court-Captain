@@ -17,6 +17,9 @@ import {
   removePool,
   saveProgram,
   saveProgramDates,
+  setGradeLevel,
+  setRecLimit,
+  recLimit,
   setTeamOff,
   setTeamsOff,
   setPaid,
@@ -198,6 +201,121 @@ describe("Scenic City programs", () => {
     ]);
   });
 
+  it("Grades accepted: REC and COMP turned on or off per grade, Boys and Girls separately; not while teams are in it", async () => {
+    const id = await newLeague();
+    await div(id, "Boys", 3, 4, ["COMP"]);
+    await div(id, "Girls", 3, 4, ["REC", "COMP"]);
+    const set = (who: SessionUser, gender: string, grade: number, level: string, on: boolean) =>
+      setGradeLevel(deps(), who, id, { gender, grade, level, on });
+    const groups = async () =>
+      (await getProgram(deps(), dee, id))!.divisionList.map((d) => `${d.gender}: ${d.groups.map((g) => g.label).join(", ")}`);
+
+    expect(await set(fay, "Boys", 3, "REC", true)).toEqual({ ok: false, message: "Only a Scenic City Director of Programs can do that." });
+    // Boys 3rd REC on: only Boys; Girls unchanged.
+    expect(await set(dee, "Boys", 3, "REC", true)).toEqual({ ok: true });
+    expect(await set(dee, "Boys", 3, "REC", true)).toEqual({ ok: true }); // already on
+    expect(await groups()).toEqual([
+      "Boys: 3rd REC, 3rd COMP, 4th COMP",
+      "Girls: 3rd REC, 3rd COMP, 4th REC, 4th COMP",
+    ]);
+    // Girls 4th COMP off.
+    expect(await set(dee, "Girls", 4, "COMP", false)).toEqual({ ok: true });
+    expect((await groups())[1]).toBe("Girls: 3rd REC, 3rd COMP, 4th REC");
+    // A grade with no division, and bad input.
+    expect(await set(dee, "Boys", 7, "REC", true)).toEqual({ ok: false, message: "No Boys division has 7th. Add a division first." });
+    expect(await set(dee, "Coed", 0, "REC", true)).toMatchObject({ ok: false });
+    expect(await set(dee, "Coed", -1, "COMP", true)).toEqual({ ok: false, message: "Pre-K is REC only." });
+    // Coed Pre-K on adds its division (REC, Pool A); off removes it.
+    expect(await set(dee, "Coed", -1, "REC", true)).toEqual({ ok: true });
+    expect((await groups())[0]).toBe("Coed: Pre-K REC");
+    expect(await set(dee, "Coed", -1, "REC", false)).toEqual({ ok: true });
+    expect(await groups()).toHaveLength(2);
+    expect(await set(dee, "Boys", 3, "ELITE", true)).toMatchObject({ ok: false });
+    // Not while a team is in it; a registered team's new group gets Pool A and takes teams.
+    const b3 = await team(pat, baylor, "Baylor 3rd", "Boys", "3", "REC");
+    expect(await registerTeam(deps(), pat, id, b3, ALL)).toMatchObject({ ok: true, division: "Boys 3rd–4th · 3rd REC · Pool A" });
+    expect(await set(dee, "Boys", 3, "REC", false)).toEqual({
+      ok: false,
+      message: "Boys 3rd REC has 1 team. Withdraw or move them first.",
+    });
+    // A division keeps at least one grade.
+    const solo = await newLeague({ name: "Spring" });
+    await div(solo, "Boys", 5, 5, ["REC"]);
+    expect(await setGradeLevel(deps(), dee, solo, { gender: "Boys", grade: 5, level: "REC", on: false })).toEqual({
+      ok: false,
+      message: "Boys 5th REC is its division's last grade. Remove the division instead.",
+    });
+  });
+
+  it("REC open to: only the organizations picked (no stand-alone teams); COMP open to all; checked on the server", async () => {
+    const id = await newLeague();
+    await div(id, "Boys", 5, 5, ["REC", "COMP"]);
+    await div(id, "Girls", 5, 5, ["REC"]);
+    const other = (
+      await db.pool.query<{ id: string }>(
+        `insert into partners (name, kind, hosts_games, registers_teams, approved, created_by) values ('Other Club', 'Organization', false, true, true, 'test')
+         returning id::text`,
+      )
+    ).rows[0].id;
+    const rec5 = await team(pat, baylor, "Baylor 5 Rec", "Boys", "5", "REC");
+    const comp5 = await team(pat, baylor, "Baylor 5 Comp", "Boys", "5", "COMP");
+    const solo = await team(sam, "solo", "Sam Girls", "Girls", "5", "REC");
+    // Only organizations with CourtOrg and CourtSync can be picked: Other Club and Baylor get both; a school with only
+    // CourtSync can't.
+    await db.pool.query(
+      `insert into organizations (slug, name, short_name, kind) values ('other-club', 'Other Club', 'OC', 'Organization'),
+              ('baylor', 'Baylor School', 'Baylor', 'School'), ('high', 'High School', 'HS', 'School')`,
+    );
+    const school = (
+      await db.pool.query<{ id: string }>(
+        `insert into partners (name, kind, hosts_games, registers_teams, approved, created_by, org_slug)
+         values ('High School', 'School', true, false, true, 'test', 'high') returning id::text`,
+      )
+    ).rows[0].id;
+    await db.pool.query("update partners set org_slug = 'other-club' where id = $1", [other]);
+    await db.pool.query("update partners set org_slug = 'baylor' where id = $1", [baylor]);
+    await db.pool.query(
+      `insert into org_features (org, feature, source) values ('other-club', 'court-org', 'setup'),
+              ('other-club', 'court-sync', 'setup'), ('baylor', 'court-org', 'setup'), ('baylor', 'court-sync', 'setup'),
+              ('high', 'court-sync', 'setup')`,
+    );
+    expect((await recLimit(db.pool, id)).choices.map((c) => c.name)).toEqual(["Baylor School", "Other Club"]);
+    expect(await setRecLimit(deps(), dee, id, { limited: true, partners: [school] })).toEqual({
+      ok: false,
+      message: "Pick organizations from the list.",
+    });
+
+    expect(await setRecLimit(deps(), fay, id, { limited: true, partners: [other] })).toMatchObject({ ok: false });
+    expect(await setRecLimit(deps(), dee, id, { limited: true, partners: [] })).toEqual({
+      ok: false,
+      message: "Pick at least one organization, or open REC to everyone.",
+    });
+    expect(await setRecLimit(deps(), dee, id, { limited: true, partners: ["999999"] })).toEqual({
+      ok: false,
+      message: "Pick organizations from the list.",
+    });
+    expect(await setRecLimit(deps(), dee, id, { limited: true, partners: [other] })).toEqual({ ok: true });
+    expect(await recLimit(db.pool, id)).toMatchObject({ limited: true, by: "Dee X", partners: [other] });
+
+    // Baylor isn't picked: its REC team can't register (and isn't offered); COMP can. Solo REC can't either.
+    expect((await getProgram(deps(), pat, id))!.cantRegister).toEqual([
+      { name: "Baylor 5 Rec", why: "REC here is only for the organizations Scenic City picked" },
+    ]);
+    expect(await registerTeam(deps(), pat, id, rec5, ALL)).toEqual({
+      ok: false,
+      message: "REC in this program is only for the organizations Scenic City picked. COMP is open to all.",
+    });
+    expect(await registerTeam(deps(), pat, id, comp5, ALL)).toMatchObject({ ok: true });
+    expect(await registerTeam(deps(), sam, id, solo, ALL)).toMatchObject({ ok: false });
+
+    // Baylor picked: its REC team registers. Open to everyone again: the Solo team too.
+    expect(await setRecLimit(deps(), dee, id, { limited: true, partners: [other, baylor] })).toEqual({ ok: true });
+    expect(await registerTeam(deps(), pat, id, rec5, ALL)).toMatchObject({ ok: true });
+    expect(await setRecLimit(deps(), dee, id, { limited: false, partners: [] })).toEqual({ ok: true });
+    expect(await recLimit(db.pool, id)).toMatchObject({ limited: false, by: null, partners: [] });
+    expect(await registerTeam(deps(), sam, id, solo, ALL)).toMatchObject({ ok: true });
+  });
+
   it("teams go to the smallest pool of their grade and level (3rd/4th plays 4th); pools can be added, emptied, removed", async () => {
     const id = await newLeague();
     await div(id, "Boys", 3, 4, ["REC", "COMP"]);
@@ -317,8 +435,10 @@ describe("Scenic City programs", () => {
     expect((await getProgram(deps(), dee, id))!.divisionList.map((d) => d.label)).toEqual(["Boys 5th"]);
 
     expect(await deleteProgram(deps(), pat, id)).toMatchObject({ ok: false });
+    // Not with teams registered: withdraw them first.
+    expect(await deleteProgram(deps(), dee, id)).toEqual({ ok: false, message: "It has 1 team registered. Withdraw them first." });
+    expect(await withdrawTeam(deps(), dee, id, b5)).toEqual({ ok: true });
     expect(await deleteProgram(deps(), dee, id)).toEqual({ ok: true });
-    expect((await db.pool.query("select count(*)::int n from scenic_registrations")).rows[0].n).toBe(0);
     expect((await db.pool.query("select count(*)::int n from scenic_teams")).rows[0].n).toBe(1); // the team stays
   });
 

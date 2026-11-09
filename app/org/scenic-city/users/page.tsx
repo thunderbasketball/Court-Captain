@@ -78,12 +78,8 @@ async function ScenicUsers() {
         <Stats
           items={[
             { label: "Requests", value: requests.length, tone: requests.length ? "text-amber-600 dark:text-amber-400" : "" },
-            { label: "Solo", value: active.filter((m) => m.roles.includes("Solo")).length },
           ]}
         />
-        <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-300">
-          Join link to share: <span className="font-mono font-medium">/join/scenic-city</span>
-        </p>
         <div className="space-y-3">
           <GroupCard title="Join requests" count={requests.length}>
             {requests.length ? (

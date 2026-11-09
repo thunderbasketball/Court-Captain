@@ -12,12 +12,17 @@ import {
   removeDivision,
   removePool,
   saveProgram,
+  setGradeLevel,
+  setRecLimit,
+  setSchedulePublished,
   setPaid,
+  setProgramLogo,
   setTeamOff,
   withdrawTeam,
 } from "../actions";
 import { Alert, CloseButton, OnPage, PopUp, Toast, dialogCls, useConfirm } from "../../../client-ui";
 import { fieldLabel, inputCls, pillCls } from "../../../ui";
+import { GearIcon } from "../../../OrgSettings";
 import { REG_OPTIONS, type ProgramOption } from "@/lib/program-options";
 import RegisterChoices from "./RegisterChoices";
 
@@ -197,6 +202,100 @@ export function ProgramEditor({ program }: { program?: ProgramFields }) {
   );
 }
 
+// A program's logo (nothing when it has none).
+export function ProgramLogo({ src, className = "size-12" }: { src: string | null; className?: string }) {
+  if (!src) return null;
+  // eslint-disable-next-line @next/next/no-img-element -- an uploaded image served by /program-logo
+  return <img src={src} alt="" className={`${className} shrink-0 rounded-xl object-contain`} />;
+}
+
+// Directors of Programs: add, change or remove the program's logo (PNG, JPEG or WebP, up to 512 KB).
+export function ProgramLogoEditor({ id, logo }: { id: string; logo: string | null }) {
+  const router = useRouter();
+  const ref = useRef<HTMLDialogElement>(null);
+  const [busy, start] = useTransition();
+  const [preview, setPreview] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const save = (form: FormData) =>
+    start(async () => {
+      setError(null);
+      const r = await setProgramLogo(id, form);
+      if (!r.ok) return setError(r.message);
+      ref.current?.close();
+      setPreview(null);
+      router.refresh();
+    });
+  return (
+    <>
+      <button
+        type="button"
+        className={`${smallBtn} text-scenic-navy ring-scenic-navy/30 dark:text-zinc-200 dark:ring-white/20`}
+        onClick={() => ref.current?.showModal()}
+      >
+        {logo ? "Logo" : "+ Logo"}
+      </button>
+      <dialog ref={ref} className={dialogCls}>
+        <form
+          className="space-y-3 p-5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            save(new FormData(e.currentTarget));
+          }}
+        >
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Program logo</h2>
+            <CloseButton onClick={() => ref.current?.close()} />
+          </div>
+          <span className={fieldLabel}>PNG, JPEG or WebP, up to 512 KB</span>
+          <div className="flex items-center gap-3">
+            {preview || logo ? (
+              // eslint-disable-next-line @next/next/no-img-element -- the chosen file or the current logo
+              <img
+                src={preview ?? logo!}
+                alt=""
+                className="size-16 rounded-xl object-contain ring-1 ring-zinc-950/10"
+              />
+            ) : (
+              <span className="grid size-16 place-items-center rounded-xl text-xs text-zinc-400 ring-1 ring-zinc-950/10 ring-dashed">
+                None
+              </span>
+            )}
+            <input
+              name="logo"
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              required
+              className="min-w-0 text-sm"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                setPreview(f ? URL.createObjectURL(f) : null);
+              }}
+            />
+          </div>
+          {error && <Alert tone="red">{error}</Alert>}
+          <button type="submit" disabled={busy} className={`${navyBtn} w-full`}>
+            {busy ? "Saving…" : "Save logo"}
+          </button>
+          {logo && (
+            <button
+              type="button"
+              disabled={busy}
+              className="w-full text-sm text-red-600 hover:underline"
+              onClick={() => {
+                const f = new FormData();
+                f.set("remove", "1");
+                save(f);
+              }}
+            >
+              Remove logo
+            </button>
+          )}
+        </form>
+      </dialog>
+    </>
+  );
+}
+
 export function DeleteProgram({ id, name, teams }: { id: string; name: string; teams: number }) {
   const router = useRouter();
   const [busy, start] = useTransition();
@@ -235,7 +334,8 @@ export function RegisterTeam({
 }: {
   programId: string;
   teams: { teamId: string; name: string; division: string }[];
-  league: { options: ProgramOption[]; gameDates: string[]; today: string } | null;
+  league: { options: ProgramOption[]; gameDates: string[]; today: string;
+  } | null;
 }) {
   const router = useRouter();
   const [pick, setPick] = useState("");
@@ -698,7 +798,8 @@ export function TeamMenu({
 }) {
   const router = useRouter();
   // Where the menu shows (drawn on top of the page, under the ⋯ button, or above it near the bottom of the screen); null: closed.
-  const [at, setAt] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
+  const [at, setAt] = useState<{ top?: number; bottom?: number; right: number;
+  } | null>(null);
   const open = !!at;
   const setOpen = (on: boolean) => {
     const r = button.current?.getBoundingClientRect();
@@ -821,5 +922,280 @@ export function TeamMenu({
       {msg && <Toast key={msg} message={msg} />}
       {confirmDialog}
     </div>
+  );
+}
+
+// Publish schedule (Directors of Programs, Leagues): the schedule shows on the public League page, or is taken back.
+export function PublishSchedule({ programId, by, who }: { programId: string; by: string | null; who: boolean }) {
+  const router = useRouter();
+  const [busy, start] = useTransition();
+  const [msg, setMsg] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
+  const on = by !== null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <button
+        type="button"
+        disabled={busy}
+        onClick={async () => {
+          if (
+            !(await confirm(
+              on
+                ? {
+                    title: "Unpublish the schedule?",
+                    message: "The public League page stops showing the schedule (teams still show).",
+                    confirmLabel: "Unpublish",
+                  }
+                : {
+                    title: "Publish the schedule?",
+                    message:
+                      "Anyone with the League page link sees every game: dates, times, gyms and teams. No contact info.",
+                    confirmLabel: "Publish",
+                  },
+            ))
+          )
+            return;
+          start(async () => {
+            const r = await setSchedulePublished(programId, !on);
+            if (r.ok) router.refresh();
+            else setMsg(r.message);
+          });
+        }}
+        className={`rounded-full px-3 py-1.5 font-medium ring-1 disabled:opacity-50 ${
+          on
+            ? "bg-emerald-50 text-emerald-800 ring-emerald-600/30 dark:bg-emerald-500/10 dark:text-emerald-300"
+            : "text-zinc-700 ring-zinc-950/15 hover:bg-zinc-50 dark:text-zinc-200 dark:ring-white/20"
+        }`}
+      >
+        {on ? "Schedule published ✓" : "Publish schedule"}
+      </button>
+      <a href={`/league/scenic-city?l=${programId}`} target="_blank" className="text-thunder-blue hover:underline">
+        Public page ↗
+      </a>
+      {on && who && <span className="text-xs text-zinc-400">by {by}</span>}
+      {msg && <Toast key={msg} message={msg} />}
+      {confirmDialog}
+    </div>
+  );
+}
+
+export type GradeChip = { grade: number; on: boolean; teams: number };
+export type GradeRow = { gender: "Boys" | "Girls" | "Coed"; level: "REC" | "COMP"; grades: GradeChip[] };
+
+// Directors of Programs: which grades the program accepts in REC and in COMP, Boys and Girls separately. Each chip is a
+// grade in one of the gender's divisions; tap to turn it on or off (off is refused while teams are in it).
+export function GradesAccepted({ programId, rows }: { programId: string; rows: GradeRow[] }) {
+  const router = useRouter();
+  const [busy, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="space-y-3">
+      {rows.map((row) => (
+        <div key={`${row.gender}-${row.level}`}>
+          <p className={fieldLabel}>
+            {row.gender} {row.level}
+          </p>
+          {row.grades.length ? (
+            <div className="flex flex-wrap gap-1.5">
+              {row.grades.map((c) => (
+                <button
+                  key={c.grade}
+                  type="button"
+                  disabled={busy}
+                  aria-pressed={c.on}
+                  title={c.teams ? `${c.teams} team${c.teams === 1 ? "" : "s"}` : undefined}
+                  onClick={() =>
+                    start(async () => {
+                      setError(null);
+                      const r = await setGradeLevel(programId, {
+                        gender: row.gender,
+                        grade: c.grade,
+                        level: row.level,
+                        on: !c.on,
+                      });
+                      if (r.ok) router.refresh();
+                      else setError(r.message);
+                    })
+                  }
+                  className={`${pillCls(c.on)} min-w-11 px-3 py-1.5 disabled:opacity-60`}
+                >
+                  {c.grade === -1 ? "Pre-K" : c.grade === 0 ? "K" : c.grade}
+                  {c.teams > 0 && <span className="ml-1 text-xs opacity-75">·{c.teams}</span>}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-zinc-500">No {row.gender} divisions yet.</p>
+          )}
+        </div>
+      ))}
+      <p className="text-xs text-zinc-500">
+        Blue = accepted. ·2 = teams in it. Coed is Pre-K, REC only. A grade not shown needs a division first.
+      </p>
+      {error && <Toast key={error} message={error} />}
+    </div>
+  );
+}
+
+// Directors of Programs: the program's gear: Edit (dates, registration, options), Logo, Grades accepted, Delete.
+export function ProgramSettings({
+  program,
+  logo,
+  teams,
+  grades,
+  rec,
+}: {
+  program: ProgramFields;
+  logo: string | null;
+  teams: number;
+  grades: GradeRow[] | null; // null: no divisions yet
+  rec: RecLimitView;
+}) {
+  return (
+    <PopUp
+      label={<GearIcon className="size-5" />}
+      ariaLabel={`${program.name} settings`}
+      title={`${program.name} settings`}
+      className="shrink-0 rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+    >
+      {() => (
+        <ul className="divide-y divide-zinc-100 dark:divide-white/5">
+          <li className="flex items-center justify-between gap-3 py-2.5">
+            <span className="text-sm text-zinc-600 dark:text-zinc-300">Type, name, dates, registration and options</span>
+            <ProgramEditor program={program} />
+          </li>
+          <li className="flex items-center justify-between gap-3 py-2.5">
+            <span className="text-sm text-zinc-600 dark:text-zinc-300">The program&apos;s logo</span>
+            <ProgramLogoEditor id={program.id} logo={logo} />
+          </li>
+          <li className="flex items-center justify-between gap-3 py-2.5">
+            <span className="text-sm text-zinc-600 dark:text-zinc-300">
+              Grades accepted
+              <span className="block text-xs text-zinc-500">
+                {grades ? gradesSummary(grades) : "Add a division first"}
+              </span>
+            </span>
+            {grades && (
+              <PopUp label="Edit" title="Grades accepted" className={editBtn}>
+                {() => <GradesAccepted programId={program.id} rows={grades} />}
+              </PopUp>
+            )}
+          </li>
+          <li className="flex items-center justify-between gap-3 py-2.5">
+            <span className="text-sm text-zinc-600 dark:text-zinc-300">
+              REC open to
+              <span className="block text-xs text-zinc-500">
+                {rec.limited
+                  ? `${rec.partners.length} invited organization${rec.partners.length === 1 ? "" : "s"}`
+                  : "Everyone"}
+              </span>
+            </span>
+            <PopUp label="Edit" title="REC open to" className={editBtn}>
+              {(close) => <RecLimitEditor programId={program.id} rec={rec} onSaved={close} />}
+            </PopUp>
+          </li>
+          {/* Delete only with no teams registered (the server refuses it too). */}
+          {teams === 0 && (
+            <li className="flex items-center justify-between gap-3 py-2.5">
+              <span className="text-sm text-zinc-600 dark:text-zinc-300">Delete the program</span>
+              <DeleteProgram id={program.id} name={program.name} teams={0} />
+            </li>
+          )}
+        </ul>
+      )}
+    </PopUp>
+  );
+}
+
+const editBtn = `${smallBtn} text-scenic-navy ring-scenic-navy/30 dark:text-zinc-200 dark:ring-white/20`;
+
+// One line for the gear: the grades on per row that has any ("Boys REC K–9 · Boys COMP 2–9 …").
+function gradesSummary(rows: GradeRow[]) {
+  const name = (g: number) => (g === -1 ? "Pre-K" : g === 0 ? "K" : String(g));
+  const parts = rows.flatMap((r) => {
+    const on = r.grades.filter((c) => c.on).map((c) => c.grade);
+    if (!on.length) return [];
+    const runs: string[] = [];
+    for (let i = 0; i < on.length; i++) {
+      let j = i;
+      while (j + 1 < on.length && on[j + 1] === on[j] + 1) j++;
+      runs.push(i === j ? name(on[i]) : `${name(on[i])}–${name(on[j])}`);
+      i = j;
+    }
+    return [`${r.gender === "Coed" ? "Coed" : r.gender} ${r.level} ${runs.join(", ")}`];
+  });
+  return parts.length ? parts.join(" · ") : "None yet";
+}
+
+export type RecLimitView = {
+  limited: boolean;
+  by: string | null; // who limited it (shown to Owners and Admins)
+  partners: string[];
+  choices: { id: string; name: string }[];
+};
+
+// Directors of Programs: REC open to everyone, or only the organizations picked. COMP stays open to all; stand-alone
+// teams can't register REC while it's limited. Teams already registered stay.
+function RecLimitEditor({ programId, rec, onSaved }: { programId: string; rec: RecLimitView; onSaved: () => void }) {
+  const router = useRouter();
+  const [busy, start] = useTransition();
+  const [limited, setLimited] = useState(rec.limited);
+  // Only organizations still on the list (one that lost CourtOrg or CourtSync drops off when saved).
+  const [picked, setPicked] = useState<string[]>(rec.partners.filter((x) => rec.choices.some((c) => c.id === x)));
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const changed =
+    limited !== rec.limited || (limited && (picked.length !== rec.partners.length || picked.some((x) => !rec.partners.includes(x))));
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          setMsg(null);
+          const r = await setRecLimit(programId, limited, limited ? picked : []);
+          if (!r.ok) return setMsg({ ok: false, text: r.message });
+          router.refresh();
+          onSaved();
+        });
+      }}
+    >
+      <div className="flex gap-2">
+        <button type="button" className={`${pillCls(!limited)} px-3 py-1.5`} onClick={() => setLimited(false)}>
+          Everyone
+        </button>
+        <button type="button" className={`${pillCls(limited)} px-3 py-1.5`} onClick={() => setLimited(true)}>
+          Only these organizations
+        </button>
+      </div>
+      {limited && !rec.choices.length && (
+        <p className="text-sm text-zinc-500">No organization has CourtOrg and CourtSync yet.</p>
+      )}
+      {limited && rec.choices.length > 0 && (
+        <ul className="max-h-56 divide-y divide-zinc-100 overflow-y-auto rounded-xl ring-1 ring-zinc-950/10 dark:divide-white/5 dark:ring-white/10">
+          {rec.choices.map((c) => (
+            <li key={c.id}>
+              <label className="flex items-center gap-2 px-3 py-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-4"
+                  checked={picked.includes(c.id)}
+                  onChange={(e) => setPicked(e.target.checked ? [...picked, c.id] : picked.filter((x) => x !== c.id))}
+                />
+                {c.name}
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-xs text-zinc-500">
+        Organizations with CourtOrg and CourtSync. COMP stays open to all. While REC is limited, stand-alone teams can&apos;t
+        register REC. Teams already registered stay.
+        {rec.by && ` Limited by ${rec.by}.`}
+      </p>
+      {msg && <Alert tone={msg.ok ? "green" : "red"}>{msg.text}</Alert>}
+      <button type="submit" disabled={busy || !changed || (limited && !picked.length)} className={navyBtn}>
+        {busy ? "Saving…" : "Save"}
+      </button>
+    </form>
   );
 }

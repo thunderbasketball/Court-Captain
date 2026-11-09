@@ -170,6 +170,18 @@ export async function renameOrg(
       }
     }
     await q.query("update organizations set name = $2, short_name = $3 where slug = $1", [org, name, short]);
+    // Its copy in Scenic City's lists (partners) takes the new name too, unless another partner already has it.
+    await q.query(
+      `update partners set name = $2 where org_slug = $1
+         and not exists (select 1 from partners x where lower(x.name) = lower($2) and x.org_slug is distinct from $1)`,
+      [org, name],
+    );
+    // A CourtSolo account's team is named for it, here and in leagues.
+    await q.query(
+      `with t as (update org_teams set name = $2 from organizations o where o.slug = $1 and o.kind = 'Team' and org_teams.org = $1 returning org_teams.id)
+       update scenic_teams set name = $2 where org_team_id in (select id from t)`,
+      [org, name],
+    );
     if (slug !== org) {
       await q.query("delete from org_old_slugs where old_slug = $1", [slug]);
       await q.query("update organizations set slug = $2 where slug = $1", [org, slug]); // everything pointing at it follows
@@ -217,9 +229,10 @@ export async function setOrgAbbr(deps: Deps, viewer: SessionUser, org: string, a
   const admin = await deps.pool.query<{ ok: boolean }>("select acts_as($1, $2, 'Admin') as ok", [viewer.coachId, org]);
   if (!admin.rows[0].ok) return { ok: false, message: "Only an Admin of this organization can change its abbreviation." };
   await deps.pool.query("update organizations set abbr = $2 where slug = $1", [org, a]);
-  // Its teams' names in leagues follow.
+  // Its teams' names in leagues follow (a CourtSolo team's is just its name).
   await deps.pool.query(
-    `update scenic_teams st set name = $2 || ' ' || t.name from org_teams t where st.org_team_id = t.id and t.org = $1`,
+    `update scenic_teams st set name = $2 || ' ' || t.name from org_teams t join organizations o on o.slug = t.org
+      where st.org_team_id = t.id and t.org = $1 and o.kind <> 'Team'`,
     [org, a],
   );
   return { ok: true };

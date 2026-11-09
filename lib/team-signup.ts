@@ -4,15 +4,19 @@
 // what it registers for (ALL Season or Game Days, with the fees). No Level is asked: the team is COMP, or REC where the
 // program has no COMP group for its grade. The Head Coach verifies their email with a code: a new cell chooses a PIN
 // (their login); a cell that already has a login enters its PIN instead. Then the team is made, owned and coached by the
-// Head Coach (the Scenic City Solo role: their own teams), registered in the program, and they're logged in. Team names
-// are unique in Scenic City (any capitals). Nothing is saved unless all of it goes in.
+// Head Coach, registered in the program, and put in its own CourtSolo account (lib/court-solo.ts: the Head Coach is its
+// Owner), and they're logged in. Team names are unique in Scenic City and among CourtCaptain's organizations (any
+// capitals). Nothing is saved unless all of it goes in.
 import type { PoolClient } from "pg";
+import { makeSoloAccount, myAccounts, replaceSoloTeam, switchSoloToOrg, type OrgAccount, type SoloAccount } from "./court-solo";
 import {
   checkCode,
   checkPin,
+  isVerified,
   issueCode,
   lockCell,
   newPinError,
+  getSessionUser,
   startSession,
   type Deps,
   type Step,
@@ -22,12 +26,11 @@ import { hashPin } from "./auth/crypto";
 import { cleanEmail, cleanName, maskEmail } from "./auth/validate";
 import { coachIdFromCell, normalizeCell } from "./phone";
 import { planChoice, type Choice, type ProgramOption } from "./program-options";
-import { leagueEntry, parseChoice, saveChoice } from "./scenic-programs";
+import { PROGRAM_LOGO_SQL, leagueEntry, parseChoice, saveChoice } from "./scenic-programs";
 import { cleanTeam, TeamError } from "./scenic-teams";
 import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
 
-const ORG = "scenic-city";
 export const STAFF_ROLES = [
   { key: "AsstCoach", label: "Assistant Coach" },
   { key: "Manager", label: "Manager" },
@@ -50,10 +53,17 @@ export type TeamSignupInput = {
   pin1?: unknown; // a new cell: the PIN they choose
   pin2?: unknown;
   staff?: unknown; // [{ role, first, last, cell, email }]
+  replace?: unknown; // their CourtSolo account (slug) whose team is archived for this new one
 };
 
+export type HeadCoachInfo = { first: string; last: string; email: string };
 export type TeamStep =
-  { step: "form"; existing: boolean } | { step: "code"; maskedEmail: string } | Exclude<Step, { step: "loggedIn" }>;
+  | { step: "pin" } // the cell has a login: its PIN first
+  | { step: "resetCode"; maskedEmail: string } // Forgot PIN: a code went to their verified email
+  // coach: filled in from their login, after the PIN; accounts: their CourtSolo accounts and organizations (asked first)
+  | { step: "form"; existing: boolean; coach?: HeadCoachInfo; accounts?: { solo: SoloAccount[]; orgs: OrgAccount[] } }
+  | { step: "code"; maskedEmail: string }
+  | Exclude<Step, { step: "loggedIn" }>;
 
 const err = (message: string): TeamStep => ({ step: "error", message });
 
@@ -61,13 +71,20 @@ export type OpenProgram = {
   id: string;
   name: string;
   kind: string;
+  startsOn: string;
+  endsOn: string;
+  regCloses: string;
+  logo: string | null; // its logo's link
+  recLimited: boolean; // REC open only to the organizations Scenic City picked
   league: { options: ProgramOption[]; gameDates: string[] } | null; // a League's options and Game Days
 };
 
 // Programs open for registration today, by start date.
 export async function openPrograms(q: Pick<Queryable, "query">, now: Date): Promise<OpenProgram[]> {
-  const r = await q.query<{ id: string; name: string; kind: string }>(
-    `select id::text, name, kind from scenic_programs
+  const r = await q.query<Omit<OpenProgram, "league">>(
+    `select id::text, name, kind, starts_on::text as "startsOn", ends_on::text as "endsOn", reg_closes::text as "regCloses",
+            ${PROGRAM_LOGO_SQL} as logo, rec_limited_by is not null as "recLimited"
+       from scenic_programs p
       where reg_opens <= $1::date and reg_closes >= $1::date order by starts_on, lower(name), id`,
     [easternDate(now)],
   );
@@ -94,17 +111,43 @@ async function levelIn(q: Pick<Queryable, "query">, programId: string, gender: s
 // Something that stops the whole registration (nothing kept).
 class Stop extends Error {}
 
+// The name is the team's and its CourtSolo account's: free in Scenic City's teams and CourtCaptain's organizations.
 const nameTaken = async (q: Pick<Queryable, "query">, name: string) =>
-  !!(await q.query("select 1 from scenic_teams where lower(name) = lower($1)", [name])).rowCount;
+  !!(
+    await q.query(
+      "select 1 from scenic_teams where lower(name) = lower($1) union all select 1 from organizations where lower(name) = lower($1)",
+      [name],
+    )
+  ).rowCount;
 
-// Step 1: the Head Coach's cell. Does it have a login already (then they enter its PIN, not a new one)?
+// Step 1: the Head Coach's cell. A cell with a login enters its PIN next (teamSignupPin); a new one goes to the form.
 export async function teamSignupLookup(deps: Deps, cellInput: unknown): Promise<TeamStep> {
   const cell = typeof cellInput === "string" ? normalizeCell(cellInput) : null;
   if (!cell) return err("Enter the Head Coach's 10-digit cell number.");
   if (!(await openPrograms(deps.pool, deps.now())).length) return err("Team registration isn't open right now.");
   const u = await deps.pool.query<{ active: boolean }>("select active from users where cell = $1", [cell]);
   if (u.rows[0] && !u.rows[0].active) return err("That cell's account is deactivated. Please contact Scenic City.");
-  return { step: "form", existing: !!u.rows[0] };
+  return u.rows[0] ? { step: "pin" } : { step: "form", existing: false };
+}
+
+// Step 1b: a cell with a login enters its PIN (the usual tries and lockout). Right, the form opens with the Head Coach's
+// name and email from their login. The PIN is checked again when the code is sent.
+export async function teamSignupPin(deps: Deps, cellInput: unknown, pin: unknown): Promise<TeamStep> {
+  const cell = typeof cellInput === "string" ? normalizeCell(cellInput) : null;
+  if (!cell) return err("Enter the Head Coach's 10-digit cell number.");
+  return withTx(deps.pool, async (q) => {
+    await lockCell(q, cell);
+    const u = await q.query<
+      UserRow & { first_name: string; last_name: string; email: string | null; verified_email: string | null }
+    >("select * from users where cell = $1", [cell]);
+    const user = u.rows[0];
+    if (!user) return { step: "form" as const, existing: false };
+    if (!user.active) return err("That cell's account is deactivated. Please contact Scenic City.");
+    const bad = await checkPin(deps, q, user, pin);
+    if (bad) return bad as TeamStep;
+    const accounts = await myAccounts(q, user.coach_id, easternDate(deps.now()));
+    return { step: "form" as const, existing: true, coach: coachInfo(user), accounts };
+  });
 }
 
 function cleanStaff(v: unknown): Staff[] | string {
@@ -128,6 +171,52 @@ function cleanStaff(v: unknown): Staff[] | string {
     out.push({ role: role.key, first, last, cell, email });
   }
   return out;
+}
+
+// Forgot PIN (on the PIN step): a code to the login's verified email (shown masked), then a new PIN with it. Like the
+// login's Forgot PIN (works while locked out), but it opens the form instead of logging in.
+type CoachRow = UserRow & { first_name: string; last_name: string; email: string | null; verified_email: string | null };
+const coachInfo = (u: CoachRow) => ({ first: u.first_name, last: u.last_name, email: u.verified_email ?? u.email ?? "" });
+
+export async function teamSignupForgot(deps: Deps, cellInput: unknown): Promise<TeamStep> {
+  const cell = typeof cellInput === "string" ? normalizeCell(cellInput) : null;
+  if (!cell) return err("Enter the Head Coach's 10-digit cell number.");
+  return withTx(deps.pool, async (q) => {
+    await lockCell(q, cell);
+    const user = (await q.query<CoachRow>("select * from users where cell = $1", [cell])).rows[0];
+    if (!user) return { step: "form" as const, existing: false };
+    if (!user.active) return err("That cell's account is deactivated. Please contact Scenic City.");
+    if (!isVerified(user))
+      return err("This login has no confirmed email to send a code to. Please contact Scenic City to reset the PIN.");
+    const email = user.verified_email!.trim().toLowerCase();
+    const fail = await issueCode(deps, q, cell, "reset", email);
+    return (fail as TeamStep | null) ?? { step: "resetCode" as const, maskedEmail: maskEmail(email) };
+  });
+}
+
+export async function teamSignupReset(
+  deps: Deps,
+  cellInput: unknown,
+  code: unknown,
+  pin1: unknown,
+  pin2: unknown,
+): Promise<TeamStep> {
+  const cell = typeof cellInput === "string" ? normalizeCell(cellInput) : null;
+  if (!cell) return err("Enter the Head Coach's 10-digit cell number.");
+  const pinError = newPinError(pin1, pin2);
+  if (pinError) return err(pinError);
+  const pinHash = await hashPin(pin1 as string);
+  return withTx(deps.pool, async (q) => {
+    await lockCell(q, cell);
+    const user = (await q.query<CoachRow>("select * from users where cell = $1", [cell])).rows[0];
+    if (!user || !user.active || !isVerified(user)) return err("That code didn't work. Start again.");
+    const c = await checkCode(deps, q, cell, "reset", code);
+    if (!c.ok) return c.step as TeamStep;
+    await q.query("update users set pin_hash = $2, updated_at = $3 where coach_id = $1", [user.coach_id, pinHash, deps.now()]);
+    await q.query("delete from pin_lockouts where cell = $1", [cell]);
+    const accounts = await myAccounts(q, user.coach_id, easternDate(deps.now()));
+    return { step: "form" as const, existing: true, coach: coachInfo(user), accounts };
+  });
 }
 
 // Step 2: check everything, then email the Head Coach a code. Nothing is saved until the code checks out.
@@ -166,16 +255,25 @@ export async function teamSignupStart(deps: Deps, input: TeamSignupInput): Promi
   }
   return withTx(deps.pool, async (q) => {
     await lockCell(q, f.cell);
-    const u = await q.query<Pick<UserRow, "coach_id" | "active" | "pin_hash" | "cell">>(
-      "select coach_id, active, pin_hash, cell from users where cell = $1",
+    const u = await q.query<Pick<UserRow, "coach_id" | "active" | "pin_hash" | "cell" | "first_name" | "last_name">>(
+      "select coach_id, active, pin_hash, cell, first_name, last_name from users where cell = $1",
       [f.cell],
     );
     const user = u.rows[0];
     let pinHash: string | null = null;
+    let replace: string | null = null;
     if (user) {
       if (!user.active) return err("That cell's account is deactivated. Please contact Scenic City.");
       const bad = await checkPin(deps, q, user as UserRow, input.pin);
       if (bad) return bad as TeamStep; // a wrong PIN or a lockout
+      // A CourtSolo account has one active team: a new one replaces it (archived), never a second account.
+      const solo = (await myAccounts(q, user.coach_id, easternDate(deps.now()))).solo;
+      if (solo.length) {
+        const acct = solo.find((a) => a.slug === input.replace);
+        if (!acct) return err(`You already have ${solo[0].name}: register it, or archive it to make a new team.`);
+        if (acct.busyIn) return err(`${acct.teamName} is still in ${acct.busyIn}: it can be archived once that ends.`);
+        replace = acct.slug;
+      }
     } else {
       const clash = await q.query("select 1 from users where coach_id = $1", [coachIdFromCell(f.cell)]);
       if (clash.rowCount) return err("That number is already in use. Please contact Scenic City.");
@@ -190,10 +288,11 @@ export async function teamSignupStart(deps: Deps, input: TeamSignupInput): Promi
       choice,
       team,
       staff,
-      first: f.first,
-      last: f.last,
+      first: user ? user.first_name : f.first, // a login keeps its own name
+      last: user ? user.last_name : f.last,
       pinHash,
       existing: !!user,
+      replace,
     });
     return (fail as TeamStep | null) ?? { step: "code", maskedEmail: maskEmail(email) };
   });
@@ -208,6 +307,7 @@ type Payload = {
   last: string;
   pinHash: string | null;
   existing: boolean;
+  replace?: string | null; // their CourtSolo account: its team is archived for this one
 };
 
 // Step 3: the code. Makes the login (or confirms the email of the one there), the team and its staff; logs them in.
@@ -215,7 +315,7 @@ export async function teamSignupComplete(
   deps: Deps,
   cellInput: unknown,
   code: unknown,
-): Promise<TeamStep | { step: "loggedIn"; token: string; expiresAt: Date; teamId: string; programId: string }> {
+): Promise<TeamStep | { step: "loggedIn"; token: string; expiresAt: Date; teamId: string; programId: string; slug: string }> {
   const cell = typeof cellInput === "string" ? normalizeCell(cellInput) : null;
   if (!cell) return err("Enter the Head Coach's 10-digit cell number.");
   // The code is checked (and a wrong try counted) on its own; the rest goes in all at once or not at all.
@@ -247,10 +347,6 @@ async function registerAll(deps: Deps, q: PoolClient, cell: string, p: Payload, 
   const coachId = await headCoach(q, cell, p, email, now);
   if (!coachId) throw new Stop("That number is already in use. Please contact Scenic City.");
   const who = `${p.first} ${p.last}`;
-  await q.query(
-    "select set_role($1, $2, 'Solo', true, $3), set_role($1, $2, 'Coach', true, $3), set_role($1, $2, 'Request', false, $3)",
-    [coachId, ORG, "Team registration"],
-  );
   const t = await q.query<{ id: string }>(
     `insert into scenic_teams (name, gender, grade_low, grade, level, owner_coach_id, coach_id, created_by, created_at, updated_by, updated_at)
        values ($1, $2, $3, $4, $5, $6, $6, $7, $8, $7, $8) returning id::text`,
@@ -265,9 +361,19 @@ async function registerAll(deps: Deps, q: PoolClient, cell: string, p: Payload, 
     );
   const reg = await saveChoice(q, p.programId, teamId, p.choice ?? undefined, who, now);
   if ("error" in reg) throw new Stop(reg.error);
+  // The team's own CourtSolo account, owned by its Head Coach; or their account, its old team archived.
+  let slug: string;
+  if (p.replace) {
+    try {
+      await replaceSoloTeam(q, p.replace, coachId, teamId, who, now, easternDate(now));
+    } catch (e) {
+      throw new Stop(e instanceof Error ? e.message : "Couldn't archive the old team.");
+    }
+    slug = p.replace;
+  } else slug = await makeSoloAccount(q, teamId, who, now);
   const s = await startSession(deps, q, coachId);
   if (s.step !== "loggedIn") throw new Stop("Couldn't log in.");
-  return { ...s, teamId, programId: p.programId };
+  return { ...s, teamId, programId: p.programId, slug };
 }
 
 // The Head Coach's login: a new one with their PIN and verified email, or the one there with this email now verified.
@@ -298,4 +404,43 @@ export async function teamStaff(q: Pick<Queryable, "query">, teamIds: string[]) 
   const out: Record<string, typeof r.rows> = {};
   for (const s of r.rows) (out[s.teamId] ??= []).push(s);
   return out;
+}
+
+// A returning coach (after their PIN) picks what they came to do instead of a new team: register their CourtSolo team
+// (its Register tab), add teams to their organization (its Teams tab), or switch their CourtSolo account to CourtOrg
+// (with the organization's name) and bring the team along. The PIN is checked again; then they're logged in.
+export type GoTarget =
+  { to: "register"; slug: string } | { to: "org"; slug: string } | { to: "switch"; slug: string; name: string; short: string };
+
+export async function teamSignupGo(
+  deps: Deps,
+  cellInput: unknown,
+  pin: unknown,
+  target: GoTarget,
+): Promise<TeamStep | { step: "loggedIn"; token: string; expiresAt: Date; slug: string; next: string }> {
+  const cell = typeof cellInput === "string" ? normalizeCell(cellInput) : null;
+  if (!cell) return err("Enter the Head Coach's 10-digit cell number.");
+  const t = target as Partial<GoTarget>;
+  const s = await withTx(deps.pool, async (q) => {
+    await lockCell(q, cell);
+    const user = (await q.query<CoachRow>("select * from users where cell = $1", [cell])).rows[0];
+    if (!user?.active) return err("That login isn't active.");
+    const bad = await checkPin(deps, q, user, pin);
+    if (bad) return bad as TeamStep;
+    const acc = await myAccounts(q, user.coach_id, easternDate(deps.now()));
+    const ok = t.to === "org" ? acc.orgs.some((o) => o.slug === t.slug) : acc.solo.some((a) => a.slug === t.slug);
+    if (!ok || typeof t.slug !== "string") return err("Pick one of your accounts.");
+    return startSession(deps, q, user.coach_id);
+  });
+  if (s.step !== "loggedIn") return s as TeamStep;
+  let slug = t.slug as string;
+  if (t.to === "switch") {
+    const viewer = await getSessionUser(deps, s.token);
+    if (!viewer) return err("Couldn't log in.");
+    const r = await switchSoloToOrg(deps, viewer, slug, { name: t.name, short: t.short });
+    if (!r.ok) return err(r.message);
+    slug = r.slug;
+  }
+  const next = t.to === "register" ? `/org/${slug}/teams?view=register` : `/org/${slug}/teams`;
+  return { step: "loggedIn", token: s.token, expiresAt: s.expiresAt, slug, next };
 }

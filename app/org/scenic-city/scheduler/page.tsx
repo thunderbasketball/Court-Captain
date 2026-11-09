@@ -14,7 +14,8 @@ import { dayGrid, gameLength, gymBlocks, programGameLength, type DayGrid } from 
 import { gameDaySchedule, type DateTeam, type ScheduleDay } from "@/lib/scenic-programs";
 import AppHeader from "../../../AppHeader";
 import { CoachBadge, LevelTag, PageTitle, TeamName, card, type CoachTag } from "../../../ui";
-import { TeamOffButton } from "../programs/ProgramTools";
+import { PublishSchedule, TeamOffButton } from "../programs/ProgramTools";
+import { canPublish, schedulePublished } from "@/lib/public-league";
 import { MatchupBoard } from "./MatchupBoard";
 import { GamePlace, HomeAway } from "../../../LeagueGames";
 import type { ScheduledGame } from "@/lib/scenic-games";
@@ -89,6 +90,9 @@ async function Scheduler({ searchParams }: { searchParams: PageProps<"/org/sceni
     program ? programGameLength({ pool: db, now: () => new Date() }, user, program.id) : null,
   ]);
   const simOn = !!program && sim.teams > 0 && sim.programId === program.id;
+  const publishing = program
+    ? { can: await canPublish(db, user), by: (await schedulePublished(db, program.id))?.by ?? null }
+    : { can: false, by: null };
   const day = days.find((d) => d.date === q.day) ?? days.find((d) => d.date >= s.today) ?? days[0];
   const view: View = VIEWS.find((v) => v.key === q.view)?.key ?? "teams";
   const grid = day && view === "grid" ? await dayGrid({ pool: db, now: () => new Date() }, user, day.date) : null;
@@ -103,46 +107,50 @@ async function Scheduler({ searchParams }: { searchParams: PageProps<"/org/sceni
         <main className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 py-6">
           <PageTitle title="Scheduler" subtitle="Each Game Day across every League: its teams, matchups and grid." />
           {program && (
-            <div className="flex items-start justify-between gap-3">
-              <nav aria-label="Program" className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">Scheduling for</span>
-                {programs.length === 1 ? (
-                  <span className="text-sm">{program.name}</span>
-                ) : (
-                  programs.map((p) => (
-                    <Link
-                      key={p.id}
-                      href={`/org/scenic-city/scheduler?program=${p.id}`}
-                      aria-current={p.id === program.id ? "page" : undefined}
-                      className={`rounded-full px-3 py-1.5 text-sm font-medium ${
-                        p.id === program.id
-                          ? "bg-scenic-navy text-white dark:bg-white dark:text-zinc-900"
-                          : "text-zinc-600 ring-1 ring-zinc-950/10 hover:bg-zinc-50 dark:text-zinc-300 dark:ring-white/15"
-                      }`}
-                    >
-                      {p.name}
-                    </Link>
-                  ))
-                )}
-                {programLength && <span className="text-xs text-zinc-500">· {programLength.minutes}-min games</span>}
+            <div>
+              {/* Each program is its own tab (the soonest League first). */}
+              <nav aria-label="Program" className="flex gap-1 overflow-x-auto border-b border-zinc-200 dark:border-white/10">
+                {programs.map((p) => (
+                  <Link
+                    key={p.id}
+                    href={`/org/scenic-city/scheduler?program=${p.id}`}
+                    aria-current={p.id === program.id ? "page" : undefined}
+                    className={`shrink-0 border-b-2 px-3 py-2 text-sm font-semibold ${
+                      p.id === program.id
+                        ? "border-thunder-orange text-zinc-900 dark:text-white"
+                        : "border-transparent text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+                    }`}
+                  >
+                    {p.name}
+                  </Link>
+                ))}
               </nav>
-              {programLength && (
-                <ProgramGear
-                  programId={program.id}
-                  programName={program.name}
-                  minutes={programLength.minutes}
-                  setBy={who ? programLength.setBy : null}
-                  simulation={
-                    <SimulationToggle
-                      teams={sim.teams}
-                      inProgram={sim.programId}
-                      inProgramName={sim.programName}
-                      programId={program.id}
-                      programName={program.name}
-                    />
-                  }
-                />
-              )}
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  {publishing.can && (
+                    // Publish schedule: the League's games on the public League page (Directors of Programs or Scheduling).
+                    <PublishSchedule programId={program.id} by={publishing.by} who={who} />
+                  )}
+                  {programLength && <span className="text-xs text-zinc-500">{programLength.minutes}-min games</span>}
+                </div>
+                {programLength && (
+                  <ProgramGear
+                    programId={program.id}
+                    programName={program.name}
+                    minutes={programLength.minutes}
+                    setBy={who ? programLength.setBy : null}
+                    simulation={
+                      <SimulationToggle
+                        teams={sim.teams}
+                        inProgram={sim.programId}
+                        inProgramName={sim.programName}
+                        programId={program.id}
+                        programName={program.name}
+                      />
+                    }
+                  />
+                )}
+              </div>
             </div>
           )}
           {simOn && (

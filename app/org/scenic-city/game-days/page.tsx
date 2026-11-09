@@ -20,8 +20,8 @@ export default function GameDaysPage() {
   );
 }
 
-// Scenic City game days on a calendar, view only: set by each program's Game & Bracket Days. Directors of Facilities also
-// see how many hosting sites' courts are open each day.
+// Scenic City game days on a calendar, view only: set by each program's Game & Bracket Days, with how many hosting
+// sites' courts are open each day. Admins and Directors of Facilities, on the Director chip.
 async function GameDays() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
@@ -31,9 +31,9 @@ async function GameDays() {
   if (!days) redirect("/");
   const scenic = await currentScenic(user);
   if (!scenic) redirect("/");
-  // Shown as the chip in use: the Director chip (Directors of Facilities and Admins) sees open courts.
-  const director = scenic.role === "Director" && (await isScenicFacilities(db, user.coachId));
-  const byId = director ? ((await openCourtsByDay(deps, user)) ?? {}) : {};
+  // Facilities is for the Director chip of Admins and Directors of Facilities only (coaches have no reason to see it).
+  if (scenic.role !== "Director" || !(await isScenicFacilities(db, user.coachId))) redirect("/org/scenic-city");
+  const byId = (await openCourtsByDay(deps, user)) ?? {};
   const openCourts = Object.fromEntries(days.filter((d) => byId[d.id]).map((d) => [d.day, byId[d.id]]));
   const t = localParts(new Date());
   const today = `${t.year}-${String(t.month).padStart(2, "0")}-${String(t.day).padStart(2, "0")}`;

@@ -7,7 +7,7 @@ export type Org = {
   slug: OrgSlug;
   name: string;
   short: string;
-  kind: "Organization" | "School" | "Club" | "League";
+  kind: "Organization" | "School" | "Club" | "League" | "Team"; // Team: a CourtSolo account
   color: string;
   logo: string | null;
   bigLogo: string | null;

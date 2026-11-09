@@ -4,14 +4,14 @@ import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { currentScenic } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
-import { money, optionName } from "@/lib/program-options";
+import { REC_LIMITED, money, optionName } from "@/lib/program-options";
 import { requireFeature } from "@/lib/features-server";
 import { listPrograms } from "@/lib/scenic-programs";
 import { dayLabel } from "@/lib/time";
 import AppHeader from "../../../AppHeader";
 import { ProgramsNav } from "../ScenicNav";
 import { card, PageTitle } from "../../../ui";
-import { ProgramEditor } from "./ProgramTools";
+import { ProgramEditor, ProgramLogo } from "./ProgramTools";
 import { RegBadge } from "./RegBadge";
 
 export default function ProgramsPage() {
@@ -48,9 +48,12 @@ async function Programs() {
           {data.programs.map((p) => (
             <Link key={p.id} href={`/org/scenic-city/programs/${p.id}`} className={`${card} block p-4 hover:ring-scenic-navy/40`}>
               <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold tracking-wide text-scenic-navy uppercase dark:text-zinc-300">{p.kind}</p>
-                  <h2 className="font-semibold">{p.name}</h2>
+                <div className="flex min-w-0 items-center gap-3">
+                  <ProgramLogo src={p.logo} />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold tracking-wide text-scenic-navy uppercase dark:text-zinc-300">{p.kind}</p>
+                    <h2 className="font-semibold">{p.name}</h2>
+                  </div>
                 </div>
                 <RegBadge status={p.status} />
               </div>
@@ -63,6 +66,7 @@ async function Programs() {
                   ? p.options.length > 0 && ` · ${p.options.map((o) => optionName(o.kind)).join(", ")}`
                   : p.feeCents !== null && ` · ${money(p.feeCents)} per team`}
               </p>
+              {p.recLimited && <p className="text-xs font-medium text-amber-700 dark:text-amber-300">{REC_LIMITED}</p>}
             </Link>
           ))}
         </div>

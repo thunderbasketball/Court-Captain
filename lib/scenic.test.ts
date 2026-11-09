@@ -75,68 +75,62 @@ describe("Scenic City joining and users", () => {
     expect((await partnerOptions(deps())).map((p) => p.name)).toEqual(["Thunder Basketball"]);
   });
 
-  it("Solo request: pending until a Director approves it", async () => {
-    expect(await joinStatus(deps(), sam)).toBe("none");
-    expect(await requestJoin(deps(), sam, { wants: "Solo" })).toEqual({ ok: true });
-    expect(await joinStatus(deps(), sam)).toBe("pending");
-    expect(await roles(sam.coachId)).toEqual(["Request"]);
-    const list = await listScenicPeople(deps(), dee);
-    expect(list?.requests).toMatchObject([{ coachId: "5550002", wants: "Solo", partner: null }]);
-
-    expect(await approveRequest(deps(), dee, sam.coachId, "Solo")).toEqual({ ok: true });
-    expect(await roles(sam.coachId)).toEqual(["Solo"]);
-    expect(await joinStatus(deps(), sam)).toBe("member");
-    const after = await listScenicPeople(deps(), dee);
-    expect(after?.requests).toEqual([]);
-    expect(after?.members.map((m) => `${m.firstName}:${m.roles.join(",")}:${m.grantedBy}`)).toEqual([
-      "Dee:Director:test",
-      "Sam:Solo:Dee X",
+  // Leftover join requests from before joining by request was retired.
+  const oldRequest = async (coachId: string) => {
+    await db.pool.query("insert into access_requests (coach_id, org, wants, partner_id, created_at) values ($1, 'scenic-city', 'Solo', null, now())", [
+      coachId,
     ]);
-  });
+    await grant(db.pool, `${coachId} scenic-city Request`);
+  };
 
-  it("the Partner role is retired: joining or approving as Partner is refused", async () => {
+  it("joining by request is retired (Solo and Partner); a leftover request is approved as Coach, never Solo", async () => {
+    expect(await joinStatus(deps(), sam)).toBe("none");
+    expect(await requestJoin(deps(), sam, { wants: "Solo" })).toMatchObject({ ok: false, message: /One team/ });
     expect(await requestJoin(deps(), pat, { wants: "Partner", partnerId: thunderId })).toMatchObject({
       ok: false,
       message: /their own organization on CourtCaptain/,
     });
-    expect(await requestJoin(deps(), pat, { wants: "Director" })).toMatchObject({ ok: false, message: "Choose Solo." });
-    expect(await roles(pat.coachId)).toEqual([]);
-    await requestJoin(deps(), pat, { wants: "Solo" });
-    expect(await approveRequest(deps(), dee, pat.coachId, "Partner")).toMatchObject({ ok: false });
-    expect(await roles(pat.coachId)).toEqual(["Request"]);
-    expect(await requestJoin(deps(), dee, { wants: "Solo" })).toMatchObject({
-      ok: false,
-      message: "You're already part of Scenic City.",
-    });
+    expect(await roles(sam.coachId)).toEqual([]);
+
+    await oldRequest(sam.coachId);
+    expect(await joinStatus(deps(), sam)).toBe("pending");
+    expect((await listScenicPeople(deps(), dee))?.requests).toMatchObject([{ coachId: "5550002", wants: "Solo", partner: null }]);
+    expect(await approveRequest(deps(), dee, sam.coachId, "Solo")).toMatchObject({ ok: false, message: /One team/ });
+    expect(await approveRequest(deps(), dee, sam.coachId, "Partner")).toMatchObject({ ok: false });
+    expect(await approveRequest(deps(), dee, sam.coachId, "Coach")).toEqual({ ok: true });
+    expect(await roles(sam.coachId)).toEqual(["Coach"]);
+    expect(await joinStatus(deps(), sam)).toBe("member");
+    expect((await listScenicPeople(deps(), dee))?.requests).toEqual([]);
   });
 
   it("deny: the request goes away with no role", async () => {
-    await requestJoin(deps(), pat, { wants: "Solo" });
+    await oldRequest(pat.coachId);
     expect(await denyRequest(deps(), dee, pat.coachId)).toEqual({ ok: true });
     expect(await roles(pat.coachId)).toEqual([]);
     expect(await partners()).toEqual(["Hidden Prep (new)", "Thunder Basketball"]);
     expect(await joinStatus(deps(), pat)).toBe("none");
   });
 
-  it("edit roles: Director is left alone (Admins set it); Partner is only ever taken away", async () => {
+  it("edit roles: Director is left alone (Admins set it); Partner and Solo are only ever taken away", async () => {
     await grant(db.pool, "5550001 scenic-city Partner"); // left over from before it was retired
     expect(await setScenicRoles(deps(), dee, dee.coachId, ["Coach"])).toEqual({ ok: true });
     expect(await roles(dee.coachId)).toEqual(["Admin", "Coach", "Director"]); // Admin and Director are left alone
+    await grant(db.pool, "5550001 scenic-city Solo"); // left over from before it was retired
     expect(await setScenicRoles(deps(), dee, pat.coachId, ["Coach", "Solo", "Partner", "Bogus"])).toEqual({ ok: true });
-    expect(await roles(pat.coachId)).toEqual(["Coach", "Solo"]);
+    expect(await roles(pat.coachId)).toEqual(["Coach"]); // Solo and Partner are only ever taken away
   });
 
   it("only Scenic City Admins manage requests and roles (a Director with areas isn't enough)", async () => {
-    await requestJoin(deps(), sam, { wants: "Solo" });
+    await oldRequest(sam.coachId);
     await grant(db.pool, "5550001 thunder Director", "5550001 scenic-city Partner", "5550001 scenic-city Director");
     await db.pool.query(
       "insert into director_areas (coach_id, org, area, granted_by) values ('5550001', 'scenic-city', 'facilities', 'test')",
     );
     expect(await listScenicPeople(deps(), pat)).toBeNull();
-    expect(await approveRequest(deps(), pat, sam.coachId, "Solo")).toMatchObject({ ok: false });
+    expect(await approveRequest(deps(), pat, sam.coachId, "Coach")).toMatchObject({ ok: false });
     expect(await denyRequest(deps(), pat, sam.coachId)).toMatchObject({ ok: false });
     expect(await setScenicRoles(deps(), pat, sam.coachId, ["Director"])).toMatchObject({ ok: false });
-    expect(await approveRequest(deps(), pat, sam.coachId, "Solo")).toEqual({
+    expect(await approveRequest(deps(), pat, sam.coachId, "Coach")).toEqual({
       ok: false,
       message: "Only a Scenic City Admin can do that.",
     });
