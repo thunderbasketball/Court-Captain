@@ -12,6 +12,7 @@ import { directorAreas, hasArea, isOrgAdmin, isThunderAdmin, orgHasArea, type Ar
 import { canHost } from "@/lib/facilities";
 import { listOrgs, orgInfo } from "@/lib/org-registry";
 import { PLATFORM_BRAND } from "@/lib/orgs";
+import { featureGroup } from "@/lib/org-groups";
 import OrgLogo from "./OrgLogo";
 import { myPracticesToday } from "@/lib/practice-attendance";
 import { localParts, zonedTime } from "@/lib/time";
@@ -113,13 +114,19 @@ export default async function AppHeader({
   const supportStaff = contexts.some((c) => c.key === "platform");
   // Chips for this organization only; the logo next to Log out switches organizations (SPEC section 14).
   const orgChips = platform ? [] : contexts.filter((c) => c.org === org);
+  // Each organization's features, for grouping the logo menu (more than 4 organizations).
+  const featuresOf = new Map(
+    (
+      await db.query<{ org: string; features: string[] }>("select org, array_agg(feature) as features from org_features group by org")
+    ).rows.map((r) => [r.org, r.features]),
+  );
   const switchTo = [
     ...(contexts.some((c) => c.key === "platform")
-      ? [{ slug: PLATFORM, name: "CourtCaptain", logo: PLATFORM_BRAND.logo.src }]
+      ? [{ slug: PLATFORM, name: "CourtCaptain", logo: PLATFORM_BRAND.logo.src, group: "Platform" }]
       : []),
     ...orgs
       .filter((o) => contexts.some((c) => c.org === o.slug) || (o.slug === "thunder" && user.hasThunderRole))
-      .map((o) => ({ slug: o.slug, name: o.name, logo: o.logo, color: o.color })),
+      .map((o) => ({ slug: o.slug, name: o.name, logo: o.logo, color: o.color, group: featureGroup(featuresOf.get(o.slug) ?? []) })),
   ];
   // Backup for the sheet timer: after this page is sent, refresh registrations if the last check is stale.
   after(syncIfStale);

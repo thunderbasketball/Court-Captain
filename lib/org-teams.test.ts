@@ -206,6 +206,7 @@ Coed,3,REC,,,,`;
     // Undo: the import's teams go (and their coaches lose the Coach role); a team registered in a program is kept.
     const [batch] = (await listTeamImports(deps(), jo, org))!;
     expect(batch).toMatchObject({ importedBy: "Jordan Harris", teams: 3, left: 3, undoneBy: null });
+    expect(batch.names).toHaveLength(3); // tap the line to see its teams
     const rockets = list.find((t) => t.name === "5G Lee 1")!.id;
     const st = await db.pool.query<{ id: string }>(
       `insert into scenic_teams (name, gender, grade_low, grade, level, coach_id, created_by, updated_by, org_team_id, owner_coach_id)
@@ -244,7 +245,7 @@ Coed,3,REC,,,,`;
     await db.pool.query("delete from scenic_registrations");
     expect(await undoTeamImport(deps(), jo, org, batch.id)).toEqual({ ok: true, removed: ["5G Lee"], kept: [] });
     expect(await hasRole("5550021", "Coach")).toBe(false);
-    expect((await listTeamImports(deps(), jo, org))![0]).toMatchObject({ left: 0, undoneBy: "Jordan Harris" });
+    expect(await listTeamImports(deps(), jo, org)).toEqual([]); // undone: no longer listed
     expect(await undoTeamImport(deps(), jo, org, batch.id)).toMatchObject({ ok: false, message: /already undid/ });
   });
 

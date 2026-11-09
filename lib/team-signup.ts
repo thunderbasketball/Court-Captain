@@ -25,7 +25,7 @@ import {
 import { hashPin } from "./auth/crypto";
 import { cleanEmail, cleanName, maskEmail } from "./auth/validate";
 import { coachIdFromCell, normalizeCell } from "./phone";
-import { planChoice, type Choice, type ProgramOption } from "./program-options";
+import { closedReason, planChoice, type Choice, type ProgramOption } from "./program-options";
 import { PROGRAM_LOGO_SQL, leagueEntry, parseChoice, saveChoice } from "./scenic-programs";
 import { cleanTeam, TeamError } from "./scenic-teams";
 import { withTx, type Queryable } from "./sql";
@@ -250,8 +250,11 @@ export async function teamSignupStart(deps: Deps, input: TeamSignupInput): Promi
     if (!choice || (!choice.allSeason && !choice.days.length)) return err("Pick ALL Season or at least one date.");
     const today = easternDate(deps.now());
     if (choice.days.some((d) => d.date < today)) return err("Past Game Days can't be picked.");
-    const plan = planChoice(program.league.options, program.league.gameDates, { allSeason: false, days: [] }, choice);
+    const none = { allSeason: false, days: [] };
+    const plan = planChoice(program.league.options, program.league.gameDates, none, choice);
     if ("error" in plan) return err(plan.error);
+    const closed = closedReason(program.league.options, program.league.gameDates, none, choice, today);
+    if (closed) return err(closed);
   }
   return withTx(deps.pool, async (q) => {
     await lockCell(q, f.cell);

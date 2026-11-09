@@ -10,7 +10,7 @@ import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { orgHasArea } from "./org-admin";
 import { logoType, type Logo } from "./org-signup";
-import { REG_OPTIONS, planChoice, type Choice, type ChoiceResult, type ProgramOption, type SingleKind } from "./program-options";
+import { REG_OPTIONS, closedReason, planChoice, type Choice, type ChoiceResult, type ProgramOption, type SingleKind } from "./program-options";
 import { clubAbbr } from "./scenic-club-teams";
 import { cleanPlaceName } from "./scenic-partners";
 import { LEVELS, gradeLabel, gradeRange, teamsICanManage, type Level } from "./scenic-teams";
@@ -90,7 +90,8 @@ const SUMMARY = `select p.id::text, p.kind, p.name, p.starts_on::text as "starts
     (select count(*)::int from scenic_divisions d where d.program_id = p.id) as divisions,
     (select count(*)::int from scenic_registrations r where r.program_id = p.id) as teams, ${PROGRAM_LOGO_SQL} as logo,
     p.rec_limited_by is not null as "recLimited",
-    coalesce((select json_agg(json_build_object('kind', o.kind, 'feeCents', o.fee_cents)
+    coalesce((select json_agg(json_build_object('kind', o.kind, 'feeCents', o.fee_cents, 'closesOn', o.closes_on::text,
+                                                'closesDaysBefore', o.closes_days_before)
                               order by array_position(array['all_season', 'single_1', 'single_2', 'single_2nd'], o.kind))
               from scenic_program_options o where o.program_id = p.id), '[]') as options
   from scenic_programs p`;
@@ -509,7 +510,7 @@ export type ProgramInput = {
   regOpens: unknown;
   regCloses: unknown;
   fee: unknown; // dollars, e.g. "150" or "150.00"; blank for none (Circuits and Tournaments)
-  options?: unknown; // a League's Registration Options: [{ kind, fee }] (fee in dollars, blank for none)
+  options?: unknown; // a League's Registration Options: [{ kind, fee, closesOn?, closesDaysBefore? }] (fee in dollars)
 };
 
 const cents = (v: unknown): number | null => {
@@ -538,12 +539,20 @@ function cleanProgram(input: ProgramInput) {
       input.options === undefined
         ? [{ kind: "all_season", fee: input.fee }]
         : Array.isArray(input.options)
-          ? (input.options as { kind?: unknown; fee?: unknown }[])
+          ? (input.options as { kind?: unknown; fee?: unknown; closesOn?: unknown; closesDaysBefore?: unknown }[])
           : [];
-    options = REG_OPTIONS.filter((o) => list.some((x) => x?.kind === o.key)).map((o) => ({
-      kind: o.key,
-      feeCents: cents(list.find((x) => x?.kind === o.key)!.fee),
-    }));
+    options = REG_OPTIONS.filter((o) => list.some((x) => x?.kind === o.key)).map((o) => {
+      const x = list.find((y) => y?.kind === o.key)!;
+      // Its own close: a date within the registration window, or 0–365 days before the event; never both.
+      const on = x.closesOn === undefined || x.closesOn === null || x.closesOn === "" ? null : x.closesOn;
+      const days = x.closesDaysBefore === undefined || x.closesDaysBefore === null || x.closesDaysBefore === "" ? null : Number(x.closesDaysBefore);
+      if (on !== null && days !== null) throw new ProgramError(`${o.name}: pick a close date or days before, not both.`);
+      if (on !== null && (!isDate(on) || on < regOpens || on > regCloses))
+        throw new ProgramError(`${o.name}: its close date must be within registration (${regOpens} to ${regCloses}).`);
+      if (days !== null && !(Number.isInteger(days) && days >= 0 && days <= 365))
+        throw new ProgramError(`${o.name}: days before must be a whole number from 0 to 365.`);
+      return { kind: o.key, feeCents: cents(x.fee), closesOn: on as string | null, closesDaysBefore: days };
+    });
     if (!options.length) throw new ProgramError("Pick at least one Registration Option.");
     if (options.some((o) => o.kind === "single_2nd") && !options.some((o) => o.kind === "all_season" || o.kind === "single_1"))
       throw new ProgramError("Add a 2nd Game needs ALL Season or 1 Game – Single Day too.");
@@ -586,9 +595,10 @@ export async function saveProgram(
       ]);
       for (const o of f.options)
         await q.query(
-          `insert into scenic_program_options (program_id, kind, fee_cents) values ($1, $2, $3)
-           on conflict (program_id, kind) do update set fee_cents = excluded.fee_cents`,
-          [pid, o.kind, o.feeCents],
+          `insert into scenic_program_options (program_id, kind, fee_cents, closes_on, closes_days_before) values ($1, $2, $3, $4, $5)
+           on conflict (program_id, kind) do update
+             set fee_cents = excluded.fee_cents, closes_on = excluded.closes_on, closes_days_before = excluded.closes_days_before`,
+          [pid, o.kind, o.feeCents, o.closesOn ?? null, o.closesDaysBefore ?? null],
         );
       return { id: pid };
     });
@@ -1029,38 +1039,116 @@ export async function registerTeam(
 // Register every team this person can register (the ones "Register a team" offers) that isn't in the program yet, each
 // into its matching division (smallest pool); a League: ALL Season. Teams with no division here are skipped and say why.
 // Same rules as one team: whoever manages the teams while registration is open, a Director of Programs any time.
+// `preview`: what it would do, nothing kept (the confirmation before Register all).
 export async function registerAllScenicTeams(
   deps: Deps,
   viewer: SessionUser,
   programId: unknown,
-): Promise<Result<{ registered: string[]; skipped: string[] }>> {
+  preview = false,
+  only?: unknown, // the teams left checked in the confirmation
+): Promise<Result<BatchResult>> {
   if (!isId(programId)) return { ok: false, message: "Pick a program." };
   return run(() =>
-    withTx(deps.pool, async (q) => {
-      const p = await q.query<{ reg_opens: string; reg_closes: string }>(
-        "select reg_opens::text, reg_closes::text from scenic_programs where id = $1 for update",
-        [programId],
-      );
-      if (!p.rows[0]) throw new ProgramError("That program no longer exists.");
-      const manage = await isProgramsDirector(q, viewer);
-      if (!manage && regStatus(easternDate(deps.now()), p.rows[0].reg_opens, p.rows[0].reg_closes) !== "open")
-        throw new ProgramError("Registration isn't open for this program.");
-      const done = new Set(
-        (
-          await q.query<{ id: string }>("select team_id::text as id from scenic_registrations where program_id = $1", [programId])
-        ).rows.map((r) => r.id),
-      );
-      const registered: string[] = [];
-      const skipped: string[] = [];
-      for (const t of await teamsICanManage(q, viewer)) {
-        if (done.has(t.id)) continue;
-        const placed = await saveChoice(q, programId, t.id, { allSeason: true, days: [] }, by(viewer), deps.now());
-        if ("error" in placed) skipped.push(`${t.name}: ${placed.error}`);
-        else registered.push(`${t.name}: ${placed.division}`);
-      }
-      return { registered, skipped };
-    }),
+    previewTx(
+      deps.pool,
+      async (q) => {
+        const p = await q.query<{ reg_opens: string; reg_closes: string }>(
+          "select reg_opens::text, reg_closes::text from scenic_programs where id = $1 for update",
+          [programId],
+        );
+        if (!p.rows[0]) throw new ProgramError("That program no longer exists.");
+        const manage = await isProgramsDirector(q, viewer);
+        if (!manage && regStatus(easternDate(deps.now()), p.rows[0].reg_opens, p.rows[0].reg_closes) !== "open")
+          throw new ProgramError("Registration isn't open for this program.");
+        const done = new Set(
+          (
+            await q.query<{ id: string }>("select team_id::text as id from scenic_registrations where program_id = $1", [programId])
+          ).rows.map((r) => r.id),
+        );
+        const teams = (await teamsICanManage(q, viewer)).filter((t) => !done.has(t.id));
+        return registerBatch(
+          q,
+          { programId, org: ORG, viewer, now: deps.now(), preview, only },
+          teams.map((t) => ({ id: t.id, name: t.name, teamId: async () => t.id })),
+        );
+      },
+      (r) => r,
+    ),
   );
+}
+
+// ---- Register all: a preview first, then the registrations as one batch that can be undone ----
+
+export type BatchTeam = { id: string; name: string; division: string; dates: string[]; bracket: boolean }; // id: the team picked
+export type BatchResult = { registered: string[]; skipped: string[]; teams: BatchTeam[]; batchId: string | null };
+
+// A Register all that can't go ahead (returned as its message).
+export class BatchError extends Error {}
+
+class PreviewDone extends Error {
+  constructor(readonly result: BatchResult) {
+    super("preview");
+  }
+}
+
+// Register all's loop, for Scenic City, Thunder and every organization: each team as ALL Season, the dates it plays,
+// and the ones skipped (and why). `teamId` gives the team's Scenic City id (an organization's team is copied in first).
+// `only`: the teams the Director left checked in the confirmation (by `id`); the others aren't registered this time.
+// The registrations are one batch (Undo takes them out). `preview`: everything is rolled back (see previewTx), so the
+// confirmation shows exactly what Register all will do.
+export async function registerBatch(
+  q: PoolClient,
+  b: { programId: string; org: string; viewer: SessionUser; now: Date; preview: boolean; only?: unknown },
+  all: { id: string; name: string; teamId: () => Promise<string> }[],
+): Promise<BatchResult> {
+  let teams = all;
+  if (b.only !== undefined && b.only !== null) {
+    if (!Array.isArray(b.only) || b.only.length > 1000 || !b.only.every(isId)) throw new BatchError("Pick the teams to register.");
+    const keep = new Set<string>(b.only);
+    teams = all.filter((t) => keep.has(t.id));
+    if (!teams.length) throw new BatchError("Check at least one team to register.");
+  }
+  const registered: string[] = [];
+  const skipped: string[] = [];
+  const out: BatchTeam[] = [];
+  const ids: string[] = [];
+  for (const t of teams) {
+    const id = await t.teamId();
+    const placed = await saveChoice(q, b.programId, id, { allSeason: true, days: [] }, by(b.viewer), b.now);
+    if ("error" in placed) {
+      skipped.push(`${t.name}: ${placed.error}`);
+      continue;
+    }
+    registered.push(`${t.name}: ${placed.division}`);
+    ids.push(id);
+    const e = placed.entry;
+    out.push({ id: t.id, name: t.name, division: placed.division ?? "", dates: e ? Object.keys(e.perDate).sort() : [], bracket: !!e?.bracket });
+  }
+  const result: BatchResult = { registered, skipped, teams: out, batchId: null };
+  if (b.preview) throw new PreviewDone(result);
+  if (!ids.length) return result;
+  const batch = await q.query<{ id: string }>(
+    `insert into scenic_register_batches (program_id, org, teams, done_by, done_by_id, done_at)
+     values ($1, $2, $3, $4, $5, $6) returning id::text`,
+    [b.programId, b.org, ids.length, by(b.viewer), b.viewer.coachId, b.now],
+  );
+  await q.query("update scenic_registrations set batch_id = $1 where program_id = $2 and team_id = any($3::bigint[])", [
+    batch.rows[0].id,
+    b.programId,
+    ids,
+  ]);
+  return { ...result, batchId: batch.rows[0].id };
+}
+
+// A transaction whose preview (registerBatch with `preview`) is rolled back and returned through `wrap`.
+export async function previewTx<T>(pool: Pool, fn: (q: PoolClient) => Promise<T>, wrap: (r: BatchResult) => T): Promise<T> {
+  try {
+    return await withTx(pool, fn);
+  } catch (e) {
+    if (e instanceof PreviewDone) return wrap(e.result);
+    if (e instanceof BatchError) return { ok: false, message: e.message } as T;
+    throw e;
+  }
 }
 
 // Put a team into a program's matching grade group, in its smallest pool. The caller has checked who may and when.
@@ -1190,8 +1278,9 @@ export function parseChoice(v: unknown): Choice | null {
 // A League's options and Game Days (regular season, not Bracket Days), soonest first.
 async function leagueTerms(q: Pick<Queryable, "query">, programId: string) {
   const [o, d] = await Promise.all([
-    q.query<{ kind: ProgramOption["kind"]; feeCents: number | null }>(
-      'select kind, fee_cents as "feeCents" from scenic_program_options where program_id = $1',
+    q.query<ProgramOption>(
+      `select kind, fee_cents as "feeCents", closes_on::text as "closesOn", closes_days_before as "closesDaysBefore"
+         from scenic_program_options where program_id = $1`,
       [programId],
     ),
     q.query<{ day: string }>(
@@ -1231,6 +1320,7 @@ export async function saveChoice(
   choice: unknown,
   byName: string,
   now: Date,
+  checkCloses = true, // each option's own close (false only for the FastBreak sync)
 ): Promise<{ error: string } | { division: string | null; entry: Entry | null }> {
   const kind = (await q.query<{ kind: string }>("select kind from scenic_programs where id = $1", [programId])).rows[0]?.kind;
   if (!kind) return { error: "That program no longer exists." };
@@ -1245,8 +1335,11 @@ export async function saveChoice(
   const today = easternDate(now);
   if (add.days.some((d) => d.date < today)) return { error: "Past Game Days can't be picked." };
   const terms = await leagueTerms(q, programId);
-  const plan = planChoice(terms.options, terms.gameDates, registered ?? { allSeason: false, days: [] }, add);
+  const had = registered ?? { allSeason: false, days: [] };
+  const plan = planChoice(terms.options, terms.gameDates, had, add);
   if ("error" in plan) return plan;
+  const closed = checkCloses ? closedReason(terms.options, terms.gameDates, had, add, today) : null;
+  if (closed) return { error: closed };
   let division: string | null = null;
   if (!registered) {
     const placed = await addToPool(q, programId, teamId, byName, now);

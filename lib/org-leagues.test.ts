@@ -12,7 +12,8 @@ import {
 } from "./org-leagues";
 import { createOrganization } from "./org-signup";
 import { addOrgTeamCoach, createOrgTeam, deleteOrgTeam } from "./org-teams";
-import { addDivision, getProgram, saveProgram, saveProgramDates, setTeamOff } from "./scenic-programs";
+import { addDivision, getProgram, saveProgram, saveProgramDates, setPaid, setTeamOff } from "./scenic-programs";
+import { undoRegisterAll } from "./register-batches";
 import { listScenicTeams, updateScenicTeam } from "./scenic-teams";
 import { createTestDb, grant } from "./testing/db";
 
@@ -182,7 +183,7 @@ describe("an organization's teams in Scenic City programs", () => {
       { name: "Winter League 2027", registered: 1, unregistered: 4 },
     ]);
     expect(await registerAllOrgTeams(deps(), { ...jo, coachId: "5550003" }, org, pid)).toMatchObject({ ok: false });
-    expect(await registerAllOrgTeams(deps(), jo, org, pid)).toEqual({
+    const plan = {
       ok: true,
       registered: [
         "3B Comets: Boys 3rd–4th · 3rd COMP · Pool A",
@@ -190,8 +191,47 @@ describe("an organization's teams in Scenic City programs", () => {
         "5G Rockets: Girls 5th–6th · 5th REC · Pool A",
       ],
       skipped: ["7G Stars: This program has no Girls 7th REC."],
+    };
+    // The confirmation first: what it would do (each team's division and dates), nothing registered yet.
+    const preview = await registerAllOrgTeams(deps(), jo, org, pid, true);
+    expect(preview).toMatchObject({ ...plan, batchId: null });
+    expect(preview.ok && preview.teams[0]).toMatchObject({ name: "3B Comets", division: "Boys 3rd–4th · 3rd COMP · Pool A" });
+    expect((await orgPrograms(deps(), jo, org))!.programs).toMatchObject([{ registered: 1, unregistered: 4, lastBatch: null }]);
+    const done = await registerAllOrgTeams(deps(), jo, org, pid);
+    expect(done).toMatchObject(plan);
+    const batchId = done.ok ? done.batchId! : "";
+    expect((await orgPrograms(deps(), jo, org))!.programs).toMatchObject([
+      {
+        registered: 4,
+        unregistered: 1,
+        lastBatch: { id: batchId, teams: 3, by: "Jo X", undoneAt: null, names: ["3B Comets", "4B TBD", "5G Rockets"] },
+      },
+    ]);
+
+    // Undo: the 3 come back out (Bolts, registered on its own, stays); a team marked paid since stays too.
+    const comets = (await db.pool.query<{ id: string }>("select id::text from scenic_teams where name like '%Comets'")).rows[0].id;
+    expect(await setPaid(deps(), dee, pid, comets, true)).toMatchObject({ ok: true });
+    expect(await undoRegisterAll(deps(), { ...jo, coachId: "5550003" }, batchId)).toMatchObject({ ok: false });
+    expect(await undoRegisterAll(deps(), jo, batchId)).toEqual({ ok: true, removed: 2, kept: [expect.stringContaining("Comets")] });
+    expect(await undoRegisterAll(deps(), jo, batchId)).toEqual({ ok: false, message: "That Register all was already undone." });
+    expect((await orgPrograms(deps(), jo, org))!.programs).toMatchObject([
+      { registered: 2, unregistered: 3, lastBatch: null }, // undone: no longer listed
+    ]);
+    // Uncheck teams in the confirmation: only the checked ones register (checked on the server).
+    const again = await registerAllOrgTeams(deps(), jo, org, pid, true);
+    const ids = again.ok ? again.teams.map((t) => t.id) : [];
+    expect(ids).toHaveLength(2);
+    expect(await registerAllOrgTeams(deps(), jo, org, pid, false, [])).toEqual({
+      ok: false,
+      message: "Check at least one team to register.",
     });
-    expect((await orgPrograms(deps(), jo, org))!.programs).toMatchObject([{ registered: 4, unregistered: 1 }]);
+    expect(await registerAllOrgTeams(deps(), jo, org, pid, false, ["x"])).toMatchObject({ ok: false });
+    expect(await registerAllOrgTeams(deps(), jo, org, pid, false, [ids[1]])).toMatchObject({
+      ok: true,
+      registered: [plan.registered[2]],
+      skipped: [],
+    });
+    expect(await registerAllOrgTeams(deps(), jo, org, pid)).toMatchObject({ ok: true, registered: [plan.registered[1]] });
 
     now = new Date("2026-12-20T15:00:00Z");
     expect(await registerAllOrgTeams(deps(), jo, org, pid)).toEqual({

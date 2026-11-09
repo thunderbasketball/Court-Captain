@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import TeamsIncluded from "../../../TeamsIncluded";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
@@ -139,17 +140,18 @@ async function OrgTeams({
             <h2 className="font-semibold">Recent imports</h2>
             <ul className="divide-y divide-zinc-100 dark:divide-white/5">
               {imports.map((i) => (
-                <li key={i.id} className="flex items-center justify-between gap-3 py-2 text-sm">
-                  <span className={i.undoneBy || !i.left ? "text-zinc-400" : ""}>
-                    {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"}
-                    {who && ` · by ${i.importedBy}`}
-                    {i.undoneBy
-                      ? ` · undone${who ? ` by ${i.undoneBy}` : ""}`
-                      : i.left < i.teams
-                        ? ` · ${i.left} still here`
-                        : ""}
-                  </span>
-                  {!i.undoneBy && i.left > 0 && (
+                <li key={i.id} className="flex items-start justify-between gap-3 py-2 text-sm">
+                  <TeamsIncluded
+                    names={i.names}
+                    summary={
+                      <>
+                        {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"}
+                        {who && ` · by ${i.importedBy}`}
+                        {i.left < i.teams && ` · ${i.left} still here`}
+                      </>
+                    }
+                  />
+                  {i.left > 0 && (
                     <UndoImportButton
                       undo={undoImport.bind(null, slug, i.id)}
                       teams={i.left}

@@ -107,8 +107,8 @@ export async function deleteProgram(id: string) {
 export async function registerTeam(programId: string, teamId: string, choice?: unknown) {
   return guarded((u) => programs.registerTeam(deps, u, programId, teamId, choice), "programs");
 }
-export async function registerAllScenicTeams(programId: string) {
-  return guarded((u) => programs.registerAllScenicTeams(deps, u, programId), "programs");
+export async function registerAllScenicTeams(programId: string, preview?: boolean, only?: string[]) {
+  return guarded((u) => programs.registerAllScenicTeams(deps, u, programId, preview === true, only), "programs");
 }
 export async function setTeamOff(programId: string, teamId: string, what: string, out: boolean) {
   return guarded((u) => programs.setTeamOff(deps, u, programId, teamId, what, out === true), "programs");

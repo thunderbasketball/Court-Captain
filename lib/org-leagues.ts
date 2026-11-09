@@ -7,10 +7,22 @@ import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { hasFeature } from "./features";
 import { orgName, orgShort } from "./org-registry";
+import { lastBatches, type LastBatch } from "./register-batches";
 import { teamsManagerOf } from "./org-teams";
 import { leagueNameSql } from "./solo-names";
 import type { OrgSlug } from "./orgs";
-import { leagueEntry, programRegStatus, recOpenSql, saveChoice, type Entry, type ProgramOption, type RegStatus } from "./scenic-programs";
+import {
+  leagueEntry,
+  previewTx,
+  programRegStatus,
+  recOpenSql,
+  registerBatch,
+  saveChoice,
+  type BatchResult,
+  type Entry,
+  type ProgramOption,
+  type RegStatus,
+} from "./scenic-programs";
 import { gradeLabel, gradeRange } from "./scenic-teams";
 import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
@@ -75,6 +87,7 @@ export type OrgProgram = {
   status: RegStatus;
   registered: number; // of this organization's teams
   unregistered: number; // its teams not in it yet
+  lastBatch: LastBatch | null; // its latest Register all into the program (Undo)
 };
 
 export async function orgPrograms(
@@ -85,7 +98,7 @@ export async function orgPrograms(
   const o = await teamsManagerOf(deps.pool, viewer, org);
   if (!o || !(await hasFeature(deps.pool, LEAGUE, "programs"))) return null;
   const today = easternDate(deps.now());
-  const r = await deps.pool.query<Omit<OrgProgram, "status"> & { regOpens: string }>(
+  const r = await deps.pool.query<Omit<OrgProgram, "status" | "lastBatch"> & { regOpens: string }>(
     `select p.id::text, p.kind, p.name, p.starts_on::text as "startsOn", p.ends_on::text as "endsOn",
             p.reg_opens::text as "regOpens", p.reg_closes::text as "regCloses", p.fee_cents as "feeCents",
             count(r.team_id)::int as registered, (count(t.id) - count(r.team_id))::int as unregistered
@@ -97,9 +110,14 @@ export async function orgPrograms(
      group by p.id order by p.starts_on, lower(p.name)`,
     [o, today],
   );
+  const last = await lastBatches(deps.pool, o);
   return {
     league: await orgShort(deps.pool, LEAGUE),
-    programs: r.rows.map(({ regOpens, ...p }) => ({ ...p, status: regOpen(today, regOpens, p.regCloses) })),
+    programs: r.rows.map(({ regOpens, ...p }) => ({
+      ...p,
+      status: regOpen(today, regOpens, p.regCloses),
+      lastBatch: last.get(p.id) ?? null,
+    })),
   };
 }
 
@@ -255,38 +273,42 @@ export async function registerOrgTeam(
 
 // Register every team of the organization not in the program yet, each into its matching division (smallest pool).
 // Teams with no division for their gender, grade and level are skipped and say why. A team needs no coach yet.
+// `preview`: what it would do, nothing kept (the confirmation before Register all); otherwise one batch Undo can take out.
 export async function registerAllOrgTeams(
   deps: Deps,
   viewer: SessionUser,
   org: unknown,
   programId: unknown,
-): Promise<Result<{ registered: string[]; skipped: string[] }>> {
+  preview = false,
+  only?: unknown, // the teams left checked in the confirmation
+): Promise<Result<BatchResult>> {
   if (!isId(programId)) return { ok: false, message: "Pick a program." };
   const o = await teamsManagerOf(deps.pool, viewer, org);
   if (!o) return { ok: false, message: "Only an Admin or Director of Teams can register teams." };
-  return withTx(deps.pool, async (q) => {
-    const status = await programRegStatus(q, programId, deps.now());
-    if (!status) return { ok: false as const, message: "That program no longer exists." };
-    if (status !== "open") return { ok: false as const, message: "Registration isn't open for this program." };
-    const teams = await q.query<{ id: string; name: string }>(
-      `select t.id::text, t.name from org_teams t
-       where t.org = $1 and t.archived_at is null and not exists (select 1 from scenic_teams st join scenic_registrations r on r.team_id = st.id
-                                        where st.org_team_id = t.id and r.program_id = $2)
-       order by t.gender, t.grade, lower(t.name) for update`,
-      [o, programId],
-    );
-    const partnerId = await partnerFor(q, o, by(viewer));
-    const registered: string[] = [];
-    const skipped: string[] = [];
-    for (const t of teams.rows) {
-      const copy = await copyOf(q, t.id, partnerId, by(viewer), deps.now());
-      // All at once: ALL Season (Single Days are picked on each team's page).
-      const placed = await saveChoice(q, programId, copy, { allSeason: true, days: [] }, by(viewer), deps.now());
-      if ("error" in placed) skipped.push(`${t.name}: ${placed.error}`);
-      else registered.push(`${t.name}: ${placed.division}`);
-    }
-    return { ok: true as const, registered, skipped };
-  });
+  return previewTx(
+    deps.pool,
+    async (q) => {
+      const status = await programRegStatus(q, programId, deps.now());
+      if (!status) return { ok: false as const, message: "That program no longer exists." };
+      if (status !== "open") return { ok: false as const, message: "Registration isn't open for this program." };
+      const teams = await q.query<{ id: string; name: string }>(
+        `select t.id::text, t.name from org_teams t
+         where t.org = $1 and t.archived_at is null and not exists (select 1 from scenic_teams st join scenic_registrations r on r.team_id = st.id
+                                          where st.org_team_id = t.id and r.program_id = $2)
+         order by t.gender, t.grade, lower(t.name) for update`,
+        [o, programId],
+      );
+      const partnerId = await partnerFor(q, o, by(viewer));
+      const now = deps.now();
+      const r = await registerBatch(
+        q,
+        { programId, org: o, viewer, now, preview, only },
+        teams.rows.map((t) => ({ id: t.id, name: t.name, teamId: () => copyOf(q, t.id, partnerId, by(viewer), now) })),
+      );
+      return { ok: true as const, ...r };
+    },
+    (r) => ({ ok: true as const, ...r }),
+  );
 }
 
 // The team withdraws from one of its upcoming dates (or the Brackets), or re-enters one it withdrew from (`out` false).

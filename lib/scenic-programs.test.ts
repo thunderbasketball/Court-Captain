@@ -142,14 +142,36 @@ describe("Scenic City programs", () => {
         { kind: "nope", fee: "1" },
       ]),
     ).toEqual({ ok: true, id });
+    const open = { closesOn: null, closesDaysBefore: null }; // no own close: with the program's registration
     expect((await getProgram(deps(), pat, id))!.options).toEqual([
-      { kind: "all_season", feeCents: 30000 },
-      { kind: "single_1", feeCents: 3550 },
-      { kind: "single_2", feeCents: 6000 },
-      { kind: "single_2nd", feeCents: null },
+      { kind: "all_season", feeCents: 30000, ...open },
+      { kind: "single_1", feeCents: 3550, ...open },
+      { kind: "single_2", feeCents: 6000, ...open },
+      { kind: "single_2nd", feeCents: null, ...open },
     ]);
     await opts([{ kind: "all_season", fee: "150" }]);
-    expect((await getProgram(deps(), pat, id))!.options).toEqual([{ kind: "all_season", feeCents: 15000 }]);
+    expect((await getProgram(deps(), pat, id))!.options).toEqual([{ kind: "all_season", feeCents: 15000, ...open }]);
+
+    // Each option's own close: a date within registration (Nov 1 – Dec 15), or 0–365 days before; not both.
+    expect(await opts([{ kind: "all_season", fee: "150", closesOn: "2026-12-20" }])).toEqual({
+      ok: false,
+      message: "ALL Season: its close date must be within registration (2026-11-01 to 2026-12-15).",
+    });
+    expect(await opts([{ kind: "single_1", fee: "40", closesDaysBefore: "400" }])).toMatchObject({ ok: false });
+    expect(await opts([{ kind: "single_1", fee: "40", closesOn: "2026-12-01", closesDaysBefore: 3 }])).toMatchObject({
+      ok: false,
+    });
+    expect(
+      await opts([
+        { kind: "all_season", fee: "150", closesOn: "2026-12-01" },
+        { kind: "single_1", fee: "40", closesDaysBefore: "3" },
+      ]),
+    ).toEqual({ ok: true, id });
+    expect((await getProgram(deps(), pat, id))!.options).toEqual([
+      { kind: "all_season", feeCents: 15000, closesOn: "2026-12-01", closesDaysBefore: null },
+      { kind: "single_1", feeCents: 4000, closesOn: null, closesDaysBefore: 3 },
+    ]);
+    await opts([{ kind: "all_season", fee: "150" }]);
     expect(await saveProgram(deps(), dee, null, league({ name: "winter league 2027" }))).toEqual({
       ok: false,
       message: "There's already a program with that name.",
@@ -316,6 +338,30 @@ describe("Scenic City programs", () => {
     expect(await registerTeam(deps(), sam, id, solo, ALL)).toMatchObject({ ok: true });
   });
 
+  it("each option's own close: refused after it (ALL Season by date, Single Day N days before each date)", async () => {
+    const id = await newLeague({
+      regCloses: "2027-01-20",
+      options: [
+        { kind: "all_season", fee: "150", closesOn: "2026-11-20" },
+        { kind: "single_1", fee: "40", closesDaysBefore: 3 },
+      ],
+    });
+    await saveProgramDates(deps(), dee, id, { add: ["2027-01-09", "2027-01-16"], remove: [] });
+    await div(id, "Boys", 5, 5, ["REC"]);
+    const a = await team(pat, baylor, "Baylor A", "Boys", "5");
+    const b = await team(pat, baylor, "Baylor B", "Boys", "5");
+    now = new Date("2026-11-21T15:00:00Z"); // after ALL Season closed (Nov 20)
+    expect(await registerTeam(deps(), pat, id, a, ALL)).toEqual({ ok: false, message: "ALL Season registration closed Nov 20." });
+    // Jan 9 closes Jan 6 (3 days before): open on Nov 21.
+    const jan9 = { allSeason: false, days: [{ date: "2027-01-09", kind: "single_1" }] };
+    expect(await registerTeam(deps(), pat, id, a, jan9)).toMatchObject({ ok: true });
+    now = new Date("2027-01-07T15:00:00Z"); // Jan 9 closed; Jan 16 still open
+    expect(await registerTeam(deps(), pat, id, b, jan9)).toEqual({
+      ok: false,
+      message: "1 Game – Single Day for Jan 9 closed Jan 6.",
+    });
+  });
+
   it("teams go to the smallest pool of their grade and level (3rd/4th plays 4th); pools can be added, emptied, removed", async () => {
     const id = await newLeague();
     await div(id, "Boys", 3, 4, ["REC", "COMP"]);
@@ -383,7 +429,7 @@ describe("Scenic City programs", () => {
     await team(pat, baylor, "Baylor 5th", "Boys", "5", "REC");
     await team(sam, "solo", "Sam Girls", "Girls", "5", "REC"); // not Pat's
     expect(await registerTeam(deps(), pat, id, b34c, ALL)).toMatchObject({ ok: true });
-    expect(await registerAllScenicTeams(deps(), pat, id)).toEqual({
+    expect(await registerAllScenicTeams(deps(), pat, id)).toMatchObject({
       ok: true,
       registered: ["Baylor 4 Rec: Boys 3rd–4th · 4th REC · Pool A"],
       skipped: ["Baylor 5th: This program has no Boys 5th REC."],

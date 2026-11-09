@@ -655,16 +655,18 @@ export type TeamImport = {
   teams: number; // added by it
   left: number; // still there (not removed or undone)
   undoneBy: string | null;
+  names: string[]; // its teams still there
 };
 
-// The organization's recent imports (newest first), for Undo.
+// The organization's recent imports not undone and with teams still there (newest first, each with its teams), for Undo.
 export async function listTeamImports(deps: Deps, viewer: SessionUser, org: unknown): Promise<TeamImport[] | null> {
   const o = await teamsManagerOf(deps.pool, viewer, org);
   if (!o) return null;
   const r = await deps.pool.query<TeamImport>(
     `select i.id::text, i.imported_by as "importedBy", i.imported_at as "importedAt", i.teams, i.undone_by as "undoneBy",
-            (select count(*)::int from org_teams t where t.import_id = i.id) as left
-     from org_team_imports i where i.org = $1 order by i.imported_at desc limit 5`,
+            (select count(*)::int from org_teams t where t.import_id = i.id) as left,
+            array(select t.name from org_teams t where t.import_id = i.id order by lower(t.name)) as names
+     from org_team_imports i where i.org = $1 and i.undone_by is null and exists (select 1 from org_teams t where t.import_id = i.id) order by i.imported_at desc limit 5`,
     [o],
   );
   return r.rows;

@@ -394,6 +394,7 @@ async function register(
     { allSeason: false, days: days.map((date) => ({ date, kind: "single_1" })) },
     FASTBREAK_BY,
     now,
+    false, // registered in FastBreak: options' own closes don't apply
   );
   if ("error" in r) throw new TeamError(r.error);
   report.registered.push(`${ref(teamId)}: ${days.map(short).join(", ")}`);

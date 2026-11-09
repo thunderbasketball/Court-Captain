@@ -47,15 +47,32 @@ export type ProgramFields = {
 };
 
 const dollars = (c: number | null) => (c === null ? "" : (c / 100).toFixed(2));
-// The options form: each Registration Option on or off, with its fee (text, dollars).
-type OptionsForm = Record<string, { on: boolean; fee: string }>;
+// The options form: each Registration Option on or off, with its fee (text, dollars) and its own close: with the
+// program's registration, on a date, or a number of days before the event.
+type CloseMode = "program" | "date" | "days";
+type OptionsForm = Record<string, { on: boolean; fee: string; closes: CloseMode; closesOn: string; days: string }>;
 const optionsForm = (list: ProgramOption[]): OptionsForm =>
   Object.fromEntries(
     REG_OPTIONS.map((o) => {
       const have = list.find((x) => x.kind === o.key);
-      return [o.key, { on: !!have, fee: dollars(have?.feeCents ?? null) }];
+      const closes: CloseMode = have?.closesOn ? "date" : have?.closesDaysBefore != null ? "days" : "program";
+      return [
+        o.key,
+        {
+          on: !!have,
+          fee: dollars(have?.feeCents ?? null),
+          closes,
+          closesOn: have?.closesOn ?? "",
+          days: have?.closesDaysBefore != null ? String(have.closesDaysBefore) : "",
+        },
+      ];
     }),
   );
+const CLOSE_MODES: { key: CloseMode; label: string }[] = [
+  { key: "program", label: "With registration" },
+  { key: "date", label: "On a date" },
+  { key: "days", label: "Days before" },
+];
 
 // Directors of Programs: new program, or edit its details. Divisions are set up on the program page.
 export function ProgramEditor({ program }: { program?: ProgramFields }) {
@@ -76,7 +93,15 @@ export function ProgramEditor({ program }: { program?: ProgramFields }) {
   const save = () =>
     start(async () => {
       setError(null);
-      const options = REG_OPTIONS.filter((o) => opts[o.key].on).map((o) => ({ kind: o.key, fee: opts[o.key].fee }));
+      const options = REG_OPTIONS.filter((o) => opts[o.key].on).map((o) => {
+        const x = opts[o.key];
+        return {
+          kind: o.key,
+          fee: x.fee,
+          closesOn: x.closes === "date" ? x.closesOn : null,
+          closesDaysBefore: x.closes === "days" ? x.days : null,
+        };
+      });
       const r = await saveProgram(program?.id ?? null, { ...f, options });
       if (!r.ok) return setError(r.message);
       close();
@@ -157,7 +182,8 @@ export function ProgramEditor({ program }: { program?: ProgramFields }) {
               </p>
               <div className="space-y-2">
                 {REG_OPTIONS.map((o) => (
-                  <div key={o.key} className="flex items-center gap-3 rounded-xl p-2 ring-1 ring-zinc-950/5 dark:ring-white/10">
+                  <div key={o.key} className="rounded-xl p-2 ring-1 ring-zinc-950/5 dark:ring-white/10">
+                  <div className="flex items-center gap-3">
                     <label className="flex min-w-0 flex-1 items-start gap-2 text-sm">
                       <input
                         type="checkbox"
@@ -182,6 +208,54 @@ export function ProgramEditor({ program }: { program?: ProgramFields }) {
                         />
                       </label>
                     )}
+                  </div>
+                  {opts[o.key].on && (
+                    // Its own close: with the program's registration, on a date, or days before the event.
+                    <div className="mt-2 space-y-1.5 pl-6">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-xs text-zinc-500">Closes</span>
+                        {CLOSE_MODES.map((m) => (
+                          <button
+                            key={m.key}
+                            type="button"
+                            onClick={() => setOpts({ ...opts, [o.key]: { ...opts[o.key], closes: m.key } })}
+                            className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                              opts[o.key].closes === m.key
+                                ? "bg-scenic-navy text-white dark:bg-white dark:text-scenic-navy"
+                                : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                            }`}
+                          >
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+                      {opts[o.key].closes === "date" && (
+                        <input
+                          type="date"
+                          aria-label={`${o.name} closes on`}
+                          className={inputCls}
+                          min={f.regOpens || undefined}
+                          max={f.regCloses || undefined}
+                          value={opts[o.key].closesOn}
+                          onChange={(e) => setOpts({ ...opts, [o.key]: { ...opts[o.key], closesOn: e.target.value } })}
+                        />
+                      )}
+                      {opts[o.key].closes === "days" && (
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            className={`${inputCls} w-20`}
+                            inputMode="numeric"
+                            aria-label={`${o.name} closes days before`}
+                            value={opts[o.key].days}
+                            onChange={(e) => setOpts({ ...opts, [o.key]: { ...opts[o.key], days: e.target.value } })}
+                          />
+                          <span className="text-zinc-600 dark:text-zinc-300">
+                            days before {o.perDate ? "each Game Day picked" : "the first Game Day"}
+                          </span>
+                        </label>
+                      )}
+                    </div>
+                  )}
                   </div>
                 ))}
               </div>

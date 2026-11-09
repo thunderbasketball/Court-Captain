@@ -52,7 +52,7 @@ describe("Thunder's teams in Scenic City programs", () => {
 
     expect((await thunderPrograms(deps(), earl))!.programs).toMatchObject([{ name: "Winter", registered: 0, unregistered: 2 }]);
     expect(await registerAllThunderTeams(deps(), { ...earl, thunderAreas: ["facilities"] }, pid)).toMatchObject({ ok: false });
-    expect(await registerAllThunderTeams(deps(), earl, pid)).toEqual({
+    expect(await registerAllThunderTeams(deps(), earl, pid)).toMatchObject({
       ok: true,
       registered: ["4G Epps: Girls 3rd–4th · 4th COMP · Pool A"],
       skipped: ["6B TBD: This program has no Boys 6th REC."],

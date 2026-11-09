@@ -160,6 +160,6 @@ describe("Scenic City: outside clubs' teams", () => {
     expect(await undoClubImport(deps(), fay, imp.id)).toMatchObject({ ok: false });
     expect(await undoClubImport(deps(), dee, imp.id)).toEqual({ ok: true, removed: ["HH 5B Lee", "BS 4G TBD"], kept: [] });
     expect((await listScenicTeams(deps(), dee, "Director"))!.teams).toEqual([]);
-    expect((await listClubImports(deps(), dee))![0]).toMatchObject({ undoneBy: "Dee X", left: 0 });
+    expect(await listClubImports(deps(), dee)).toEqual([]); // undone: no longer listed
   });
 });

@@ -69,7 +69,7 @@ Boys,3,REC,,,,Comets`;
     // Left alone, it dropped its number.
     await db.pool.query("delete from team_players");
     expect(await undoThunderImport(deps(), director, batch.id)).toEqual({ ok: true, removed: ["4B Lee"], kept: [] });
-    expect((await listThunderImports(deps(), director))![0]).toMatchObject({ left: 0, undoneBy: "Earl Epps" });
+    expect(await listThunderImports(deps(), director)).toEqual([]); // undone: no longer listed
   });
 
   it("a coach with no cell: the team is named for them and waits for it; their cell makes them the Head Coach", async () => {

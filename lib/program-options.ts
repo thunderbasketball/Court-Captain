@@ -7,7 +7,13 @@ export const REG_OPTIONS = [
   { key: "single_2nd", name: "Add a 2nd Game", about: "A day the team already plays becomes 2GG", perDate: true },
 ] as const;
 export type RegOptionKind = (typeof REG_OPTIONS)[number]["key"];
-export type ProgramOption = { kind: RegOptionKind; feeCents: number | null };
+// closesOn / closesDaysBefore: the option's own close (at most one); neither = it closes with the program's registration.
+export type ProgramOption = {
+  kind: RegOptionKind;
+  feeCents: number | null;
+  closesOn?: string | null; // YYYY-MM-DD: the last day to register for it
+  closesDaysBefore?: number | null; // the last day is this many days before the event (0 = the day itself)
+};
 
 export const optionName = (kind: string) => REG_OPTIONS.find((o) => o.key === kind)?.name ?? kind;
 export const money = (c: number) => `$${(c / 100).toFixed(2).replace(/\.00$/, "")}`;
@@ -71,6 +77,48 @@ export function planChoice(
     result: { perDate, bracket: allSeason || (gameDates.length > 0 && played * 2 >= gameDates.length), feeCents: total(merged) },
     newFeeCents: total(merged) - total(had),
   };
+}
+
+const addDays = (d: string, n: number) => {
+  const t = new Date(`${d}T12:00:00Z`);
+  t.setUTCDate(t.getUTCDate() + n);
+  return t.toISOString().slice(0, 10);
+};
+
+// The last day to register for an option (null: it closes with the program). `event`: the Game Day picked, or for ALL
+// Season the League's first Game Day.
+export function optionLastDay(o: ProgramOption | undefined, event: string | undefined): string | null {
+  if (!o) return null;
+  if (o.closesOn) return o.closesOn;
+  if (o.closesDaysBefore != null && event) return addDays(event, -o.closesDaysBefore);
+  return null;
+}
+
+// Why what's being added can't be registered any more (an option past its own close), or null. Only new additions are
+// checked: what a team already has stays.
+export function closedReason(offered: ProgramOption[], gameDates: string[], had: Choice, add: Choice, today: string): string | null {
+  const opt = (k: RegOptionKind) => offered.find((o) => o.kind === k);
+  if (add.allSeason && !had.allSeason) {
+    const last = optionLastDay(opt("all_season"), gameDates[0]);
+    if (last && today > last) return `ALL Season registration closed ${shortDate(last)}.`;
+  }
+  for (const d of add.days) {
+    if (had.days.some((x) => x.date === d.date && x.kind === d.kind)) continue;
+    const last = optionLastDay(opt(d.kind), d.date);
+    if (last && today > last) return `${optionName(d.kind)} for ${shortDate(d.date)} closed ${shortDate(last)}.`;
+  }
+  return null;
+}
+
+// "closes Dec 1", "closes 3 days before each date" (ALL Season: "before the first Game Day"); "" when it has no own close.
+export function closeLabel(o: ProgramOption): string {
+  if (o.closesOn) return `closes ${shortDate(o.closesOn)}`;
+  if (o.closesDaysBefore != null) {
+    const n = o.closesDaysBefore;
+    const when = o.kind === "all_season" ? "the first Game Day" : "each date";
+    return n === 0 ? `closes the day of ${when}` : `closes ${n} day${n === 1 ? "" : "s"} before ${when}`;
+  }
+  return "";
 }
 
 // "Dec 5 1GG · Dec 12 2GG" for the dates a team plays (ALL Season: only the 2GG days, after "ALL Season").

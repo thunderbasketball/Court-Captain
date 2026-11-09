@@ -393,6 +393,7 @@ export type ClubImport = {
   teams: number;
   left: number;
   undoneBy: string | null;
+  names: string[]; // its teams still there
 };
 
 // Recent imports (newest first), for Undo. Directors of Teams only.
@@ -400,8 +401,9 @@ export async function listClubImports(deps: Deps, viewer: SessionUser): Promise<
   if (!(await orgHasArea(deps.pool, viewer.coachId, ORG, "teams"))) return null;
   const r = await deps.pool.query<ClubImport>(
     `select i.id::text, i.imported_by as "importedBy", i.imported_at as "importedAt", i.teams, i.undone_by as "undoneBy",
-            (select count(*)::int from scenic_teams t where t.import_id = i.id) as left
-     from scenic_team_imports i order by i.imported_at desc limit 5`,
+            (select count(*)::int from scenic_teams t where t.import_id = i.id) as left,
+            array(select t.name from scenic_teams t where t.import_id = i.id order by lower(t.name)) as names
+     from scenic_team_imports i where i.undone_by is null and exists (select 1 from scenic_teams t where t.import_id = i.id) order by i.imported_at desc limit 5`,
   );
   return r.rows;
 }

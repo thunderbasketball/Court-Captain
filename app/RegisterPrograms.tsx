@@ -1,12 +1,13 @@
 import type { OrgProgram } from "@/lib/org-leagues";
-import { RegisterAllButton } from "./leagues/LeagueButtons";
+import { LastRegisterAll, RegisterAllButton } from "./leagues/LeagueButtons";
 import { card } from "./ui";
 
 const day = (d: string) =>
   new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
 // The Register tab on a Teams page (Thunder and every organization): the league's programs whose registration hasn't
-// closed, how many of this organization's teams are in each, and Register all unregistered (ALL Season).
+// closed, how many of this organization's teams are in each, and Register all unregistered (ALL Season), with the last
+// Register all and its Undo (while registration is open).
 export default function RegisterPrograms({ org, progs }: { org: string; progs: { league: string; programs: OrgProgram[] } }) {
   const slug = org;
   return (
@@ -30,6 +31,7 @@ export default function RegisterPrograms({ org, progs }: { org: string; progs: {
                 {p.registered} of {p.registered + p.unregistered} teams registered
                 {p.status === "open" ? ` · open until ${day(p.regCloses)}` : " · registration opens soon"}
               </p>
+              {p.lastBatch && <LastRegisterAll batch={p.lastBatch} program={p.name} canUndo={p.status === "open"} />}
             </div>
             {p.status === "open" && p.unregistered > 0 && (
               <RegisterAllButton org={slug} programId={p.id} program={p.name} count={p.unregistered} />

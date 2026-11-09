@@ -7,8 +7,8 @@ import { hasFeature } from "./features";
 import { hasArea } from "./org-admin";
 import { partnerFor, type OrgProgram } from "./org-leagues";
 import { orgShort } from "./org-registry";
-import { programRegStatus, saveChoice } from "./scenic-programs";
-import { withTx } from "./sql";
+import { lastBatches } from "./register-batches";
+import { previewTx, programRegStatus, registerBatch, type BatchResult } from "./scenic-programs";
 import { easternDate } from "./time";
 
 type Deps = { pool: Pool; now: () => Date };
@@ -47,7 +47,7 @@ export async function thunderPrograms(
 ): Promise<{ league: string; programs: OrgProgram[] } | null> {
   if (!hasArea(viewer, "teams") || !(await hasFeature(deps.pool, LEAGUE, "programs"))) return null;
   const today = easternDate(deps.now());
-  const r = await deps.pool.query<Omit<OrgProgram, "status"> & { regOpens: string }>(
+  const r = await deps.pool.query<Omit<OrgProgram, "status" | "lastBatch"> & { regOpens: string }>(
     `select p.id::text, p.kind, p.name, p.starts_on::text as "startsOn", p.ends_on::text as "endsOn",
             p.reg_opens::text as "regOpens", p.reg_closes::text as "regCloses", p.fee_cents as "feeCents",
             count(r.team_id)::int as registered, (count(t.id) - count(r.team_id))::int as unregistered
@@ -59,45 +59,52 @@ export async function thunderPrograms(
      group by p.id order by p.starts_on, lower(p.name)`,
     [today],
   );
+  const last = await lastBatches(deps.pool, "thunder");
   return {
     league: await orgShort(deps.pool, LEAGUE),
     programs: r.rows.map(({ regOpens, ...p }) => ({
       ...p,
       status: regOpen(today, regOpens, p.regCloses) as OrgProgram["status"],
+      lastBatch: last.get(p.id) ?? null,
     })),
   };
 }
 
 // Register every Thunder team not in the program yet, each into its division (as ALL Season); skipped ones say why.
+// `preview`: what it would do, nothing kept (the confirmation before Register all); otherwise one batch Undo can take out.
 export async function registerAllThunderTeams(
   deps: Deps,
   viewer: SessionUser,
   programId: unknown,
-): Promise<Result<{ registered: string[]; skipped: string[] }>> {
+  preview = false,
+  only?: unknown, // the teams left checked in the confirmation
+): Promise<Result<BatchResult>> {
   if (!hasArea(viewer, "teams")) return { ok: false, message: "Only a Director of Teams can register teams." };
   if (!isId(programId)) return { ok: false, message: "Pick a program." };
-  return withTx(deps.pool, async (q) => {
-    const status = await programRegStatus(q, programId, deps.now());
-    if (!status) return { ok: false as const, message: "That program no longer exists." };
-    if (status !== "open") return { ok: false as const, message: "Registration isn't open for this program." };
-    const teams = await q.query<{ id: string; name: string }>(
-      `select t.id::text, t.name from teams t
-       where not exists (select 1 from scenic_teams st join scenic_registrations r on r.team_id = st.id
-                         where st.thunder_team_id = t.id and r.program_id = $1)
-       order by t.gender, t.grade_sort, t.name for update`,
-      [programId],
-    );
-    const partnerId = await partnerFor(q, "thunder", by(viewer));
-    const registered: string[] = [];
-    const skipped: string[] = [];
-    for (const t of teams.rows) {
-      const copy = await thunderCopy(q, t.id, partnerId, by(viewer), deps.now());
-      const placed = await saveChoice(q, programId, copy, { allSeason: true, days: [] }, by(viewer), deps.now());
-      if ("error" in placed) skipped.push(`${t.name}: ${placed.error}`);
-      else registered.push(`${t.name}: ${placed.division}`);
-    }
-    return { ok: true as const, registered, skipped };
-  });
+  return previewTx(
+    deps.pool,
+    async (q) => {
+      const status = await programRegStatus(q, programId, deps.now());
+      if (!status) return { ok: false as const, message: "That program no longer exists." };
+      if (status !== "open") return { ok: false as const, message: "Registration isn't open for this program." };
+      const teams = await q.query<{ id: string; name: string }>(
+        `select t.id::text, t.name from teams t
+         where not exists (select 1 from scenic_teams st join scenic_registrations r on r.team_id = st.id
+                           where st.thunder_team_id = t.id and r.program_id = $1)
+         order by t.gender, t.grade_sort, t.name for update`,
+        [programId],
+      );
+      const partnerId = await partnerFor(q, "thunder", by(viewer));
+      const now = deps.now();
+      const r = await registerBatch(
+        q,
+        { programId, org: "thunder", viewer, now, preview, only },
+        teams.rows.map((t) => ({ id: t.id, name: t.name, teamId: () => thunderCopy(q, t.id, partnerId, by(viewer), now) })),
+      );
+      return { ok: true as const, ...r };
+    },
+    (r) => ({ ok: true as const, ...r }),
+  );
 }
 
 // After a Thunder team's name or Head Coach changes: its copy in Scenic City follows.

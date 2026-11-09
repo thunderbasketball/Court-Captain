@@ -3,6 +3,8 @@
 import { useState, useTransition } from "react";
 import {
   REG_OPTIONS,
+  closeLabel,
+  closedReason,
   entryLine,
   money,
   planChoice,
@@ -43,10 +45,14 @@ export default function RegisterChoices({
   const [error, setError] = useState<string | null>(null);
   const [busy, start] = useTransition();
   const add: Choice = { allSeason: all, days };
-  const plan = planChoice(options, gameDates, had, add);
+  // What's picked, checked like the server does: the options' rules, then each option's own close.
+  const plan0 = planChoice(options, gameDates, had, add);
+  const closed0 = "error" in plan0 ? null : closedReason(options, gameDates, had, add, today);
+  const plan = closed0 ? { error: closed0 } : plan0;
   const upcoming = gameDates.filter((d) => d >= today);
   const picked = (date: string, kind: SingleKind) => days.some((d) => d.date === date && d.kind === kind);
-  const fits = (next: Choice) => !("error" in planChoice(options, gameDates, had, next));
+  const fits = (next: Choice) =>
+    !("error" in planChoice(options, gameDates, had, next)) && !closedReason(options, gameDates, had, next, today);
   // Greyed out: a date that can't be picked with what's picked now (e.g. 1 Game on a day ALL Season already plays).
   const canPick = (date: string, kind: SingleKind) =>
     picked(date, kind) || fits({ allSeason: all, days: [...days, { date, kind }] });
@@ -78,8 +84,10 @@ export default function RegisterChoices({
         </p>
       )}
       {REG_OPTIONS.filter((o) => options.some((x) => x.kind === o.key)).map((o) => {
-        const fee = options.find((x) => x.kind === o.key)!.feeCents;
-        const price = fee !== null ? ` · ${money(fee)}${o.perDate ? " per date" : ""}` : "";
+        const opt = options.find((x) => x.kind === o.key)!;
+        const fee = opt.feeCents;
+        const closes = closeLabel(opt);
+        const price = `${fee !== null ? ` · ${money(fee)}${o.perDate ? " per date" : ""}` : ""}${closes ? ` · ${closes}` : ""}`;
         if (o.key === "all_season")
           return had.allSeason ? null : (
             <label key={o.key} className="flex items-start gap-3 rounded-xl p-3 ring-1 ring-zinc-950/10 dark:ring-white/10">
@@ -125,7 +133,7 @@ export default function RegisterChoices({
                 ? "Tap the dates."
                 : second
                   ? "Pick a day the team plays first."
-                  : "Not available: the team already plays those days."}
+                  : "Not available: closed, or the team already plays those days."}
             </p>
             <div className="flex flex-wrap gap-1.5">
               {upcoming.map((d) => {

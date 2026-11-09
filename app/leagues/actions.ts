@@ -4,6 +4,7 @@ import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import * as leagues from "@/lib/org-leagues";
 import * as thunderLeagues from "@/lib/thunder-leagues";
+import * as batches from "@/lib/register-batches";
 
 // Session checked here; who may (each organization's Admins and Directors of Teams) is checked in lib/org-leagues.
 async function guarded<T>(fn: (user: NonNullable<Awaited<ReturnType<typeof currentUser>>>) => Promise<T>) {
@@ -22,11 +23,20 @@ const deps = () => ({ pool: db, now: () => new Date() });
 export async function registerTeam(org: string, teamId: string, programId: string, choice?: unknown) {
   return guarded((u) => leagues.registerOrgTeam(deps(), u, org, teamId, programId, choice));
 }
-export async function registerAll(org: string, programId: string) {
+// `preview`: what Register all would do, nothing kept (its confirmation).
+// `only`: the teams left checked in it (checked on the server).
+export async function registerAll(org: string, programId: string, preview?: boolean, only?: string[]) {
   // Thunder's teams are its own kind; every other organization's are organization teams.
+  const p = preview === true;
   return guarded((u) =>
-    org === "thunder" ? thunderLeagues.registerAllThunderTeams(deps(), u, programId) : leagues.registerAllOrgTeams(deps(), u, org, programId),
+    org === "thunder"
+      ? thunderLeagues.registerAllThunderTeams(deps(), u, programId, p, only)
+      : leagues.registerAllOrgTeams(deps(), u, org, programId, p, only),
   );
+}
+// Undo a Register all (who may is checked in lib/register-batches).
+export async function undoRegisterAll(batchId: string) {
+  return guarded((u) => batches.undoRegisterAll(deps(), u, batchId));
 }
 export async function setDayOff(org: string, teamId: string, programId: string, what: string, out: boolean) {
   return guarded((u) => leagues.setOrgTeamDayOff(deps(), u, org, teamId, programId, what, out === true));

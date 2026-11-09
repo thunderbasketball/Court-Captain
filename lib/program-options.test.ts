@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planChoice, type Choice, type ProgramOption } from "./program-options";
+import { closeLabel, closedReason, optionLastDay, planChoice, type Choice, type ProgramOption } from "./program-options";
 
 const offered: ProgramOption[] = [
   { kind: "all_season", feeCents: 30000 },
@@ -46,5 +46,28 @@ describe("League registration choices", () => {
     expect(
       (planChoice([{ kind: "single_1", feeCents: 100 }], dates, none, { allSeason: true, days: [] }) as { error?: string }).error,
     ).toBe("This League doesn't offer ALL Season.");
+  });
+
+  it("each option's own close: on a date, or days before the event; only new additions are checked", () => {
+    const opts: ProgramOption[] = [
+      { kind: "all_season", feeCents: 30000, closesOn: "2026-11-30" },
+      { kind: "single_1", feeCents: 3500, closesDaysBefore: 3 },
+      { kind: "single_2nd", feeCents: 2000 },
+    ];
+    expect(optionLastDay(opts[0], dates[0])).toBe("2026-11-30");
+    expect(optionLastDay(opts[1], "2026-12-12")).toBe("2026-12-09");
+    expect(optionLastDay(opts[2], "2026-12-12")).toBeNull();
+    const all: Choice = { allSeason: true, days: [] };
+    expect(closedReason(opts, dates, none, all, "2026-11-30")).toBeNull();
+    expect(closedReason(opts, dates, none, all, "2026-12-01")).toBe("ALL Season registration closed Nov 30.");
+    const dec12: Choice = { allSeason: false, days: [{ date: "2026-12-12", kind: "single_1" }] };
+    expect(closedReason(opts, dates, none, dec12, "2026-12-09")).toBeNull();
+    expect(closedReason(opts, dates, none, dec12, "2026-12-10")).toBe("1 Game – Single Day for Dec 12 closed Dec 9.");
+    // Already registered: not checked again.
+    expect(closedReason(opts, dates, dec12, dec12, "2026-12-10")).toBeNull();
+    expect(closeLabel(opts[0])).toBe("closes Nov 30");
+    expect(closeLabel(opts[1])).toBe("closes 3 days before each date");
+    expect(closeLabel({ kind: "all_season", feeCents: 1, closesDaysBefore: 1 })).toBe("closes 1 day before the first Game Day");
+    expect(closeLabel(opts[2])).toBe("");
   });
 });

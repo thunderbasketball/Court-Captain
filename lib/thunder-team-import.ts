@@ -160,14 +160,16 @@ export type ThunderImport = {
   teams: number;
   left: number;
   undoneBy: string | null;
+  names: string[]; // its teams still there
 };
 
 export async function listThunderImports(deps: Deps, viewer: SessionUser): Promise<ThunderImport[] | null> {
   if (!hasArea(viewer, "teams")) return null;
   const r = await deps.pool.query<ThunderImport>(
     `select i.id::text, i.imported_by as "importedBy", i.imported_at as "importedAt", i.teams, i.undone_by as "undoneBy",
-            (select count(*)::int from teams t where t.import_id = i.id) as left
-     from org_team_imports i where i.org = 'thunder' order by i.imported_at desc limit 5`,
+            (select count(*)::int from teams t where t.import_id = i.id) as left,
+            array(select t.name from teams t where t.import_id = i.id order by lower(t.name)) as names
+     from org_team_imports i where i.org = 'thunder' and i.undone_by is null and exists (select 1 from teams t where t.import_id = i.id) order by i.imported_at desc limit 5`,
   );
   return r.rows;
 }
