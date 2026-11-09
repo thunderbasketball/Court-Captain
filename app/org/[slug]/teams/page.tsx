@@ -3,15 +3,16 @@ import TeamsIncluded from "../../../TeamsIncluded";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
-import { seesWho } from "@/lib/org-admin";
+import { isOrgAdmin, seesWho } from "@/lib/org-admin";
+import { ViewAsButton } from "../../../ViewAsButton";
 import { orgPrograms } from "@/lib/org-leagues";
 import { listOrgCoaches, listOrgTeams, listTeamImports } from "@/lib/org-teams";
 import { TZ } from "@/lib/time";
 import { orgInfo } from "@/lib/org-registry";
 import AppHeader from "../../../AppHeader";
-import { PageTitle, card } from "../../../ui";
-import TeamRow, { TeamsTabs, teamTabs } from "../../../TeamRow";
-import { ContactChip, TextTeamsButton } from "../../../Contacts";
+import { CollapseCard, PageTitle } from "../../../ui";
+import TeamRow, { GradeGroups, TeamsTabs, teamTabs } from "../../../TeamRow";
+import { ContactChip, GroupTextButton, TextTeamsButton } from "../../../Contacts";
 import RegisterPrograms from "../../../RegisterPrograms";
 import AddTeamButton from "../../../AddTeam";
 import { ImportTeamsButton, UndoImportButton } from "../../../TeamImport";
@@ -51,7 +52,8 @@ async function OrgTeams({
   // Tabs: one per level and gender it has teams for (youngest grade first), then Register (league programs).
   const register = !!progs && progs.programs.length > 0 && list.canManage;
   const tabs = teamTabs(list.teams, (await searchParams).view, register);
-  const solo = o.kind === "Team"; // a CourtSolo account: its one team, no Add or Import
+  const solo = o.kind === "Team";
+  const admin = await isOrgAdmin(db, user.coachId, slug); // Owners and Admins: 👁 View as on each coach // a CourtSolo account: its one team, no Add or Import
 
   return (
     <>
@@ -104,65 +106,73 @@ async function OrgTeams({
           <p className="text-sm text-zinc-500">No teams yet. Tap “+ Add” (or Import) to create some.</p>
         )}
         {tabs.group && (
-          <section className={`${card} overflow-hidden`}>
-            <ul className="divide-y divide-zinc-100 dark:divide-white/5">
-              {tabs.group.teams.map((t) => (
-                <TeamRow
-                  key={t.id}
-                  href={`/org/${slug}/teams/${t.id}`}
-                  name={t.name}
-                  altName={t.altName}
-                  gender={t.gender}
-                  level={t.level}
-                  sub={t.grade === "Pre-K" ? "Pre-K (ages 3–4)" : `${t.grade} grade`}
-                  hasCoach={t.coaches.some((c) => c.role === "HeadCoach")}
-                  waitingCoach={t.waitingCoach && `${t.waitingCoach.first} ${t.waitingCoach.last}`}
-                  needsEmail={t.coaches.some((c) => c.role === "HeadCoach" && !c.email)}
-                  players={t.players}
-                  people={t.coaches.map((c) => {
-                    const [first, ...rest] = c.name.split(" ");
-                    return (
-                      <ContactChip
-                        key={c.id}
-                        person={{ role: c.role, email: c.email, first, last: rest.join(" "), cell: c.cell }}
-                        about={t.name}
-                      />
-                    );
-                  })}
-                />
-              ))}
-            </ul>
-          </section>
+          <GradeGroups
+            teams={tabs.group.teams}
+            grade={(t) => {
+              const top = t.grade.split("/").at(-1);
+              return t.grade === "Pre-K" ? "Pre-K" : top === "K" || top === "0th" ? "Kindergarten" : `${top} Grade`;
+            }}
+            row={(t) => (
+            <TeamRow
+              key={t.id}
+              href={`/org/${slug}/teams/${t.id}`}
+              name={t.name}
+              altName={t.altName}
+              gender={t.gender}
+              level={t.level}
+              sub={t.grade === "Pre-K" ? "Pre-K (ages 3–4)" : t.grade.includes("/") ? `${t.grade} grade` : ""}
+              hasCoach={t.coaches.some((c) => c.role === "HeadCoach")}
+              waitingCoach={t.waitingCoach && `${t.waitingCoach.first} ${t.waitingCoach.last}`}
+              needsEmail={t.coaches.some((c) => c.role === "HeadCoach" && !c.email)}
+              players={t.players}
+              actions={
+                t.coaches.length > 0 && <GroupTextButton small cells={t.coaches.map((c) => c.cell)} label="Text coaches" />
+              }
+              people={t.coaches.map((c) => {
+                const [first, ...rest] = c.name.split(" ");
+                return (
+                  <ContactChip
+                    key={c.id}
+                    person={{ role: c.role, email: c.email, first, last: rest.join(" "), cell: c.cell }}
+                    about={t.name}
+                    extra={admin && c.id !== user.coachId && <ViewAsButton coachId={c.id} name={c.name} />}
+                  />
+                );
+              })}
+            />
+            )}
+          />
         )}
         {tabs.current === "register" && progs && <RegisterPrograms org={slug} progs={progs} />}
         {imports.length > 0 && (
-          <section className={`${card} mt-4 p-4`}>
-            <h2 className="font-semibold">Recent imports</h2>
-            <ul className="divide-y divide-zinc-100 dark:divide-white/5">
-              {imports.map((i) => (
-                <li key={i.id} className="flex items-start justify-between gap-3 py-2 text-sm">
-                  <TeamsIncluded
-                    names={i.names}
-                    summary={
-                      <>
-                        {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"}
-                        {who && ` · by ${i.importedBy}`}
-                        {i.left < i.teams && ` · ${i.left} still here`}
-                      </>
-                    }
-                  />
-                  {i.left > 0 && (
-                    <UndoImportButton
-                      undo={undoImport.bind(null, slug, i.id)}
-                      teams={i.left}
-                      when={when(i.importedAt)}
-                      note="Teams registered in a program are kept (withdraw them first)."
+          <div className="mt-4">
+            <CollapseCard title="Recent imports" count={imports.length}>
+              <ul className="divide-y divide-zinc-100 px-4 pb-2 dark:divide-white/5">
+                {imports.map((i) => (
+                  <li key={i.id} className="flex items-start justify-between gap-3 py-2 text-sm">
+                    <TeamsIncluded
+                      names={i.names}
+                      summary={
+                        <>
+                          {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"}
+                          {who && ` · by ${i.importedBy}`}
+                          {i.left < i.teams && ` · ${i.left} still here`}
+                        </>
+                      }
                     />
-                  )}
-                </li>
-              ))}
-            </ul>
-          </section>
+                    {i.left > 0 && (
+                      <UndoImportButton
+                        undo={undoImport.bind(null, slug, i.id)}
+                        teams={i.left}
+                        when={when(i.importedAt)}
+                        note="Teams registered in a program are kept (withdraw them first)."
+                      />
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </CollapseCard>
+          </div>
         )}
       </main>
     </>

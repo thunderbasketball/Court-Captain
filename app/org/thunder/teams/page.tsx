@@ -6,23 +6,28 @@ import { requireFeature } from "@/lib/features-server";
 import { dmKey } from "@/lib/chat";
 import { db } from "@/lib/db";
 import { gradesText } from "@/lib/event-names";
+import { gradeLabel } from "@/lib/grades";
 import { listTeams, personOptions } from "@/lib/teams";
 import AddTeamButton from "../../../AddTeam";
 import { listThunderImports } from "@/lib/thunder-team-import";
 import { thunderPrograms } from "@/lib/thunder-leagues";
 import RegisterPrograms from "../../../RegisterPrograms";
-import { TZ } from "@/lib/time";
+import { TZ, easternDate } from "@/lib/time";
+import { scheduledGames, type ScheduledGame } from "@/lib/scenic-games";
+import { ScheduleList } from "../../../LeagueGames";
+import { upcomingForTeams } from "@/lib/practice/schedule";
 import { ImportTeamsButton, UndoImportButton } from "../../../TeamImport";
 import { createTeam, importThunderTeams, previewThunderImport, undoThunderImport } from "./actions";
 import { gradeSort } from "@/lib/team-names";
 import AppHeader from "../../../AppHeader";
-import { PageTitle, card } from "../../../ui";
-import TeamRow, { TeamsTabs, teamTabs } from "../../../TeamRow";
-import { ContactChip, TextTeamsButton } from "../../../Contacts";
+import { CollapseCard, PageTitle } from "../../../ui";
+import TeamRow, { GradeGroups, TeamsTabs, teamTabs } from "../../../TeamRow";
+import { ContactChip, GroupTextButton, TextTeamsButton } from "../../../Contacts";
 import ChatLink from "../../../ChatLink";
 import NotifyButton from "../../../NotifyButton";
-import RosterCountButton from "./RosterCountButton";
-import { hasArea, seesWho } from "@/lib/org-admin";
+import TeamRosterList from "./TeamRosterList";
+import { hasArea, isThunderAdmin, seesWho } from "@/lib/org-admin";
+import { ViewAsButton } from "../../../ViewAsButton";
 
 export default function TeamsPage({ searchParams }: PageProps<"/org/thunder/teams">) {
   return (
@@ -49,6 +54,19 @@ async function Teams({ searchParams }: { searchParams: PageProps<"/org/thunder/t
   const progs = await thunderPrograms({ pool: db, now: () => new Date() }, user);
   const register = !!progs && progs.programs.length > 0;
   const tabs = teamTabs(teams, (await searchParams).view, register);
+  // Each team's published Scenic City League games (matchups are made for its copy there), for the 📅 on its card.
+  const copies = (
+    await db.query<{ id: string; team: string }>(
+      "select id::text, thunder_team_id::text as team from scenic_teams where thunder_team_id = any($1::bigint[])",
+      [teams.map((t) => t.id)],
+    )
+  ).rows;
+  const games = await scheduledGames(db, copies.map((c) => c.id));
+  const schedules: Record<string, ScheduledGame[]> = Object.fromEntries(
+    copies.map((c) => [c.team, (games[c.id] ?? []).filter((g) => g.published)]),
+  );
+  const today = easternDate(new Date());
+  const practices = await upcomingForTeams({ pool: db, now: () => new Date() }, teams.map((t) => t.id)); // and practices
 
   return (
     <>
@@ -84,79 +102,80 @@ async function Teams({ searchParams }: { searchParams: PageProps<"/org/thunder/t
         <TeamsTabs base="/org/thunder/teams" current={tabs.current} groups={tabs.groups} register={register} />
         {!teams.length && <p className="text-zinc-500">No teams yet. Tap “+ Add” (or Import) to create some.</p>}
         {tabs.group && (
-          <section className={`${card} overflow-hidden`}>
-            <ul className="divide-y divide-zinc-100 dark:divide-white/5">
-              {tabs.group.teams.map((t) => (
-                <TeamRow
-                  key={t.id}
-                  href={`/org/thunder/teams/${t.id}`}
-                  name={t.name}
-                  altName={t.altName}
-                  gender={t.gender as "Boys" | "Girls"}
-                  level={t.level}
-                  sub={[gradesText(t.grades), ...t.practiceLocations].join(" · ")}
-                  hasCoach={!!t.headCoach}
-                  waitingCoach={t.waitingCoach && `${t.waitingCoach.first} ${t.waitingCoach.last}`}
-                  needsEmail={t.staff.some((p) => p.role === "HeadCoach" && !p.email)}
-                  players={t.players.length}
-                  people={t.staff.map((p) => (
-                    <ContactChip
-                      key={p.role}
-                      person={p}
-                      about={t.name}
-                      chatKey={
-                        (p.role === "HeadCoach" || p.role === "AsstCoach") && p.coachId !== user.coachId
-                          ? dmKey(user.coachId, p.coachId)
-                          : undefined
-                      }
-                    />
-                  ))}
-                  actions={
-                    <>
-                      <RosterCountButton
-                        team={who ? t : { ...t, players: t.players.map((p) => ({ ...p, rosteredBy: "" })) }}
-                        who={who}
-                      />
-                      {t.staff.length > 0 && (
-                        <ChatLink chatKey={`staff-${user.coachId}-${t.id}`} label={`Chat with ${t.name} staff`} popup />
-                      )}
-                      {t.staff.length > 0 && <NotifyButton audience={{ teams: [t.id] }} to={t.name} />}
-                    </>
+          <GradeGroups
+            teams={tabs.group.teams}
+            grade={(t) => (t.grades.length ? gradeLabel(t.grades[t.grades.length - 1]) : "No grade")}
+            row={(t) => (
+            <TeamRow
+              key={t.id}
+              href={`/org/thunder/teams/${t.id}`}
+              name={t.name}
+              altName={t.altName}
+              gender={t.gender as "Boys" | "Girls"}
+              level={t.level}
+              sub={[...(t.grades.length > 1 ? [gradesText(t.grades)] : []), ...t.practiceLocations].join(" · ")}
+              hasCoach={!!t.headCoach}
+              waitingCoach={t.waitingCoach && `${t.waitingCoach.first} ${t.waitingCoach.last}`}
+              needsEmail={t.staff.some((p) => p.role === "HeadCoach" && !p.email)}
+              players={t.players.length}
+              people={t.staff.map((p) => (
+                <ContactChip
+                  key={p.role}
+                  person={p}
+                  about={t.name}
+                  extra={
+                    isThunderAdmin(user) &&
+                    p.coachId !== user.coachId && <ViewAsButton coachId={p.coachId} name={`${p.first} ${p.last}`} />
+                  }
+                  chatKey={
+                    (p.role === "HeadCoach" || p.role === "AsstCoach") && p.coachId !== user.coachId
+                      ? dmKey(user.coachId, p.coachId)
+                      : undefined
                   }
                 />
               ))}
-            </ul>
-          </section>
+              lead={t.staff.length > 0 && <GroupTextButton small cells={t.staff.map((p) => p.cell)} label="Text coaches" />}
+              roster={{ count: t.players.length, list: <TeamRosterList team={t} who={who} /> }}
+              schedule={{
+                items: (schedules[t.id] ?? []).length + (practices[t.id] ?? []).length,
+                list: <ScheduleList games={schedules[t.id] ?? []} practices={practices[t.id] ?? []} today={today} />,
+              }}
+              chat={t.staff.length > 0 ? { chatKey: `staff-${user.coachId}-${t.id}`, label: `Chat with ${t.name} staff` } : undefined}
+              notify={t.staff.length > 0 ? { teams: [t.id] } : undefined}
+            />
+            )}
+          />
         )}
         {tabs.current === "register" && progs && <RegisterPrograms org="thunder" progs={progs} />}
         {imports.length > 0 && (
-          <section className={`${card} mt-4 p-4`}>
-            <h2 className="font-semibold">Recent imports</h2>
-            <ul className="divide-y divide-zinc-100 dark:divide-white/5">
-              {imports.map((i) => (
-                <li key={i.id} className="flex items-start justify-between gap-3 py-2 text-sm">
-                  <TeamsIncluded
-                    names={i.names}
-                    summary={
-                      <>
-                        {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"}
-                        {who && ` · by ${i.importedBy}`}
-                        {i.left < i.teams && ` · ${i.left} still here`}
-                      </>
-                    }
-                  />
-                  {i.left > 0 && (
-                    <UndoImportButton
-                      undo={undoThunderImport.bind(null, i.id)}
-                      teams={i.left}
-                      when={when(i.importedAt)}
-                      note="Teams with players or booked practices are kept (remove those first)."
+          <div className="mt-4">
+            <CollapseCard title="Recent imports" count={imports.length}>
+              <ul className="divide-y divide-zinc-100 px-4 pb-2 dark:divide-white/5">
+                {imports.map((i) => (
+                  <li key={i.id} className="flex items-start justify-between gap-3 py-2 text-sm">
+                    <TeamsIncluded
+                      names={i.names}
+                      summary={
+                        <>
+                          {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"}
+                          {who && ` · by ${i.importedBy}`}
+                          {i.left < i.teams && ` · ${i.left} still here`}
+                        </>
+                      }
                     />
-                  )}
-                </li>
-              ))}
-            </ul>
-          </section>
+                    {i.left > 0 && (
+                      <UndoImportButton
+                        undo={undoThunderImport.bind(null, i.id)}
+                        teams={i.left}
+                        when={when(i.importedAt)}
+                        note="Teams with players or booked practices are kept (remove those first)."
+                      />
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </CollapseCard>
+          </div>
         )}
       </main>
     </>

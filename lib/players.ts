@@ -25,6 +25,15 @@ export type MemberPlayer = PlayerListItem & {
   gradeSort: number;
   interestedTeams: string[]; // teams that marked them Interested (shown on unrostered players)
   playsUp: string | null; // "3rd grader" when rostered on a team of another grade
+  // More from registration, shown when the player's card is opened (Members → Players).
+  parent2Name: string | null;
+  parent2Cell: string | null;
+  parent2Email: string | null;
+  address: string | null; // "12 Main St, Chattanooga 37411"
+  uniformSize: string | null;
+  uniformNumber: string | null;
+  totalFees: string | null; // "185.00"
+  amountRemaining: string | null;
 };
 export type GradeTeam = { id: string; name: string; players: MemberPlayer[] };
 export type GradeGroup = { gender: "Boys" | "Girls"; grade: string; unrostered: MemberPlayer[]; teams: GradeTeam[] };
@@ -48,13 +57,19 @@ export async function listPlayersByGrade(
 }> {
   if (!hasArea(viewer, "players", "teams")) throw new Error("Director only");
   const r = await db.query<
-    PlayerListItem & { gradeSort: number; teamId: string | null; teamGrade: number | null; interestedTeams: string[] }
+    PlayerListItem &
+      Omit<MemberPlayer, keyof PlayerListItem | "playsUp"> & { teamId: string | null; teamGrade: number | null }
   >(
     `select r.registrant_id as "registrantId", r.first_name as "firstName", r.last_name as "lastName", r.gender, r.grade,
             r.grade_sort as "gradeSort", to_char(r.birthdate, 'YYYY-MM-DD') as birthdate,
             nullif(trim(coalesce(r.parent1_first, '') || ' ' || coalesce(r.parent1_last, '')), '') as "parentName",
             r.parent1_cell as "parentCell", r.parent1_email as "parentEmail",
             r.coach_request as "coachRequest", r.coaching_interest as "coachingInterest",
+            nullif(trim(coalesce(r.parent2_first, '') || ' ' || coalesce(r.parent2_last, '')), '') as "parent2Name",
+            r.parent2_cell as "parent2Cell", r.parent2_email as "parent2Email",
+            nullif(concat_ws(', ', nullif(trim(r.address), ''), nullif(trim(concat_ws(' ', nullif(trim(r.city), ''), nullif(trim(r.zip), ''))), '')), '') as address,
+            nullif(trim(r.uniform_size), '') as "uniformSize", nullif(trim(r.uniform_number), '') as "uniformNumber",
+            r.total_fees::text as "totalFees", r.amount_remaining::text as "amountRemaining",
             r.added_by as "addedBy", r.fees_waived_by as "feesWaivedBy",
             t.id::text as "teamId", t.name as team, t.grade_sort as "teamGrade",
             array(select t2.name from evaluations e join teams t2 on t2.id = e.team_id

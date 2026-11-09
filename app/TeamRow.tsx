@@ -1,16 +1,22 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Chip } from "./ui";
+import { Chip, GroupCard } from "./ui";
+import TeamRowMore, { type CardToggle } from "./TeamRowMore";
+import ChatPanel from "./ChatPanel";
+import { BellIcon, NotifyPanel } from "./NotifyButton";
+import type { AudienceInput } from "@/lib/announcements";
 
 // What a team still needs, flashing red until it's done.
 export function MustBeEntered({ what }: { what: "COACH INFO" | "COACH CELL" | "COACH EMAIL" | "ROSTER" }) {
   return <span className="block animate-pulse text-sm font-semibold text-red-600 dark:text-red-400">{what} MUST BE ENTERED</span>;
 }
 
-// One team on a Teams page, the same for Thunder and every organization: its grade/gender badge, name (and Alternate
-// name), level, grades and practice places, its staff (`people`) and buttons (`actions`), and what it still needs:
-// a Head Coach (COACH INFO MUST BE ENTERED), their cell when named without one (COACH CELL), their email (COACH EMAIL)
-// and players (ROSTER MUST BE ENTERED).
+// One team on a Teams page, the same for Thunder and every organization. One line: its grade/gender badge, name (and
+// Alternate name; both open the team page), its buttons (`lead`: Text coaches; `roster`: the 👥 count, which opens the roster on the card; `actions`: chat,
+// notify) and the
+// chevron. Opened: level, grades (when more than one) and practice places (`sub`), its staff (`people`) and what it
+// still needs, flashing red: a Head Coach (COACH INFO MUST BE ENTERED), their cell when named without one (COACH CELL),
+// their email (COACH EMAIL) and players (ROSTER MUST BE ENTERED).
 export default function TeamRow({
   href,
   name,
@@ -23,6 +29,11 @@ export default function TeamRow({
   needsEmail,
   players,
   people,
+  lead,
+  roster,
+  schedule,
+  chat,
+  notify,
   actions,
 }: {
   href: string;
@@ -30,58 +41,158 @@ export default function TeamRow({
   altName: string | null;
   gender: "Boys" | "Girls" | "Coed";
   level: string;
-  sub: string; // e.g. "2nd Grade · Action Church"
+  sub: string; // e.g. "4th–5th Grade · Action Church" ("" for one grade and no places)
   hasCoach: boolean;
   waitingCoach?: string | null; // a Head Coach named without a cell yet ("Alex Campbell")
   needsEmail?: boolean; // the Head Coach (or the one waiting) has no email
   players: number;
   people?: ReactNode;
-  actions?: ReactNode;
+  lead?: ReactNode; // first button (Text coaches)
+  roster?: { count: number; list: ReactNode }; // the 👥 count; tapping it opens `list` on the card
+  schedule?: { items: number; list: ReactNode }; // 📅 by it: published League games and upcoming practices, on the card
+  chat?: { chatKey: string; label: string }; // its staff chat, opened on the card
+  notify?: AudienceInput; // 🔔 an announcement to the team, written on the card
+  actions?: ReactNode; // after the toggles
 }) {
+  const ring = "inline-flex size-7 shrink-0 items-center justify-center rounded-full ring-1";
+  const toggles: CardToggle[] = [
+    ...(roster
+      ? [
+          {
+            key: "roster",
+            label: `${name} roster, ${roster.count} ${roster.count === 1 ? "player" : "players"}`,
+            icon: <span className="text-xs font-semibold tabular-nums">👥 {roster.count}</span>,
+            className: `${ring} h-7 w-auto px-2.5 text-zinc-600 ring-zinc-950/15 hover:bg-zinc-100 dark:text-zinc-300 dark:ring-white/20 dark:hover:bg-white/10`,
+            panel: roster.list,
+          },
+        ]
+      : []),
+    ...(schedule
+      ? [
+          {
+            key: "schedule",
+            label: schedule.items ? "Schedule" : "Schedule: no games published or practices booked yet",
+            icon: <CalendarIcon />,
+            className: `${ring} ring-zinc-950/15 hover:bg-zinc-100 dark:ring-white/20 dark:hover:bg-white/10 ${
+              schedule.items ? "text-thunder-blue dark:text-blue-400" : "text-zinc-300 dark:text-zinc-600"
+            }`,
+            panel: schedule.list,
+          },
+        ]
+      : []),
+    ...(chat
+      ? [
+          {
+            key: "chat",
+            label: chat.label,
+            icon: <ChatIcon />,
+            className: `${ring} text-thunder-blue ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10`,
+            panel: <ChatPanel chatKey={chat.chatKey} />,
+          },
+        ]
+      : []),
+    ...(notify
+      ? [
+          {
+            key: "notify",
+            label: `Notify ${name}`,
+            icon: <BellIcon className="size-4" />,
+            className: `${ring} text-thunder-orange ring-thunder-orange/40 hover:bg-orange-50 dark:hover:bg-orange-500/10`,
+            panel: <NotifyPanel audience={notify} to={name} />,
+          },
+        ]
+      : []),
+  ];
   return (
-    <li className="px-4 py-3">
-      <Link href={href} className="-mx-2 flex gap-3 rounded-xl px-2 py-1 hover:bg-zinc-50 dark:hover:bg-white/5">
-        <span
-          className={`flex size-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white ${
-            gender === "Boys" ? "bg-thunder-blue" : gender === "Coed" ? "bg-emerald-600" : "bg-pink-600"
-          }`}
-        >
-          {name.split(" ")[0]}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <p className="truncate font-semibold">
+    <li className="px-4 py-2.5">
+      <TeamRowMore
+        head={
+          <>
+            <span
+              className={`flex size-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold text-white ${
+                gender === "Boys" ? "bg-thunder-blue" : gender === "Coed" ? "bg-emerald-600" : "bg-pink-600"
+              }`}
+            >
+              {name.split(" ")[0]}
+            </span>
+            <span className="truncate font-semibold">
               {name}
               {altName && <span className="font-normal text-zinc-500"> · {altName}</span>}
-            </p>
-            <Chip tone={level === "COMP" ? "orange" : "zinc"}>{level}</Chip>
-          </div>
-          <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">{sub}</p>
-        </div>
-        <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden className="mt-3 size-5 shrink-0 text-zinc-300">
-          <path
-            fillRule="evenodd"
-            d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z"
-            clipRule="evenodd"
-          />
-        </svg>
-      </Link>
-      <div className="mt-1.5 flex items-start gap-2 pl-12">
-        <div className="flex flex-1 flex-col gap-1">
-          {people && <div className="flex flex-wrap gap-x-1 gap-y-1">{people}</div>}
-          {waitingCoach && (
-            <span className="text-sm text-zinc-600 dark:text-zinc-300">
-              Head Coach {waitingCoach} <span className="text-zinc-400">· no cell yet</span>
             </span>
-          )}
-          {!hasCoach && !waitingCoach && <MustBeEntered what="COACH INFO" />}
-          {waitingCoach && <MustBeEntered what="COACH CELL" />}
-          {(waitingCoach || needsEmail) && <MustBeEntered what="COACH EMAIL" />}
-          {!players && <MustBeEntered what="ROSTER" />}
-        </div>
-        {actions}
-      </div>
+          </>
+        }
+        lead={lead}
+        toggles={toggles}
+        actions={
+          <>
+            {actions}
+            {/* The team page, last before the chevron. */}
+            <Link
+              href={href}
+              aria-label={`${name}: team page`}
+              title="Team page"
+              className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-zinc-600 ring-1 ring-zinc-950/15 hover:bg-zinc-100 dark:text-zinc-300 dark:ring-white/20 dark:hover:bg-white/10"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden className="size-4">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
+                />
+              </svg>
+            </Link>
+          </>
+        }
+        more={
+          <>
+            {/* One line: the level, then its staff (grades and places, when shown, after the level). */}
+            <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
+              <Chip tone={level === "COMP" ? "orange" : "zinc"}>{level}</Chip>
+              {sub && <span className="mr-1 text-sm text-zinc-500 dark:text-zinc-400">{sub}</span>}
+              {people}
+            </div>
+            {waitingCoach && (
+              <span className="text-sm text-zinc-600 dark:text-zinc-300">
+                Head Coach {waitingCoach} <span className="text-zinc-400">· no cell yet</span>
+              </span>
+            )}
+            {!hasCoach && !waitingCoach && <MustBeEntered what="COACH INFO" />}
+            {waitingCoach && <MustBeEntered what="COACH CELL" />}
+            {(waitingCoach || needsEmail) && <MustBeEntered what="COACH EMAIL" />}
+            {!players && <MustBeEntered what="ROSTER" />}
+          </>
+        }
+      />
     </li>
+  );
+}
+
+// A Teams page tab's teams grouped by grade (each team under its top grade, the one on its badge), youngest first as
+// listed, one card per grade with how many, each collapsed (tap to open).
+export function GradeGroups<T>({
+  teams,
+  grade,
+  row,
+}: {
+  teams: T[];
+  grade: (t: T) => string; // e.g. "1st Grade"
+  row: (t: T) => ReactNode;
+}) {
+  const groups: { label: string; teams: T[] }[] = [];
+  for (const t of teams) {
+    const label = grade(t);
+    let g = groups.find((x) => x.label === label);
+    if (!g) groups.push((g = { label, teams: [] }));
+    g.teams.push(t);
+  }
+  return (
+    <div className="space-y-3">
+      {groups.map((g) => (
+        <GroupCard key={g.label} title={g.label} count={g.teams.length} defaultOpen={false}>
+          {g.teams.map(row)}
+        </GroupCard>
+      ))}
+    </div>
   );
 }
 
@@ -138,5 +249,29 @@ export function TeamsTabs({
         </Link>
       ))}
     </nav>
+  );
+}
+
+function CalendarIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden className="size-4">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5"
+      />
+    </svg>
+  );
+}
+
+function ChatIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden className="size-4">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z"
+      />
+    </svg>
   );
 }

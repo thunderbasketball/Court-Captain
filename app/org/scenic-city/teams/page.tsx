@@ -20,7 +20,7 @@ import { TZ } from "@/lib/time";
 import AppHeader from "../../../AppHeader";
 import AddTeamButton from "../../../AddTeam";
 import { ImportTeamsButton, UndoImportButton } from "../../../TeamImport";
-import { GroupCard, PageTitle, PhoneLink, TeamName, card } from "../../../ui";
+import { CollapseCard, GroupCard, PageTitle, PhoneLink, TeamName } from "../../../ui";
 import { DeleteTeam, TeamEditor } from "./TeamEditor";
 import { addClubTeam, importClubTeams, previewClubImport, undoClubImport } from "../actions";
 
@@ -239,33 +239,34 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
         </div>
 
         {imports && imports.length > 0 && (
-          <section className={`${card} mt-4 p-4`}>
-            <h2 className="font-semibold">Recent imports</h2>
-            <ul className="divide-y divide-zinc-100 dark:divide-white/5">
-              {imports.map((i) => (
-                <li key={i.id} className="flex items-start justify-between gap-3 py-2 text-sm">
-                  <TeamsIncluded
-                    names={i.names}
-                    summary={
-                      <>
-                        {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"}
-                        {who && ` · by ${i.importedBy}`}
-                        {i.left < i.teams && ` · ${i.left} still here`}
-                      </>
-                    }
-                  />
-                  {i.left > 0 && (
-                    <UndoImportButton
-                      undo={undoClubImport.bind(null, i.id)}
-                      teams={i.left}
-                      when={when(i.importedAt)}
-                      note="Teams registered in a program are kept (withdraw them first)."
+          <div className="mt-4">
+            <CollapseCard title="Recent imports" count={imports.length}>
+              <ul className="divide-y divide-zinc-100 px-4 pb-2 dark:divide-white/5">
+                {imports.map((i) => (
+                  <li key={i.id} className="flex items-start justify-between gap-3 py-2 text-sm">
+                    <TeamsIncluded
+                      names={i.names}
+                      summary={
+                        <>
+                          {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"}
+                          {who && ` · by ${i.importedBy}`}
+                          {i.left < i.teams && ` · ${i.left} still here`}
+                        </>
+                      }
                     />
-                  )}
-                </li>
-              ))}
-            </ul>
-          </section>
+                    {i.left > 0 && (
+                      <UndoImportButton
+                        undo={undoClubImport.bind(null, i.id)}
+                        teams={i.left}
+                        when={when(i.importedAt)}
+                        note="Teams registered in a program are kept (withdraw them first)."
+                      />
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </CollapseCard>
+          </div>
         )}
       </main>
     </>

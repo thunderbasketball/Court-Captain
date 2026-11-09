@@ -5,6 +5,7 @@ import type { SessionUser } from "./auth/service";
 import { cleanEmail, cleanName } from "./auth/validate";
 import { normalizeCell } from "./phone";
 import { withTx } from "./sql";
+import { parent, type Parent } from "./rosters";
 import {
   GRADES,
   LEVELS,
@@ -58,7 +59,16 @@ export type TeamListItem = {
   headCoach: { first: string; last: string; cell: string } | null;
   waitingCoach: { first: string; last: string } | null; // named without a cell yet: COACH CELL MUST BE ENTERED
   staff: Contact[]; // Head Coach, Assistant, Manager, Team Parent order
-  players: { registrantId: string; first: string; last: string; grade: string; rosteredBy: string }[]; // by last name
+  // By last name; each with its registration's parents (name, cell, email) and coach request, opened on the Teams page.
+  players: {
+    registrantId: string;
+    first: string;
+    last: string;
+    grade: string;
+    rosteredBy: string;
+    parents: Parent[];
+    coachRequest: string | null;
+  }[];
 };
 
 export type Contact = { coachId: string; role: Role; first: string; last: string; cell: string; email: string | null };
@@ -75,15 +85,24 @@ export async function listTeams(deps: Deps, viewer: SessionUser): Promise<TeamLi
                                                         'cell', u.cell, 'email', u.email) order by ${roleOrder})
                       from team_staff s join users u on u.coach_id = s.coach_id where s.team_id = t.id), '[]') as staff,
             coalesce((select json_agg(json_build_object('registrantId', p.registrant_id, 'first', p.first_name, 'last', p.last_name,
-                                                        'grade', p.grade, 'rosteredBy', p.rostered_by)
+                                                        'grade', p.grade, 'rosteredBy', p.rostered_by,
+                                                        'coachRequest', nullif(trim(g.coach_request), ''),
+                                                        'p', json_build_array(g.parent1_first, g.parent1_last, g.parent1_cell, g.parent1_email,
+                                                                              g.parent2_first, g.parent2_last, g.parent2_cell, g.parent2_email))
                                       order by lower(p.last_name), lower(p.first_name))
-                      from team_players p where p.team_id = t.id), '[]') as players
+                      from team_players p left join registrations g on g.registrant_id = p.registrant_id
+                      where p.team_id = t.id), '[]') as players
      from teams t
      order by t.level = 'COMP' desc, t.gender, t.grade_sort, lower(t.name)`,
   );
   return r.rows.map((t) => {
     const h = t.staff.find((s) => s.role === "HeadCoach");
-    return { ...t, grades: sortGrades(t.grades), headCoach: h ? { first: h.first, last: h.last, cell: h.cell } : null };
+    // Each player's parents from registration (a real cell and email only).
+    const players = (t.players as (TeamListItem["players"][number] & { p: (string | null)[] })[]).map(({ p, ...x }) => ({
+      ...x,
+      parents: [parent(p[0], p[1], p[2], p[3]), parent(p[4], p[5], p[6], p[7])].filter((v): v is Parent => !!v),
+    }));
+    return { ...t, players, grades: sortGrades(t.grades), headCoach: h ? { first: h.first, last: h.last, cell: h.cell } : null };
   });
 }
 
@@ -156,7 +175,11 @@ export async function personOptions(
   const users = await deps.pool.query<PersonOption>(
     `select 'user:' || coach_id as value, first_name as "firstName", last_name as "lastName",
             case when has_role(coach_id, 'thunder', 'Director') then 'Director' when has_role(coach_id, 'thunder', 'Coach') then 'Coach' else 'User' end as detail
-     from users where active order by lower(last_name), lower(first_name)`,
+     from users
+     where active
+       and (exists (select 1 from org_roles o where o.coach_id = users.coach_id and o.org = 'thunder')
+            or exists (select 1 from team_staff s where s.coach_id = users.coach_id))
+     order by lower(last_name), lower(first_name)`,
   );
   const volunteers = await deps.pool.query<PersonOption>(
     `select distinct on (r.parent1_cell) 'volunteer:' || r.registrant_id as value,

@@ -103,6 +103,14 @@ describe("teams", () => {
     ]);
     // Now a user, so no longer offered as a volunteer.
     expect((await personOptions(deps(), director)).volunteers).toEqual([]);
+    // Users: only Thunder's active people (a Thunder role or a team spot); a login from another organization isn't offered.
+    await db.pool.query(
+      "insert into users (coach_id, first_name, last_name, cell) values ('5559999', 'Out', 'Side', '4235559999')",
+    );
+    await db.pool.query("select set_role('5559999', 'scenic-city', 'Coach', true, 'test')");
+    const users = (await personOptions(deps(), director)).users.map((u) => u.value);
+    expect(users).toContain("user:5550000");
+    expect(users).not.toContain("user:5559999");
   });
 
   it("gives an existing user the Coach role when they become a head coach", async () => {

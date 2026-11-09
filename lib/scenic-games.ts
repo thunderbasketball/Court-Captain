@@ -14,6 +14,7 @@ export type ScheduledGame = {
   court: string | null;
   address: string | null;
   starts: string | null; // "HH:MM" Eastern
+  published: boolean; // its League's schedule is published (a Director of Programs or Scheduling did)
 };
 
 // Where a game slot is: a partner's court ("123"), or an organization's gym court ("o39-12") or whole gym ("o39-gym").
@@ -33,7 +34,8 @@ export async function scheduledGames(q: Pick<Pool, "query">, teamIds: string[]):
   const r = await q.query<Omit<ScheduledGame, "opponentGroup"> & { team: string; grade: number | null; level: string | null }>(
     `select x.me::text as team, p.id::text as "programId", p.name as program, m.day::text as date,
             coalesce(o.name, 'TBD') as opponent, coalesce(m.home_side, 'a') = x.side as home,
-            gg.grade, gg.level, place.gym, place.court, place.address, to_char(m.starts, 'HH24:MI') as starts
+            gg.grade, gg.level, place.gym, place.court, place.address, to_char(m.starts, 'HH24:MI') as starts,
+            p.schedule_published_at is not null as published
        from scenic_matchups m
        cross join lateral (values (m.team_a, m.team_b, 'a'), (m.team_b, m.team_a, 'b')) x (me, other, side)
        join scenic_programs p on p.id = m.program_id

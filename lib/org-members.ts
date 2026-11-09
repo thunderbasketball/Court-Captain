@@ -23,6 +23,12 @@ export async function listOrgMembers(
                                        order by lower(t.name))
                       from org_team_coaches c join org_teams t on t.id = c.team_id
                       where c.coach_id = u.coach_id and t.org = $1), '{}') as teams,
+            coalesce((select json_agg(json_build_object(
+                               'id', t.id::text, 'gender', t.gender, 'grade', t.grade,
+                               'label', t.name || ' · ' || case c.role when 'HeadCoach' then 'Head Coach' else 'Asst Coach' end)
+                               order by lower(t.name))
+                      from org_team_coaches c join org_teams t on t.id = c.team_id
+                      where c.coach_id = u.coach_id and t.org = $1), '[]') as "teamLinks",
             false as "scenicCity", u.updated_by as "updatedBy", null as "joinReason", false as "joinTeamListed"
      from users u
      where (exists (select 1 from org_roles o where o.coach_id = u.coach_id and o.org = $1)

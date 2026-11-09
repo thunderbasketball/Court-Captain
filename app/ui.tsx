@@ -1,6 +1,7 @@
 // Shared building blocks so every page looks the same.
 import type { ReactNode } from "react";
 import Link from "next/link";
+import MoreToggle from "./MoreToggle";
 
 export const fieldLabel = "mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300";
 export const inputCls =
@@ -39,11 +40,21 @@ export function Chip({ tone = "zinc", children }: { tone?: Tone; children: React
   );
 }
 
-export function Avatar({ first, last, tone = "zinc" }: { first?: string | null; last?: string | null; tone?: Tone }) {
+export function Avatar({
+  first,
+  last,
+  tone = "zinc",
+  small,
+}: {
+  first?: string | null;
+  last?: string | null;
+  tone?: Tone;
+  small?: boolean; // the height of a name line (collapsed cards)
+}) {
   const initials = `${first?.[0] ?? ""}${last?.[0] ?? ""}`.toUpperCase() || "?";
   return (
     <span
-      className={`flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold ring-1 ring-inset ${tones[tone]}`}
+      className={`flex ${small ? "size-7 text-[11px]" : "size-10 text-sm"} shrink-0 items-center justify-center rounded-full font-semibold ring-1 ring-inset ${tones[tone]}`}
     >
       {initials}
     </span>
@@ -82,16 +93,18 @@ export function GroupCard({
   count,
   children,
   defaultOpen = true,
+  action,
 }: {
   title: ReactNode;
   count: number;
   children: ReactNode;
   defaultOpen?: boolean;
+  action?: ReactNode; // a button on the title line, left of the count (outside the summary, so tapping it doesn't toggle)
 }) {
-  return (
+  const box = (
     <details className={`${card} group overflow-hidden`} open={defaultOpen}>
       <summary className="flex cursor-pointer select-none items-center justify-between gap-3 px-4 py-3">
-        <span className="font-semibold">{title}</span>
+        <span className={`font-semibold ${action ? "min-w-0 pr-32" : ""}`}>{title}</span>
         <span className="flex items-center gap-2">
           <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium tabular-nums text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
             {count}
@@ -113,6 +126,59 @@ export function GroupCard({
       <ul className="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-white/5 dark:border-white/5">{children}</ul>
     </details>
   );
+  if (!action) return box;
+  return (
+    <div className="relative">
+      {box}
+      <div className="absolute top-2 right-20">{action}</div>
+    </div>
+  );
+}
+
+// A section of a page as a card that opens when tapped (e.g. a team page's Staff, Players, Practices): its title with
+// a count, an optional button on the title line (outside the summary, so tapping it doesn't open or close the card),
+// and `alert` flashes the title red (something must be entered). Children go in as they are.
+export function CollapseCard({
+  title,
+  count,
+  action,
+  open = false,
+  alert = false,
+  children,
+}: {
+  title: string;
+  count?: number;
+  action?: ReactNode;
+  open?: boolean;
+  alert?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="relative">
+      <details className={`${card} group overflow-hidden`} open={open}>
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+          <span className={`font-semibold ${alert ? "animate-pulse text-red-600 dark:text-red-400" : ""} ${action ? "pr-36" : ""}`}>
+            {title}
+            {count !== undefined && <span className="font-normal text-zinc-500"> ({count})</span>}
+          </span>
+          <svg
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            aria-hidden
+            className="size-5 shrink-0 text-zinc-400 transition-transform group-open:rotate-180"
+          >
+            <path
+              fillRule="evenodd"
+              d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z"
+              clipRule="evenodd"
+            />
+          </svg>
+        </summary>
+        <div className="pt-1">{children}</div>
+      </details>
+      {action && <div className="absolute top-2 right-11">{action}</div>}
+    </div>
+  );
 }
 
 // One person in a list: initials circle, name, chips on the right, detail lines below.
@@ -124,6 +190,8 @@ export function PersonRow({
   dim,
   under,
   href,
+  collapsed,
+  always,
   children,
 }: {
   first?: string | null;
@@ -133,15 +201,45 @@ export function PersonRow({
   dim?: boolean;
   under?: ReactNode; // shown just under the initials circle (e.g. the 👁 View-as button)
   href?: string; // tapping the initials opens this (e.g. the person's dashboard, for Admins)
+  collapsed?: boolean; // only `always` shows, with a chevron that opens the rest (children)
+  always?: ReactNode;
   children?: ReactNode;
 }) {
   const avatar = href ? (
     <Link href={href} aria-label={`${first ?? ""} ${last ?? ""}: dashboard`} className="shrink-0 rounded-full hover:opacity-80">
-      <Avatar first={first} last={last} tone={avatarTone} />
+      <Avatar first={first} last={last} tone={avatarTone} small={collapsed} />
     </Link>
   ) : (
-    <Avatar first={first} last={last} tone={avatarTone} />
+    <Avatar first={first} last={last} tone={avatarTone} small={collapsed} />
   );
+  const name = (
+    <span className="block truncate">
+      {first} <span className="font-semibold">{last}</span>
+    </span>
+  );
+  // Collapsed: a small initials circle, and the chevron at the far right of the name line (one line when closed).
+  if (collapsed)
+    return (
+      <li className={dim ? "opacity-50" : undefined}>
+        <MoreToggle
+          lead={
+            under ? (
+              <div className="flex shrink-0 flex-col items-center gap-2">
+                {avatar}
+                {under}
+              </div>
+            ) : (
+              avatar
+            )
+          }
+          name={name}
+          chips={chips}
+          always={always}
+        >
+          {children}
+        </MoreToggle>
+      </li>
+    );
   return (
     <li className={`flex gap-3 px-4 py-3 ${dim ? "opacity-50" : ""}`}>
       {under ? (
@@ -159,7 +257,9 @@ export function PersonRow({
           </p>
           {chips && <div className="flex flex-wrap justify-end gap-1">{chips}</div>}
         </div>
-        <div className="mt-0.5 space-y-0.5 text-sm text-zinc-500 dark:text-zinc-400">{children}</div>
+        <div className="mt-0.5 space-y-0.5 text-sm text-zinc-500 dark:text-zinc-400">
+          {children}
+        </div>
       </div>
     </li>
   );

@@ -1,6 +1,8 @@
 import type { ScheduledGame } from "@/lib/scenic-games";
 import { shortDate } from "@/lib/program-options";
-import { timeLabel } from "@/lib/time";
+import type { ReactNode } from "react";
+import type { TeamPractice } from "@/lib/practice/schedule";
+import { easternDate, localParts, timeLabel } from "@/lib/time";
 import { TeamName } from "./ui";
 
 // Where and when a League game is: "9:00 AM · East Hamilton High School · Main", or not set yet.
@@ -64,5 +66,65 @@ export function LeagueGames({ games, today }: { games: ScheduledGame[]; today: s
         ))}
       </ul>
     </details>
+  );
+}
+
+// A team card's schedule (Teams page, opened by its 📅): its published League games (opponent, time and gym; past ones
+// greyed) and upcoming practices (time, gym and court), together by date and time.
+export function ScheduleList({
+  games,
+  practices,
+  today,
+}: {
+  games: ScheduledGame[];
+  practices: TeamPractice[];
+  today: string;
+}) {
+  type Item = { date: string; time: string; node: ReactNode };
+  const items: Item[] = [
+    ...games.map((g) => ({
+      date: g.date,
+      time: g.starts ?? "99:99",
+      node: (
+        <>
+          <HomeAway home={g.home} />{" "}
+          <span className="font-medium">
+            vs <TeamName name={g.opponent} />
+          </span>{" "}
+          <span className="text-xs text-zinc-500">{g.opponentGroup}</span>
+          {games.some((x) => x.programId !== g.programId) && <span className="text-xs text-zinc-500"> · {g.program}</span>}
+          <GamePlace g={g} />
+        </>
+      ),
+    })),
+    ...practices.map((p) => {
+      const t = localParts(p.startsAt);
+      const time = `${String(t.hour).padStart(2, "0")}:${String(t.minute).padStart(2, "0")}`;
+      return {
+        date: easternDate(p.startsAt),
+        time,
+        node: (
+          <>
+            <span className="rounded bg-blue-100 px-1 text-[10px] font-bold text-blue-800 uppercase dark:bg-blue-500/15 dark:text-blue-300">
+              Practice
+            </span>{" "}
+            <span className="block text-zinc-600 dark:text-zinc-300">
+              {timeLabel(time)} · {p.gym} · {p.court}
+            </span>
+          </>
+        ),
+      };
+    }),
+  ].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
+  if (!items.length) return <p className="text-sm text-zinc-500">No games published or practices booked yet.</p>;
+  return (
+    <ul className="divide-y divide-zinc-100 rounded-xl bg-zinc-50 px-3 text-sm dark:divide-white/5 dark:bg-white/5">
+      {items.map((x, i) => (
+        <li key={i} className={`flex gap-3 py-1.5 ${x.date < today ? "opacity-50" : ""}`}>
+          <span className="w-14 shrink-0 text-zinc-500">{shortDate(x.date)}</span>
+          <span className="min-w-0">{x.node}</span>
+        </li>
+      ))}
+    </ul>
   );
 }

@@ -11,10 +11,17 @@ import { ResetLoginButton } from "./ResetLoginButton";
 import { ViewAsButton } from "./ViewAsButton";
 import { AddUserButton, ApproveJoinButton, EditUserButton } from "./users/UserEditor";
 import { Chip, EmailLink, GroupCard, PageTitle, PersonRow, PhoneLink, Stats } from "./ui";
+import GearPopUp from "./GearPopUp";
+import Link from "next/link";
+import { gradeLabel } from "@/lib/grades";
+import { gradeStr } from "@/lib/team-names";
 
-// Members → Staff: Admins & Directors, then access requests, other logins (no team role; collapsed) and inactive Directors.
-// Members → Coaches: `view="coaches"` Active Coaches and Team Managers & Parents; `view="inactive-coaches"` every other
-// inactive login. Each group sorted by last name.
+// Members → Staff: Admins & Directors, then access requests, other logins (no team role) and inactive Directors; laid out
+// like Coaches: each group collapsed, each person's card collapsed (👁 and the gear with Edit and Reset login on the name
+// line; their Director role and area tools, contact and Chat inside).
+// Members → Coaches: `view="coaches"` coaches, Team Managers and Parents grouped by grade, then on a card per team;
+// `view="inactive-coaches"` every other inactive login. Each group sorted by last name. Coach cards are collapsed with
+// Edit and Reset login under a gear; team pills open the team's page.
 // Edit and View as are for Admins only. `orgAdmin` (another organization's list): View as for its Owners and Admins;
 // Edit, Approve and Chat stay Thunder's. 🔑 Reset login under 👁 for whoever the viewer may reset (lib/login-reset.ts).
 // `team` (Admins only): each Director's role and area tools in their row, and + Add Admin / + Add Director by the title.
@@ -68,100 +75,223 @@ export default async function UserList({
   const inactive = users.filter((u) => !u.active && u.director);
   const inactiveCoaches = users.filter((u) => !u.active && !u.director);
 
-  const rows = (list: UserListItem[]) =>
-    list.map((u) => (
-      <PersonRow
-        key={u.coachId}
-        first={u.firstName}
-        last={u.lastName}
-        avatarTone={u.director ? "blue" : u.coach ? "green" : "zinc"}
-        href={admin ? (u.coachId === viewer.coachId ? "/me" : `/me/${u.coachId}`) : undefined}
-        dim={!u.active}
-        under={
-          admin &&
-          u.coachId !== viewer.coachId && (
-            <>
-              {u.active && <ViewAsButton coachId={u.coachId} name={`${u.firstName} ${u.lastName}`} />}
-              {slug && canReset.has(u.coachId) && (
-                <ResetLoginButton org={slug} coachId={u.coachId} name={`${u.firstName} ${u.lastName}`} />
-              )}
-            </>
-          )
-        }
-        chips={
-          <>
-            {u.director && (
-              <Chip tone="blue">{roleOf(u.coachId)?.owner ? "Owner" : roleOf(u.coachId)?.admin ? "Admin" : "Director"}</Chip>
-            )}
-            {u.coach && <Chip tone="green">Coach</Chip>}
-            {requests.includes(u) && <Chip tone="amber">Pending</Chip>}
-            {!u.active && <Chip tone="red">Inactive</Chip>}
-          </>
-        }
-      >
-        {team && roleOf(u.coachId) && (
-          <DirectorRole
-            org={team.org}
-            orgName={team.orgName}
-            person={roleOf(u.coachId)!}
-            areas={team.areas}
-            canManageAdmins={team.canManageAdmins}
-          />
-        )}
-        {u.joinReason && <p className="font-medium text-amber-800 dark:text-amber-300">{u.joinReason}</p>}
-        <p>
-          <PhoneLink cell={u.cell} label={formatCell(u.cell)} />
-        </p>
-        <p className="truncate">
-          {u.email ? <EmailLink email={u.email} /> : "No email"}
-          {u.email &&
-            (u.verified ? <span className="text-emerald-600 dark:text-emerald-400"> ✓ verified</span> : " · not verified")}
-        </p>
-        <div className="flex items-end justify-between gap-2 pt-1">
-          <div className="flex flex-wrap gap-1">
-            {u.teams.map((t) => (
-              <Chip key={t} tone="orange">
-                {t}
-              </Chip>
-            ))}
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {thunder &&
-              u.active &&
-              u.coachId !== viewer.coachId &&
-              (u.coach || u.teams.some((t) => /(Head|Assistant) Coach$/.test(t))) && (
-                <ChatLink chatKey={`coach-${u.coachId}`} label={`Chat with ${u.firstName} ${u.lastName}`} />
-              )}
-            {thunder && admin && u.joinTeamListed && <ApproveJoinButton coachId={u.coachId} label="Approve onto team" />}
-            {thunder && admin && (
-              <EditUserButton
-                user={admin ? u : { ...u, updatedBy: null }}
-                isSelf={u.coachId === viewer.coachId}
-                deleteBlocker={deleteBlocker(u, viewer)}
-              />
-            )}
-          </div>
-        </div>
-      </PersonRow>
-    ));
-
-  if (view === "coaches")
-    return (
-      <div className="space-y-3">
-        <GroupCard title="Active Coaches" count={coaches.length}>
-          {coaches.length ? rows(coaches) : <li className="px-4 py-3 text-sm text-zinc-500 italic">No coaches yet.</li>}
-        </GroupCard>
-        {helpers.length > 0 && (
-          <GroupCard title="Team Managers & Parents" count={helpers.length}>
-            {rows(helpers)}
-          </GroupCard>
-        )}
+  // A team pill opens that team's page.
+  const teamHref = (id: string) => (thunder ? `/org/thunder/teams/${id}` : `/org/${slug}/teams/${id}`);
+  const teamPills = (u: UserListItem) =>
+    !u.teamLinks?.length && !u.teams.length ? null : (u.teamLinks?.length ?? 0) > 0 ? (
+      <div className="flex flex-wrap gap-1">
+        {u.teamLinks.map((t) => (
+          <Link key={`${t.id}-${t.label}`} href={teamHref(t.id)} className="rounded-full hover:opacity-80">
+            <Chip tone="orange">{t.label}</Chip>
+          </Link>
+        ))}
+      </div>
+    ) : (
+      <div className="flex flex-wrap gap-1">
+        {u.teams.map((t) => (
+          <Chip key={t} tone="orange">
+            {t}
+          </Chip>
+        ))}
       </div>
     );
+
+  // `coachCard` (Members → Coaches): collapsed (name, chips, team pills; the chevron opens cell, email and Chat), and
+  // Edit and Reset login under a gear at the top right, View as (👁) just before it.
+  // `onTeam` (a team card): one pill at the top right, that team and their role on it (e.g. 1B Clemons · Head Coach),
+  // opening the team, in place of the Coach chip and the team pills under the name.
+  const rows = (list: UserListItem[], coachCard = false, onTeam?: string) =>
+    list.map((u) => {
+      const name = `${u.firstName} ${u.lastName}`;
+      const teamLink = onTeam ? u.teamLinks?.find((t) => t.id === onTeam) : undefined;
+      const mayReset = admin && u.coachId !== viewer.coachId && !!slug && canReset.has(u.coachId);
+      const mayEdit = thunder && admin;
+      const gear = coachCard && (mayReset || mayEdit) && (
+        <GearPopUp title={name}>
+          {mayEdit && (
+            <EditUserButton
+              user={admin ? u : { ...u, updatedBy: null }}
+              isSelf={u.coachId === viewer.coachId}
+              deleteBlocker={deleteBlocker(u, viewer)}
+            />
+          )}
+          {mayReset && (
+            <div className="flex items-center gap-2 text-sm">
+              <ResetLoginButton org={slug!} coachId={u.coachId} name={name} />
+              Reset login
+            </div>
+          )}
+        </GearPopUp>
+      );
+      const buttons = (
+        <div className="flex shrink-0 items-center gap-2">
+          {thunder &&
+            u.active &&
+            u.coachId !== viewer.coachId &&
+            (u.coach || u.teams.some((t) => /(Head|Assistant) Coach$/.test(t))) && (
+              <ChatLink chatKey={`coach-${u.coachId}`} label={`Chat with ${name}`} />
+            )}
+          {thunder && admin && u.joinTeamListed && <ApproveJoinButton coachId={u.coachId} label="Approve onto team" />}
+          {!coachCard && mayEdit && (
+            <EditUserButton
+              user={admin ? u : { ...u, updatedBy: null }}
+              isSelf={u.coachId === viewer.coachId}
+              deleteBlocker={deleteBlocker(u, viewer)}
+            />
+          )}
+        </div>
+      );
+      const contact = (
+        <>
+          {u.joinReason && <p className="font-medium text-amber-800 dark:text-amber-300">{u.joinReason}</p>}
+          <p>
+            <PhoneLink cell={u.cell} label={formatCell(u.cell)} />
+          </p>
+          <p className="truncate">
+            {u.email ? <EmailLink email={u.email} /> : "No email"}
+            {u.email &&
+              (u.verified ? <span className="text-emerald-600 dark:text-emerald-400"> ✓ verified</span> : " · not verified")}
+          </p>
+        </>
+      );
+      return (
+        <PersonRow
+          key={u.coachId}
+          first={u.firstName}
+          last={u.lastName}
+          avatarTone={u.director ? "blue" : u.coach ? "green" : "zinc"}
+          href={admin ? (u.coachId === viewer.coachId ? "/me" : `/me/${u.coachId}`) : undefined}
+          dim={!u.active}
+          under={
+            !coachCard &&
+            admin &&
+            u.coachId !== viewer.coachId && (
+              <>
+                {u.active && <ViewAsButton coachId={u.coachId} name={name} />}
+                {mayReset && <ResetLoginButton org={slug!} coachId={u.coachId} name={name} />}
+              </>
+            )
+          }
+          chips={
+            <>
+              {u.director && (
+                <Chip tone="blue">{roleOf(u.coachId)?.owner ? "Owner" : roleOf(u.coachId)?.admin ? "Admin" : "Director"}</Chip>
+              )}
+              {teamLink ? (
+                <Link href={teamHref(teamLink.id)} className="rounded-full hover:opacity-80">
+                  <Chip tone="orange">{teamLink.label}</Chip>
+                </Link>
+              ) : (
+                u.coach && <Chip tone="green">Coach</Chip>
+              )}
+              {requests.includes(u) && <Chip tone="amber">Pending</Chip>}
+              {!u.active && <Chip tone="red">Inactive</Chip>}
+              {coachCard && admin && u.active && u.coachId !== viewer.coachId && (
+                <ViewAsButton coachId={u.coachId} name={name} />
+              )}
+              {gear}
+            </>
+          }
+          collapsed={coachCard}
+          always={coachCard && !onTeam ? teamPills(u) : undefined}
+        >
+          {team && roleOf(u.coachId) && (
+            <DirectorRole
+              org={team.org}
+              orgName={team.orgName}
+              person={roleOf(u.coachId)!}
+              areas={team.areas}
+              canManageAdmins={team.canManageAdmins}
+            />
+          )}
+          {contact}
+          {coachCard ? (
+            <div className="flex justify-end pt-1">{buttons}</div>
+          ) : (
+            <div className="flex items-end justify-between gap-2 pt-1">
+              {teamPills(u)}
+              {buttons}
+            </div>
+          )}
+        </PersonRow>
+      );
+    });
+
+  // Members → Coaches: everyone active with a team spot or the Coach role, grouped by their teams' gender and grade
+  // (Boys then Girls, youngest first; no team yet last), and inside a grade on one card per team (Head Coach, Asst
+  // Coach, Manager, Team Parent; someone on two teams is listed on both). Grade cards and team cards start collapsed.
+  const roleRank = (label: string) =>
+    ["Head Coach", "Asst Coach", "Manager", "Team Parent"].findIndex((r) => label.endsWith(r)) >>> 0;
+  const byGrade = (list: UserListItem[]) => {
+    type Team = { id: string; name: string; people: { u: UserListItem; rank: number }[] };
+    const groups = new Map<string, { gender: string; grade: number; teams: Map<string, Team>; people: Set<UserListItem> }>();
+    const group = (key: string, gender: string, grade: number) => {
+      if (!groups.has(key)) groups.set(key, { gender, grade, teams: new Map(), people: new Set() });
+      return groups.get(key)!;
+    };
+    for (const u of list) {
+      if (!u.teamLinks?.length) {
+        group("none", "", 99).people.add(u);
+        continue;
+      }
+      for (const t of u.teamLinks) {
+        const g = group(`${t.gender}|${t.grade}`, t.gender, t.grade);
+        g.people.add(u);
+        if (!g.teams.has(t.id)) g.teams.set(t.id, { id: t.id, name: t.label.split(" · ")[0], people: [] });
+        const team = g.teams.get(t.id)!;
+        const rank = roleRank(t.label);
+        const had = team.people.find((p) => p.u === u);
+        if (!had) team.people.push({ u, rank });
+        else had.rank = Math.min(had.rank, rank);
+      }
+    }
+    const order = (g: string) => ["Boys", "Girls", "Coed"].indexOf(g) + (g ? 0 : 9);
+    return [...groups]
+      .sort(([, a], [, b]) => order(a.gender) - order(b.gender) || a.grade - b.grade)
+      .map(([key, g]) => ({
+        key,
+        title: g.gender ? `${g.gender} · ${g.grade === -1 ? "Pre-K" : gradeLabel(gradeStr(g.grade))}` : "No team yet",
+        count: g.people.size,
+        people: [...g.people],
+        teams: [...g.teams.values()]
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((t) => ({ ...t, people: t.people.sort((a, b) => a.rank - b.rank).map((p) => p.u) })),
+      }));
+  };
+
+  if (view === "coaches") {
+    const people = [...coaches, ...helpers].sort(
+      (a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName),
+    );
+    if (!people.length) return <p className="text-sm text-zinc-500 italic">No coaches yet.</p>;
+    return (
+      <div className="space-y-3">
+        {byGrade(people).map((g) => (
+          <GroupCard key={g.key} title={g.title} count={g.count} defaultOpen={false}>
+            {g.teams.length
+              ? g.teams.map((t) => (
+                  <li key={t.id}>
+                    <details className="group/t">
+                      <summary className="flex cursor-pointer list-none items-center justify-between bg-orange-50 px-4 py-2 text-xs font-semibold tracking-wide text-orange-800 uppercase dark:bg-orange-500/10 dark:text-orange-300 [&::-webkit-details-marker]:hidden">
+                        <span>
+                          {t.name} · {t.people.length}
+                        </span>
+                        <span className="text-base transition-transform group-open/t:rotate-90">›</span>
+                      </summary>
+                      <ul className="divide-y divide-zinc-100 dark:divide-white/5">{rows(t.people, true, t.id)}</ul>
+                    </details>
+                  </li>
+                ))
+              : rows(g.people, true)}
+          </GroupCard>
+        ))}
+      </div>
+    );
+  }
   if (view === "inactive-coaches")
     return (
       <GroupCard title="Inactive coaches" count={inactiveCoaches.length}>
-        {inactiveCoaches.length ? rows(inactiveCoaches) : <li className="px-4 py-3 text-sm text-zinc-500 italic">None.</li>}
+        {inactiveCoaches.length ? rows(inactiveCoaches, true) : <li className="px-4 py-3 text-sm text-zinc-500 italic">None.</li>}
       </GroupCard>
     );
 
@@ -195,7 +325,7 @@ export default async function UserList({
       {view === "requests" ? (
         <GroupCard title="Access requests" count={requests.length}>
           {requests.length ? (
-            rows(requests)
+            rows(requests, true)
           ) : (
             <li className="px-4 py-3 text-sm text-zinc-500 italic">No pending access requests.</li>
           )}
@@ -210,18 +340,18 @@ export default async function UserList({
           />
           <div className="space-y-3">
             {directors.length > 0 && (
-              <GroupCard title="Admins & Directors" count={directors.length}>
-                {rows(directors)}
+              <GroupCard title="Admins & Directors" count={directors.length} defaultOpen={false}>
+                {rows(directors, true)}
               </GroupCard>
             )}
             {others.length > 0 && (
               <GroupCard title="Other logins" count={others.length} defaultOpen={false}>
-                {rows(others)}
+                {rows(others, true)}
               </GroupCard>
             )}
             {inactive.length > 0 && (
               <GroupCard title="Inactive Directors" count={inactive.length} defaultOpen={false}>
-                {rows(inactive)}
+                {rows(inactive, true)}
               </GroupCard>
             )}
           </div>

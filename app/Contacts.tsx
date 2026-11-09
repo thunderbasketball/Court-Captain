@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { Contact } from "@/lib/teams";
+import { MAX_GROUP_TEXT } from "@/lib/group-text";
 import ChatPopup from "./ChatPopup";
-import { CloseButton, PopUp, dialogCls } from "./client-ui";
+import { PopUp } from "./client-ui";
 
 type Role = Contact["role"];
 
@@ -30,45 +31,52 @@ export function RoleDot({ role }: { role: Role }) {
 
 type Person = Pick<Contact, "role" | "email"> & { first: string | null; last: string | null; cell: string | null };
 
-// A role circle and the person's name; tapping the name opens their contact card.
-// `about` is the line under their name on the card (team, or the player they registered).
-// `chatKey`: an in-app chat with this person (coaches with a login), opened in a pop-up.
-export function ContactChip({ person, about, chatKey }: { person: Person; about: string; chatKey?: string }) {
+// A role circle and the person's name; tapping the name opens their details right there, on a line of their own (no
+// pop-up): cell, email, and Chat / Call / Text / Email. `about` is the line under their name (team, or the player they
+// registered). `chatKey`: an in-app chat with this person (coaches with a login). `extra`: more buttons beside the
+// actions (e.g. 👁 View as, for Admins).
+export function ContactChip({
+  person,
+  about,
+  chatKey,
+  extra,
+}: {
+  person: Person;
+  about: string;
+  chatKey?: string;
+  extra?: ReactNode;
+}) {
   const cell = person.cell && /^\d{10}$/.test(person.cell) ? person.cell : null;
   const name = [person.first, person.last].filter(Boolean).join(" ") || "No name";
-  const dialog = useRef<HTMLDialogElement>(null);
-  const close = () => dialog.current?.close();
+  const [open, setOpen] = useState(false);
   const action =
-    "flex flex-1 flex-col items-center gap-1 rounded-xl bg-zinc-100 px-3 py-3 text-sm font-medium text-thunder-blue hover:bg-zinc-200 dark:bg-zinc-800 dark:text-blue-400";
+    "inline-flex items-center gap-1 rounded-full bg-zinc-100 px-3 py-1.5 text-xs font-medium text-thunder-blue hover:bg-zinc-200 dark:bg-zinc-800 dark:text-blue-400";
   return (
     <>
       <button
         type="button"
-        onClick={() => dialog.current?.showModal()}
-        className="inline-flex items-center gap-1.5 rounded-full py-0.5 pr-2 pl-0.5 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-white/5"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className={`inline-flex items-center gap-1.5 rounded-full py-0.5 pr-2 pl-0.5 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-white/5 ${
+          open ? "bg-zinc-100 dark:bg-white/5" : ""
+        }`}
       >
         <RoleDot role={person.role} />
         <span className="underline decoration-zinc-300 underline-offset-2">{name}</span>
       </button>
-      <dialog ref={dialog} className={dialogCls} onClick={(e) => e.target === dialog.current && close()}>
-        <div className="space-y-4 p-5">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <RoleDot role={person.role} />
-              <div>
-                <h2 className="text-lg font-semibold">{name}</h2>
-                <p className="text-sm text-zinc-500">
-                  {ROLE_BADGE[person.role].label} · {about}
-                </p>
-              </div>
+      {open && (
+        <div className="basis-full space-y-2 rounded-xl bg-zinc-50 px-3 py-2.5 text-sm dark:bg-white/5">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="font-semibold">
+                {name} <span className="font-normal text-zinc-500">· {ROLE_BADGE[person.role].label} · {about}</span>
+              </p>
+              {cell ? <p>{pretty(cell)}</p> : <p className="text-zinc-400">No cell on file</p>}
+              {person.email ? <p className="break-all">{person.email}</p> : <p className="text-zinc-400">No email on file</p>}
             </div>
-            <CloseButton onClick={close} />
+            {extra}
           </div>
-          <div className="space-y-1 text-sm">
-            {cell ? <p>{pretty(cell)}</p> : <p className="text-zinc-400">No cell on file</p>}
-            {person.email ? <p className="break-all">{person.email}</p> : <p className="text-zinc-400">No email on file</p>}
-          </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {chatKey && (
               <ChatPopup chatKey={chatKey} label={`Chat with ${name}`} className={action}>
                 💬 Chat
@@ -91,27 +99,44 @@ export function ContactChip({ person, about, chatKey }: { person: Person; about:
             )}
           </div>
         </div>
-      </dialog>
+      )}
     </>
   );
 }
 
-// Opens the phone's Messages app with everyone in one group text. iPhones/Macs and Android phones
-// expect different link formats.
-export function GroupTextButton({ cells, label }: { cells: (string | null)[]; label: string }) {
+// Open the phone's Messages app with these numbers in one group text.
+function openGroupText(to: string[]) {
+  const apple = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
+  window.location.href = apple ? `sms://open?addresses=${to.join(",")}` : `sms:${to.join(",")}`;
+}
+
+// Opens the phone's Messages app with everyone in one group text. iPhones/Macs and Android phones expect different link
+// formats. More than 19 numbers: split into texts of 19 at most, one button each ("Text parents 1–19", "20–24").
+// `small`: the compact button on a Teams page card.
+export function GroupTextButton({ cells, label, small }: { cells: (string | null)[]; label: string; small?: boolean }) {
   const numbers = [...new Set(cells.filter((c): c is string => !!c && /^\d{10}$/.test(c)))].map((c) => `+1${c}`);
+  const parts: string[][] = [];
+  for (let i = 0; i < numbers.length; i += MAX_GROUP_TEXT) parts.push(numbers.slice(i, i + MAX_GROUP_TEXT));
+  const cls = small
+    ? "shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
+    : "shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-500/10";
+  if (parts.length <= 1)
+    return (
+      <button type="button" disabled={!numbers.length} onClick={() => openGroupText(numbers)} className={cls}>
+        💬 {label} ({numbers.length})
+      </button>
+    );
   return (
-    <button
-      type="button"
-      disabled={!numbers.length}
-      onClick={() => {
-        const apple = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
-        window.location.href = apple ? `sms://open?addresses=${numbers.join(",")}` : `sms:${numbers.join(",")}`;
-      }}
-      className="shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
-    >
-      💬 {label} ({numbers.length})
-    </button>
+    <>
+      {parts.map((part, i) => {
+        const from = i * MAX_GROUP_TEXT + 1;
+        return (
+          <button key={from} type="button" onClick={() => openGroupText(part)} className={cls}>
+            💬 {label} {from}–{from + part.length - 1}
+          </button>
+        );
+      })}
+    </>
   );
 }
 

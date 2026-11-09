@@ -15,11 +15,15 @@ export type UserListItem = {
   coach: boolean;
   director: boolean;
   teams: string[]; // e.g. "4G Epps · Manager", sorted by team name
+  teamLinks: TeamLink[]; // the same, each with its team (its page, and grouping by grade)
   scenicCity: boolean; // Scenic City also uses this person
   updatedBy: string | null;
   joinReason: string | null; // why they asked to join, e.g. "Team staff: Asst Coach · 4G Epps", "Other: …"
   joinTeamListed: boolean; // a team staff request for a listed team (one tap to approve onto it)
 };
+
+// One of a person's team spots: its team's id, "4G Epps · Manager", and the team's gender and (top) grade (K = 0).
+export type TeamLink = { id: string; label: string; gender: "Boys" | "Girls" | "Coed"; grade: number };
 
 // Admins (Members → Staff) and Directors of Coaches (Members → Coaches). Sorted by last name, then first name.
 export async function listUsers(viewer: SessionUser): Promise<UserListItem[]> {
@@ -32,6 +36,11 @@ export async function listUsers(viewer: SessionUser): Promise<UserListItem[]> {
             coalesce((select array_agg(t.name || ' · ' || case s.role when 'HeadCoach' then 'Head Coach' when 'AsstCoach' then 'Asst Coach'
                                                      when 'Manager' then 'Manager' else 'Team Parent' end order by t.name)
                       from team_staff s join teams t on t.id = s.team_id where s.coach_id = users.coach_id), '{}') as teams,
+            coalesce((select json_agg(json_build_object(
+                               'id', t.id::text, 'gender', t.gender, 'grade', t.grade_sort,
+                               'label', t.name || ' · ' || case s.role when 'HeadCoach' then 'Head Coach' when 'AsstCoach' then 'Asst Coach'
+                                                         when 'Manager' then 'Manager' else 'Team Parent' end) order by t.name)
+                      from team_staff s join teams t on t.id = s.team_id where s.coach_id = users.coach_id), '[]') as "teamLinks",
             exists (select 1 from org_roles o where o.coach_id = users.coach_id and o.org = 'scenic-city') as "scenicCity",
             updated_by as "updatedBy",
             (select case j.purpose

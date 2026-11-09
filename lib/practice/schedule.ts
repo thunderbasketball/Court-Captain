@@ -248,6 +248,28 @@ export async function upcomingForTeam(deps: Deps, teamId: string, limit = 8): Pr
   return r.rows;
 }
 
+// Every listed team's upcoming practices at once (the 📅 on each Teams page card), soonest first, `limit` each, keyed by
+// team id. Director only: the caller checks.
+export async function upcomingForTeams(
+  deps: Deps,
+  teamIds: string[],
+  limit = 8,
+): Promise<Record<string, TeamPractice[]>> {
+  if (!teamIds.length) return {};
+  const r = await deps.pool.query<TeamPractice & { team: string }>(
+    `select team, id, "startsAt", gym, court, "bookedBy" from (
+       select s.team_id::text as team, s.id::text, s.starts_at as "startsAt", g.name as gym, c.name as court, s.booked_by as "bookedBy",
+              row_number() over (partition by s.team_id order by s.starts_at) as n
+         from slots s join courts c on c.id = s.court_id join gyms g on g.id = c.gym_id
+        where s.team_id = any($1::bigint[]) and s.starts_at + interval '60 minutes' > $2) x
+     where n <= $3 order by "startsAt", lower(gym), lower(court)`,
+    [teamIds, deps.now(), limit],
+  );
+  const out: Record<string, TeamPractice[]> = {};
+  for (const { team, ...p } of r.rows) (out[team] ??= []).push(p);
+  return out;
+}
+
 export async function teamChoices(deps: Pick<Deps, "pool">): Promise<{ id: string; name: string }[]> {
   const r = await deps.pool.query<{ id: string; name: string }>(
     "select id::text, name from teams order by level = 'COMP' desc, gender, grade_sort, lower(name)",

@@ -4,7 +4,7 @@ import { createTestDb } from "../testing/db";
 import { weekOf, zonedTime } from "../time";
 import { addGym, addSlots } from "./admin";
 import { bookSlot } from "./booking";
-import { weekGrid } from "./schedule";
+import { upcomingForTeams, weekGrid } from "./schedule";
 
 const person = (coachId: string, isDirector = false): SessionUser => ({
   coachId,
@@ -63,6 +63,21 @@ describe("week grid", () => {
     ).rows[0].id;
   const lines = (g: Awaited<ReturnType<typeof weekGrid>>) =>
     g.days.flatMap((d) => d.gyms.flatMap((x) => x.times.flatMap((t) => t.slots.map((s) => `${d.label} ${x.gym} ${s.court} ${s.team ?? (s.canBook ? "BOOK" : "no")}`))));
+
+  it("lists each team's upcoming practices at once (Teams page 📅), soonest first, past ones left out", async () => {
+    await bookSlot(deps(), director, { slotId: await slotAt("Heritage HS", "Main", 12), teamId: team });
+    await bookSlot(deps(), director, { slotId: await slotAt("Action Church", "North", 10), teamId: team });
+    await bookSlot(deps(), director, { slotId: await slotAt("Action Church", "South", 9), teamId: other });
+    now = zonedTime(2026, 11, 9, 20); // Monday's practice is over
+    const all = await upcomingForTeams(deps(), [team, other]);
+    expect(all[team].map((p) => `${p.gym} ${p.court} ${p.startsAt.toISOString()}`)).toEqual([
+      `Action Church North ${zonedTime(2026, 11, 10, 18).toISOString()}`,
+      `Heritage HS Main ${zonedTime(2026, 11, 12, 18).toISOString()}`,
+    ]);
+    expect(all[other]).toBeUndefined();
+    expect((await upcomingForTeams(deps(), [team], 1))[team]).toHaveLength(1);
+    expect(await upcomingForTeams(deps(), [])).toEqual({});
+  });
 
   it("the Director sees everything", async () => {
     await bookSlot(deps(), director, { slotId: await slotAt("Action Church", "North", 9), teamId: other });

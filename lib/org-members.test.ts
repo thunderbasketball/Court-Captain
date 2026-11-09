@@ -59,6 +59,10 @@ describe("a registered organization's Members", () => {
       ["Bo", true, false, []],
       ["Jo", true, false, []],
     ]);
+    // Each team spot with its team (the pill opens it; Members → Coaches groups by its gender and grade).
+    const t5 = (t as { id: string }).id;
+    expect(list!.users[0].teamLinks).toEqual([{ id: t5, label: "5G Lee · Head Coach", gender: "Girls", grade: 5 }]);
+    expect(list!.users[1].teamLinks).toEqual([]);
     expect((await listOrgMembers(db.pool, teamsDirector, org))!.admin).toBe(false);
     expect(await listOrgMembers(db.pool, outsider, org)).toBeNull();
     expect(await listOrgMembers(db.pool, owner, "thunder")).toBeNull();

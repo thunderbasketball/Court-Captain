@@ -29,8 +29,8 @@ const TABS = [
 ] as const;
 
 // Members → Coaches (Directors of Coaches), in three tabs: Active (coaches, then team managers and parents) and Inactive,
-// listed like Staff (Edit and View as for Admins); Volunteers from registration, each tagged with any team staff spot
-// they already hold.
+// listed like Staff (Edit and View as for Admins), grouped by grade; Volunteers from registration not on a team yet
+// (grade cards and cards collapsed).
 async function Coaches({ searchParams }: { searchParams: PageProps<"/org/thunder/members/coaches">["searchParams"] }) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
@@ -40,11 +40,14 @@ async function Coaches({ searchParams }: { searchParams: PageProps<"/org/thunder
   const [users, groups] = await Promise.all([listUsers(user), listVolunteerCoaches(user)]);
   const volunteers = groups.flatMap((g) => g.coaches);
   const onStaff = volunteers.filter((c) => c.staff.length).length;
+  // The Volunteers tab lists only those not on a team yet (the others are under Active).
+  const open = groups.map((g) => ({ ...g, coaches: g.coaches.filter((c) => !c.staff.length) })).filter((g) => g.coaches.length);
+  const unassigned = open.flatMap((g) => g.coaches);
   const active = users.filter((u) => u.active && !u.director && (u.coach || u.teams.length > 0));
   const coachCells = active.filter((u) => u.coach || u.teams.some((t) => /(Head|Asst) Coach$/.test(t))).map((u) => u.cell);
   const counts = {
     active: active.length,
-    volunteers: volunteers.length,
+    volunteers: unassigned.length,
     inactive: users.filter((u) => !u.active && !u.director).length,
   };
 
@@ -63,7 +66,7 @@ async function Coaches({ searchParams }: { searchParams: PageProps<"/org/thunder
           )}
           {tab === "volunteers" && (
             <div className="flex items-center gap-2">
-              <GroupTextButton cells={volunteers.map((c) => c.cell)} label="Text all" />
+              <GroupTextButton cells={unassigned.map((c) => c.cell)} label="Text all" />
               <NotifyButton audience={{ volunteers: true }} to="all volunteer coaches" size="md" />
             </div>
           )}
@@ -97,33 +100,27 @@ async function Coaches({ searchParams }: { searchParams: PageProps<"/org/thunder
               ]}
             />
             {!volunteers.length && <p className="text-zinc-500">No volunteers yet.</p>}
+            {volunteers.length > 0 && !unassigned.length && <p className="text-zinc-500">Every volunteer is on a team.</p>}
             <div className="space-y-3">
-              {groups.map((g) => (
-                <GroupCard key={`${g.gender}-${g.grade}`} title={`${g.gender} · ${gradeLabel(g.grade)}`} count={g.coaches.length}>
+              {open.map((g) => (
+                <GroupCard
+                  key={`${g.gender}-${g.grade}`}
+                  title={`${g.gender} · ${gradeLabel(g.grade)}`}
+                  count={g.coaches.length}
+                  defaultOpen={false}
+                >
                   {g.coaches.map((c) => (
                     <PersonRow
                       key={c.registrantId}
                       first={c.firstName}
                       last={c.lastName}
-                      avatarTone={c.staff.length ? "green" : "zinc"}
-                      chips={
-                        <>
-                          <Chip tone={c.isHead ? "blue" : "green"}>{c.isHead ? "Head Coach" : "Asst Coach"}</Chip>
-                          {c.staff.length ? (
-                            c.staff.map((x) => (
-                              <Chip key={x} tone="orange">
-                                {x}
-                              </Chip>
-                            ))
-                          ) : (
-                            <Chip tone="amber">Not on a team</Chip>
-                          )}
-                        </>
-                      }
+                      avatarTone="zinc"
+                      chips={<Chip tone={c.isHead ? "blue" : "green"}>{c.isHead ? "Head Coach" : "Asst Coach"}</Chip>}
+                      collapsed
+                      always={<p className="text-zinc-500">Parent of {c.playerName}</p>}
                     >
                       <p>{c.cell && c.cell.length === 10 ? <PhoneLink cell={c.cell} label={formatCell(c.cell)} /> : "No cell"}</p>
                       <p className="truncate">{c.email ? <EmailLink email={c.email} /> : "No email"}</p>
-                      <p className="text-zinc-500">Parent of {c.playerName}</p>
                     </PersonRow>
                   ))}
                 </GroupCard>
