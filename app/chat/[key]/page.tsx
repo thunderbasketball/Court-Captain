@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { requireFeature } from "@/lib/features-server";
-import { getChat, markChatRead } from "@/lib/chat";
+import { chatOrg, getChat, markChatRead } from "@/lib/chat";
 import { currentContexts } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
 import AppHeader from "../../AppHeader";
@@ -20,10 +20,10 @@ export default function ChatThreadPage({ params }: PageProps<"/chat/[key]">) {
 async function Thread({ params }: { params: PageProps<"/chat/[key]">["params"] }) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
-  await requireFeature("thunder", "chat");
   const { key } = await params;
+  await requireFeature(chatOrg(decodeURIComponent(key)) ?? "thunder", "chat"); // the chat's organization has Chat
   const deps = { pool: db, now: () => new Date() };
-  const chat = await getChat(deps, user, key);
+  const chat = await getChat(deps, user, decodeURIComponent(key));
   if (!chat) notFound();
   // Seeing the chat marks it read (before the header counts unread). Not while a Director is viewing as someone.
   if (!user.actingBy) await markChatRead(deps, user, chat.key);

@@ -25,6 +25,7 @@ export type MemberPlayer = PlayerListItem & {
   gradeSort: number;
   interestedTeams: string[]; // teams that marked them Interested (shown on unrostered players)
   playsUp: string | null; // "3rd grader" when rostered on a team of another grade
+  teamGrades: string[] | null; // their team's grades (for the eligibility check), null when not on a team
   // More from registration, shown when the player's card is opened (Members → Players).
   parent2Name: string | null;
   parent2Cell: string | null;
@@ -71,7 +72,7 @@ export async function listPlayersByGrade(
             nullif(trim(r.uniform_size), '') as "uniformSize", nullif(trim(r.uniform_number), '') as "uniformNumber",
             r.total_fees::text as "totalFees", r.amount_remaining::text as "amountRemaining",
             r.added_by as "addedBy", r.fees_waived_by as "feesWaivedBy",
-            t.id::text as "teamId", t.name as team, t.grade_sort as "teamGrade",
+            t.id::text as "teamId", t.name as team, t.grade_sort as "teamGrade", t.grades as "teamGrades",
             array(select t2.name from evaluations e join teams t2 on t2.id = e.team_id
                   where e.registrant_id = r.registrant_id and e.interested order by t2.name) as "interestedTeams"
      from registrations r

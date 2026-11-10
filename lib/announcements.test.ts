@@ -158,7 +158,7 @@ describe("announcements", () => {
     });
     expect(await sendAnnouncement(deps(), head, { ...msg, everyone: true })).toEqual({
       ok: false,
-      message: "Only the Director can send announcements.",
+      message: "Only the organization's Directors can send alerts.",
     });
     expect((await previewAudience(deps(), head, { everyone: true })).ok).toBe(false);
   });
@@ -166,7 +166,7 @@ describe("announcements", () => {
   it("the Director can remove one: gone from every inbox and never emailed", async () => {
     const r = await sendAnnouncement(deps(), director, { ...msg, everyone: true });
     if (!r.ok) throw new Error(r.message);
-    expect(await deleteAnnouncement(deps(), head, r.id)).toEqual({ ok: false, message: "Only the Director can remove announcements." });
+    expect(await deleteAnnouncement(deps(), head, r.id)).toEqual({ ok: false, message: "Only the organization's Directors can remove its alerts." });
     expect(await unreadCount(deps(), head)).toBe(1);
     expect(await deleteAnnouncement(deps(), director, r.id)).toEqual({ ok: true });
     expect(await listInbox(deps(), head)).toEqual([]);
@@ -177,6 +177,41 @@ describe("announcements", () => {
     const mail: string[] = [];
     hours(9);
     expect(await sendUnreadEmails({ ...deps(), appUrl: "x", sendEmail: async (to) => void mail.push(to) })).toBe(0);
+  });
+
+  it("every organization: its Directors alert its own people (roles, teams), never another organization's", async () => {
+    await db.pool.query("delete from org_role_types where org = 'east-ridge'");
+    await db.pool.query("delete from organizations where slug = 'east-ridge'");
+    await db.pool.query(
+      "insert into organizations (slug, name, short_name, kind) values ('east-ridge', 'East Ridge', 'ER', 'Organization')",
+    );
+    await db.pool.query("insert into org_role_types (org, role) values ('east-ridge', 'Director'), ('east-ridge', 'Coach')");
+    await grant(db.pool, "5550006 east-ridge Director", "5550001 east-ridge Coach", "5550002 east-ridge Coach");
+    const t = await db.pool.query<{ id: string }>(
+      `insert into org_teams (org, name, gender, grade_low, grade, level, created_by)
+       values ('east-ridge', '5B Hank', 'Boys', 5, 5, 'REC', 'x'), ('east-ridge', '6B Amy', 'Boys', 6, 6, 'REC', 'x') returning id::text`,
+    );
+    const [er5, er6] = t.rows.map((r) => r.id);
+    await db.pool.query(
+      `insert into org_team_coaches (team_id, coach_id, role, added_by) values ($1, '5550001', 'HeadCoach', 'x'), ($2, '5550002', 'HeadCoach', 'x'), ($2, '5550003', 'AsstCoach', 'x')`,
+      [er5, er6],
+    );
+    const rex = person("5550006", "Rex");
+    const er = (a: object) => previewAudience(deps(), rex, { org: "east-ridge", ...a });
+    const first = (r: Awaited<ReturnType<typeof er>>) => (r.ok ? r.names.map((n) => n.split(" ")[0]) : r.message);
+    expect(first(await er({ everyone: true }))).toEqual(["Amy", "Cole", "Hank"]); // not Earl or Paula (Thunder only)
+    expect(first(await er({ teams: [er6] }))).toEqual(["Amy", "Cole"]);
+    expect(first(await er({ roles: ["AsstCoach"] }))).toEqual(["Cole"]);
+    expect(first(await er({ teams: [teamA] }))).toEqual([]); // Thunder's team ids reach nobody here
+    // Thunder's Director isn't East Ridge's; East Ridge's isn't Thunder's.
+    expect(await sendAnnouncement(deps(), director, { ...msg, org: "east-ridge", everyone: true })).toMatchObject({ ok: false });
+    expect(await previewAudience(deps(), rex, { everyone: true })).toMatchObject({ ok: false });
+    const r = await sendAnnouncement(deps(), rex, { ...msg, org: "east-ridge", teams: [er5] });
+    expect(r).toMatchObject({ ok: true, count: 1 });
+    expect((await listInbox(deps(), head))[0]).toMatchObject({ title: "Gym change", orgName: "East Ridge" });
+    expect((await listSent(deps(), rex, "east-ridge")).map((x) => x.audience)).toEqual(["5B Hank"]);
+    expect(await listSent(deps(), director)).toEqual([]); // Thunder's Sent has only Thunder's
+    if (r.ok) expect(await deleteAnnouncement(deps(), director, r.id)).toMatchObject({ ok: false });
   });
 
   it("pop-up: unread and under 24 hours old, oldest first, until acknowledged", async () => {

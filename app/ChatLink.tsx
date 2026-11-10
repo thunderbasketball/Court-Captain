@@ -1,17 +1,14 @@
-import Link from "next/link";
-import ChatPopup from "./ChatPopup";
+import { ChatToggle } from "./InlineToggle";
 
-// A round chat button that opens one chat, on its own page or in a pop-up (who can open it is checked on the server).
+// A round chat button that opens one chat right on the page (who can open it is checked on the server).
 export default function ChatLink({
   chatKey,
   label,
   size = "sm",
-  popup = false,
 }: {
   chatKey: string;
   label: string;
   size?: "sm" | "md";
-  popup?: boolean;
 }) {
   const className = `inline-flex shrink-0 items-center justify-center rounded-full text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10 ${
     size === "md" ? "size-9" : "size-7"
@@ -25,13 +22,10 @@ export default function ChatLink({
       />
     </svg>
   );
-  return popup ? (
-    <ChatPopup chatKey={chatKey} label={label} className={className}>
+  // Opens the chat right on the page (put it in a wrapping row: the chat takes a line of its own).
+  return (
+    <ChatToggle chatKey={chatKey} label={label} className={className}>
       {icon}
-    </ChatPopup>
-  ) : (
-    <Link href={`/chat/${chatKey}`} aria-label={label} title={label} className={className}>
-      {icon}
-    </Link>
+    </ChatToggle>
   );
 }

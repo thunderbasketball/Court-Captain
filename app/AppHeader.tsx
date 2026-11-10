@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { after } from "next/server";
-import { popupAnnouncements, unreadCount } from "@/lib/announcements";
-import { chatUnreadCount } from "@/lib/chat";
+import { popupAnnouncements, sendsAlerts, unreadCount } from "@/lib/announcements";
+import { chatUnreadCount, orgKey } from "@/lib/chat";
 import type { SessionUser } from "@/lib/auth/service";
 import { PLATFORM } from "@/lib/contexts";
 import { currentContexts } from "@/lib/contexts-server";
@@ -20,10 +20,10 @@ import { recordVisit } from "@/lib/site-visits";
 import { syncIfStale } from "@/lib/teamsnap/scheduler";
 import { stopActing } from "./act-as/actions";
 import AnnouncementPopup from "./AnnouncementPopup";
-import ChatPopup from "./ChatPopup";
-import NotifyButton from "./NotifyButton";
 import OrgSwitcher from "./OrgSwitcher";
 import OrgGear from "./OrgGear";
+import HeaderPanels from "./HeaderPanels";
+import { directorAlerts } from "@/lib/director-alerts";
 import SupportButton from "./support/SupportButton";
 import { listArticles, supportChats } from "@/lib/support";
 import { LogoutButton } from "./HomeActions";
@@ -98,11 +98,11 @@ export default async function AppHeader({
   const [{ contexts }, features, unread, myEvents, popups, chatUnread, articles, chats] = await Promise.all([
     currentContexts(user),
     orgFeatures(db, org),
-    thunder ? unreadCount(deps, user) : 0,
+    platform ? 0 : unreadCount(deps, user), // alerts from every organization
     thunder && !user.isDirector ? checkInsFor(user) : 0,
     // Not while a Director is viewing as this person.
-    user.actingBy || !thunder ? [] : popupAnnouncements(deps, user),
-    thunder ? chatUnreadCount(deps, user) : 0,
+    user.actingBy || platform ? [] : popupAnnouncements(deps, user),
+    platform ? 0 : chatUnreadCount(deps, user), // chats in every organization
     // Support (the same everywhere): its questions and guides, this person's chats, and the chats they answer
     // (CourtCaptain staff: all; an organization's Owners and Admins: the ones started there).
     listArticles(db),
@@ -303,35 +303,62 @@ export default async function AppHeader({
           : directorTabs.filter((t) => (!t.areas || hasArea(user, ...t.areas)) && (!t.admin || isThunderAdmin(user)))
   ).filter(has);
   const activeTab: string | undefined = teamTab ? teamTab.tab : tab;
-  const alerting = (key: string) => !!teamTab?.alert?.includes(key as TeamTab);
+  // The Director's Teams and Uniforms tabs flash red while a team has an alert or a uniform is missing a number or size.
+  const flags =
+    !teamTab && thunder && user.isDirector && tabs.some((t) => t.key === "teams" || t.key === "uniforms")
+      ? await directorAlerts(db, new Date())
+      : null;
+  const alerting = (key: string) =>
+    !!teamTab?.alert?.includes(key as TeamTab) ||
+    (key === "teams" && !!flags?.teams) ||
+    (key === "uniforms" && !!flags?.uniforms);
   const showTabs = !!orgTabs || !!scenicTabs || !!teamTab || (user.isDirector && context === "director");
   const activeBg = scenicTabs ? "bg-scenic-navy" : "bg-thunder-blue";
   // A registered organization's own color (set in its gear) marks the tab in use; Thunder and Scenic City keep theirs.
   const tabColor = registered ? brand.color : null;
   // The gear (features, logo, color, login link) after the last tab, for the organization's Admins.
   const gear = showTabs && !teamTab && !platform && (await isOrgAdmin(db, user.coachId, org));
-  // Thunder's Chat and Alerts icons (the organization's chat and announcements).
+  // Alerts in every organization: its Directors' bell sends to everyone there (opens under the header); everyone
+  // else's bell opens their inbox. Thunder keeps its own (all team staff) and its chat.
+  const member = !platform && (thunder || orgChips.length > 0);
+  const alertSender = member && !thunder && (await sendsAlerts(deps, user, org));
   const orgIcons = (
     <>
-      {thunder &&
-        chatOn &&
-        // Directors: the bubble chats with every Head Coach (the full list is linked inside).
-        (user.isDirector ? (
-          <ChatPopup chatKey={`heads-${user.coachId}`} label="Chat with all Head Coaches" className={headerBtn} allChats>
-            <HeaderIcon d={ICONS.chat} badge={chatUnread} />
-          </ChatPopup>
-        ) : (
-          <Link href="/chat" aria-label={chatUnread ? `Chat, ${chatUnread} unread` : "Chat"} className={headerBtn}>
-            <HeaderIcon d={ICONS.chat} badge={chatUnread} />
-          </Link>
-        ))}
-      {thunder &&
-        // Directors: the bell notifies all team staff (their own announcements are linked inside).
-        (user.isDirector ? (
-          <NotifyButton audience={{ roles: ALL_STAFF }} to="all team staff" className={headerBtn} inbox>
-            <HeaderIcon d={ICONS.bell} badge={unread} />
-          </NotifyButton>
-        ) : (
+      {/* Directors: the bubble (chat with every Head Coach) and the bell (notify all team staff) open under the header. */}
+      {thunder && user.isDirector && (
+        <HeaderPanels
+          className={headerBtn}
+          chat={chatOn ? { chatKey: `heads-${user.coachId}`, icon: <HeaderIcon d={ICONS.chat} badge={chatUnread} /> } : undefined}
+          alert={{ audience: { roles: ALL_STAFF }, to: "all team staff", icon: <HeaderIcon d={ICONS.bell} badge={unread} /> }}
+        />
+      )}
+      {thunder && chatOn && !user.isDirector && (
+        <Link href="/chat" aria-label={chatUnread ? `Chat, ${chatUnread} unread` : "Chat"} className={headerBtn}>
+          <HeaderIcon d={ICONS.chat} badge={chatUnread} />
+        </Link>
+      )}
+      {alertSender && (
+        <HeaderPanels
+          className={headerBtn}
+          // Its Directors' bubble: the chat with every Head Coach there (All chats → inside).
+          chat={
+            chatOn ? { chatKey: orgKey(org, `heads-${user.coachId}`), icon: <HeaderIcon d={ICONS.chat} badge={chatUnread} /> } : undefined
+          }
+          alert={{
+            audience: { org, everyone: true },
+            to: `everyone at ${here?.short ?? here?.name ?? "this organization"}`,
+            icon: <HeaderIcon d={ICONS.bell} badge={unread} />,
+          }}
+        />
+      )}
+      {member && !thunder && !alertSender && chatOn && (
+        <Link href="/chat" aria-label={chatUnread ? `Chat, ${chatUnread} unread` : "Chat"} className={headerBtn}>
+          <HeaderIcon d={ICONS.chat} badge={chatUnread} />
+        </Link>
+      )}
+      {member &&
+        !alertSender &&
+        (thunder && user.isDirector ? null : (
           <Link
             href="/inbox"
             prefetch={false}

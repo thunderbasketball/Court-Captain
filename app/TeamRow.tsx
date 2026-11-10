@@ -35,7 +35,9 @@ export default function TeamRow({
   chat,
   notify,
   actions,
+  issue,
 }: {
+  issue?: string | null; // a roster problem ("1 Too old"): the name turns red with a badge saying it
   href: string;
   name: string;
   altName: string | null;
@@ -115,10 +117,11 @@ export default function TeamRow({
             >
               {name.split(" ")[0]}
             </span>
-            <span className="truncate font-semibold">
+            <span className={`truncate font-semibold ${issue ? "text-red-600 dark:text-red-400" : ""}`}>
               {name}
               {altName && <span className="font-normal text-zinc-500"> · {altName}</span>}
             </span>
+            {issue && <Chip tone="red">{issue}</Chip>}
           </>
         }
         lead={lead}
@@ -169,14 +172,29 @@ export default function TeamRow({
 
 // A Teams page tab's teams grouped by grade (each team under its top grade, the one on its badge), youngest first as
 // listed, one card per grade with how many, each collapsed (tap to open).
+// A grade card's title: red, with a ⚠ badge of how many of its teams have a problem.
+function gradeTitle(label: string, bad: number) {
+  if (!bad) return label;
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <span className="text-red-600 dark:text-red-400">{label}</span>
+      <Chip tone="red">
+        ⚠ {bad} {bad === 1 ? "team" : "teams"}
+      </Chip>
+    </span>
+  );
+}
+
 export function GradeGroups<T>({
   teams,
   grade,
   row,
+  warn,
 }: {
   teams: T[];
   grade: (t: T) => string; // e.g. "1st Grade"
   row: (t: T) => ReactNode;
+  warn?: (t: T) => boolean; // a team with a problem (a player not eligible): its grade's title turns red with ⚠ N teams
 }) {
   const groups: { label: string; teams: T[] }[] = [];
   for (const t of teams) {
@@ -188,7 +206,7 @@ export function GradeGroups<T>({
   return (
     <div className="space-y-3">
       {groups.map((g) => (
-        <GroupCard key={g.label} title={g.label} count={g.teams.length} defaultOpen={false}>
+        <GroupCard key={g.label} title={gradeTitle(g.label, warn ? g.teams.filter(warn).length : 0)} count={g.teams.length} defaultOpen={false}>
           {g.teams.map(row)}
         </GroupCard>
       ))}
@@ -264,7 +282,7 @@ function CalendarIcon() {
   );
 }
 
-function ChatIcon() {
+export function ChatIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden className="size-4">
       <path

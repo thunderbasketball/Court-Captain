@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import type { Contact } from "@/lib/teams";
 import { MAX_GROUP_TEXT } from "@/lib/group-text";
-import ChatPopup from "./ChatPopup";
+import { ChatToggle } from "./InlineToggle";
 import { PopUp } from "./client-ui";
 
 type Role = Contact["role"];
@@ -78,9 +78,9 @@ export function ContactChip({
           </div>
           <div className="flex flex-wrap gap-2">
             {chatKey && (
-              <ChatPopup chatKey={chatKey} label={`Chat with ${name}`} className={action}>
+              <ChatToggle chatKey={chatKey} label={`Chat with ${name}`} className={action}>
                 💬 Chat
-              </ChatPopup>
+              </ChatToggle>
             )}
             {cell && (
               <>
@@ -113,6 +113,16 @@ function openGroupText(to: string[]) {
 // Opens the phone's Messages app with everyone in one group text. iPhones/Macs and Android phones expect different link
 // formats. More than 19 numbers: split into texts of 19 at most, one button each ("Text parents 1–19", "20–24").
 // `small`: the compact button on a Teams page card.
+// A group text, opened from a page's 📣 menu: says it opens the phone's Messages app, then the button(s).
+export function TextPanel({ cells, label }: { cells: (string | null)[]; label: string }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-sm text-zinc-500">Opens your phone&apos;s Messages app with everyone in one group text (nothing is sent by the app).</p>
+      <GroupTextButton cells={cells} label={label} />
+    </div>
+  );
+}
+
 export function GroupTextButton({ cells, label, small }: { cells: (string | null)[]; label: string; small?: boolean }) {
   const numbers = [...new Set(cells.filter((c): c is string => !!c && /^\d{10}$/.test(c)))].map((c) => `+1${c}`);
   const parts: string[][] = [];
@@ -155,6 +165,15 @@ export function TextTeamsButton({
       {() => <TeamPicker teams={teams} />}
     </PopUp>
   );
+}
+
+// The same picker, opened right on the page (a page's menu) instead of in a pop-up.
+export function TextTeamsPanel({
+  teams,
+}: {
+  teams: { id: string; name: string; gender: string; level: string; grade: number; headCells: (string | null)[] }[];
+}) {
+  return <TeamPicker teams={teams} />;
 }
 
 function TeamPicker({

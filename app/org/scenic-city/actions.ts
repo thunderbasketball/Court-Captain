@@ -17,6 +17,7 @@ import * as bindings from "@/lib/scenic-bindings";
 import * as fastbreak from "@/lib/fastbreak/orgs";
 import * as publicLeague from "@/lib/public-league";
 import { fastbreakClient } from "@/lib/fastbreak/client";
+import { setProgramGradeRules as saveProgramGradeRules } from "@/lib/grade-rules";
 
 const deps = { pool: db, now: () => new Date() };
 
@@ -136,6 +137,10 @@ export async function addDivision(programId: string, input: programs.DivisionInp
 }
 export async function removeDivision(id: string) {
   return guarded((u) => programs.removeDivision(deps, u, id), "programs");
+}
+// Directors of Programs (checked in lib/grade-rules): a program's grade requirements.
+export async function setProgramGradeRules(programId: string, rules: unknown) {
+  return guarded((u) => saveProgramGradeRules(deps, u, programId, rules), "programs");
 }
 export async function setRecLimit(programId: string, limited: boolean, partners: string[]) {
   return guarded((u) => programs.setRecLimit(deps, u, programId, { limited, partners }), "programs");

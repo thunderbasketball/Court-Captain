@@ -23,3 +23,28 @@ export const db =
   });
 
 if (process.env.NODE_ENV !== "production") globalForDb.thunderPool = db;
+
+// Slow spots: every query taking SLOW_QUERY_MS or longer (default 500 ms) is logged with its time and the start of its
+// SQL (never the values, so no personal info), in the `npm run dev` terminal or the host's function logs. Together with
+// the dev terminal's own "GET /path 200 in 1.2s" and "POST … ƒ action in 80ms" lines, it shows where the app sticks.
+const slowMs = Number(process.env.SLOW_QUERY_MS ?? 500);
+const timed = db as Pool & { timed?: boolean };
+if (!timed.timed && slowMs > 0) {
+  timed.timed = true;
+  const query = db.query.bind(db) as (...args: unknown[]) => unknown;
+  (db as unknown as { query: (...args: unknown[]) => unknown }).query = (...args: unknown[]) => {
+    const start = performance.now();
+    const result = query(...args);
+    if (result instanceof Promise) {
+      const sql = typeof args[0] === "string" ? args[0] : ((args[0] as { text?: string })?.text ?? "");
+      void result.then(
+        () => {
+          const ms = Math.round(performance.now() - start);
+          if (ms >= slowMs) console.warn(`[slow query] ${ms} ms: ${sql.replace(/\s+/g, " ").trim().slice(0, 140)}`);
+        },
+        () => {},
+      );
+    }
+    return result;
+  };
+}

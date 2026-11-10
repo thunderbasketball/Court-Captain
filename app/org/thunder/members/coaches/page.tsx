@@ -8,8 +8,10 @@ import { hasArea } from "@/lib/org-admin";
 import { formatCell } from "@/lib/phone";
 import { listUsers } from "@/lib/users";
 import AppHeader from "../../../../AppHeader";
-import { GroupTextButton } from "../../../../Contacts";
-import NotifyButton from "../../../../NotifyButton";
+import { TextPanel } from "../../../../Contacts";
+import { NotifyPanel } from "../../../../NotifyButton";
+import ChatPanel from "../../../../ChatPanel";
+import PageMenus, { MEGAPHONE_BTN, MegaphoneIcon } from "../../../../PageMenus";
 import { Chip, EmailLink, GroupCard, PageTitle, PersonRow, PhoneLink, Stats } from "../../../../ui";
 import UserList from "../../../../UserList";
 import MembersNav from "../MembersNav";
@@ -56,21 +58,52 @@ async function Coaches({ searchParams }: { searchParams: PageProps<"/org/thunder
       <AppHeader user={user} tab="members" context="director" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
         <MembersNav user={user} current="coaches" />
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <PageTitle title="Coaches" subtitle="Coaches and team staff, volunteers from registration, and inactive coaches" />
-          {tab === "active" && (
-            <div className="flex items-center gap-2">
-              <GroupTextButton cells={coachCells} label="Text coaches" />
-              <NotifyButton audience={{ roles: ["HeadCoach", "AsstCoach"] }} to="all coaches" size="md" />
-            </div>
-          )}
-          {tab === "volunteers" && (
-            <div className="flex items-center gap-2">
-              <GroupTextButton cells={unassigned.map((c) => c.cell)} label="Text all" />
-              <NotifyButton audience={{ volunteers: true }} to="all volunteer coaches" size="md" />
-            </div>
-          )}
-        </div>
+        {/* 📣 opens Text, Chat and Alert right under the title (the same menu as the Teams page). */}
+        <PageMenus
+          title={<PageTitle title="Coaches" subtitle="Coaches and team staff, volunteers from registration, and inactive coaches" />}
+          menus={
+            tab === "active"
+              ? [
+                  {
+                    key: "coaches",
+                    icon: <MegaphoneIcon />,
+                    label: "Coaches: text, chat or alert",
+                    className: MEGAPHONE_BTN,
+                    items: [
+                      { key: "text", label: "💬 Text coaches", panel: <TextPanel cells={coachCells} label="Text coaches" /> },
+                      { key: "chat", label: "🗨️ Chat with coaches", panel: <ChatPanel chatKey="coaches" /> },
+                      {
+                        key: "alert",
+                        label: "🔔 Alert coaches",
+                        panel: <NotifyPanel audience={{ roles: ["HeadCoach", "AsstCoach"] }} to="all coaches" />,
+                      },
+                    ],
+                  },
+                ]
+              : tab === "volunteers"
+                ? [
+                    {
+                      key: "volunteers",
+                      icon: <MegaphoneIcon />,
+                      label: "Volunteer coaches: text or alert",
+                      className: MEGAPHONE_BTN,
+                      items: [
+                        {
+                          key: "text",
+                          label: "💬 Text volunteers",
+                          panel: <TextPanel cells={unassigned.map((c) => c.cell)} label="Text all" />,
+                        },
+                        {
+                          key: "alert",
+                          label: "🔔 Alert volunteers",
+                          panel: <NotifyPanel audience={{ volunteers: true }} to="all volunteer coaches" />,
+                        },
+                      ],
+                    },
+                  ]
+                : []
+          }
+        />
         <nav className="mb-4 flex gap-1 overflow-x-auto rounded-full bg-zinc-100 p-1 [scrollbar-width:none] dark:bg-zinc-900">
           {TABS.map((t) => (
             <Link

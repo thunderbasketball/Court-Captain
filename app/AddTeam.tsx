@@ -56,6 +56,47 @@ export default function AddTeamButton({
   );
 }
 
+// The same form, opened right on the page (a page's + menu) instead of in a pop-up; a new team opens its page (`href`),
+// or the page refreshes with a fresh form.
+export function AddTeamPanel({
+  people,
+  create,
+  href,
+  clubs,
+  preK = false,
+  noRec = false,
+}: {
+  people: Person[];
+  create: Create;
+  href?: string;
+  clubs?: Club[];
+  preK?: boolean;
+  noRec?: boolean;
+}) {
+  const router = useRouter();
+  const [round, setRound] = useState(0);
+  const [added, setAdded] = useState(false);
+  return (
+    <div className="space-y-3">
+      {added && <Alert tone="green">Team added.</Alert>}
+      <AddTeamForm
+        key={round}
+        people={people}
+        clubs={clubs}
+        preK={preK && !noRec}
+        noRec={noRec}
+        create={create}
+        onAdded={(id) => {
+          if (href) return router.push(`${href}${id}`);
+          setAdded(true);
+          setRound((n) => n + 1);
+          router.refresh();
+        }}
+      />
+    </div>
+  );
+}
+
 const NEW = "new";
 
 function AddTeamForm({

@@ -6,7 +6,13 @@ import { db } from "@/lib/db";
 import { listOrgMembers } from "@/lib/org-members";
 import { orgInfo } from "@/lib/org-registry";
 import AppHeader from "../../../../AppHeader";
-import { GroupTextButton } from "../../../../Contacts";
+import { TextPanel } from "../../../../Contacts";
+import { NotifyPanel } from "../../../../NotifyButton";
+import { sendsAlerts } from "@/lib/announcements";
+import { orgKey } from "@/lib/chat";
+import { hasFeature } from "@/lib/features";
+import ChatPanel from "../../../../ChatPanel";
+import PageMenus, { MEGAPHONE_BTN, MegaphoneIcon } from "../../../../PageMenus";
 import { PageTitle } from "../../../../ui";
 import UserList from "../../../../UserList";
 import OrgMembersNav from "../OrgMembersNav";
@@ -44,6 +50,8 @@ async function OrgCoaches({
   const tab = TABS.find((t) => t.key === sp.view)?.key ?? "active";
   const { users, admin } = members;
   const active = users.filter((u) => u.active && !u.director && (u.coach || u.teams.length > 0));
+  const alerter = await sendsAlerts({ pool: db, now: () => new Date() }, user, slug); // its Directors alert its coaches
+  const chatter = alerter && (await hasFeature(db, slug, "chat")); // and chat with them, with Chat
   const counts = { active: active.length, inactive: users.filter((u) => !u.active && !u.director).length };
 
   return (
@@ -51,10 +59,37 @@ async function OrgCoaches({
       <AppHeader user={user} context={`org:${slug}`} tab="org-members" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
         <OrgMembersNav slug={slug} current="coaches" staff={admin} coaches />
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <PageTitle title="Coaches" subtitle="Coaches on your teams (add them on each team's page), and inactive coaches" />
-          {tab === "active" && active.length > 0 && <GroupTextButton cells={active.map((u) => u.cell)} label="Text coaches" />}
-        </div>
+        {/* 📣 opens Text, and for its Directors Chat (with Chat) and Alert coaches, right under the title. */}
+        <PageMenus
+          title={<PageTitle title="Coaches" subtitle="Coaches on your teams (add them on each team's page), and inactive coaches" />}
+          menus={
+            tab === "active" && active.length > 0
+              ? [
+                  {
+                    key: "coaches",
+                    icon: <MegaphoneIcon />,
+                    label: chatter ? "Coaches: text, chat or alert" : alerter ? "Coaches: text or alert" : "Coaches: text",
+                    className: MEGAPHONE_BTN,
+                    items: [
+                      { key: "text", label: "💬 Text coaches", panel: <TextPanel cells={active.map((u) => u.cell)} label="Text coaches" /> },
+                      ...(chatter
+                        ? [{ key: "chat", label: "🗨️ Chat with coaches", panel: <ChatPanel chatKey={orgKey(slug, "coaches")} /> }]
+                        : []),
+                      ...(alerter
+                        ? [
+                            {
+                              key: "alert",
+                              label: "🔔 Alert coaches",
+                              panel: <NotifyPanel audience={{ org: slug, roles: ["coach"] }} to="all coaches" />,
+                            },
+                          ]
+                        : []),
+                    ],
+                  },
+                ]
+              : []
+          }
+        />
         <nav className="mb-4 flex gap-1 overflow-x-auto rounded-full bg-zinc-100 p-1 [scrollbar-width:none] dark:bg-zinc-900">
           {TABS.map((t) => (
             <Link

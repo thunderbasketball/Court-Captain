@@ -36,7 +36,7 @@ async function Event({ params }: { params: PageProps<"/events/[id]">["params"] }
         <Link href="/events" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
           ← Events
         </Link>
-        <div className="mt-2 flex items-start justify-between gap-3">
+        <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">{event.name}</h1>
           <ChatLink chatKey={`event-${event.id}`} label="Chat with this event's check-in people" size="md" />
         </div>

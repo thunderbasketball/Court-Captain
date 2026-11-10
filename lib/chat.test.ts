@@ -61,6 +61,41 @@ describe("chat", () => {
     return postMessage(deps(), u, key, body);
   };
 
+  it("every organization with Chat: its own chats, its own people, kept apart from Thunder's", async () => {
+    await db.pool.query("delete from org_role_types where org = 'east-ridge'");
+    await db.pool.query("delete from organizations where slug = 'east-ridge'");
+    await db.pool.query("insert into organizations (slug, name, short_name, kind) values ('east-ridge', 'East Ridge', 'ER', 'Organization')");
+    await db.pool.query("insert into org_role_types (org, role) values ('east-ridge', 'Director'), ('east-ridge', 'Coach')");
+    await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ('east-ridge', 'court-sync', 'setup', 'test')");
+    await grant(db.pool, "5550004 east-ridge Director", "5550002 east-ridge Coach");
+    const t = await db.pool.query<{ id: string }>(
+      `insert into org_teams (org, name, gender, grade_low, grade, level, created_by) values ('east-ridge', '5B Ace', 'Boys', 5, 5, 'REC', 'x') returning id::text`,
+    );
+    const er = t.rows[0].id;
+    await db.pool.query("insert into org_team_coaches (team_id, coach_id, role, added_by) values ($1, '5550002', 'HeadCoach', 'x')", [er]);
+    const erDir = person("5550004", "Max");
+    // East Ridge's Director starts East Ridge's chats; its keys carry its address.
+    const opts = (await newChatOptions(deps(), erDir, "east-ridge")).map((o) => o.key);
+    expect(opts.slice(0, 3)).toEqual(["east-ridge~directors", "east-ridge~everyone", "east-ridge~coaches"]);
+    expect(opts).toContain(`east-ridge~team-${er}`);
+    expect(opts).toContain("east-ridge~coach-5550002");
+    expect(opts).not.toContain("east-ridge~coach-5550001"); // Thunder's coach isn't East Ridge's
+    expect(await post(erDir, "east-ridge~coaches", "Gym is open")).toMatchObject({ ok: true });
+    // Ace (East Ridge's Head Coach) gets it; Thunder's coaches and Thunder's Director (not East Ridge's) don't see it.
+    expect(await chatUnreadCount(deps(), ace)).toBe(1);
+    expect((await listChats(deps(), ace)).map((c) => c.title)).toEqual(["Coaches · ER"]);
+    expect(await getChat(deps(), cal, "east-ridge~coaches")).toBeNull();
+    expect(await getChat(deps(), dir, "east-ridge~coaches")).toBeNull();
+    expect((await getChat(deps(), ace, "east-ridge~coaches"))?.members).toEqual(["Ace X"]);
+    // Thunder's "coaches" chat is a different chat.
+    expect((await getChat(deps(), cal, "coaches"))?.messages).toEqual([]);
+    expect(await post(dir, `east-ridge~team-${er}`)).toMatchObject({ ok: false });
+    expect(await getChat(deps(), erDir, "east-ridge~event-1")).toBeNull(); // events are Thunder's
+    // A private chat with a coach there.
+    expect(await post(erDir, dmKey("5550004", "5550002", "east-ridge"))).toMatchObject({ ok: true });
+    expect((await listChats(deps(), ace)).map((c) => c.title)).toContain("Max X · ER");
+  });
+
   it("who can start what", async () => {
     expect(await keys(cal)).toEqual(["coach-5550001", "everyone", "coaches", `team-${A}`, `teamcoaches-${A}`]);
     expect(await keys(ace)).toEqual(["coach-5550002", "everyone", "coaches", `team-${B}`, `teamcoaches-${B}`]); // a team coach counts as a coach

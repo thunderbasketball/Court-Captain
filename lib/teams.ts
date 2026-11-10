@@ -65,6 +65,7 @@ export type TeamListItem = {
     first: string;
     last: string;
     grade: string;
+    birthdate: string | null; // "YYYY-MM-DD" from registration
     rosteredBy: string;
     parents: Parent[];
     coachRequest: string | null;
@@ -86,6 +87,7 @@ export async function listTeams(deps: Deps, viewer: SessionUser): Promise<TeamLi
                       from team_staff s join users u on u.coach_id = s.coach_id where s.team_id = t.id), '[]') as staff,
             coalesce((select json_agg(json_build_object('registrantId', p.registrant_id, 'first', p.first_name, 'last', p.last_name,
                                                         'grade', p.grade, 'rosteredBy', p.rostered_by,
+                                                        'birthdate', to_char(g.birthdate, 'YYYY-MM-DD'),
                                                         'coachRequest', nullif(trim(g.coach_request), ''),
                                                         'p', json_build_array(g.parent1_first, g.parent1_last, g.parent1_cell, g.parent1_email,
                                                                               g.parent2_first, g.parent2_last, g.parent2_cell, g.parent2_email))

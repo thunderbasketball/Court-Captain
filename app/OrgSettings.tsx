@@ -21,7 +21,9 @@ export default function OrgSettings({
   name,
   short,
   canRename,
+  gradeRules,
 }: {
+  gradeRules?: ReactNode; // Grade requirements (not for Scenic City: its Leagues have their own)
   org: string;
   logo: ReactNode;
   features: ReactNode;
@@ -80,6 +82,7 @@ export default function OrgSettings({
                 }}
               />
             )}
+            {gradeRules}
             <AbbrForm
               org={org}
               abbr={abbr}

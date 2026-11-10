@@ -52,6 +52,27 @@ describe("rosters", () => {
     await reg("r4", "Dee", "Bell", "Girls", "5");
   });
 
+  it("players are offered by the age control date: free eligible players first, then those on a team", async () => {
+    const born = (id: string, d: string) => db.pool.query("update registrations set birthdate = $2 where registrant_id = $1", [id, d]);
+    await reg("r5", "Eve", "Low", "Girls", "3"); // a grade below: eligible
+    await reg("r6", "Fay", "Old", "Girls", "4");
+    await reg("r7", "Gia", "Kid", "Girls", "5");
+    await born("r5", "2017-05-01");
+    await born("r6", "2014-01-01"); // turns 13 before Aug 1, 2027: too old for 4th
+    await born("r7", "2016-09-01"); // 5th grader who doesn't turn 11 before Aug 1, 2027: age exception
+    await addPlayers(deps(), director, other, ["r2"]);
+    const c = await rosterCandidates(deps(), director, team);
+    expect(c.map((x) => [x.firstName, x.fits, x.note])).toEqual([
+      ["Eve", true, null],
+      ["Ava", true, "No birthdate"],
+      ["Gia", true, "Age exception"],
+      ["Bea", true, "No birthdate"], // already on 4G B
+      ["Cy", false, "No birthdate"], // a boy
+      ["Fay", false, "Too old"],
+      ["Dee", false, "No birthdate"],
+    ]);
+  });
+
   it("the Director adds players (who rostered them is recorded); fitting players are offered first", async () => {
     expect((await rosterCandidates(deps(), director, team)).map((c) => [c.firstName, c.fits])).toEqual([
       ["Bea", true],

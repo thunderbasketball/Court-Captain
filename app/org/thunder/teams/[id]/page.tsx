@@ -18,9 +18,12 @@ import { listUniforms, uniformsMissing } from "@/lib/uniforms";
 import { TZ } from "@/lib/time";
 import { getTeam, personOptions, roleLabel } from "@/lib/teams";
 import RosterPlayerRow from "../RosterPlayerRow";
+import EligibleChip, { bornLabel } from "../../../../EligibleChip";
+import { rosterIssue, schoolYearOf } from "@/lib/eligibility";
+import { orgGradeRules } from "@/lib/grade-rules";
 import { ViewAsButton } from "../../../../ViewAsButton";
 import { GroupTextButton } from "../../../../Contacts";
-import ChatPopup from "../../../../ChatPopup";
+import { ChatToggle } from "../../../../InlineToggle";
 import { MAX_GROUP_TEXT } from "@/lib/group-text";
 import AppHeader from "../../../../AppHeader";
 import { Chip, CollapseCard, EmailLink, PersonRow, PhoneLink, card } from "../../../../ui";
@@ -72,6 +75,9 @@ async function Team({
     canEvaluate(db, user, team.id),
   ]);
   const players = roster ?? [];
+  const schoolYear = schoolYearOf(easternDate(new Date())); // for each player's grade eligibility
+  const { rules: gradeRules } = await orgGradeRules(db, "thunder", new Date()); // set in the organization's gear
+  const issue = rosterIssue(team.grades, players, schoolYear, gradeRules); // "1 Too old": the Players card's title turns red
   // Who did it (Created by, Added by, Rostered by, booked by) shows only to Owners and Admins.
   const who = await seesWho(db, user, "thunder");
   // Every parent's cell and email once, for one group text or email to the team's families. A group text holds 19
@@ -149,13 +155,13 @@ async function Team({
           {(chatOn || parentCells.length > 0) && (
             <div className="mt-3 flex flex-wrap gap-2 sm:pl-16">
               {chatOn && (
-                <ChatPopup
+                <ChatToggle
                   chatKey={`team-${team.id}`}
                   label={`${team.name} team chat`}
                   className="shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
                 >
                   🗨️ Team chat
-                </ChatPopup>
+                </ChatToggle>
               )}
               {parentCells.length > 0 && <GroupTextButton cells={parentCells} label="Text parents" />}
               {onePerPlayer && (
@@ -273,7 +279,8 @@ async function Team({
           title="Players"
           count={players.length}
           open={opened === "roster"}
-          alert={!players.length}
+          alert={!players.length || !!issue}
+          badge={issue && <Chip tone="red">{issue}</Chip>}
           action={
             asDirector && (
               <AddPlayersButton
@@ -315,11 +322,15 @@ async function Team({
                 className="px-4 py-2.5"
                 line={
                   <>
-                    <span className="min-w-0 truncate font-medium">
-                      {p.firstName} <span className="font-semibold">{p.lastName}</span>
+                    <span className="flex min-w-0 flex-wrap items-center gap-1">
+                      <span className="truncate font-medium">
+                        {p.firstName} <span className="font-semibold">{p.lastName}</span>
+                      </span>
+                      <EligibleChip teamGrades={team.grades} grade={p.grade} birthdate={p.birthdate} year={schoolYear} rules={gradeRules} />
                     </span>
-                    <span className="shrink-0 text-xs text-zinc-400">
+                    <span className="shrink-0 text-right text-xs text-zinc-400">
                       {gradeLabel(p.grade)}
+                      {bornLabel(p.birthdate)}
                       {!p.registered && <span className="text-amber-700 dark:text-amber-400"> · not registered</span>}
                     </span>
                   </>

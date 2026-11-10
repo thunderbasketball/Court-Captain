@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import type { GridSlot, WeekGrid } from "@/lib/practice/schedule";
 import { bookSlot, releaseSlot, setSlotBlocked } from "./actions";
 import { Alert, CloseButton, Toast, dialogCls } from "../../../client-ui";
-import NotifyButton from "../../../NotifyButton";
+import { BellIcon, NotifyPanel } from "../../../NotifyButton";
 import { fieldLabel, inputCls, primaryBtn } from "../../../ui";
 
 type Ctx = { slot: GridSlot; when: string; where: string };
@@ -36,6 +36,7 @@ export default function WeekGridView({
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const [action, setAction] = useState<Action | null>(null);
+  const [alertDay, setAlertDay] = useState<string | null>(null); // the day whose alert form is open on its card
   const [teamId, setTeamId] = useState(grid.team?.id ?? "");
   const [everyWeek, setEveryWeek] = useState(false);
   const [reason, setReason] = useState("");
@@ -186,9 +187,26 @@ export default function WeekGridView({
             <h2 className="flex items-center justify-between gap-2 bg-zinc-900 px-4 py-2 text-sm font-bold text-white dark:bg-zinc-800">
               {d.label}
               {mode === "director" && d.gyms.some((g) => g.times.some((t) => t.slots.some((x) => x.team))) && (
-                <NotifyButton audience={{ practiceDate: d.iso }} to={`everyone practicing ${d.label}`} />
+                <button
+                  type="button"
+                  aria-label={`Notify everyone practicing ${d.label}`}
+                  title={`Notify everyone practicing ${d.label}`}
+                  aria-expanded={alertDay === d.iso}
+                  onClick={() => setAlertDay(alertDay === d.iso ? null : d.iso)}
+                  className={`inline-flex size-7 shrink-0 items-center justify-center rounded-full text-thunder-orange ring-1 ring-thunder-orange/40 hover:bg-orange-500/10 ${
+                    alertDay === d.iso ? "bg-thunder-orange/20" : ""
+                  }`}
+                >
+                  <BellIcon className="size-4" />
+                </button>
               )}
             </h2>
+            {/* The day's alert opens here on its card (tap the bell again to close). */}
+            {alertDay === d.iso && (
+              <div className="border-b border-zinc-100 px-3 pt-3 pb-3 dark:border-white/5">
+                <NotifyPanel audience={{ practiceDate: d.iso }} to={`everyone practicing ${d.label}`} />
+              </div>
+            )}
             <div className="space-y-3 px-4 py-3">
               {d.gyms.map((g) => (
                 <div key={g.gym}>

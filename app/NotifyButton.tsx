@@ -117,7 +117,8 @@ export function NotifyForm({
 }
 
 // The form right on a team card (Teams page): after sending, says so and the form is ready again.
-export function NotifyPanel({ audience, to }: { audience: AudienceInput; to: string }) {
+// `inbox` adds a link to the person's own announcements (the header's bell).
+export function NotifyPanel({ audience, to, inbox = false }: { audience: AudienceInput; to: string; inbox?: boolean }) {
   const [done, setDone] = useState<string | null>(null);
   return (
     <div className="rounded-xl bg-zinc-50 p-3 dark:bg-white/5">
@@ -126,7 +127,7 @@ export function NotifyPanel({ audience, to }: { audience: AudienceInput; to: str
           <Alert tone="green">{done}</Alert>
         </div>
       )}
-      <NotifyForm audience={audience} to={to} onSent={setDone} />
+      <NotifyForm audience={audience} to={to} inbox={inbox} onSent={setDone} />
     </div>
   );
 }

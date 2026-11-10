@@ -14,6 +14,7 @@ import {
   saveProgram,
   setGradeLevel,
   setRecLimit,
+  setProgramGradeRules,
   setSchedulePublished,
   setPaid,
   setProgramLogo,
@@ -25,6 +26,8 @@ import { fieldLabel, inputCls, pillCls } from "../../../ui";
 import { GearIcon } from "../../../OrgSettings";
 import { REG_OPTIONS, type ProgramOption } from "@/lib/program-options";
 import RegisterChoices from "./RegisterChoices";
+import GradeRulesForm, { rulesSummary } from "../../../GradeRulesForm";
+import type { GradeRules } from "@/lib/eligibility";
 
 const KINDS = ["League", "Circuit", "Tournament"] as const;
 const GRADES = Array.from({ length: 13 }, (_, g) => g);
@@ -1118,7 +1121,11 @@ export function ProgramSettings({
   teams,
   grades,
   rec,
+  gradeRules,
+  today,
 }: {
+  gradeRules: GradeRules; // its age control date, oldest age and age exception
+  today: string;
   program: ProgramFields;
   logo: string | null;
   teams: number;
@@ -1154,6 +1161,22 @@ export function ProgramSettings({
                 {() => <GradesAccepted programId={program.id} rows={grades} />}
               </PopUp>
             )}
+          </li>
+          <li className="flex items-center justify-between gap-3 py-2.5">
+            <span className="text-sm text-zinc-600 dark:text-zinc-300">
+              Grade requirements
+              <span className="block text-xs text-zinc-500">{rulesSummary(gradeRules, today)}</span>
+            </span>
+            <PopUp label="Edit" title="Grade requirements" className={editBtn}>
+              {(close) => (
+                <GradeRulesForm
+                  rules={gradeRules}
+                  today={today}
+                  save={(r) => setProgramGradeRules(program.id, r)}
+                  onSaved={close}
+                />
+              )}
+            </PopUp>
           </li>
           <li className="flex items-center justify-between gap-3 py-2.5">
             <span className="text-sm text-zinc-600 dark:text-zinc-300">

@@ -1,4 +1,7 @@
 import { Suspense } from "react";
+import { orgKey } from "@/lib/chat";
+import { hasFeature } from "@/lib/features";
+import { ChatToggle } from "../../../../InlineToggle";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
@@ -56,6 +59,8 @@ async function OrgTeam({
     new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
   const roleName = (r: string) => COACH_ROLES.find((x) => x.key === r)?.name ?? r;
   const hasHead = t.coaches.some((c) => c.role === "HeadCoach");
+  // Team chat (with Chat): the team's coaches and the Directors, opened right here (who can open it is checked again).
+  const teamChat = (await hasFeature(db, slug, "chat")) && (canManage || t.coaches.some((c) => c.id === user.coachId));
 
   return (
     <>
@@ -115,6 +120,17 @@ async function OrgTeam({
               {!t.players && <MustBeEntered what="ROSTER" />}
             </div>
           </div>
+          {teamChat && (
+            <div className="mt-3 flex flex-wrap gap-2 sm:pl-16">
+              <ChatToggle
+                chatKey={orgKey(slug, `team-${t.id}`)}
+                label={`${t.name} team chat`}
+                className="shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
+              >
+                🗨️ Team chat
+              </ChatToggle>
+            </div>
+          )}
           {canManage && (
             <div className="mt-3">
               <AltNameButton org={slug} id={t.id} alt={t.altName} />

@@ -6,6 +6,9 @@ import { ORG_COLORS } from "@/lib/org-signup";
 import { TZ } from "@/lib/time";
 import OrgLogo from "./OrgLogo";
 import OrgSettings from "./OrgSettings";
+import OrgGradeRules from "./OrgGradeRules";
+import { orgGradeRules } from "@/lib/grade-rules";
+import { easternDate } from "@/lib/time";
 
 // The gear after an organization's last tab, for its Admins only (checked here on the server): its name (Owners), login link, every
 // feature (what it has, since when, and what it can add: buying upgrades in the app is coming soon), its color and logo.
@@ -18,6 +21,8 @@ export default async function OrgGear({ org, coachId }: { org: string; coachId: 
     db.query<{ feature: string }>("select feature from org_feature_requests where org = $1", [org]),
   ]);
   if (!admin || !o) return null;
+  const now = new Date();
+  const grades = org === "scenic-city" ? null : await orgGradeRules(db, org, now);
   const since = new Map(on.rows.map((f) => [f.feature, f.turned_on_at]));
   const requested = new Set(asked.rows.map((f) => f.feature));
   const date = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: TZ });
@@ -34,6 +39,7 @@ export default async function OrgGear({ org, coachId }: { org: string; coachId: 
       name={o.name}
       short={o.short}
       canRename={owner}
+      gradeRules={grades && <OrgGradeRules org={org} grades={grades} today={easternDate(now)} />}
       featuresOn={have.length}
       logo={<OrgLogo src={o.logo} name={o.name} color={o.color} className="size-14 rounded-xl text-xl" />}
       features={

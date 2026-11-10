@@ -3,12 +3,14 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { gradeLabel } from "@/lib/grades";
+import { birthdayLabel } from "@/lib/eligibility";
 import type { RosterCandidate } from "@/lib/rosters";
 import { Alert, CloseButton, Toast, dialogCls, useConfirm } from "../../../../client-ui";
 import { primaryBtn } from "../../../../ui";
 import { addPlayers, removePlayer } from "../actions";
 
-// Director: pick registered players to put on the team. Players who fit the team (gender + grade) show first.
+// Director: pick registered players to put on the team. Players eligible for the team (gender, grade and age control
+// date) show first, those on no team yet before those already on one.
 // `canSecond` (Owners, Admins, Directors of Players): picking a player already on a team asks first, then puts them on a
 // 2nd team. The server checks again.
 export function AddPlayersButton({
@@ -38,6 +40,7 @@ export function AddPlayersButton({
     (c) => (showAll || c.fits || q) && (!q || `${c.firstName} ${c.lastName}`.toLowerCase().includes(q)),
   );
   const fitting = candidates.filter((c) => c.fits).length;
+  const free = candidates.filter((c) => c.fits && !c.otherTeams.length).length;
 
   return (
     <>
@@ -59,7 +62,7 @@ export function AddPlayersButton({
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold">Add players</h2>
-              <p className="text-sm text-zinc-500">{fitting} registered players fit this team&apos;s gender and grades</p>
+              <p className="text-sm text-zinc-500">{fitting} registered players are eligible for this team ({free} not on a team yet)</p>
             </div>
             <CloseButton onClick={close} />
           </div>
@@ -101,6 +104,8 @@ export function AddPlayersButton({
                     </span>
                     <span className="block text-xs text-zinc-500">
                       {c.gender} · {gradeLabel(c.grade)}
+                      {c.birthdate && ` · born ${birthdayLabel(c.birthdate)}`}
+                      {c.note && <span className="text-amber-700 dark:text-amber-400"> · {c.note}</span>}
                       {c.otherTeams.length > 0 && (
                         <span className="text-amber-700 dark:text-amber-400"> · on {c.otherTeams.join(", ")}</span>
                       )}

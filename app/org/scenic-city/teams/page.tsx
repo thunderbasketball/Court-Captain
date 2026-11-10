@@ -18,8 +18,9 @@ import { LeagueGames } from "../../../LeagueGames";
 import { GRADE_CHOICES, gradeRange, listScenicTeams, type ScenicTeam } from "@/lib/scenic-teams";
 import { TZ } from "@/lib/time";
 import AppHeader from "../../../AppHeader";
-import AddTeamButton from "../../../AddTeam";
-import { ImportTeamsButton, UndoImportButton } from "../../../TeamImport";
+import { AddTeamPanel } from "../../../AddTeam";
+import PageMenus, { PLUS_BTN, PlusIcon } from "../../../PageMenus";
+import { ImportTeamsPanel, UndoImportButton } from "../../../TeamImport";
 import { CollapseCard, GroupCard, PageTitle, PhoneLink, TeamName } from "../../../ui";
 import { DeleteTeam, TeamEditor } from "./TeamEditor";
 import { addClubTeam, importClubTeams, previewClubImport, undoClubImport } from "../actions";
@@ -179,41 +180,65 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
     <>
       <AppHeader user={user} context={scenic.key} tab="scenic-teams" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <div className="flex items-start justify-between gap-3">
-          <PageTitle title={`Teams (${teams.length})`} subtitle={SUBTITLE[scenic.role]} />
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            {director && (
-              <>
-                {imports && ( // Directors of Teams
-                  <Link
-                    href="/org/scenic-city/teams/fastbreak"
-                    className="rounded-full px-3 py-1.5 text-sm font-semibold text-zinc-700 ring-1 ring-zinc-950/10 hover:bg-zinc-50 dark:text-zinc-200 dark:ring-white/15"
-                  >
-                    FastBreak
-                  </Link>
-                )}
-                <ImportTeamsButton
-                  preview={previewClubImport}
-                  named
-                  nameLabel="Organization"
-                  add={importClubTeams}
-                  example={
-                    "Organization,Gender,Grade,Level,Coach First,Coach Last,Coach Cell,Alternate Name\nHixson Hoops,Boys,5th,REC,Sam,Lee,423-555-0101,Bolts\nHixson Hoops,Girls,3rd/4th,COMP,,,,"
-                  }
-                  help="Teams for outside clubs (organizations not on CourtCaptain), one per row with its Organization, Gender, Grade and Level (REC or COMP), and if you have them the Head Coach's name, cell and email and an Alternate name, in any order. A coach without a cell is fine: Edit the team later to add it. A new club is added with its initials as its Abbreviation. Each team is named with the club's Abbreviation, grade, gender and Head Coach (like HH 5B Lee; HH 5B TBD until a coach). Organizations on CourtCaptain add their own teams. Paste from a spreadsheet or choose a CSV file. Next you'll check which column is which, then see exactly what will be added (we clean up things like 3 & 4 or R)."
-                />
-                <AddTeamButton
-                  people={people}
-                  clubs={clubs.map((c) => ({ value: c.id, label: c.name, abbr: c.abbr }))}
-                  create={addClubTeam}
-                  preK
-                />
-              </>
-            )}
-            {!director && data.addFor.length > 0 && <TeamEditor addFor={data.addFor} grades={GRADE_CHOICES} />}
-          </div>
-        </div>
-
+        {/* The same as every Teams page: + (Add a team, Import teams) opens right under the title. */}
+        <PageMenus
+          title={<PageTitle title={`Teams (${teams.length})`} subtitle={SUBTITLE[scenic.role]} />}
+          extra={
+            <>
+              {director && imports && ( // Directors of Teams
+                <Link
+                  href="/org/scenic-city/teams/fastbreak"
+                  className="rounded-full px-3 py-1.5 text-sm font-semibold text-zinc-700 ring-1 ring-zinc-950/10 hover:bg-zinc-50 dark:text-zinc-200 dark:ring-white/15"
+                >
+                  FastBreak
+                </Link>
+              )}
+              {!director && data.addFor.length > 0 && <TeamEditor addFor={data.addFor} grades={GRADE_CHOICES} />}
+            </>
+          }
+          menus={
+            director
+              ? [
+                  {
+                    key: "add",
+                    icon: <PlusIcon />,
+                    label: "Add or import teams",
+                    className: PLUS_BTN,
+                    items: [
+                      {
+                        key: "add",
+                        label: "＋ Add a team",
+                        panel: (
+                          <AddTeamPanel
+                            people={people}
+                            clubs={clubs.map((c) => ({ value: c.id, label: c.name, abbr: c.abbr }))}
+                            create={addClubTeam}
+                            preK
+                          />
+                        ),
+                      },
+                      {
+                        key: "import",
+                        label: "⇪ Import teams",
+                        panel: (
+                          <ImportTeamsPanel
+                            preview={previewClubImport}
+                            named
+                            nameLabel="Organization"
+                            add={importClubTeams}
+                            example={
+                              "Organization,Gender,Grade,Level,Coach First,Coach Last,Coach Cell,Alternate Name\nHixson Hoops,Boys,5th,REC,Sam,Lee,423-555-0101,Bolts\nHixson Hoops,Girls,3rd/4th,COMP,,,,"
+                            }
+                            help="Teams for outside clubs (organizations not on CourtCaptain), one per row with its Organization, Gender, Grade and Level (REC or COMP), and if you have them the Head Coach's name, cell and email and an Alternate name, in any order. A coach without a cell is fine: Edit the team later to add it. A new club is added with its initials as its Abbreviation. Each team is named with the club's Abbreviation, grade, gender and Head Coach (like HH 5B Lee; HH 5B TBD until a coach). Organizations on CourtCaptain add their own teams. Paste from a spreadsheet or choose a CSV file. Next you'll check which column is which, then see exactly what will be added (we clean up things like 3 & 4 or R)."
+                          />
+                        ),
+                      },
+                    ],
+                  },
+                ]
+              : []
+          }
+        />
         {/* Which program: current and upcoming first, then past ones (ended), then teams not registered now. */}
         <nav aria-label="Programs" className="mb-3 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
           {[...data.programs.map((p) => ({ key: p.id, label: p.ended ? `${p.name} · ended` : p.name })), { key: "none", label: "Not registered" }].map(

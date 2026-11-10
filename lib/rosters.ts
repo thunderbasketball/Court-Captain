@@ -5,6 +5,9 @@ import type { SessionUser } from "./auth/service";
 import { withTx } from "./sql";
 import { hasArea } from "./org-admin";
 import { normalizeCell } from "./phone";
+import { eligibility, eligibilityChip, schoolYearOf } from "./eligibility";
+import { easternDate } from "./time";
+import { orgGradeRules } from "./grade-rules";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -25,6 +28,7 @@ export type RosterPlayer = {
   lastName: string;
   gender: string;
   grade: string;
+  birthdate: string | null; // "YYYY-MM-DD" from registration
   rosteredBy: string;
   rosteredAt: Date;
   registered: boolean; // still in the current registrations
@@ -39,7 +43,7 @@ export async function listRoster(deps: Deps, viewer: SessionUser, teamId: string
   type Row = Omit<RosterPlayer, "parents"> & Record<`p${1 | 2}${"f" | "l" | "c" | "e"}`, string | null>;
   const r = await deps.pool.query<Row>(
     `select p.registrant_id as "registrantId", p.first_name as "firstName", p.last_name as "lastName", p.gender, p.grade,
-            p.rostered_by as "rosteredBy", p.rostered_at as "rosteredAt",
+            p.rostered_by as "rosteredBy", p.rostered_at as "rosteredAt", to_char(g.birthdate, 'YYYY-MM-DD') as birthdate,
             g.registrant_id is not null as registered,
             g.parent1_first as p1f, g.parent1_last as p1l, g.parent1_cell as p1c, g.parent1_email as p1e,
             g.parent2_first as p2f, g.parent2_last as p2l, g.parent2_cell as p2c, g.parent2_email as p2e
@@ -71,24 +75,40 @@ export type RosterCandidate = {
   lastName: string;
   gender: string;
   grade: string;
-  fits: boolean; // the team's gender and one of its grades
+  birthdate: string | null;
+  fits: boolean; // the team's gender, and eligible by grade and age (lib/eligibility.ts); no birthdate: one of its grades
+  note: string | null; // "Age exception" (playing above their grade by age) or "No birthdate"
   otherTeams: string[];
 };
 
-// Director: registered players not on this team yet. Those who fit the team come first.
+// Director: registered players not on this team yet. Those who fit the team come first (eligible by the age control date:
+// its grade or below and young enough, or the age exception), players on no team before those already on one; then
+// youngest grade first, by last name.
 export async function rosterCandidates(deps: Deps, viewer: SessionUser, teamId: string): Promise<RosterCandidate[]> {
   if (!hasArea(viewer, "teams") || !isId(teamId)) return [];
-  const r = await deps.pool.query<RosterCandidate>(
+  const r = await deps.pool.query<Omit<RosterCandidate, "fits" | "note"> & { teamGender: string; teamGrades: string[] }>(
     `select g.registrant_id as "registrantId", g.first_name as "firstName", g.last_name as "lastName", g.gender, g.grade,
-            (g.gender = t.gender and g.grade = any(t.grades)) as fits,
+            to_char(g.birthdate, 'YYYY-MM-DD') as birthdate, t.gender as "teamGender", t.grades as "teamGrades",
             array(select t2.name from team_players p2 join teams t2 on t2.id = p2.team_id
                   where p2.registrant_id = g.registrant_id order by t2.name) as "otherTeams"
      from registrations g cross join teams t
      where t.id = $1 and not exists (select 1 from team_players p where p.team_id = t.id and p.registrant_id = g.registrant_id)
-     order by (g.gender = t.gender and g.grade = any(t.grades)) desc, g.grade_sort, lower(g.last_name), lower(g.first_name)`,
+     order by g.grade_sort, lower(g.last_name), lower(g.first_name)`,
     [teamId],
   );
-  return r.rows;
+  const year = schoolYearOf(easternDate(deps.now()));
+  const { rules } = await orgGradeRules(deps.pool, "thunder", deps.now());
+  const list = r.rows.map(({ teamGender, teamGrades, ...c }) => {
+    const e = eligibility(teamGrades, c.grade, c.birthdate, year, rules);
+    const byGrade = e === "no-birthdate" ? teamGrades.includes(c.grade) : e === "ok" || e === "exception";
+    return {
+      ...c,
+      fits: c.gender === teamGender && byGrade,
+      note: eligibilityChip(e, c.grade, teamGrades)?.text ?? null,
+    };
+  });
+  const rank = (c: RosterCandidate) => (c.fits ? 0 : 2) + (c.otherTeams.length ? 1 : 0);
+  return list.sort((a, b) => rank(a) - rank(b)); // stable: keeps grade and name order within each
 }
 
 // Roster changes lock each player they touch (in id order), so two changes can't put one player on two teams.

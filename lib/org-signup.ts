@@ -185,6 +185,12 @@ export async function renameOrg(
     if (slug !== org) {
       await q.query("delete from org_old_slugs where old_slug = $1", [slug]);
       await q.query("update organizations set slug = $2 where slug = $1", [org, slug]); // everything pointing at it follows
+      // Its chats' keys carry the address ("east-ridge~coaches"): they follow it too.
+      for (const table of ["chat_messages", "chat_reads"])
+        await q.query(`update ${table} set conv = $2 || substr(conv, length($1) + 1) where org = $2 and conv like $1 || '~%'`, [
+          org,
+          slug,
+        ]);
       await q.query("insert into org_old_slugs (old_slug, slug, changed_by, changed_at) values ($1, $2, $3, $4)", [
         org,
         slug,

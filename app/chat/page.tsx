@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
-import { requireFeature } from "@/lib/features-server";
+import { hasFeature } from "@/lib/features";
 import { listChats, newChatOptions } from "@/lib/chat";
 import { currentContexts } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
@@ -29,10 +29,12 @@ const when = (d: Date) => {
 async function Chats() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
-  await requireFeature("thunder", "chat");
-  if (!user.hasThunderRole) redirect("/");
   const deps = { pool: db, now: () => new Date() };
-  const [chats, options, { active }] = await Promise.all([listChats(deps, user), newChatOptions(deps, user), currentContexts(user)]);
+  // Every chat they're in, from every organization with Chat; + New chat starts one in the organization in use.
+  const { active } = await currentContexts(user);
+  const org = active?.org && active.org !== "platform" ? active.org : "thunder";
+  const chatHere = await hasFeature(db, org, "chat");
+  const [chats, options] = await Promise.all([listChats(deps, user), chatHere ? newChatOptions(deps, user, org) : []]);
 
   return (
     <>
@@ -41,7 +43,7 @@ async function Chats() {
         <div className="flex items-start justify-between gap-3">
           <PageTitle
             title="Chat"
-            subtitle={user.isDirector ? "Every chat in the club" : "Your chats with Directors, coaches and your teams"}
+            subtitle="Your chats with Directors, coaches and teams, in every organization"
           />
           {options.length > 0 && <NewChatButton options={options} />}
         </div>

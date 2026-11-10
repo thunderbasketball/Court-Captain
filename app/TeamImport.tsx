@@ -61,6 +61,46 @@ export function ImportTeamsButton({
   );
 }
 
+// The same import, opened right on the page (a page's + menu) instead of in a pop-up; says what was added when done.
+export function ImportTeamsPanel({
+  preview,
+  add,
+  help,
+  example,
+  named = false,
+  nameLabel = "Team",
+}: {
+  preview: Preview;
+  add: Add;
+  help: ReactNode;
+  example: string;
+  named?: boolean;
+  nameLabel?: string;
+}) {
+  const router = useRouter();
+  const [msg, setMsg] = useState<string | null>(null);
+  const [round, setRound] = useState(0); // a fresh form after each import
+  return (
+    <div className="space-y-3">
+      {msg && <Alert tone="green">{msg}</Alert>}
+      <ImportForm
+        key={round}
+        preview={preview}
+        add={add}
+        help={help}
+        example={example}
+        named={named}
+        nameLabel={nameLabel}
+        onDone={(text) => {
+          setMsg(text);
+          setRound((n) => n + 1);
+          router.refresh();
+        }}
+      />
+    </div>
+  );
+}
+
 type Step = "paste" | "columns" | "preview";
 const pill = (on: boolean) =>
   `shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${on ? "bg-thunder-blue text-white" : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800"}`;

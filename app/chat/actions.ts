@@ -7,11 +7,11 @@ import { db } from "@/lib/db";
 
 const deps = { pool: db, now: () => new Date() };
 
-// Session and chat membership are checked again inside lib/chat.
+// Session and chat membership are checked again inside lib/chat; the Chat feature is the chat's organization's.
 export async function postMessage(key: string, body: string) {
   const user = await currentUser();
   if (!user) return { ok: false as const, message: "Please log in again." };
-  const refused = await featureRefusal("thunder", "chat");
+  const refused = await featureRefusal(chat.chatOrg(String(key)) ?? "thunder", "chat"); // that organization's Chat
   if (refused) return refused;
   if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
   try {
@@ -30,7 +30,7 @@ export async function postMessage(key: string, body: string) {
 export async function loadChat(key: string) {
   const user = await currentUser();
   if (!user) return { ok: false as const, message: "Please log in again." };
-  const refused = await featureRefusal("thunder", "chat");
+  const refused = await featureRefusal(chat.chatOrg(String(key)) ?? "thunder", "chat"); // that organization's Chat
   if (refused) return refused;
   try {
     const thread = await chat.getChat(deps, user, String(key));

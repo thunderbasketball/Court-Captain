@@ -2,10 +2,16 @@ import { formatCell } from "@/lib/phone";
 import type { SessionUser } from "@/lib/auth/service";
 import { deleteBlocker } from "@/lib/user-admin";
 import type { UserListItem } from "@/lib/users";
-import ChatLink from "./ChatLink";
+import { ChatToggle } from "./InlineToggle";
+import { ChatIcon } from "./TeamRow";
+
+const CHAT_BTN =
+  "inline-flex size-7 shrink-0 items-center justify-center rounded-full text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10";
 import { AddMenu, DirectorButtons, DirectorRole, menuItem, type Director } from "./DirectorTools";
 import { isThunderAdmin } from "@/lib/org-admin";
 import { db } from "@/lib/db";
+import { hasFeature } from "@/lib/features";
+import { orgKey } from "@/lib/chat";
 import { resettable } from "@/lib/login-reset";
 import { ResetLoginButton } from "./ResetLoginButton";
 import { ViewAsButton } from "./ViewAsButton";
@@ -23,7 +29,7 @@ import { gradeStr } from "@/lib/team-names";
 // `view="inactive-coaches"` every other inactive login. Each group sorted by last name. Coach cards are collapsed with
 // Edit and Reset login under a gear; team pills open the team's page.
 // Edit and View as are for Admins only. `orgAdmin` (another organization's list): View as for its Owners and Admins;
-// Edit, Approve and Chat stay Thunder's. 🔑 Reset login under 👁 for whoever the viewer may reset (lib/login-reset.ts).
+// Edit and Approve stay Thunder's; Chat (a coach's chat with the Directors) wherever the organization has Chat. 🔑 Reset login under 👁 for whoever the viewer may reset (lib/login-reset.ts).
 // `team` (Admins only): each Director's role and area tools in their row, and + Add Admin / + Add Director by the title.
 export type DirectorTeam = {
   org: string;
@@ -54,6 +60,8 @@ export default async function UserList({
   const thunder = orgAdmin === undefined;
   const admin = thunder ? isThunderAdmin(viewer) : orgAdmin;
   const slug = thunder ? "thunder" : (org ?? team?.org);
+  // Each coach's chat with the Directors, opened on their card: Thunder, or another organization with Chat (its Admins).
+  const chatOn = thunder || (!!slug && admin && (await hasFeature(db, slug, "chat")));
   const canReset =
     admin && slug
       ? await resettable(
@@ -123,13 +131,16 @@ export default async function UserList({
           )}
         </GearPopUp>
       );
+      // The chat opens right here on the card, on a line of its own under the buttons (no pop-up, no new page).
       const buttons = (
-        <div className="flex shrink-0 items-center gap-2">
-          {thunder &&
+        <>
+          {chatOn &&
             u.active &&
             u.coachId !== viewer.coachId &&
             (u.coach || u.teams.some((t) => /(Head|Assistant) Coach$/.test(t))) && (
-              <ChatLink chatKey={`coach-${u.coachId}`} label={`Chat with ${name}`} />
+              <ChatToggle chatKey={orgKey(slug ?? "thunder", `coach-${u.coachId}`)} label={`Chat with ${name}`} className={CHAT_BTN}>
+                <ChatIcon />
+              </ChatToggle>
             )}
           {thunder && admin && u.joinTeamListed && <ApproveJoinButton coachId={u.coachId} label="Approve onto team" />}
           {!coachCard && mayEdit && (
@@ -139,7 +150,7 @@ export default async function UserList({
               deleteBlocker={deleteBlocker(u, viewer)}
             />
           )}
-        </div>
+        </>
       );
       const contact = (
         <>
@@ -206,10 +217,10 @@ export default async function UserList({
           )}
           {contact}
           {coachCard ? (
-            <div className="flex justify-end pt-1">{buttons}</div>
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-1">{buttons}</div>
           ) : (
-            <div className="flex items-end justify-between gap-2 pt-1">
-              {teamPills(u)}
+            <div className="flex flex-wrap items-end gap-2 pt-1">
+              <div className="mr-auto">{teamPills(u)}</div>
               {buttons}
             </div>
           )}

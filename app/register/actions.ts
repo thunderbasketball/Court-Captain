@@ -5,6 +5,7 @@ import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
 import { CONTEXT_COOKIE } from "@/lib/contexts";
 import { db } from "@/lib/db";
 import { switchSoloToOrg } from "@/lib/court-solo";
+import { setOrgGradeRules } from "@/lib/grade-rules";
 import { createOrganization, renameOrg, setOrgAbbr, setOrgColor, setOrgLogo, type Logo } from "@/lib/org-signup";
 
 const deps = { pool: db, now: () => new Date() };
@@ -126,4 +127,17 @@ export async function switchSoloAccount(slug: string, name: string, short: strin
       maxAge: 60 * 60 * 24 * 365,
     });
   return r;
+}
+
+// Admins (checked in lib/grade-rules): the organization's grade requirements, or adopt its League's.
+export async function changeOrgGradeRules(org: string, rules: unknown, adopt: boolean) {
+  const user = await currentUser();
+  if (!user) return { ok: false as const, message: "Please log in again." };
+  if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  try {
+    return await setOrgGradeRules(deps, user, String(org), { adopt: adopt === true, rules });
+  } catch (e) {
+    console.error("Grade requirements change failed:", e);
+    return { ok: false as const, message: "Something went wrong. Please try again." };
+  }
 }

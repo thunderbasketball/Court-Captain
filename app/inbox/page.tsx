@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { listInbox, listSent, markRead } from "@/lib/announcements";
+import { listInbox, listSent, markRead, sendsAlerts } from "@/lib/announcements";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { currentContexts } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
@@ -24,11 +24,15 @@ const when = (d: Date) =>
 async function Inbox({ searchParams }: { searchParams: PageProps<"/inbox">["searchParams"] }) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
-  if (!user.hasThunderRole) redirect("/");
   const deps = { pool: db, now: () => new Date() };
   const sp = await searchParams;
-  const sent = user.isDirector && sp.view === "sent";
-  const { active } = await currentContexts(user);
+  // Everyone's inbox holds their alerts from every organization. Sent and + New are for the organization in use
+  // (?org=, else the role chip in use), for its Directors only (checked on the server).
+  const { active, contexts } = await currentContexts(user);
+  const org = typeof sp.org === "string" ? sp.org : active?.org && active.org !== "platform" ? active.org : "thunder";
+  const sender = await sendsAlerts(deps, user, org);
+  const sent = sender && sp.view === "sent";
+  const here = contexts.find((c) => c.org === org);
   const inbox = sent ? [] : await listInbox(deps, user);
   // Opening the inbox counts as seeing what's in it. Done before the header renders, so its badge is already cleared.
   // Not while a Director is viewing as this person: that would hide their unread ones from them.
@@ -43,33 +47,33 @@ async function Inbox({ searchParams }: { searchParams: PageProps<"/inbox">["sear
 
   return (
     <>
-      <AppHeader user={user} context={active?.key} />
+      <AppHeader user={user} context={here?.key ?? active?.key} />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
         <div className="flex items-start justify-between gap-3">
           <PageTitle
             title="Announcements"
-            subtitle={sent ? "Everything sent, and who hasn't read it yet" : "News from Thunder Basketball"}
+            subtitle={sent ? "Everything sent, and who hasn't read it yet" : "News from your organizations"}
           />
-          {user.isDirector && (
+          {sender && (
             <Link
-              href="/inbox/new"
+              href={`/inbox/new?org=${org}`}
               className="shrink-0 rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark"
             >
               + New
             </Link>
           )}
         </div>
-        {user.isDirector && (
+        {sender && (
           <nav className="mb-4 flex rounded-full bg-zinc-100 p-1 sm:inline-flex dark:bg-zinc-900">
-            <Link href="/inbox" className={tab(!sent)}>
+            <Link href={`/inbox?org=${org}`} className={tab(!sent)}>
               Inbox
             </Link>
-            <Link href="/inbox?view=sent" className={tab(sent)}>
+            <Link href={`/inbox?view=sent&org=${org}`} className={tab(sent)}>
               Sent
             </Link>
           </nav>
         )}
-        {sent ? <Sent items={await listSent(deps, user)} /> : <Received items={inbox} />}
+        {sent ? <Sent items={await listSent(deps, user, org)} /> : <Received items={inbox} />}
       </main>
     </>
   );
@@ -86,7 +90,7 @@ function Received({ items }: { items: Awaited<ReturnType<typeof listInbox>> }) {
             {!a.read && <span className="shrink-0 rounded-full bg-thunder-blue px-2 py-0.5 text-xs font-semibold text-white">New</span>}
           </div>
           <p className="mt-0.5 text-xs text-zinc-500">
-            {a.sentBy} · {when(a.createdAt)}
+            {a.orgName} · {a.sentBy} · {when(a.createdAt)}
           </p>
           <p className="mt-3 text-sm whitespace-pre-wrap">{a.body}</p>
         </article>

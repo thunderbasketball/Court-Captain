@@ -11,6 +11,7 @@ import { formatCell } from "@/lib/phone";
 import { getProgram, listPrograms, recLimit, teamsByDate } from "@/lib/scenic-programs";
 import { dayLabel, timeLabel } from "@/lib/time";
 import { programSchedule } from "@/lib/public-league";
+import { programGradeRules } from "@/lib/grade-rules";
 import { shortDate as shortDay } from "@/lib/program-options";
 import AppHeader from "../../../../AppHeader";
 import { ProgramsNav } from "../../ScenicNav";
@@ -126,6 +127,8 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
                   teams={p.teams}
                   grades={p.divisionList.length ? gradeRows : null}
                   rec={{ ...rec!, by: who ? rec!.by : null }}
+                  gradeRules={await programGradeRules(db, p.id)}
+                  today={p.today}
                 />
               )}
             </div>

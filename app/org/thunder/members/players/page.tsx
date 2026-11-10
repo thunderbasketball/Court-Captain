@@ -6,6 +6,9 @@ import { hasFeature } from "@/lib/features";
 import { requireFeature } from "@/lib/features-server";
 import { db } from "@/lib/db";
 import { gradeLabel } from "@/lib/grades";
+import { schoolYearOf } from "@/lib/eligibility";
+import { orgGradeRules } from "@/lib/grade-rules";
+import EligibleChip from "../../../../EligibleChip";
 import { hasArea, seesWho } from "@/lib/org-admin";
 import { formatCell } from "@/lib/phone";
 import { easternDate } from "@/lib/time";
@@ -45,6 +48,8 @@ async function Players() {
   const canAdd = hasArea(user, "players"); // Owners, Admins and Directors of Players add players (fees can be waived)
 
   const today = easternDate(new Date());
+  const schoolYear = schoolYearOf(today);
+  const { rules: gradeRules } = await orgGradeRules(db, "thunder", new Date()); // set in the organization's gear
   // "Mar 4, 2017" and how old they are today.
   const birthday = (d: string) =>
     new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
@@ -62,6 +67,9 @@ async function Players() {
       collapsed
       chips={
         <>
+          {/* Birthday on every card; a rostered player's eligibility for their team's grade (age control date). */}
+          {p.birthdate && <span className="text-xs whitespace-nowrap text-zinc-400">{birthday(p.birthdate)}</span>}
+          {p.teamGrades && <EligibleChip teamGrades={p.teamGrades} grade={p.grade} birthdate={p.birthdate} year={schoolYear} rules={gradeRules} />}
           {p.playsUp && <Chip tone="amber">{p.playsUp}</Chip>}
           {p.addedBy && <Chip tone="zinc">Added in app</Chip>}
           {p.feesWaivedBy && <Chip tone="green">Fees waived</Chip>}

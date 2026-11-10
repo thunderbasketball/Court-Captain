@@ -6,7 +6,7 @@ import { Alert, useConfirm } from "../../client-ui";
 import { card, fieldLabel as label, inputCls, pillCls as pill, primaryBtn } from "../../ui";
 import { previewAudience, sendAnnouncement } from "../actions";
 
-type Choices = { roles: { key: string; label: string }[]; teams: { id: string; name: string }[]; users: { id: string; name: string }[] };
+type Choices = { org: string; roles: { key: string; label: string }[]; teams: { id: string; name: string }[]; users: { id: string; name: string }[] };
 
 const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
@@ -25,7 +25,7 @@ export default function ComposeForm({ choices }: { choices: Choices }) {
   const [confirm, confirmDialog] = useConfirm();
 
   // Who it will reach, worked out on the server as the picks change.
-  const audienceKey = JSON.stringify({ everyone, roles, teams, users });
+  const audienceKey = JSON.stringify({ org: choices.org, everyone, roles, teams, users });
   useEffect(() => {
     let stale = false;
     const t = setTimeout(async () => {
@@ -57,9 +57,9 @@ export default function ComposeForm({ choices }: { choices: Choices }) {
         });
         if (!ok) return;
         start(async () => {
-          const r = await sendAnnouncement({ title, body, everyone, roles, teams, users });
+          const r = await sendAnnouncement({ org: choices.org, title, body, everyone, roles, teams, users });
           if (!r.ok) return setError(r.message);
-          router.push("/inbox?view=sent");
+          router.push(`/inbox?view=sent&org=${choices.org}`);
         });
       }}
     >

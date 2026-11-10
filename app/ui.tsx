@@ -144,9 +144,11 @@ export function CollapseCard({
   action,
   open = false,
   alert = false,
+  badge,
   children,
 }: {
   title: string;
+  badge?: ReactNode; // e.g. a red "1 Too old" after the title
   count?: number;
   action?: ReactNode;
   open?: boolean;
@@ -160,6 +162,7 @@ export function CollapseCard({
           <span className={`font-semibold ${alert ? "animate-pulse text-red-600 dark:text-red-400" : ""} ${action ? "pr-36" : ""}`}>
             {title}
             {count !== undefined && <span className="font-normal text-zinc-500"> ({count})</span>}
+            {badge && <span className="ml-2 align-middle">{badge}</span>}
           </span>
           <svg
             viewBox="0 0 20 20"
