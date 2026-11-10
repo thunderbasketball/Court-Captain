@@ -4,6 +4,7 @@ import type { Pool } from "pg";
 import { gradeLabel } from "./scenic-teams";
 
 export type ScheduledGame = {
+  id: string; // the matchup
   programId: string;
   program: string;
   date: string; // YYYY-MM-DD
@@ -32,7 +33,7 @@ export const PLACE_SQL = `left join lateral (
 export async function scheduledGames(q: Pick<Pool, "query">, teamIds: string[]): Promise<Record<string, ScheduledGame[]>> {
   if (!teamIds.length) return {};
   const r = await q.query<Omit<ScheduledGame, "opponentGroup"> & { team: string; grade: number | null; level: string | null }>(
-    `select x.me::text as team, p.id::text as "programId", p.name as program, m.day::text as date,
+    `select x.me::text as team, m.id::text as id, p.id::text as "programId", p.name as program, m.day::text as date,
             coalesce(o.name, 'TBD') as opponent, coalesce(m.home_side, 'a') = x.side as home,
             gg.grade, gg.level, place.gym, place.court, place.address, to_char(m.starts, 'HH24:MI') as starts,
             p.schedule_published_at is not null as published

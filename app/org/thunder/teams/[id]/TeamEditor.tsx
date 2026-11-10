@@ -1,5 +1,6 @@
 "use client";
 
+import { AddPersonIcon, addIconBtn } from "../../../../CardIcons";
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { GRADES, LEVELS } from "@/lib/team-names";
@@ -179,7 +180,7 @@ export function RemoveStaffButton({
 
 const NEW = "new";
 
-// "+ Add staff" button on the Staff card; opens the form in a pop-up.
+// Add staff (a person-plus icon) on the Staff card; opens the form in a pop-up.
 export function AddStaffButton({
   teamId,
   gender,
@@ -188,6 +189,7 @@ export function AddStaffButton({
   filledRoles,
   users,
   volunteers,
+  parents = [],
 }: {
   teamId: string;
   gender: "Boys" | "Girls";
@@ -196,6 +198,7 @@ export function AddStaffButton({
   filledRoles: Role[];
   users: PersonOption[];
   volunteers: PersonOption[];
+  parents?: PersonOption[]; // parents of the players on this team's roster
 }) {
   const router = useRouter();
   // One person per role: open roles only. The Director can also replace the head coach.
@@ -204,7 +207,7 @@ export function AddStaffButton({
   const [picked, setRole] = useState<Role | null>(null);
   const role =
     picked && roles.some((r) => r.role === picked) ? picked : (roles.find((r) => r.role !== "HeadCoach") ?? roles[0])?.role;
-  const pickList = users.length + volunteers.length > 0;
+  const pickList = users.length + volunteers.length + parents.length > 0;
   const [person, setPerson] = useState(pickList ? "" : NEW);
   const [p, setP] = useState({ first: "", last: "", cell: "", email: "" });
   const [error, setError] = useState<string | null>(null);
@@ -233,9 +236,11 @@ export function AddStaffButton({
           setError(null);
           dialog.current?.showModal();
         }}
-        className="shrink-0 rounded-full bg-thunder-blue px-3 py-1.5 text-sm font-semibold whitespace-nowrap text-white shadow-sm hover:bg-thunder-blue-dark"
+        aria-label="Add staff"
+        title="Add staff"
+        className={addIconBtn}
       >
-        + Add staff
+        <AddPersonIcon />
       </button>
       {done && <Toast key={done} message={done} />}
       {confirmDialog}
@@ -295,6 +300,7 @@ export function AddStaffButton({
             <select className={inputCls} value={person} onChange={(e) => setPerson(e.target.value)}>
               {pickList && <option value="">Choose…</option>}
               <option value={NEW}>+ New person (not in the app yet)</option>
+              {parents.length > 0 && <optgroup label="Parents of players on this team">{parents.map(option)}</optgroup>}
               {volunteers.some(matches) && (
                 <optgroup label="Volunteers for this team">{volunteers.filter(matches).map(option)}</optgroup>
               )}

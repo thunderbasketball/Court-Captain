@@ -2,6 +2,7 @@ import type { ScheduledGame } from "@/lib/scenic-games";
 import { shortDate } from "@/lib/program-options";
 import type { ReactNode } from "react";
 import type { TeamPractice } from "@/lib/practice/schedule";
+import type { OwnPractice } from "@/lib/team-practices";
 import { easternDate, localParts, timeLabel } from "@/lib/time";
 import { TeamName } from "./ui";
 
@@ -69,22 +70,17 @@ export function LeagueGames({ games, today }: { games: ScheduledGame[]; today: s
   );
 }
 
-// A team card's schedule (Teams page, opened by its 📅): its published League games (opponent, time and gym; past ones
-// greyed) and upcoming practices (time, gym and court), together by date and time.
-export function ScheduleList({
-  games,
-  practices,
-  today,
-}: {
-  games: ScheduledGame[];
-  practices: TeamPractice[];
-  today: string;
-}) {
-  type Item = { date: string; time: string; node: ReactNode };
-  const items: Item[] = [
+// One line of a team's schedule: its date and time for sorting, what shows, and (games and practices) which event it is,
+// for attendance.
+export type ScheduleItem = { date: string; time: string; node: ReactNode; event: { kind: "slot" | "own" | "game"; id: string } };
+
+// A team's published League games, booked practices and own-gym practices, together by date and time.
+export function scheduleItems(games: ScheduledGame[], practices: TeamPractice[], own: OwnPractice[] = []): ScheduleItem[] {
+  const items: ScheduleItem[] = [
     ...games.map((g) => ({
       date: g.date,
       time: g.starts ?? "99:99",
+      event: { kind: "game" as const, id: g.id },
       node: (
         <>
           <HomeAway home={g.home} />{" "}
@@ -103,6 +99,7 @@ export function ScheduleList({
       return {
         date: easternDate(p.startsAt),
         time,
+        event: { kind: "slot" as const, id: p.id },
         node: (
           <>
             <span className="rounded bg-blue-100 px-1 text-[10px] font-bold text-blue-800 uppercase dark:bg-blue-500/15 dark:text-blue-300">
@@ -115,8 +112,49 @@ export function ScheduleList({
         ),
       };
     }),
-  ].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
-  if (!items.length) return <p className="text-sm text-zinc-500">No games published or practices booked yet.</p>;
+    ...own.map((p) => {
+      const hm = (d: Date) => {
+        const t = localParts(d);
+        return `${String(t.hour).padStart(2, "0")}:${String(t.minute).padStart(2, "0")}`;
+      };
+      const time = hm(p.startsAt);
+      return {
+        date: easternDate(p.startsAt),
+        time,
+        event: { kind: "own" as const, id: p.id },
+        node: (
+          <>
+            <span className="rounded bg-blue-100 px-1 text-[10px] font-bold text-blue-800 uppercase dark:bg-blue-500/15 dark:text-blue-300">
+              Practice
+            </span>{" "}
+            <span className="block text-zinc-600 dark:text-zinc-300">
+              {timeLabel(time)}–{timeLabel(hm(new Date(p.startsAt.getTime() + p.minutes * 60_000)))} · {p.location}
+            </span>
+          </>
+        ),
+      };
+    }),
+  ];
+  return items.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
+}
+
+// A team card's schedule (Teams page, opened by its 📅): its published League games (opponent, time and gym; past ones
+// greyed), booked practices (time, gym and court) and own-gym practices (time span and place), by date and time.
+export function ScheduleList({
+  games,
+  practices,
+  own = [],
+  today,
+  empty = "No games published or practices booked yet.",
+}: {
+  games: ScheduledGame[];
+  practices: TeamPractice[];
+  own?: OwnPractice[];
+  today: string;
+  empty?: string;
+}) {
+  const items = scheduleItems(games, practices, own);
+  if (!items.length) return <p className="text-sm text-zinc-500">{empty}</p>;
   return (
     <ul className="divide-y divide-zinc-100 rounded-xl bg-zinc-50 px-3 text-sm dark:divide-white/5 dark:bg-white/5">
       {items.map((x, i) => (

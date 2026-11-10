@@ -66,6 +66,7 @@ export default function TeamRow({
             icon: <span className="text-xs font-semibold tabular-nums">👥 {roster.count}</span>,
             className: `${ring} h-7 w-auto px-2.5 text-zinc-600 ring-zinc-950/15 hover:bg-zinc-100 dark:text-zinc-300 dark:ring-white/20 dark:hover:bg-white/10`,
             panel: roster.list,
+            opensCard: true, // the staff show above the players
           },
         ]
       : []),

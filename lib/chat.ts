@@ -5,6 +5,8 @@
 //   coaches          coaches (Directors can read and post, but aren't counted as members: no unread, no email)
 //   team-<id>        that team's staff + Directors
 //   teamcoaches-<id> that team's Head and Assistant Coaches + Directors
+//   parents-<id>     that team's staff + its players' parents with a login (cell is parent 1 or 2 on the registration;
+//                    Thunder only). Directors can read and post, but aren't counted as members.
 //   coach-<id>       one coach + the Directors
 //   event-<id>       the event's check-in people + Directors (started from the event; Thunder only)
 // Started by one person; Directors can still open them, but only members get unread counts and emails:
@@ -51,6 +53,7 @@ type Ctx = {
   coach: boolean;
   teams: { id: string; name: string; coach: boolean; head: boolean }[];
   events: string[];
+  parentOf: string[]; // Thunder teams with this person's children on the roster
 };
 
 // Roles in one organization, fresh from the database (for the viewer, or anyone when working out who gets an email).
@@ -71,6 +74,14 @@ async function contextFor(q: Q, coachId: string, org: string = THUNDER): Promise
     org === THUNDER
       ? await q.query<{ id: string }>("select event_id::text as id from event_staff where coach_id = $1", [coachId])
       : { rows: [] };
+  const kids =
+    org === THUNDER
+      ? await q.query<{ id: string }>(
+          `select distinct p.team_id::text as id from team_players p join registrations g on g.registrant_id = p.registrant_id
+             join users u on u.coach_id = $1 where u.cell in (g.parent1_cell, g.parent2_cell)`,
+          [coachId],
+        )
+      : { rows: [] };
   return {
     org,
     coachId,
@@ -78,12 +89,13 @@ async function contextFor(q: Q, coachId: string, org: string = THUNDER): Promise
     coach: u.rows[0].coach || t.rows.some((x) => x.coach),
     teams: t.rows,
     events: e.rows.map((x) => x.id),
+    parentOf: kids.rows.map((x) => x.id),
   };
 }
 
 type Key =
   | { kind: "directors" | "everyone" | "coaches" }
-  | { kind: "team" | "teamcoaches" | "event"; id: string }
+  | { kind: "team" | "teamcoaches" | "event" | "parents"; id: string }
   | { kind: "coach"; id: string }
   | { kind: "dm"; a: string; b: string }
   | { kind: "staff"; by: string; id: string }
@@ -103,8 +115,8 @@ export function chatOrg(key: unknown): string | null {
 export function parseKey(key: unknown): Key | null {
   if (typeof key !== "string") return null;
   if (key === "directors" || key === "everyone" || key === "coaches") return { kind: key };
-  const m = key.match(/^(team|teamcoaches|event)-(\d{1,18})$/);
-  if (m) return { kind: m[1] as "team" | "teamcoaches" | "event", id: m[2] };
+  const m = key.match(/^(team|teamcoaches|event|parents)-(\d{1,18})$/);
+  if (m) return { kind: m[1] as "team" | "teamcoaches" | "event" | "parents", id: m[2] };
   const c = key.match(/^coach-(\d{7})$/);
   if (c) return { kind: "coach", id: c[1] };
   const d = key.match(/^dm-(\d{7})-(\d{7})$/);
@@ -122,7 +134,7 @@ function parseFull(key: unknown): { org: string; k: Key } | null {
   const org = i < 0 ? THUNDER : key.slice(0, i);
   if (!SLUG.test(org) || (i >= 0 && org === THUNDER)) return null;
   const k = parseKey(i < 0 ? key : key.slice(i + 1));
-  if (!k || (k.kind === "event" && org !== THUNDER)) return null;
+  if (!k || ((k.kind === "event" || k.kind === "parents") && org !== THUNDER)) return null;
   return { org, k };
 }
 
@@ -140,6 +152,8 @@ function access(ctx: Ctx, key: Key): { member: boolean; seen: boolean } {
         return ctx.director || ctx.teams.some((t) => t.id === key.id);
       case "teamcoaches":
         return ctx.director || ctx.teams.some((t) => t.id === key.id && t.coach);
+      case "parents":
+        return ctx.teams.some((t) => t.id === key.id) || ctx.parentOf.includes(key.id);
       case "coach":
         return ctx.director || (ctx.coach && key.id === ctx.coachId);
       case "event":
@@ -183,9 +197,10 @@ async function titleOf(q: Q, ctx: Ctx, k: Key): Promise<string | null> {
     case "coaches":
       return "Coaches";
     case "team":
-    case "teamcoaches": {
+    case "teamcoaches":
+    case "parents": {
       const t = await q.query<{ name: string }>(`select name from ${S.teams} t where t.id = $1`, [k.id]);
-      return t.rows[0] ? `${t.rows[0].name} · ${k.kind === "team" ? "Team" : "Coaches"}` : null;
+      return t.rows[0] ? `${t.rows[0].name} · ${k.kind === "team" ? "Team" : k.kind === "parents" ? "Parents" : "Coaches"}` : null;
     }
     case "event": {
       const e = await q.query<{ name: string }>("select name from events where id = $1", [k.id]);
@@ -391,6 +406,12 @@ function membersWhere(k: Key, S: Scope): [string, string[]] {
       return [`${dir} or ${onTeam()}`, [k.id]];
     case "teamcoaches":
       return [`${dir} or ${onTeam("'HeadCoach', 'AsstCoach'")}`, [k.id]];
+    case "parents":
+      return [
+        `${onTeam()} or exists (select 1 from team_players p join registrations g on g.registrant_id = p.registrant_id
+                                where p.team_id = $1 and u.cell in (g.parent1_cell, g.parent2_cell))`,
+        [k.id],
+      ];
     case "coach":
       return [`${dir} or u.coach_id = $1`, [k.id]];
     case "event":

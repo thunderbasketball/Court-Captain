@@ -89,6 +89,12 @@ describe("practice attendance", () => {
 
   it("team staff (any role) and the Director take attendance from the roster; who marked it is recorded", async () => {
     expect(await getPractice(deps(), otherCoach, slotA)).toBeNull();
+    // Marking opens 15 minutes before the 6 PM start.
+    expect(await setPracticeStatus(deps(), parent, { slotId: slotA, registrantId: "r1", status: "here" })).toEqual({
+      ok: false,
+      message: "Attendance opens 15 minutes before the start.",
+    });
+    now = new Date("2026-11-10T22:45:00Z");
     let p = await getPractice(deps(), parent, slotA);
     expect(p?.players.map((x) => [x.firstName, x.status])).toEqual([
       ["Ava", "unknown"],
@@ -114,6 +120,12 @@ describe("practice attendance", () => {
     expect(p).toMatchObject({ here: 1, absent: 1, total: 2 });
     await setPracticeStatus(deps(), parent, { slotId: slotA, registrantId: "r1", status: "unknown" });
     expect((await getPractice(deps(), parent, slotA))?.players[0]).toMatchObject({ status: "unknown", updatedBy: null });
+    // …and closes 24 hours after it.
+    now = new Date("2026-11-11T23:00:01Z");
+    expect(await setPracticeStatus(deps(), parent, { slotId: slotA, registrantId: "r1", status: "here" })).toEqual({
+      ok: false,
+      message: "Attendance closed 24 hours after the event.",
+    });
   });
 
   it("an open (unbooked) slot isn't a practice", async () => {

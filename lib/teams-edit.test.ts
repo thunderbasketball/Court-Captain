@@ -4,7 +4,7 @@ import { createTestDb, grant } from "./testing/db";
 import { HEADER, row } from "./teamsnap/fixtures";
 import { importRegistrations } from "./teamsnap/import";
 import { parseRegistrations } from "./teamsnap/parse";
-import { addStaff, createTeam, getTeam, removeStaff, updateTeam } from "./teams";
+import { addStaff, createTeam, getTeam, removeStaff, rosterParentOptions, updateTeam } from "./teams";
 
 const director: SessionUser = {
   coachId: "9913694",
@@ -207,6 +207,25 @@ describe("editing teams and staff", () => {
     expect(
       await updateTeam(deps(), head, teamId, { gender: "Girls", grades: ["4"], level: "REC", practiceLocations: "" }),
     ).toMatchObject({ ok: false });
+  });
+
+  it("the head coach adds a parent of a player on the team's roster, not anyone else's", async () => {
+    await db.pool.query(
+      `update registrations set parent2_first = 'Pat', parent2_last = 'Parent', parent2_cell = '4235550099', parent2_email = 'pat@x.com'
+        where registrant_id = '1'`,
+    );
+    expect(await rosterParentOptions(deps(), teamId)).toEqual([]); // nobody rostered yet
+    expect(await addStaff(deps(), head, teamId, { role: "TeamParent", person: "parent:1:2" })).toMatchObject({ ok: false });
+    await db.pool.query(
+      `insert into team_players (team_id, registrant_id, first_name, last_name, gender, grade, grade_sort, rostered_by, rostered_at)
+       values ($1, '1', 'Kid', 'K', 'Girls', '4', 4, 'x', now())`,
+      [teamId],
+    );
+    const opts = await rosterParentOptions(deps(), teamId);
+    expect(opts.find((o) => o.value === "parent:1:2")).toMatchObject({ firstName: "Pat", lastName: "Parent", detail: "Parent of Kid" });
+    expect(await addStaff(deps(), head, teamId, { role: "TeamParent", person: "parent:1:2" })).toMatchObject({ ok: true });
+    expect(await staff()).toContain("TeamParent:Parent");
+    expect(await addStaff(deps(), head, teamId, { role: "Manager", person: "parent:1:3" })).toMatchObject({ ok: false });
   });
 
   it("other staff can view the team but not change it", async () => {

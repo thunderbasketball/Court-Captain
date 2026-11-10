@@ -247,4 +247,31 @@ describe("chat", () => {
     expect(await run()).toBe(2); // Ace and Dee; each message only once
     expect(mail.at(-1)?.text).not.toContain("Practice plans posted");
   });
+
+  it("a team's parents chat: its staff and its players' parents with a login; Directors can read but aren't members", async () => {
+    const fam = person("5550005", "Fay");
+    await db.pool.query("insert into users (coach_id, first_name, last_name, cell) values ('5550005', 'Fay', 'X', '4235550005')");
+    await db.pool.query(
+      `insert into registrations (registrant_id, registration_id, first_name, last_name, gender, grade, grade_sort, program, raw, imported_at,
+                                  imported_by, parent1_first, parent1_last, parent1_cell)
+       values ('r1', 'r1', 'Kid', 'X', 'Girls', '4', 4, 'x', '{}', now(), 'x', 'Fay', 'X', '4235550005')`,
+    );
+    await db.pool.query(
+      `insert into team_players (team_id, registrant_id, first_name, last_name, gender, grade, grade_sort, rostered_by, rostered_at)
+       values ($1, 'r1', 'Kid', 'X', 'Girls', '4', 4, 'x', now())`,
+      [A],
+    );
+    expect(await postMessage(deps(), fam, `parents-${A}`, "Running late")).toMatchObject({ ok: true });
+    later(1);
+    expect(await postMessage(deps(), cal, `parents-${A}`, "No problem")).toMatchObject({ ok: true });
+    const thread = await getChat(deps(), dir, `parents-${A}`);
+    expect(thread?.title).toBe("4G A · Parents");
+    expect(thread?.members).toEqual(["Cal X", "Fay X", "Pam X"]);
+    // Another team's parents chat, and a stranger: no.
+    expect(await getChat(deps(), fam, `parents-${B}`)).toBeNull();
+    expect(await getChat(deps(), ace, `parents-${A}`)).toBeNull();
+    expect(await getChat(deps(), fam, `east-ridge~parents-${A}`)).toBeNull();
+    // The parent gets it in their list and unread count.
+    expect(await chatUnreadCount(deps(), fam)).toBe(1);
+  });
 });

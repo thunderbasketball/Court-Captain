@@ -1,7 +1,6 @@
 import { Suspense } from "react";
 import { orgKey } from "@/lib/chat";
 import { hasFeature } from "@/lib/features";
-import { ChatToggle } from "../../../../InlineToggle";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
@@ -21,6 +20,14 @@ import { listOrgRoster } from "@/lib/org-rosters";
 import { AddPlayerButton, ImportPlayersButton, RemovePlayerButton } from "../RosterTools";
 import { AddCoachButton, AltNameButton, DeleteTeamButton, RemoveCoachButton } from "../TeamTools";
 import { followRename } from "@/lib/org-rename";
+import { ViewAsButton } from "../../../../ViewAsButton";
+import { CardPanel, ChatIcon, EmailIcon, PanelIcon, TextIcon } from "../../../../CardIcons";
+import ChatPanel from "../../../../ChatPanel";
+import { canChangeOwnPractices, ownPracticeLocations, upcomingOwnPractices } from "@/lib/team-practices";
+import TeamPractices from "../../../../TeamPractices";
+import NextSevenDays from "../../../../NextSevenDays";
+import { takesAttendance } from "@/lib/event-attendance";
+import { BookPracticesButton, BookPracticesPanel } from "../../../../BookPractices";
 
 export default function OrgTeamPage({ params, searchParams }: PageProps<"/org/[slug]/teams/[id]">) {
   return (
@@ -48,7 +55,8 @@ async function OrgTeam({
   if (!found) notFound();
   const { team: t, canManage } = found;
   const who = await seesWho(db, user, slug); // Owners and Admins see who did it
-  const tab = (await searchParams).tab === "roster" ? "roster" : "staff";
+  const askedTab = (await searchParams).tab;
+  const tab = askedTab === "roster" || askedTab === "practices" ? askedTab : "staff";
   const roster = await listOrgRoster({ pool: db, now: () => new Date() }, user, slug, t.id);
   const today = easternDate(new Date());
   const progs = await teamPrograms({ pool: db, now: () => new Date() }, user, slug, t.id);
@@ -61,6 +69,10 @@ async function OrgTeam({
   const hasHead = t.coaches.some((c) => c.role === "HeadCoach");
   // Team chat (with Chat): the team's coaches and the Directors, opened right here (who can open it is checked again).
   const teamChat = (await hasFeature(db, slug, "chat")) && (canManage || t.coaches.some((c) => c.id === user.coachId));
+  // Practices tab: its own-gym practices (a place the team found itself: any time and length, no limits).
+  const ref = { org: slug, teamId: t.id };
+  const own = await upcomingOwnPractices({ pool: db, now: () => new Date() }, ref, 12); // also for Next 7 days
+  const canOwn = tab === "practices" && !user.actingBy && (await canChangeOwnPractices(db, user, ref));
 
   return (
     <>
@@ -74,6 +86,7 @@ async function OrgTeam({
             [
               ["staff", "Staff", `/org/${slug}/teams/${t.id}`],
               ["roster", "Roster", `/org/${slug}/teams/${t.id}?tab=roster`],
+              ["practices", "Practices", `/org/${slug}/teams/${t.id}?tab=practices`],
             ] as const
           ).map(([key, label, href]) => (
             <Link
@@ -120,23 +133,23 @@ async function OrgTeam({
               {!t.players && <MustBeEntered what="ROSTER" />}
             </div>
           </div>
-          {teamChat && (
-            <div className="mt-3 flex flex-wrap gap-2 sm:pl-16">
-              <ChatToggle
-                chatKey={orgKey(slug, `team-${t.id}`)}
-                label={`${t.name} team chat`}
-                className="shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
-              >
-                🗨️ Team chat
-              </ChatToggle>
-            </div>
-          )}
           {canManage && (
             <div className="mt-3">
               <AltNameButton org={slug} id={t.id} alt={t.altName} />
             </div>
           )}
         </section>
+
+        <NextSevenDays
+          games={games.filter((g) => g.published)}
+          practices={[]}
+          own={own}
+          now={new Date()}
+          team={ref}
+          staff={await takesAttendance(db, user, ref)}
+          mine={[]}
+          rsvps={{}}
+        />
 
         {tab === "roster" && roster && (
           <section className={`${card} overflow-hidden`}>
@@ -176,13 +189,59 @@ async function OrgTeam({
           </section>
         )}
 
+        {tab === "practices" && (
+          <section className={`${card} overflow-hidden`}>
+            <div className="flex items-center justify-between gap-3 px-4 pt-4 pb-3">
+              <h2 className="font-semibold">
+                Practices <span className="font-normal text-zinc-500">({own.length})</span>
+              </h2>
+              {canOwn && <BookPracticesButton teamId={t.id} />}
+            </div>
+            {canOwn && (
+              <BookPracticesPanel
+                org={slug}
+                teamId={t.id}
+                choices={null}
+                own={{ locations: await ownPracticeLocations({ pool: db }, ref), today }}
+                scheduleHref={null}
+              />
+            )}
+            <TeamPractices
+              org={slug}
+              teamId={t.id}
+              booked={[]}
+              own={own}
+              canChange={canOwn}
+              locations={[]}
+              today={today}
+              who={who}
+              empty={canOwn ? "No practices yet. Tap “Book practices” to add one." : "No practices yet."}
+              addHere={false}
+            />
+          </section>
+        )}
+
         {tab === "staff" && (
           <>
             <section className={`${card} p-4`}>
               <div className="mb-2 flex items-center justify-between gap-3">
                 <h2 className="font-semibold">Coaches</h2>
-                {canManage && <AddCoachButton org={slug} teamId={t.id} hasHead={hasHead} />}
+                <span className="flex items-center gap-1.5">
+                  <TextIcon cells={t.coaches.map((c) => c.cell)} label="Text coaches" />
+                  {teamChat && (
+                    <PanelIcon id={`chat-team-${t.id}`} label={`${t.name} team chat`}>
+                      <ChatIcon />
+                    </PanelIcon>
+                  )}
+                  <EmailIcon emails={t.coaches.flatMap((c) => (c.email ? [c.email] : []))} label="Email coaches" />
+                  {canManage && <AddCoachButton org={slug} teamId={t.id} hasHead={hasHead} />}
+                </span>
               </div>
+              {teamChat && (
+                <CardPanel id={`chat-team-${t.id}`} className="mb-3">
+                  <ChatPanel chatKey={orgKey(slug, `team-${t.id}`)} />
+                </CardPanel>
+              )}
               {!t.coaches.length && !t.waitingCoach && <p className="text-sm text-zinc-500">No coaches yet.</p>}
               {t.waitingCoach && (
                 // Named without a cell yet (imported): adding it makes them the Head Coach.
@@ -202,7 +261,10 @@ async function OrgTeam({
                 {t.coaches.map((c) => (
                   <li key={c.id} className="flex items-center justify-between gap-3 py-2.5">
                     <span>
-                      <span className="block text-sm font-medium">{c.name}</span>
+                      <span className="flex items-center gap-2 text-sm font-medium">
+                        {c.name}
+                        {who && !user.actingBy && c.id !== user.coachId && <ViewAsButton coachId={c.id} name={c.name} />}
+                      </span>
                       <span className="block text-xs text-zinc-500">
                         {roleName(c.role)}
                         {who && ` · added by ${c.addedBy}`}

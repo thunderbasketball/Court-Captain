@@ -1,5 +1,6 @@
 "use client";
 
+import { AddPlayersIcon, addIconBtn } from "../../../../CardIcons";
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { gradeLabel } from "@/lib/grades";
@@ -52,9 +53,11 @@ export function AddPlayersButton({
           setSearch("");
           dialog.current?.showModal();
         }}
-        className="shrink-0 rounded-full bg-thunder-blue px-3 py-1.5 text-sm font-semibold whitespace-nowrap text-white shadow-sm hover:bg-thunder-blue-dark"
+        aria-label="Add players"
+        title="Add players"
+        className={addIconBtn}
       >
-        + Add players
+        <AddPlayersIcon />
       </button>
       {done && <Toast key={done} message={done} />}
       <dialog ref={dialog} className={dialogCls} onClick={(e) => e.target === dialog.current && close()}>

@@ -9,6 +9,7 @@ export type CardToggle = {
   icon: ReactNode;
   className: string; // the button's look (round, colored ring)
   panel: ReactNode; // shown under the team line while open (mounted only then: a chat loads when it opens)
+  opensCard?: boolean; // opening it opens the card too (👥 roster: its staff show above the players)
 };
 
 // A team's card on a Teams page: one line (`head`: badge and name, tapping it opens the card like the chevron; then its buttons and the chevron at the far right;
@@ -30,7 +31,11 @@ export default function TeamRowMore({
 }) {
   const [open, setOpen] = useState(false);
   const [shown, setShown] = useState<string[]>([]);
-  const flip = (k: string) => setShown((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]));
+  const flip = (t: CardToggle) => {
+    const opening = !shown.includes(t.key);
+    setShown((s) => (s.includes(t.key) ? s.filter((x) => x !== t.key) : [...s, t.key]));
+    if (opening && t.opensCard) setOpen(true);
+  };
   return (
     <>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -48,7 +53,7 @@ export default function TeamRowMore({
             <button
               key={t.key}
               type="button"
-              onClick={() => flip(t.key)}
+              onClick={() => flip(t)}
               aria-expanded={shown.includes(t.key)}
               aria-label={t.label}
               title={t.label}

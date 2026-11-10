@@ -11,19 +11,21 @@ import { gradesText } from "@/lib/event-names";
 import { gradeLabel } from "@/lib/grades";
 import { formatCell } from "@/lib/phone";
 import { currentContexts } from "@/lib/contexts-server";
-import { upcomingForTeam } from "@/lib/practice/schedule";
+import { teamGymChoices, upcomingForTeam } from "@/lib/practice/schedule";
+import { BookPracticesButton, BookPracticesPanel } from "../../../../BookPractices";
+import { canChangeOwnPractices, ownPracticeLocations, upcomingOwnPractices } from "@/lib/team-practices";
+import TeamPractices from "../../../../TeamPractices";
 import { canEvaluate, listEvaluations } from "@/lib/evaluations";
 import { listRoster, rosterCandidates } from "@/lib/rosters";
 import { listUniforms, uniformsMissing } from "@/lib/uniforms";
-import { TZ } from "@/lib/time";
-import { getTeam, personOptions, roleLabel } from "@/lib/teams";
+import { getTeam, personOptions, roleLabel, rosterParentOptions } from "@/lib/teams";
 import RosterPlayerRow from "../RosterPlayerRow";
 import EligibleChip, { bornLabel } from "../../../../EligibleChip";
 import { rosterIssue, schoolYearOf } from "@/lib/eligibility";
 import { orgGradeRules } from "@/lib/grade-rules";
 import { ViewAsButton } from "../../../../ViewAsButton";
-import { GroupTextButton } from "../../../../Contacts";
-import { ChatToggle } from "../../../../InlineToggle";
+import { BookIcon, CardPanel, ChatIcon, EmailIcon, PanelIcon, TextIcon } from "../../../../CardIcons";
+import ChatPanel from "../../../../ChatPanel";
 import { MAX_GROUP_TEXT } from "@/lib/group-text";
 import AppHeader from "../../../../AppHeader";
 import { Chip, CollapseCard, EmailLink, PersonRow, PhoneLink, card } from "../../../../ui";
@@ -33,6 +35,8 @@ import { AddPlayersButton, RemovePlayerButton } from "./RosterTools";
 import { scheduledGames } from "@/lib/scenic-games";
 import { easternDate } from "@/lib/time";
 import { ScheduleList } from "../../../../LeagueGames";
+import NextSevenDays from "../../../../NextSevenDays";
+import { myPlayers, rsvpsFor, takesAttendance } from "@/lib/event-attendance";
 import { AddStaffButton, DeleteTeamButton, RemoveStaffButton, TeamEditForm } from "./TeamEditor";
 import { hasArea, isThunderAdmin, seesWho } from "@/lib/org-admin";
 
@@ -94,6 +98,23 @@ async function Team({
   const games = copy ? ((await scheduledGames(db, [copy]))[copy] ?? []) : [];
   const published = games.filter((g) => g.published); // the Games card: only once its League's schedule is published
   const canBook = asDirector || team.myRoles.some((r) => r !== "TeamParent");
+  // Owners and Admins: 👁 View as on the team's staff and on players' parents who have a login (matched by cell), even
+  // while on the team's own chip; who they may view is checked again when they tap it.
+  const admin = isThunderAdmin(user) && !user.actingBy;
+  const parentLogins: Record<string, string> = admin
+    ? Object.fromEntries(
+        (
+          await db.query<{ cell: string; coach_id: string }>("select cell, coach_id from users where active and cell = any($1)", [
+            allParentCells,
+          ])
+        ).rows.map((u) => [u.cell, u.coach_id]),
+      )
+    : {};
+  // Its own-gym practices (a place the team found itself: any time and length, no limits), with the booked ones.
+  const own = await upcomingOwnPractices(deps, { org: "thunder", teamId: team.id }, 12);
+  const canOwn = !user.actingBy && (await canChangeOwnPractices(db, user, { org: "thunder", teamId: team.id }));
+  // Staff whose own children are on the team answer ✓ / ✗ for them in Next 7 days (as their parent).
+  const myKids = await myPlayers(db, user, { org: "thunder", teamId: team.id }); // shown while viewing as them too (view only)
   // One page: the team's card on top, then Staff, Players, Available players, Uniforms and Practices as cards that open
   // when tapped (no tabs). An old link with ?tab=roster (or uniforms, practices, staff) opens that card.
   const requested = (await searchParams).tab;
@@ -150,27 +171,6 @@ async function Team({
               {!players.length && <MustBeEntered what="ROSTER" />}
             </div>
           </div>
-          {/* Team chat (the team's staff + Directors; who may open it is checked in lib/chat), and text the team's
-              parents from here too (the Roster tab has it with Email parents). */}
-          {(chatOn || parentCells.length > 0) && (
-            <div className="mt-3 flex flex-wrap gap-2 sm:pl-16">
-              {chatOn && (
-                <ChatToggle
-                  chatKey={`team-${team.id}`}
-                  label={`${team.name} team chat`}
-                  className="shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
-                >
-                  🗨️ Team chat
-                </ChatToggle>
-              )}
-              {parentCells.length > 0 && <GroupTextButton cells={parentCells} label="Text parents" />}
-              {onePerPlayer && (
-                <p className="w-full text-xs text-zinc-500">
-                  One parent per player: a group text holds {MAX_GROUP_TEXT} numbers at most.
-                </p>
-              )}
-            </div>
-          )}
           {canEditTeam && (
             <TeamEditForm
               teamId={team.id}
@@ -184,13 +184,41 @@ async function Team({
             />
           )}
         </section>
+        <NextSevenDays
+          games={published}
+          practices={practices}
+          own={own}
+          now={new Date()}
+          team={{ org: "thunder", teamId: team.id }}
+          staff={await takesAttendance(db, user, { org: "thunder", teamId: team.id })}
+          mine={myKids}
+          rsvps={await rsvpsFor(
+            db,
+            { org: "thunder", teamId: team.id },
+            [
+              ...practices.map((p) => ({ kind: "slot" as const, id: p.id })),
+              ...own.map((p) => ({ kind: "own" as const, id: p.id })),
+              ...published.map((g) => ({ kind: "game" as const, id: g.id })),
+            ],
+            myKids.map((p) => p.player),
+          )}
+        />
         <CollapseCard
           title="Staff"
           count={team.staff.length}
           open={opened === "staff"}
           alert={!team.staff.some((x) => x.role === "HeadCoach")}
+          actionPad="pr-56"
           action={
-            canEditStaff && (
+            <span className="flex items-center gap-1.5">
+              <TextIcon cells={team.staff.map((x) => x.cell)} label="Text staff" />
+              {chatOn && (
+                <PanelIcon id={`chat-team-${team.id}`} label={`${team.name} team chat`}>
+                  <ChatIcon />
+                </PanelIcon>
+              )}
+              <EmailIcon emails={team.staff.flatMap((x) => (x.email ? [x.email] : []))} label="Email staff" />
+            {canEditStaff && (
               <AddStaffButton
                 teamId={team.id}
                 gender={team.gender}
@@ -199,10 +227,17 @@ async function Team({
                 filledRoles={team.staff.map((s) => s.role)}
                 users={options?.users ?? []}
                 volunteers={options?.volunteers ?? []}
+                parents={await rosterParentOptions(deps, team.id)}
               />
-            )
+            )}
+            </span>
           }
         >
+          {chatOn && (
+            <CardPanel id={`chat-team-${team.id}`}>
+              <ChatPanel chatKey={`team-${team.id}`} />
+            </CardPanel>
+          )}
           {!team.staff.length && !team.waitingCoach && <p className="px-4 pb-4 text-sm text-zinc-500">No staff yet.</p>}
           {team.waitingCoach && (
             // Named without a cell yet (imported): the Director adds it, which makes them the Head Coach.
@@ -231,13 +266,13 @@ async function Team({
                 last={s.lastName}
                 avatarTone={roleTone[s.role]}
                 href={
-                  asDirector && isThunderAdmin(user) ? (s.coachId === user.coachId ? "/me" : `/me/${s.coachId}`) : undefined
+                  admin ? (s.coachId === user.coachId ? "/me" : `/me/${s.coachId}`) : undefined
                 }
                 collapsed
                 chips={
                   <>
                     <Chip tone={roleTone[s.role]}>{roleLabel(s.role)}</Chip>
-                    {asDirector && isThunderAdmin(user) && s.coachId !== user.coachId && (
+                    {admin && s.coachId !== user.coachId && (
                       <ViewAsButton coachId={s.coachId} name={`${s.firstName} ${s.lastName}`} />
                     )}
                   </>
@@ -281,34 +316,36 @@ async function Team({
           open={opened === "roster"}
           alert={!players.length || !!issue}
           badge={issue && <Chip tone="red">{issue}</Chip>}
+          actionPad="pr-56"
           action={
-            asDirector && (
-              <AddPlayersButton
-                teamId={team.id}
-                teamName={team.name}
-                candidates={candidates}
-                canSecond={hasArea(user, "players")}
-              />
-            )
+            <span className="flex items-center gap-1.5">
+              <TextIcon cells={parentCells} label="Text parents" />
+              {chatOn && (
+                <PanelIcon id={`chat-parents-${team.id}`} label={`${team.name} parents chat`}>
+                  <ChatIcon />
+                </PanelIcon>
+              )}
+              <EmailIcon emails={parentEmails} label="Email parents" />
+              {asDirector && (
+                <AddPlayersButton
+                  teamId={team.id}
+                  teamName={team.name}
+                  candidates={candidates}
+                  canSecond={hasArea(user, "players")}
+                />
+              )}
+            </span>
           }
         >
-          {parentCells.length + parentEmails.length > 0 && (
-            <div className="flex flex-wrap gap-2 px-4 pb-3">
-              <GroupTextButton cells={parentCells} label="Text parents" />
-              {onePerPlayer && (
-                <p className="w-full text-xs text-zinc-500">
-                  One parent per player: a group text holds {MAX_GROUP_TEXT} numbers at most.
-                </p>
-              )}
-              {parentEmails.length > 0 && (
-                <a
-                  href={`mailto:?bcc=${parentEmails.map(encodeURIComponent).join(",")}`}
-                  className="shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
-                >
-                  ✉️ Email parents ({parentEmails.length})
-                </a>
-              )}
-            </div>
+          {chatOn && (
+            <CardPanel id={`chat-parents-${team.id}`}>
+              <ChatPanel chatKey={`parents-${team.id}`} />
+            </CardPanel>
+          )}
+          {onePerPlayer && (
+            <p className="px-4 pb-3 text-xs text-zinc-500">
+              💬 Text parents goes to one parent per player: a group text holds {MAX_GROUP_TEXT} numbers at most.
+            </p>
           )}
           {!players.length && (
             <p className="px-4 pb-4 text-sm text-zinc-500">
@@ -340,6 +377,9 @@ async function Team({
                     {p.parents.map((g, i) => (
                       <span key={i} className="flex flex-wrap items-baseline gap-x-2 text-xs">
                         <span className="text-zinc-600 dark:text-zinc-300">{g.name}</span>
+                        {g.cell && parentLogins[g.cell] && parentLogins[g.cell] !== user.coachId && (
+                          <ViewAsButton coachId={parentLogins[g.cell]} name={g.name} />
+                        )}
                         {g.cell && <PhoneLink cell={g.cell} label={formatCell(g.cell)} />}
                         {g.email && <EmailLink email={g.email} />}
                         {!g.cell && !g.email && <span className="text-zinc-400">no cell or email</span>}
@@ -400,36 +440,44 @@ async function Team({
         )}
         <CollapseCard
           title="Practices"
-          count={practices.length}
+          count={practices.length + own.length}
           open={opened === "practices"}
           action={
-            <Link
-              href={`/org/thunder/practice?team=${team.id}`}
-              className="shrink-0 rounded-full bg-thunder-blue px-3 py-1.5 text-sm font-semibold whitespace-nowrap text-white shadow-sm hover:bg-thunder-blue-dark"
-            >
-            {canBook ? "Book practices" : "View schedule"}
-          </Link>
+            canBook ? (
+              <BookPracticesButton teamId={team.id} />
+            ) : (
+              <Link
+                href={`/org/thunder/practice?team=${team.id}`}
+                aria-label="View schedule"
+                title="View schedule"
+                className="flex size-8 shrink-0 items-center justify-center rounded-full text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400"
+              >
+                <BookIcon />
+              </Link>
+            )
           }
         >
-          {!practices.length && <p className="px-4 pb-4 text-sm text-zinc-500">No practices booked yet.</p>}
-          <ul className="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-white/5 dark:border-white/5">
-            {practices.map((p) => (
-              <li key={p.id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
-                <Link
-                  href={`/events/practice/${p.id}`}
-                  className="font-semibold text-thunder-blue underline-offset-2 hover:underline dark:text-blue-400"
-                >
-                  {p.startsAt.toLocaleDateString("en-US", { timeZone: TZ, weekday: "short", month: "numeric", day: "numeric" })}{" "}
-                  · {p.startsAt.toLocaleTimeString("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" })}
-                  <span className="block text-xs font-normal">✓ Attendance</span>
-                </Link>
-                <span className="text-right text-zinc-500">
-                  {p.gym} {p.court}
-                  {who && p.bookedBy && <span className="block text-xs text-zinc-400">by {p.bookedBy}</span>}
-                </span>
-              </li>
-            ))}
-          </ul>
+          {canBook && (
+            <BookPracticesPanel
+              org="thunder"
+              teamId={team.id}
+              choices={await teamGymChoices(deps, user, team.id)}
+              own={canOwn ? { locations: await ownPracticeLocations(deps, { org: "thunder", teamId: team.id }), today: easternDate(new Date()) } : null}
+              scheduleHref={`/org/thunder/practice?team=${team.id}`}
+            />
+          )}
+          <TeamPractices
+            org="thunder"
+            teamId={team.id}
+            booked={practices}
+            own={own}
+            canChange={canOwn}
+            locations={canOwn ? await ownPracticeLocations(deps, { org: "thunder", teamId: team.id }) : []}
+            today={easternDate(new Date())}
+            who={who}
+            empty="No practices yet."
+            addHere={!canBook}
+          />
         </CollapseCard>
         {canEditTeam && (
           <DeleteTeamButton teamId={team.id} name={team.name} players={roster?.length ?? 0} practices={practices.length} />

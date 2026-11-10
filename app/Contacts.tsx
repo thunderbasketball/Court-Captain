@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import type { Contact } from "@/lib/teams";
 import { MAX_GROUP_TEXT } from "@/lib/group-text";
+export { MAX_GROUP_TEXT };
 import { ChatToggle } from "./InlineToggle";
 import { PopUp } from "./client-ui";
 
@@ -105,7 +106,7 @@ export function ContactChip({
 }
 
 // Open the phone's Messages app with these numbers in one group text.
-function openGroupText(to: string[]) {
+export function openGroupText(to: string[]) {
   const apple = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
   window.location.href = apple ? `sms://open?addresses=${to.join(",")}` : `sms:${to.join(",")}`;
 }

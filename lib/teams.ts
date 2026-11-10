@@ -160,7 +160,7 @@ export async function getTeam(deps: Deps, viewer: SessionUser, id: string): Prom
 }
 
 export type PersonOption = {
-  value: string; // "user:<coachId>" or "volunteer:<registrantId>"
+  value: string; // "user:<coachId>", "volunteer:<registrantId>" or "parent:<registrantId>:<1|2>"
   firstName: string;
   lastName: string;
   detail: string;
@@ -199,6 +199,32 @@ export async function personOptions(
   return { users: users.rows, volunteers: volunteers.rows.sort(byName) };
 }
 
+// Add staff: the parents (and guardians) of the players on this team's roster, from registration, once each (by
+// cell), for the team's Head Coach and the Directors alike. Picking one gives them a login (or uses theirs).
+export async function rosterParentOptions(deps: Pick<Deps, "pool">, teamId: string): Promise<PersonOption[]> {
+  if (!/^\d{1,18}$/.test(teamId)) return [];
+  const r = await deps.pool.query<PersonOption & { cell: string }>(
+    `select distinct on (x.cell) x.value, x."firstName", x."lastName", x.detail, x.cell from (
+       select 'parent:' || r.registrant_id || ':' || n as value,
+              trim(case n when 1 then r.parent1_first else r.parent2_first end) as "firstName",
+              trim(case n when 1 then r.parent1_last else r.parent2_last end) as "lastName",
+              case n when 1 then r.parent1_cell else r.parent2_cell end as cell,
+              'Parent of ' || p.first_name as detail, n
+         from team_players p join registrations r on r.registrant_id = p.registrant_id, generate_series(1, 2) n
+        where p.team_id = $1) x
+      where x.cell ~ '^\\d{10}$' and nullif(x."firstName", '') is not null and nullif(x."lastName", '') is not null
+      order by x.cell, x.n`,
+    [teamId],
+  );
+  return r.rows
+    .map((o) => ({ value: o.value, firstName: o.firstName, lastName: o.lastName, detail: o.detail }))
+    .sort(
+      (a, b) =>
+        a.lastName.localeCompare(b.lastName, undefined, { sensitivity: "base" }) ||
+        a.firstName.localeCompare(b.firstName, undefined, { sensitivity: "base" }),
+    );
+}
+
 // ---- People ----
 
 // Who to put on a team: an app user, a registration volunteer, or a new person typed in.
@@ -211,6 +237,7 @@ async function resolvePerson(
   person: PersonInput,
   isCoach: boolean,
   now: Date,
+  teamId?: string, // a "parent:" pick must be a parent of a player on this team
 ): Promise<{ coachId: string; lastName: string; who: string; newLogin: boolean }> {
   let found: { coachId: string; lastName: string; who: string; newLogin: boolean };
   const m = typeof person === "string" ? person.match(/^(user|volunteer):(\d{1,20})$/) : null;
@@ -235,6 +262,27 @@ async function resolvePerson(
     if (!v || !first || !last || !/^\d{10}$/.test(v.cell ?? ""))
       throw new UserError("That volunteer needs a name and a 10-digit cell before they can be added.");
     found = await createOrMatchUser(q, { first, last, cell: v.cell, email: cleanEmail(v.email) }, now);
+  } else if (typeof person === "string" && /^parent:/.test(person)) {
+    const pm = person.match(/^parent:([\w-]{1,40}):([12])$/);
+    const r =
+      pm && teamId
+        ? await q.query<{ first: string | null; last: string | null; cell: string | null; email: string | null }>(
+            `select case $3 when '1' then r.parent1_first else r.parent2_first end as first,
+                    case $3 when '1' then r.parent1_last else r.parent2_last end as last,
+                    case $3 when '1' then r.parent1_cell else r.parent2_cell end as cell,
+                    case $3 when '1' then r.parent1_email else r.parent2_email end as email
+               from registrations r join team_players p on p.registrant_id = r.registrant_id and p.team_id = $2
+              where r.registrant_id = $1`,
+            [pm[1], teamId, pm[2]],
+          )
+        : null;
+    const v = r?.rows[0];
+    const first = cleanName(v?.first?.trim());
+    const last = cleanName(v?.last?.trim());
+    if (!v) throw new UserError("That parent's player isn't on this team.");
+    if (!first || !last || !/^\d{10}$/.test(v.cell ?? ""))
+      throw new UserError("That parent needs a name and a 10-digit cell before they can be added.");
+    found = await createOrMatchUser(q, { first, last, cell: v.cell!, email: cleanEmail(v.email) }, now);
   } else if (person && typeof person === "object") {
     const p = person as NewPerson;
     const first = cleanName(p.first);
@@ -492,7 +540,7 @@ export async function addStaff(
         if (held.rows[0])
           throw new UserError(`This team already has a ${roleLabel(role)} (${held.rows[0].who}). Remove them first.`);
       }
-      const p = await resolvePerson(q, input.person, COACH_ROLES.includes(role), now);
+      const p = await resolvePerson(q, input.person, COACH_ROLES.includes(role), now, teamId);
       if (role === "HeadCoach") {
         await q.query("delete from team_staff where team_id = $1 and role = 'HeadCoach'", [teamId]);
         // A coach waiting for a cell is replaced by the real one.

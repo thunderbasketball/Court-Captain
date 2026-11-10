@@ -276,3 +276,46 @@ export async function teamChoices(deps: Pick<Deps, "pool">): Promise<{ id: strin
   );
   return r.rows;
 }
+
+// "Book practices" on a team page: each of the team's practice gyms with its times this week and next (the team view's
+// rule: open slots, bookable or why not, and which team booked the others, not who), soonest first. Empty when this person can't use the team's view.
+export type GymChoice = {
+  gym: string;
+  open: number;
+  bookable: number;
+  days: { iso: string; label: string; times: { label: string; slots: { id: string; court: string; canBook: boolean; reason: string | null; team: string | null; mine: boolean }[] }[] }[];
+};
+export async function teamGymChoices(
+  deps: Deps,
+  viewer: SessionUser,
+  teamId: string,
+): Promise<{ status: string; canBookRole: boolean; gyms: GymChoice[] } | null> {
+  const thisWeek = weekOf(deps.now()).start;
+  let weeks: WeekGrid[];
+  try {
+    weeks = [
+      await weekGrid(deps, viewer, thisWeek, { teamId }),
+      await weekGrid(deps, viewer, weekOf(new Date(thisWeek.getTime() + 8 * 86_400_000)).start, { teamId }),
+    ];
+  } catch {
+    return null; // not on this team (and not a Director of Facilities)
+  }
+  const gyms = new Map<string, GymChoice>();
+  for (const w of weeks)
+    for (const d of w.days)
+      for (const g of d.gyms) {
+        const times = g.times
+          .map((t) => ({ label: t.label, slots: t.slots.filter((s) => !s.past && !s.blackout) }))
+          .filter((t) => t.slots.length);
+        if (!times.length) continue;
+        const c = gyms.get(g.gym) ?? { gym: g.gym, open: 0, bookable: 0, days: [] };
+        gyms.set(g.gym, c);
+        c.days.push({ iso: d.iso, label: d.label, times: times.map((t) => ({ label: t.label, slots: t.slots.map((s) => ({ id: s.id, court: s.court, canBook: s.canBook, reason: s.reason, team: s.team, mine: s.mine })) })) });
+        for (const t of times) {
+          c.open += t.slots.filter((s) => !s.teamId).length;
+          c.bookable += t.slots.filter((s) => s.canBook).length;
+        }
+      }
+  const team = weeks[0].team!;
+  return { status: team.status, canBookRole: team.canBookRole, gyms: [...gyms.values()].sort((a, b) => a.gym.localeCompare(b.gym)) };
+}

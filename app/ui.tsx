@@ -145,9 +145,11 @@ export function CollapseCard({
   open = false,
   alert = false,
   badge,
+  actionPad = "pr-36",
   children,
 }: {
   title: string;
+  actionPad?: string; // room kept for the title-line buttons, e.g. "pr-52" for several icons
   badge?: ReactNode; // e.g. a red "1 Too old" after the title
   count?: number;
   action?: ReactNode;
@@ -159,7 +161,7 @@ export function CollapseCard({
     <div className="relative">
       <details className={`${card} group overflow-hidden`} open={open}>
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
-          <span className={`font-semibold ${alert ? "animate-pulse text-red-600 dark:text-red-400" : ""} ${action ? "pr-36" : ""}`}>
+          <span className={`font-semibold ${alert ? "animate-pulse text-red-600 dark:text-red-400" : ""} ${action ? actionPad : ""}`}>
             {title}
             {count !== undefined && <span className="font-normal text-zinc-500"> ({count})</span>}
             {badge && <span className="ml-2 align-middle">{badge}</span>}

@@ -1,13 +1,12 @@
 "use client";
 
+import { AddPersonIcon, addIconBtn } from "../../../CardIcons";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, PopUp, Toast, useConfirm } from "../../../client-ui";
 import { fieldLabel, inputCls, pillCls, primaryBtn } from "../../../ui";
 import { addCoach, removeCoach, removeTeam, setAltName } from "./actions";
 
-const addBtn =
-  "shrink-0 rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark";
 
 // Delete a team (asks first). Its coaches come off it.
 export function DeleteTeamButton({ org, id, name }: { org: string; id: string; name: string }) {
@@ -51,7 +50,7 @@ export function AddCoachButton({ org, teamId, hasHead }: { org: string; teamId: 
   const [msg, setMsg] = useState<string | null>(null);
   return (
     <>
-      <PopUp label="+ Add" title="Add a coach" className={addBtn}>
+      <PopUp label={<AddPersonIcon />} ariaLabel="Add a coach" title="Add a coach" className={addIconBtn}>
         {(close) => (
           <CoachForm
             org={org}

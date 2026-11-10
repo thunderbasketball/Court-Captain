@@ -1,10 +1,12 @@
 // Practice attendance (SPEC.md section 12): every booked team practice shows in Events. The Director and the team's
-// staff check in the team's roster: ? → ✓ → ✗. Who marked each player is recorded.
+// staff check in the team's roster: ? → ✓ → ✗, from 15 minutes before the start until 24 hours after. Who marked each
+// player is recorded.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import type { Attendee } from "./events";
 import { STATUSES } from "./events";
 import { hasArea } from "./org-admin";
+import { markClosed } from "./event-attendance";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -99,6 +101,10 @@ export async function setPracticeStatus(
   if (typeof status !== "string" || !(STATUSES as readonly string[]).includes(status)) return { ok: false, message: "Unknown status." };
   const teamId = await practiceTeam(deps.pool, viewer, slotId);
   if (!teamId) return { ok: false, message: "You can't take attendance for this practice." };
+  // Same hours as the team page: from 15 minutes before the start until 24 hours after.
+  const at0 = (await deps.pool.query<{ starts_at: Date }>("select starts_at from slots where id = $1", [slotId])).rows[0];
+  const closed = at0 ? markClosed({ start: at0.starts_at, timed: true }, deps.now()) : null;
+  if (closed) return { ok: false, message: closed };
   const back = status === "unknown"; // back to ? clears who marked it
   const by = back ? null : `${viewer.firstName} ${viewer.lastName}`;
   const at = back ? null : deps.now();
