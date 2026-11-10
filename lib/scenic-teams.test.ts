@@ -94,7 +94,7 @@ describe("Scenic City teams", () => {
     expect(coach.rows[0]).toEqual({ first_name: "Cy", cell: "4235550003", pin_hash: null, email: null, coach: true });
 
     // (Partner is retired: the team shows in a Director of Teams' list.)
-    const list = await listScenicTeams(deps(), dee, "Director");
+    const list = await listScenicTeams(deps(), dee, "Director", "none");
     expect(list!.teams).toMatchObject([
       {
         name: "Baylor 5th Boys",
@@ -106,7 +106,7 @@ describe("Scenic City teams", () => {
       },
     ]);
     expect(list!.addFor).toEqual([{ value: baylor, label: "Baylor School" }]);
-    expect(await listScenicTeams(deps(), pat, "Partner")).toMatchObject({ teams: [] });
+    expect(await listScenicTeams(deps(), pat, "Partner", "none")).toMatchObject({ teams: [] });
 
     // Same name at the same partner: refused (any case). Not for a partner they aren't a contact of, or one that only hosts.
     expect(await createScenicTeam(deps(), pat, { ...team({ name: "baylor 5th boys" }), for: baylor })).toMatchObject({
@@ -143,25 +143,25 @@ describe("Scenic City teams", () => {
     });
     expect(await createScenicTeam(deps(), pat, { ...team({ name: "Nope" }), for: "solo" })).toMatchObject({ ok: false });
 
-    const solo = await listScenicTeams(deps(), sam, "Solo");
+    const solo = await listScenicTeams(deps(), sam, "Solo", "none");
     expect(solo!.teams.map((t) => `${t.name}:${t.gradeLabel}:${t.ownerName}`)).toEqual([
       "Sam 4th:4th:Sam X",
       "Sam's Girls:3rd/4th:Sam X",
     ]);
     expect(solo!.addFor).toEqual([{ value: "solo", label: "My teams (Solo)" }]);
 
-    const all = await listScenicTeams(deps(), dee, "Director");
+    const all = await listScenicTeams(deps(), dee, "Director", "none");
     expect(all!.teams.map((t) => t.name)).toEqual(["Sam 4th", "Baylor 5th Boys", "Sam's Girls"]);
     expect(all!.teams.every((t) => t.canEdit)).toBe(true);
     expect(all!.addFor.map((p) => p.label)).toEqual(["Baylor School"]);
-    expect(await listScenicTeams(deps(), fay, "Director")).toBeNull(); // Facilities only
-    expect(await listScenicTeams(deps(), pat, "Solo")).toBeNull(); // not their role
+    expect(await listScenicTeams(deps(), fay, "Director", "none")).toBeNull(); // Facilities only
+    expect(await listScenicTeams(deps(), pat, "Solo", "none")).toBeNull(); // not their role
   });
 
   it("coaches see the teams they coach but can't change them; edits and deletes are recorded and checked", async () => {
     const { id } = (await createScenicTeam(deps(), pat, { ...team(), for: baylor })) as { id: string };
     const cy = person("5550003", "Cy");
-    const mine = await listScenicTeams(deps(), cy, "Coach");
+    const mine = await listScenicTeams(deps(), cy, "Coach", "none");
     expect(mine!.teams).toMatchObject([{ name: "Baylor 5th Boys", canEdit: false }]);
     expect(mine!.addFor).toEqual([]);
     expect(await updateScenicTeam(deps(), cy, id, team({ name: "Mine now" }))).toEqual({
@@ -177,9 +177,15 @@ describe("Scenic City teams", () => {
       id,
     ]);
     expect(t.rows[0]).toEqual({ grade_low: 4, grade: 5, coach_id: "5550002", updated_by: "Dee X", created_by: "Pat X" });
+    // Cy coaches nothing in Scenic City now: no longer a Coach there. Sam is, until the team goes.
+    const coach = async (c: string) =>
+      (await db.pool.query<{ ok: boolean }>("select has_role($1, 'scenic-city', 'Coach') as ok", [c])).rows[0].ok;
+    expect(await coach("5550003")).toBe(false);
+    expect(await coach("5550002")).toBe(true);
 
     expect(await deleteScenicTeam(deps(), pat, id)).toEqual({ ok: true });
-    expect((await listScenicTeams(deps(), dee, "Director"))!.teams).toEqual([]);
+    expect((await listScenicTeams(deps(), dee, "Director", "none"))!.teams).toEqual([]);
+    expect(await coach("5550002")).toBe(false);
   });
 
   it("checks every field on the server (no formulas, real cell, a listed grade)", async () => {

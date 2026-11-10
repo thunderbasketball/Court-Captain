@@ -3,12 +3,15 @@
 import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import * as platform from "@/lib/platform";
+import { deleteOrganization as deleteOrg } from "@/lib/org-delete";
 
 const deps = { pool: db, now: () => new Date() };
 
 // Session checked here; the CourtCaptain Admin role is re-read inside lib/platform for every change.
 async function guarded(
-  fn: (user: NonNullable<Awaited<ReturnType<typeof currentUser>>>) => Promise<{ ok: true } | { ok: false; message: string }>,
+  fn: (
+    user: NonNullable<Awaited<ReturnType<typeof currentUser>>>,
+  ) => Promise<({ ok: true } & Record<string, unknown>) | { ok: false; message: string }>,
 ) {
   const user = await currentUser();
   if (!user) return { ok: false as const, message: "Please log in again." };
@@ -29,4 +32,9 @@ export async function setPlatformAdmin(coachId: string, on: boolean) {
 }
 export async function setOrgOwner(org: string, coachId: string, on: boolean) {
   return guarded((u) => platform.setOrgOwner(deps, u, org, coachId, on === true));
+}
+
+// Delete an organization and all its teams (CourtCaptain Admins; its name typed to confirm; checked in lib/org-delete).
+export async function deleteOrganization(org: string, typedName: string) {
+  return guarded((u) => deleteOrg(deps, u, org, typedName));
 }

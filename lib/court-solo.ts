@@ -7,6 +7,7 @@ import type { SessionUser } from "./auth/service";
 import { partnerFor } from "./org-leagues";
 import { abbrFor, renameOrg } from "./org-signup";
 import { slugFor } from "./org-slug";
+import { dropScenicCoachIfIdle } from "./scenic-teams";
 import { withTx, type Queryable } from "./sql";
 
 import { SOLO_KIND } from "./solo-names";
@@ -89,6 +90,7 @@ export async function makeSoloAccount(
     "update scenic_teams set org_team_id = $2, partner_id = $3, owner_coach_id = null, name = $4, updated_by = $5, updated_at = $6 where id = $1",
     [scenicTeamId, team.rows[0].id, partner, name, byName, now],
   );
+  await dropScenicCoachIfIdle(q, t.coach, byName); // a Coach in its own account now, not in Scenic City
   return slug;
 }
 
@@ -183,6 +185,7 @@ export async function replaceSoloTeam(
     "update scenic_teams set org_team_id = $2, partner_id = $3, owner_coach_id = null, updated_by = $4, updated_at = $5 where id = $1",
     [scenicTeamId, team.rows[0].id, partner, byName, now],
   );
+  await dropScenicCoachIfIdle(q, t.coach, byName);
 }
 
 // Switch a CourtSolo account to CourtOrg (its Owner): it becomes an organization with the name they give (its address

@@ -63,14 +63,33 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
   const scenic = await currentScenic(user);
   if (!scenic) redirect("/");
   const deps = { pool: db, now: () => new Date() };
-  const data = await listScenicTeams(deps, user, scenic.role);
-  if (!data) redirect("/org/scenic-city");
-  const view = (await searchParams).view === "org" ? "org" : "division";
+  // A program at a time: the one picked (past ones too, to look back), else the soonest that hasn't ended; "none" lists
+  // Scenic City's own teams (outside clubs', CourtSolo) not in a current program.
+  const sp = await searchParams;
+  const asked = typeof sp.program === "string" ? sp.program : undefined;
+  const first = await listScenicTeams(deps, user, scenic.role, asked ?? "pick");
+  if (!first) redirect("/org/scenic-city");
+  const program =
+    asked && (asked === "none" || first.programs.some((p) => p.id === asked))
+      ? asked
+      : (first.programs.find((p) => !p.ended)?.id ?? "none");
+  const data = program === asked ? first : (await listScenicTeams(deps, user, scenic.role, program))!;
+  const view = sp.view === "org" ? "org" : "division";
+  const qs = (v: string, p: string) => {
+    const x = new URLSearchParams();
+    if (v === "org") x.set("view", "org");
+    x.set("program", p);
+    return `/org/scenic-city/teams?${x}`;
+  };
   const teams = [...data.teams].sort(byTeam);
   // Each team's League games (opponent, time and gym once scheduled), on its card.
-  const games = await scheduledGames(
+  const allGames = await scheduledGames(
     db,
     teams.map((t) => t.id),
+  );
+  // Only this program's games on each card.
+  const games = Object.fromEntries(
+    Object.entries(allGames).map(([id, gs]) => [id, program === "none" ? [] : gs.filter((g) => g.programId === program)]),
   );
   // Assistant Coach, Manager, Team Parent (from team registration).
   const staff = await teamStaff(
@@ -195,6 +214,25 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
           </div>
         </div>
 
+        {/* Which program: current and upcoming first, then past ones (ended), then teams not registered now. */}
+        <nav aria-label="Programs" className="mb-3 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
+          {[...data.programs.map((p) => ({ key: p.id, label: p.ended ? `${p.name} · ended` : p.name })), { key: "none", label: "Not registered" }].map(
+            (p) => (
+              <Link
+                key={p.key}
+                href={qs(view, p.key)}
+                aria-current={program === p.key ? "page" : undefined}
+                className={`shrink-0 rounded-full px-3 py-1.5 text-sm font-medium whitespace-nowrap ${
+                  program === p.key
+                    ? "bg-thunder-blue text-white"
+                    : "text-zinc-600 ring-1 ring-zinc-950/10 hover:bg-zinc-50 dark:text-zinc-300 dark:ring-white/15"
+                }`}
+              >
+                {p.label}
+              </Link>
+            ),
+          )}
+        </nav>
         <nav aria-label="Team views" className="mb-4 flex gap-2">
           {(
             [
@@ -204,7 +242,7 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
           ).map(([k, label]) => (
             <Link
               key={k}
-              href={k === "division" ? "/org/scenic-city/teams" : "/org/scenic-city/teams?view=org"}
+              href={qs(k, program)}
               aria-current={view === k ? "page" : undefined}
               className={`rounded-full px-3 py-1.5 text-sm font-medium ${
                 view === k
@@ -218,7 +256,12 @@ async function ScenicTeams({ searchParams }: { searchParams: PageProps<"/org/sce
         </nav>
 
         {!teams.length && (
-          <p className="text-zinc-500">No teams yet.{director && " Tap “+ Add” (or Import) for an outside club's teams."}</p>
+          <p className="text-zinc-500">
+            {program === "none"
+              ? "Every outside club's and CourtSolo team is in a current program."
+              : "No teams registered in this program."}
+            {director && program === "none" && " Tap “+ Add” (or Import) for an outside club's teams."}
+          </p>
         )}
         <div className="grid gap-4">
           {groups.map((g) => (

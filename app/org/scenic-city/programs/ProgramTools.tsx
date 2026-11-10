@@ -1242,7 +1242,7 @@ function RecLimitEditor({ programId, rec, onSaved }: { programId: string; rec: R
         </button>
       </div>
       {limited && !rec.choices.length && (
-        <p className="text-sm text-zinc-500">No organization has CourtOrg and CourtSync yet.</p>
+        <p className="text-sm text-zinc-500">No organization has CourtSync with CourtOrg or CourtPlayers yet.</p>
       )}
       {limited && rec.choices.length > 0 && (
         <ul className="max-h-56 divide-y divide-zinc-100 overflow-y-auto rounded-xl ring-1 ring-zinc-950/10 dark:divide-white/5 dark:ring-white/10">
@@ -1262,7 +1262,7 @@ function RecLimitEditor({ programId, rec, onSaved }: { programId: string; rec: R
         </ul>
       )}
       <p className="text-xs text-zinc-500">
-        Organizations with CourtOrg and CourtSync. COMP stays open to all. While REC is limited, stand-alone teams can&apos;t
+        Organizations with CourtSync and their own teams (CourtOrg or CourtPlayers). COMP stays open to all. While REC is limited, stand-alone teams can&apos;t
         register REC. Teams already registered stay.
         {rec.by && ` Limited by ${rec.by}.`}
       </p>

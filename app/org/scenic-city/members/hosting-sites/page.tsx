@@ -8,7 +8,7 @@ import { formatCell } from "@/lib/phone";
 import { hostingSiteStaff } from "@/lib/scenic-members";
 import AppHeader from "../../../../AppHeader";
 import { MembersNav } from "../../ScenicNav";
-import { PageTitle, PhoneLink, card } from "../../../../ui";
+import { Chip, EmailLink, GroupCard, PageTitle, PersonRow, PhoneLink } from "../../../../ui";
 
 export default function HostingSitesMembersPage() {
   return (
@@ -34,26 +34,51 @@ async function HostingSitesMembers() {
         <MembersNav user={user} current="hosting-sites" />
         <PageTitle title="Hosting Sites" subtitle="Who runs each site: Owners and Admins" />
         {!sites.length && <p className="text-sm text-zinc-500">No hosting sites yet.</p>}
-        <div className="grid gap-3">
+        {/* Each site a card (closed; tap to open), its ↗ opening the site's page; each person one line, opened to cell and email. */}
+        <div className="space-y-3">
           {sites.map((s) => (
-            <section key={s.id} className={`${card} p-4`}>
-              <h2 className="font-semibold">
-                <Link href={`/org/scenic-city/partners/${s.id}`} className="hover:underline">
-                  {s.name}
+            <GroupCard
+              key={s.id}
+              title={s.name}
+              count={s.people.length}
+              defaultOpen={false}
+              action={
+                <Link
+                  href={`/org/scenic-city/partners/${s.id}`}
+                  aria-label={`${s.name}: partner page`}
+                  title="Partner page"
+                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-white text-zinc-600 ring-1 ring-zinc-950/15 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-white/20 dark:hover:bg-white/10"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden className="size-4">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
+                    />
+                  </svg>
                 </Link>
-              </h2>
-              {!s.people.length && <p className="text-sm text-zinc-500">No one listed yet.</p>}
-              <ul className="divide-y divide-zinc-100 dark:divide-white/5">
-                {s.people.map((p) => (
-                  <li key={p.id} className="flex items-center justify-between gap-3 py-2 text-sm">
-                    <span>
-                      <span className="font-medium">{p.name}</span> <PhoneLink cell={p.cell} label={formatCell(p.cell)} />
-                    </span>
-                    <span className="shrink-0 text-xs font-medium text-thunder-blue dark:text-blue-300">{p.role}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
+              }
+            >
+              {!s.people.length && <li className="px-4 py-3 text-sm text-zinc-500 italic">No one listed yet.</li>}
+              {s.people.map((p) => {
+                const [first, ...rest] = p.name.split(" ");
+                return (
+                  <PersonRow
+                    key={`${s.id}-${p.id}`}
+                    first={first}
+                    last={rest.join(" ")}
+                    avatarTone={p.role === "Contact" ? "zinc" : "blue"}
+                    collapsed
+                    chips={<Chip tone={p.role === "Contact" ? "zinc" : "blue"}>{p.role}</Chip>}
+                  >
+                    <p>
+                      <PhoneLink cell={p.cell} label={formatCell(p.cell)} />
+                    </p>
+                    <p className="truncate">{p.email ? <EmailLink email={p.email} /> : "No email"}</p>
+                  </PersonRow>
+                );
+              })}
+            </GroupCard>
           ))}
         </div>
       </main>

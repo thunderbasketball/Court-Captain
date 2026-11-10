@@ -9,11 +9,12 @@ import { REG_OPTIONS, entryLine, money } from "@/lib/program-options";
 import { requireFeature } from "@/lib/features-server";
 import { formatCell } from "@/lib/phone";
 import { getProgram, listPrograms, recLimit, teamsByDate } from "@/lib/scenic-programs";
-import { dayLabel } from "@/lib/time";
+import { dayLabel, timeLabel } from "@/lib/time";
+import { programSchedule } from "@/lib/public-league";
 import { shortDate as shortDay } from "@/lib/program-options";
 import AppHeader from "../../../../AppHeader";
 import { ProgramsNav } from "../../ScenicNav";
-import { GroupCard, PhoneLink, TeamName, card } from "../../../../ui";
+import { CollapseCard, GroupCard, PhoneLink, TeamName, card } from "../../../../ui";
 import {
   AddDivision,
   AddPool,
@@ -62,6 +63,7 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
         .filter((o) => o.id !== p.id && o.divisions > 0)
         .map((o) => ({ id: o.id, name: o.name, divisions: o.divisions }))
     : [];
+  const games = p.kind === "League" ? await programSchedule(db, p.id) : []; // the Schedule card
   const fee = p.feeCents === null ? null : `$${(p.feeCents / 100).toFixed(2)}`;
   // Paid / Unpaid (Directors of Programs, when the program charges): set in each team's ⋯ menu; unpaid shows behind the team.
   const charges = manage && (!!fee || p.options.length > 0);
@@ -472,6 +474,39 @@ async function Program({ params }: { params: PageProps<"/org/scenic-city/program
               ))}
             </div>
           </section>
+        )}
+        {/* Its games by day (any time, past programs too; the public page shows them once published). */}
+        {p.kind === "League" && (
+          <div className="mt-4">
+            <CollapseCard title="Schedule" count={games.reduce((n, d) => n + d.games.length, 0)}>
+              {games.length ? (
+                <div className="space-y-3 px-4 pb-4">
+                  {games.map((d) => (
+                    <div key={d.date}>
+                      <h3 className="mb-1 text-sm font-semibold">{dayLabel(d.date)}</h3>
+                      <ul className="divide-y divide-zinc-100 rounded-xl bg-zinc-50 px-3 text-sm dark:divide-white/5 dark:bg-white/5">
+                        {d.games.map((g, i) => (
+                          <li key={i} className={`flex gap-3 py-1.5 ${d.date < p.today ? "opacity-60" : ""}`}>
+                            <span className="w-16 shrink-0 text-zinc-500">{g.starts ? timeLabel(g.starts) : "TBD"}</span>
+                            <span className="min-w-0">
+                              <TeamName name={g.away} /> <span className="text-zinc-400">at</span> <TeamName name={g.home} />
+                              <span className="block text-xs text-zinc-500">
+                                {g.group}
+                                {g.gym && ` · ${g.gym}`}
+                                {g.court && ` · ${g.court}`}
+                              </span>
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="px-4 pb-4 text-sm text-zinc-500">No games yet.</p>
+              )}
+            </CollapseCard>
+          </div>
         )}
       </main>
     </>

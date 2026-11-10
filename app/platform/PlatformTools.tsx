@@ -2,7 +2,7 @@
 
 import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { setOrgOwner, setOrgFeature, setPlatformAdmin } from "./actions";
+import { deleteOrganization, setOrgOwner, setOrgFeature, setPlatformAdmin } from "./actions";
 import { PopUp, Toast, useConfirm } from "../client-ui";
 import { inputCls } from "../ui";
 import { GearIcon } from "../OrgSettings";
@@ -258,5 +258,55 @@ export function RemoveStaff({ coachId, name }: { coachId: string; name: string }
       {error && <Toast key={error} message={error} />}
       {confirmDialog}
     </>
+  );
+}
+
+// At the bottom of an organization's gear (CourtCaptain Admins): delete it and all its teams. Type its name, then confirm.
+export function DeleteOrganization({ org, orgName, teams }: { org: string; orgName: string; teams: number }) {
+  const router = useRouter();
+  const [typed, setTyped] = useState("");
+  const [busy, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
+  const matches = typed.trim().toLowerCase() === orgName.trim().toLowerCase();
+  return (
+    <div className="mt-4 space-y-2 border-t border-red-600/20 pt-4">
+      {confirmDialog}
+      <p className="text-sm font-semibold text-red-600 dark:text-red-400">Delete organization</p>
+      <p className="text-xs text-zinc-500">
+        Removes {orgName}, its {teams} team{teams === 1 ? "" : "s"} (coaches and rosters), their League registrations, its roles,
+        features and gyms. People&apos;s logins stay. Not while its teams have League games.
+      </p>
+      <input
+        className={inputCls}
+        value={typed}
+        onChange={(e) => setTyped(e.target.value)}
+        placeholder={`Type ${orgName} to delete`}
+        aria-label={`Type ${orgName} to delete`}
+      />
+      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+      <button
+        type="button"
+        disabled={!matches || busy}
+        onClick={async () => {
+          const ok = await confirm({
+            title: `Delete ${orgName}?`,
+            message: <p>This removes {orgName} and all its teams. It can&apos;t be undone.</p>,
+            confirmLabel: "Delete",
+            tone: "warning",
+          });
+          if (!ok) return;
+          start(async () => {
+            setError(null);
+            const r = await deleteOrganization(org, typed);
+            if (!r.ok) return setError(r.message);
+            router.refresh();
+          });
+        }}
+        className="w-full rounded-full px-4 py-2 text-sm font-semibold text-red-600 ring-1 ring-red-600/30 hover:bg-red-50 disabled:opacity-40 dark:text-red-400 dark:ring-red-400/30 dark:hover:bg-red-500/10"
+      >
+        {busy ? "Deleting…" : "Delete organization"}
+      </button>
+    </div>
   );
 }

@@ -14,6 +14,7 @@ import { createOrganization } from "./org-signup";
 import { addOrgTeamCoach, createOrgTeam, deleteOrgTeam } from "./org-teams";
 import { addDivision, getProgram, saveProgram, saveProgramDates, setPaid, setTeamOff } from "./scenic-programs";
 import { undoRegisterAll } from "./register-batches";
+import { deleteOrganization } from "./org-delete";
 import { listScenicTeams, updateScenicTeam } from "./scenic-teams";
 import { createTestDb, grant } from "./testing/db";
 
@@ -51,6 +52,10 @@ describe("an organization's teams in Scenic City programs", () => {
     await grant(db.pool, "9913694 scenic-city Director", "9913694 scenic-city Admin");
     const input = { name: "East Ridge Parks & Rec", short: "East Ridge", kind: "Organization", color: "#0f766e" };
     await createOrganization(deps(), jo, { ...input, features: ["court-org"] }, null);
+    // CourtSync with its own teams: REC is open to it (lib/rec-orgs.ts).
+    await db.pool.query(
+      "insert into org_features (org, feature, source, turned_on_by) select slug, 'court-sync', 'setup', 'test' from organizations where slug not in ('thunder', 'scenic-city') on conflict do nothing",
+    );
   });
 
   it("registers a team (copy read-only in Scenic City), withdraws it", async () => {
@@ -112,14 +117,83 @@ describe("an organization's teams in Scenic City programs", () => {
 
     // Withdraw while open; not after it closes.
     expect(await withdrawOrgTeam(deps(), jo, org, tid, pid)).toEqual({ ok: true });
+    // Not registered anywhere now: not on Scenic City's Teams (its copy stays, unlisted).
+    expect((await listScenicTeams(deps(), dee, "Director"))!.teams).toEqual([]);
     expect(await registerOrgTeam(deps(), jo, org, tid, pid, ALL)).toMatchObject({ ok: true });
     now = new Date("2026-12-20T15:00:00Z");
     expect(await withdrawOrgTeam(deps(), jo, org, tid, pid)).toMatchObject({ ok: false });
     expect(await registerOrgTeam(deps(), jo, org, tid, pid, ALL)).toMatchObject({ ok: false });
 
+    // After the program ends, the registration was for it: no longer on Scenic City's Teams (still the organization's).
+    now = new Date("2027-03-07T15:00:00Z");
+    expect((await listScenicTeams(deps(), dee, "Director"))!.teams).toEqual([]);
+    // Looking back: picking the ended program still lists it (and its division); an organization's team is never "Not registered".
+    const back = (await listScenicTeams(deps(), dee, "Director", pid))!;
+    expect(back.teams.map((t) => [t.name, t.divisionLow, t.divisionHigh])).toEqual([["ER 4B Coach", 3, 4]]);
+    expect(back.programs).toEqual([{ id: pid, name: "Winter League 2027", ended: true }]);
+    expect((await listScenicTeams(deps(), dee, "Director", "none"))!.teams).toEqual([]);
+    now = new Date("2026-12-20T15:00:00Z");
+    expect((await listScenicTeams(deps(), dee, "Director"))!.teams).toHaveLength(1);
+
     // Deleting the team takes it out of Scenic City too.
     expect(await deleteOrgTeam(deps(), jo, org, tid)).toEqual({ ok: true });
     expect((await listScenicTeams(deps(), dee, "Director"))!.teams).toEqual([]);
+  });
+
+  it("a CourtCaptain Admin deletes an organization with its teams and their League registrations; not with games", async () => {
+    const pid = (
+      (await saveProgram(deps(), dee, null, {
+        kind: "League",
+        name: "Winter League 2027",
+        startsOn: "2027-01-09",
+        endsOn: "2027-03-06",
+        regOpens: "2026-11-01",
+        regCloses: "2026-12-15",
+        fee: "$150",
+      })) as { id: string }
+    ).id;
+    await addDivision(deps(), dee, pid, { gender: "Boys", from: 3, to: 4, levels: ["REC"] });
+    const add = async () => ((await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: ["4"], level: "REC" })) as { id: string }).id;
+    const [t1, t2] = [await add(), await add()];
+    expect(await registerOrgTeam(deps(), jo, org, t1, pid, ALL)).toMatchObject({ ok: true });
+    expect(await registerOrgTeam(deps(), jo, org, t2, pid, ALL)).toMatchObject({ ok: true });
+    const copies = (
+      await db.pool.query<{ id: string }>("select id::text from scenic_teams where org_team_id = any($1::bigint[]) order by id", [[t1, t2]])
+    ).rows.map((r) => r.id);
+    expect(copies).toHaveLength(2);
+
+    // CourtCaptain Admins only; the name typed exactly; never Thunder or Scenic City.
+    expect(await deleteOrganization(deps(), dee, org, "East Ridge Parks & Rec")).toEqual({
+      ok: false,
+      message: "Only a CourtCaptain Admin can do that.",
+    });
+    await db.pool.query("insert into platform_admins (coach_id, granted_by) values ('9913694', 'test')");
+    expect(await deleteOrganization(deps(), dee, org, "East Ridge")).toMatchObject({ ok: false, message: expect.stringContaining("Type") });
+    expect(await deleteOrganization(deps(), dee, "thunder", "Thunder Basketball")).toMatchObject({ ok: false });
+
+    // With a League game: refused, nothing removed.
+    const div = (await db.pool.query<{ id: string }>("select id::text from scenic_divisions where program_id = $1", [pid])).rows[0].id;
+    await db.pool.query(
+      "insert into scenic_matchups (program_id, division_id, day, team_a, team_b, created_by) values ($1, $2, '2027-01-09', $3, $4, 'x')",
+      [pid, div, copies[0], copies[1]],
+    );
+    expect(await deleteOrganization(deps(), dee, org, "east ridge parks & rec")).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("1 League game"),
+    });
+    expect((await db.pool.query("select 1 from organizations where slug = $1", [org])).rowCount).toBe(1);
+
+    // Without it: the organization, its teams, their copies and registrations, roles and listing are gone; logins stay.
+    await db.pool.query("delete from scenic_matchups");
+    expect(await deleteOrganization(deps(), dee, org, " East Ridge Parks & Rec ")).toEqual({ ok: true, teams: 2 });
+    const left = async (sql: string, v: unknown[]) => (await db.pool.query(sql, v)).rowCount;
+    expect(await left("select 1 from organizations where slug = $1", [org])).toBe(0);
+    expect(await left("select 1 from org_teams where org = $1", [org])).toBe(0);
+    expect(await left("select 1 from scenic_teams where id = any($1::bigint[])", [copies])).toBe(0);
+    expect(await left("select 1 from scenic_registrations where program_id = $1", [pid])).toBe(0);
+    expect(await left("select 1 from org_roles where org = $1", [org])).toBe(0);
+    expect(await left("select 1 from partners where org_slug = $1", [org])).toBe(0);
+    expect(await left("select 1 from users where coach_id = '5550001'", [])).toBe(1);
   });
 
   it("a Pre-K Coed team registers into the League's Coed Pre-K division (REC only)", async () => {

@@ -22,12 +22,14 @@ export default function AddTeamButton({
   href,
   clubs,
   preK = false,
+  noRec = false,
 }: {
   people: Person[];
   create: Create;
   href?: string;
   clubs?: Club[];
   preK?: boolean;
+  noRec?: boolean; // no CourtSync, or not invited to a League's REC: COMP only (and so no Pre-K, which is REC); the server checks too
 }) {
   const router = useRouter();
   return (
@@ -40,7 +42,8 @@ export default function AddTeamButton({
         <AddTeamForm
           people={people}
           clubs={clubs}
-          preK={preK}
+          preK={preK && !noRec}
+          noRec={noRec}
           create={create}
           onAdded={(id) => {
             if (href) return router.push(`${href}${id}`);
@@ -59,12 +62,14 @@ function AddTeamForm({
   people,
   clubs,
   preK,
+  noRec,
   create,
   onAdded,
 }: {
   people: Person[];
   clubs?: Club[];
   preK: boolean;
+  noRec: boolean;
   create: Create;
   onAdded: (id: string) => void;
 }) {
@@ -72,7 +77,7 @@ function AddTeamForm({
   const [newClub, setNewClub] = useState({ name: "", abbr: "" });
   const [gender, setGender] = useState<Gender | "">("");
   const [grades, setGrades] = useState<string[]>([]);
-  const [level, setLevel] = useState<string>("REC");
+  const [level, setLevel] = useState<string>(noRec ? "COMP" : "REC");
   const [coach, setCoach] = useState("");
   const [person, setPerson] = useState({ first: "", last: "", cell: "" });
   const [alt, setAlt] = useState("");
@@ -197,8 +202,9 @@ function AddTeamForm({
       </div>
       <div>
         <span className={fieldLabel}>Level</span>
+        {noRec && <p className="mb-1 text-xs text-zinc-500">COMP only: REC is for organizations with CourtSync that a League has invited to REC.</p>}
         <div className="flex gap-2">
-          {LEVELS.map((l) => (
+          {LEVELS.filter((l) => !noRec || l !== "REC").map((l) => (
             <button
               key={l}
               type="button"

@@ -6,7 +6,16 @@ import { easternDate } from "./time";
 
 type Deps = { pool: Pool; now: () => Date };
 const ORG = "scenic-city";
-type Person = { id: string; name: string; cell: string };
+type Person = { id: string; name: string; cell: string; email: string | null };
+
+// People's emails by login (shown when their card is opened).
+async function emailsOf(pool: Pool, ids: string[]): Promise<Map<string, string | null>> {
+  const r = await pool.query<{ id: string; email: string | null }>(
+    "select coach_id as id, email from users where coach_id = any($1::text[])",
+    [ids],
+  );
+  return new Map(r.rows.map((x) => [x.id, x.email]));
+}
 
 // Members → Hosting Sites (Admins and Directors of Facilities): each approved hosting site, by name, with the people who
 // run it: an organization's Owners and Admins (CourtCaptain staff stay hidden), or a school's contacts.
@@ -21,13 +30,19 @@ export async function hostingSiteStaff(
   return Promise.all(
     sites.rows.map(async (p) => {
       if (p.org) {
-        const people = (await listDirectors(deps.pool, p.org))
-          .filter((d) => d.admin)
-          .map((d) => ({ id: d.id, name: d.name, cell: d.cell, role: d.owner ? "Owner" : "Admin" }));
+        const admins = (await listDirectors(deps.pool, p.org)).filter((d) => d.admin);
+        const emails = await emailsOf(deps.pool, admins.map((d) => d.id));
+        const people = admins.map((d) => ({
+          id: d.id,
+          name: d.name,
+          cell: d.cell,
+          email: emails.get(d.id) ?? null,
+          role: d.owner ? "Owner" : "Admin",
+        }));
         return { ...p, people };
       }
       const c = await deps.pool.query<Person>(
-        `select u.coach_id as id, u.first_name || ' ' || u.last_name as name, u.cell
+        `select u.coach_id as id, u.first_name || ' ' || u.last_name as name, u.cell, u.email
          from partner_contacts pc join users u using (coach_id) where pc.partner_id = $1
          order by lower(u.last_name), lower(u.first_name)`,
         [p.id],
@@ -58,8 +73,15 @@ export async function programCoaches(
   ).rows;
   const current = programs.find((p) => p.id === programId)?.id ?? programs[0]?.id ?? null;
   if (!current) return { programs, current, coaches: [], noCoach: [] };
-  const r = await deps.pool.query<{ id: string | null; name: string | null; cell: string | null; team: string; from: string }>(
-    `select u.coach_id as id, u.first_name || ' ' || u.last_name as name, u.cell, t.name as team,
+  const r = await deps.pool.query<{
+    id: string | null;
+    name: string | null;
+    cell: string | null;
+    email: string | null;
+    team: string;
+    from: string;
+  }>(
+    `select u.coach_id as id, u.first_name || ' ' || u.last_name as name, u.cell, u.email, t.name as team,
             coalesce(p.name, 'Solo · ' || o.first_name || ' ' || o.last_name) as "from"
      from scenic_registrations r join scenic_teams t on t.id = r.team_id
      left join users u on u.coach_id = t.coach_id
@@ -77,7 +99,7 @@ export async function programCoaches(
     }
     const c = coaches.find((y) => y.id === x.id);
     if (c) c.teams.push({ name: x.team, from: x.from });
-    else coaches.push({ id: x.id, name: x.name!, cell: x.cell!, teams: [{ name: x.team, from: x.from }] });
+    else coaches.push({ id: x.id, name: x.name!, cell: x.cell!, email: x.email, teams: [{ name: x.team, from: x.from }] });
   }
   return { programs, current, coaches, noCoach };
 }

@@ -1167,16 +1167,17 @@ async function recOpen(q: Pick<Queryable, "query">, programId: string, teamId: s
   return r.rows[0]?.ok ?? false;
 }
 
-// The organizations REC can be limited to: those with CourtOrg (their own teams) and CourtSync. `p` is partners.
-const REC_CHOICE_SQL = `p.approved and p.org_slug is not null
-  and exists (select 1 from org_features f where f.org = p.org_slug and f.feature = 'court-org')
-  and exists (select 1 from org_features f where f.org = p.org_slug and f.feature = 'court-sync')`;
+// The organizations REC can be limited to: CourtSync (no CourtSync, no REC) and teams of its own (CourtOrg, or
+// CourtPlayers like Thunder). Hosts with CourtSync only (high schools) and CourtSolo teams aren't listed. `p` is partners.
+export const REC_ORG_SQL = (org: string) => `exists (select 1 from org_features f where f.org = ${org} and f.feature = 'court-sync')
+  and exists (select 1 from org_features f where f.org = ${org} and f.feature in ('court-org', 'court-players'))`;
+const REC_CHOICE_SQL = `p.approved and p.org_slug is not null and ${REC_ORG_SQL("p.org_slug")}`;
 
 export type RecLimit = {
   limited: boolean;
   by: string | null;
   partners: string[]; // picked (partner ids)
-  choices: { id: string; name: string }[]; // organizations that can be picked (CourtOrg and CourtSync), by name
+  choices: { id: string; name: string }[]; // organizations that can be picked (CourtSync + CourtOrg or CourtPlayers), by name
 };
 
 export async function recLimit(q: Pick<Queryable, "query">, programId: string): Promise<RecLimit> {

@@ -13,7 +13,7 @@ import { ResetLoginButton } from "../ResetLoginButton";
 import { ViewAsButton } from "../ViewAsButton";
 import Link from "next/link";
 import { formatCell } from "@/lib/phone";
-import { AddOwner, AddStaff, FeatureSwitch, FeaturesGear, RemoveOwner, RemoveStaff } from "./PlatformTools";
+import { AddOwner, AddStaff, DeleteOrganization, FeatureSwitch, FeaturesGear, RemoveOwner, RemoveStaff } from "./PlatformTools";
 import SupportAdmin from "./SupportAdmin";
 import { listArticles } from "@/lib/support";
 
@@ -174,6 +174,9 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
                               </li>
                             ))}
                           </ul>
+                          {o.slug !== "thunder" && o.slug !== "scenic-city" && (
+                            <DeleteOrganization org={o.slug} orgName={o.name} teams={o.stats.teams} />
+                          )}
                         </FeaturesGear>
                         <svg
                           viewBox="0 0 20 20"

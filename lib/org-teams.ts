@@ -30,6 +30,7 @@ import {
   type NamedTeam,
 } from "./team-names";
 import { matchOrCreateUser } from "./user-match";
+import { REC_CLOSED, recAllowed } from "./rec-orgs";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -304,6 +305,7 @@ export async function createOrgTeam(
     return withTx(deps.pool, async (q) => {
       await lockTeams(q, o);
       await oneSoloTeam(q, o);
+      if (level === "REC" && !(await recAllowed(q, o, deps.now()))) throw new TeamError(REC_CLOSED);
       const head = await resolveHead(q, input.headCoach, deps.now());
       const name = await ruleName(q, o, gender, grades, head?.lastName ?? null, null);
       const nums = grades.map(gradeNum).sort((a, b) => a - b);
@@ -515,8 +517,9 @@ export type ImportPreviewRow = ImportRow & { status: "new" | "exists" | "error";
 // Grades as the import reads them ("3" or "3-4", K = 0) → as the naming rule wants them ("K" … "12").
 const importGrades = (g: string) => g.split("-").map((x) => (x === "0" ? "K" : x));
 
-async function previewRows(q: Pick<Queryable, "query">, org: string, text: string) {
+async function previewRows(q: Pick<Queryable, "query">, org: string, text: string, now: Date) {
   const parsed = parseTeamRows(text, { named: false, cellOptional: true });
+  const rec = await recAllowed(q, org, now); // REC rows are a problem when the organization isn't invited to REC
   const { tooMany } = parsed;
   const teams = (
     await q.query<{ id: string; name: string; level: string; alt: string | null }>(
@@ -535,7 +538,11 @@ async function previewRows(q: Pick<Queryable, "query">, org: string, text: strin
     const grades = p.grade ? importGrades(p.grade) : null;
     const base = p.gender && grades ? (p.coach ? teamName(p.gender, grades, p.coach.last) : tbdBase(p.gender, grades)) : "";
     const alt = !p.coach && p.altName ? p.altName.toLowerCase() : "";
-    const errors = [...p.errors, ...(alt && seenAlt.has(alt) ? ["Listed twice"] : [])];
+    const errors = [
+      ...p.errors,
+      ...(alt && seenAlt.has(alt) ? ["Listed twice"] : []),
+      ...(p.level === "REC" && !rec ? [REC_CLOSED] : []),
+    ];
     if (alt) seenAlt.add(alt);
     const status = errors.length ? "error" : (p.coach ? there(base, p.level) : !!alt && alts.has(alt)) ? "exists" : "new";
     const fixes = status === "new" ? [...p.fixes, ...plan.add(`row:${i}`, base)] : p.fixes;
@@ -559,7 +566,7 @@ export async function previewTeamImport(
     const o = await mustManage(deps.pool, viewer, org);
     if (typeof text !== "string" || !text.trim()) throw new TeamError("Paste your teams or choose a CSV file.");
     if (text.length > 200_000) throw new TeamError("That's too much at once. Up to 200 teams.");
-    return previewRows(deps.pool, o, text);
+    return previewRows(deps.pool, o, text, deps.now());
   });
 }
 
@@ -578,7 +585,7 @@ export async function importTeams(
     return withTx(deps.pool, async (q) => {
       await q.query("select pg_advisory_xact_lock(hashtext('org-teams:' || $1))", [o]);
       await oneSoloTeam(q, o);
-      const { rows } = await previewRows(q, o, text);
+      const { rows } = await previewRows(q, o, text, deps.now());
       // The batch, so it can be undone.
       const batch = (
         await q.query<{ id: string }>(

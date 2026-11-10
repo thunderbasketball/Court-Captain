@@ -94,6 +94,13 @@ export async function publicLeague(q: Pick<Queryable, "query">, now: Date, id: u
   }
   if (!league.published) return { ...league, groups, schedule: null };
 
+  const schedule = await programSchedule(q, id);
+  return { ...league, groups, schedule };
+}
+
+// A League's games by day (date, time, gym, court, group, home and away; DEV teams left out), for the public page once
+// published, and for Scenic City's own program page at any time (past programs too).
+export async function programSchedule(q: Pick<Queryable, "query">, id: string): Promise<PublicDay[]> {
   const games = await q.query<{
     date: string;
     starts: string | null;
@@ -135,7 +142,7 @@ export async function publicLeague(q: Pick<Queryable, "query">, now: Date, id: u
       away: aHome ? b : m.a,
     });
   }
-  return { ...league, groups, schedule };
+  return schedule;
 }
 
 // A Director of Programs or of Scheduling (on the Scheduler) publishes a League's schedule to the public page, or takes it back.

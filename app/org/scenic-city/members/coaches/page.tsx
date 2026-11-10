@@ -8,7 +8,7 @@ import { formatCell } from "@/lib/phone";
 import { programCoaches } from "@/lib/scenic-members";
 import AppHeader from "../../../../AppHeader";
 import { MembersNav } from "../../ScenicNav";
-import { PageTitle, PhoneLink, card } from "../../../../ui";
+import { Chip, EmailLink, GroupCard, PageTitle, PersonRow, PhoneLink } from "../../../../ui";
 
 export default function ScenicCoachesPage({ searchParams }: PageProps<"/org/scenic-city/members/coaches">) {
   return (
@@ -55,28 +55,53 @@ async function ScenicCoaches({ searchParams }: { searchParams: PageProps<"/org/s
         {!data.current ? (
           <p className="text-sm text-zinc-500">No active programs.</p>
         ) : (
-          <section className={`${card} p-4`}>
-            <h2 className="mb-1 font-semibold">
-              {data.programs.find((p) => p.id === data.current)?.name} · {data.coaches.length} coach
-              {data.coaches.length === 1 ? "" : "es"}
-            </h2>
-            {!data.coaches.length && !data.noCoach.length && <p className="text-sm text-zinc-500">No teams registered yet.</p>}
-            <ul className="divide-y divide-zinc-100 dark:divide-white/5">
-              {data.coaches.map((c) => (
-                <li key={c.id} className="py-2.5 text-sm">
-                  <p className="font-medium">
-                    {c.name} <PhoneLink cell={c.cell} label={formatCell(c.cell)} />
-                  </p>
-                  <p className="text-zinc-600 dark:text-zinc-300">{c.teams.map((t) => `${t.name} (${t.from})`).join(" · ")}</p>
-                </li>
-              ))}
-            </ul>
+          <div className="space-y-3">
+            {/* The program's coaches, each one line with their teams; opened to cell and email. */}
+            <GroupCard
+              title={`${data.programs.find((p) => p.id === data.current)?.name ?? "Program"} coaches`}
+              count={data.coaches.length}
+            >
+              {!data.coaches.length && !data.noCoach.length && (
+                <li className="px-4 py-3 text-sm text-zinc-500 italic">No teams registered yet.</li>
+              )}
+              {data.coaches.map((c) => {
+                const [first, ...rest] = c.name.split(" ");
+                return (
+                  <PersonRow
+                    key={c.id}
+                    first={first}
+                    last={rest.join(" ")}
+                    avatarTone="green"
+                    collapsed
+                    chips={<Chip tone="green">Coach</Chip>}
+                    always={
+                      <div className="flex flex-wrap gap-1">
+                        {c.teams.map((t) => (
+                          <Chip key={`${t.name}-${t.from}`} tone="orange">
+                            {t.name} · {t.from}
+                          </Chip>
+                        ))}
+                      </div>
+                    }
+                  >
+                    <p>
+                      <PhoneLink cell={c.cell} label={formatCell(c.cell)} />
+                    </p>
+                    <p className="truncate">{c.email ? <EmailLink email={c.email} /> : "No email"}</p>
+                  </PersonRow>
+                );
+              })}
+            </GroupCard>
             {data.noCoach.length > 0 && (
-              <p className="mt-2 text-sm font-semibold text-red-600 dark:text-red-400">
-                No coach yet: {data.noCoach.map((t) => `${t.name} (${t.from})`).join(" · ")}
-              </p>
+              <GroupCard title="No coach yet" count={data.noCoach.length}>
+                {data.noCoach.map((t) => (
+                  <li key={`${t.name}-${t.from}`} className="px-4 py-2.5 text-sm font-medium text-red-600 dark:text-red-400">
+                    {t.name} <span className="font-normal text-zinc-500">· {t.from}</span>
+                  </li>
+                ))}
+              </GroupCard>
             )}
-          </section>
+          </div>
         )}
       </main>
     </>

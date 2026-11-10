@@ -7,7 +7,7 @@ import type { SessionUser } from "./auth/service";
 import { orgHasArea } from "./org-admin";
 import { resolveHead, TeamError } from "./org-teams";
 import { cleanPlaceName } from "./scenic-partners";
-import { gradeLabel, LEVELS, parseGrade } from "./scenic-teams";
+import { dropScenicCoachIfIdle, gradeLabel, LEVELS, parseGrade, removeEmptyClub } from "./scenic-teams";
 import { withTx, type Queryable } from "./sql";
 import { parseTeamRows, type ImportRow } from "./team-import-parse";
 import {
@@ -438,12 +438,10 @@ export async function undoClubImport(
           continue;
         }
         await q.query("delete from scenic_teams where id = $1", [t.id]);
-        if (t.coach_id) {
-          const still = await q.query("select 1 from scenic_teams where coach_id = $1 limit 1", [t.coach_id]);
-          if (!still.rowCount) await q.query("select set_role($1, $2, 'Coach', false, $3)", [t.coach_id, ORG, by(viewer)]);
-        }
+        await dropScenicCoachIfIdle(q, t.coach_id, by(viewer));
         removed.push(t.name);
         await settleClubName(q, t.partner, baseName(t.name));
+        await removeEmptyClub(q, t.partner); // the club's last team: the club goes too
       }
       if (!kept.length)
         await q.query("update scenic_team_imports set undone_by = $2, undone_at = $3 where id = $1", [

@@ -14,6 +14,7 @@ import { ResetLoginButton } from "../../../ResetLoginButton";
 import { ViewAsButton } from "../../../ViewAsButton";
 import { Chip, EmailLink, GroupCard, PageTitle, PersonRow, PhoneLink, Stats } from "../../../ui";
 import { EditScenicRoles, RequestButtons } from "./ScenicUserButtons";
+import GearPopUp from "../../../GearPopUp";
 
 export default function ScenicUsersPage() {
   return (
@@ -25,7 +26,8 @@ export default function ScenicUsersPage() {
 
 const TONE = { Director: "blue", Partner: "orange", Solo: "pink", Coach: "green" } as const;
 
-// Scenic City Directors: requests to join (oldest first), then everyone with a Scenic City role (by last name).
+// Scenic City Directors: requests to join (oldest first), then everyone with a Scenic City role (by last name). Laid out
+// like other user cards: groups and cards collapsed, 👁 and a gear (Edit roles, Reset login) on the name line.
 async function ScenicUsers() {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
@@ -90,6 +92,7 @@ async function ScenicUsers() {
                   last={r.lastName}
                   href={panel ? `/me/${r.coachId}` : undefined}
                   avatarTone="zinc"
+                  collapsed
                   chips={<Chip tone={TONE[r.wants]}>{r.wants}</Chip>}
                 >
                   {r.partner && (
@@ -111,7 +114,7 @@ async function ScenicUsers() {
               <li className="px-4 py-3 text-sm text-zinc-500 italic">No pending requests.</li>
             )}
           </GroupCard>
-          <GroupCard title="Scenic City people" count={active.length}>
+          <GroupCard title="Scenic City people" count={active.length} defaultOpen={false}>
             {active.map((m) => (
               <PersonRow
                 key={m.coachId}
@@ -119,24 +122,29 @@ async function ScenicUsers() {
                 last={m.lastName}
                 avatarTone={m.roles.includes("Director") ? "blue" : "zinc"}
                 href={panel ? (m.coachId === user.coachId ? "/me" : `/me/${m.coachId}`) : undefined}
-                under={
-                  m.coachId !== user.coachId && (
-                    <>
-                      <ViewAsButton coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} />
-                      {canReset.has(m.coachId) && (
-                        <ResetLoginButton org="scenic-city" coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} />
+                collapsed
+                chips={
+                  <>
+                    {m.roles.map((r) => {
+                      const d = r === "Director" ? panel?.directors.find((x) => x.id === m.coachId) : undefined;
+                      return (
+                        <Chip key={r} tone={TONE[r]}>
+                          {d?.owner ? "Owner" : d?.admin ? "Admin" : r}
+                        </Chip>
+                      );
+                    })}
+                    {m.coachId !== user.coachId && <ViewAsButton coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} />}
+                    <GearPopUp title={`${m.firstName} ${m.lastName}`}>
+                      <EditScenicRoles coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} roles={m.roles} />
+                      {m.coachId !== user.coachId && canReset.has(m.coachId) && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <ResetLoginButton org="scenic-city" coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} />
+                          Reset login
+                        </div>
                       )}
-                    </>
-                  )
+                    </GearPopUp>
+                  </>
                 }
-                chips={m.roles.map((r) => {
-                  const d = r === "Director" ? panel?.directors.find((x) => x.id === m.coachId) : undefined;
-                  return (
-                    <Chip key={r} tone={TONE[r]}>
-                      {d?.owner ? "Owner" : d?.admin ? "Admin" : r}
-                    </Chip>
-                  );
-                })}
               >
                 {panel && panel.directors.some((d) => d.id === m.coachId) && (
                   <DirectorRole
@@ -151,10 +159,7 @@ async function ScenicUsers() {
                   <p className="font-medium text-zinc-800 dark:text-zinc-100">{m.partners.join(" · ")}</p>
                 )}
                 {contact(m)}
-                <div className="flex items-end justify-between gap-2 pt-1">
-                  <p className="text-xs text-zinc-500">{who && m.grantedBy && `Last role from ${m.grantedBy}`}</p>
-                  <EditScenicRoles coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} roles={m.roles} />
-                </div>
+                {who && m.grantedBy && <p className="pt-1 text-xs text-zinc-500">Last role from {m.grantedBy}</p>}
               </PersonRow>
             ))}
           </GroupCard>
@@ -166,11 +171,19 @@ async function ScenicUsers() {
                   first={m.firstName}
                   last={m.lastName}
                   dim
-                  chips={<Chip tone="red">Inactive</Chip>}
-                  under={
-                    canReset.has(m.coachId) && (
-                      <ResetLoginButton org="scenic-city" coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} />
-                    )
+                  collapsed
+                  chips={
+                    <>
+                      <Chip tone="red">Inactive</Chip>
+                      {canReset.has(m.coachId) && (
+                        <GearPopUp title={`${m.firstName} ${m.lastName}`}>
+                          <div className="flex items-center gap-2 text-sm">
+                            <ResetLoginButton org="scenic-city" coachId={m.coachId} name={`${m.firstName} ${m.lastName}`} />
+                            Reset login
+                          </div>
+                        </GearPopUp>
+                      )}
+                    </>
                   }
                 >
                   {contact(m)}

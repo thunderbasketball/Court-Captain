@@ -82,7 +82,7 @@ describe("Scenic City: outside clubs' teams", () => {
       message: "Thunder Basketball is on CourtCaptain: they add and register their own teams.",
     });
 
-    const list = (await listScenicTeams(deps(), dee, "Director"))!.teams;
+    const list = (await listScenicTeams(deps(), dee, "Director", "none"))!.teams;
     expect(list.map((t) => [t.name, t.partnerName, t.altName, t.divisionLow])).toEqual([
       ["BS 5B Harris 2", "Baylor School", null, null], // COMP first
       ["BS 5B Harris 1", "Baylor School", "Bolts", null],
@@ -103,7 +103,7 @@ describe("Scenic City: outside clubs' teams", () => {
     expect(await importClubTeams(deps(), dee, text)).toMatchObject({
       added: ["T 5B Campbell 1 · Temp", "T 5B Campbell 2 · Temp"],
     });
-    const teams = async () => (await listScenicTeams(deps(), dee, "Director"))!.teams.filter((t) => t.partnerName === "Temp");
+    const teams = async () => (await listScenicTeams(deps(), dee, "Director", "none"))!.teams.filter((t) => t.partnerName === "Temp");
     const [t] = await teams();
     expect(t).toMatchObject({ coachId: null, coachFirst: "Alex", coachLast: "Campbell", coachCell: null, waitingCoach: true });
     const edit = {
@@ -159,7 +159,9 @@ describe("Scenic City: outside clubs' teams", () => {
     expect(imp).toMatchObject({ teams: 2, left: 2, importedBy: "Dee X" });
     expect(await undoClubImport(deps(), fay, imp.id)).toMatchObject({ ok: false });
     expect(await undoClubImport(deps(), dee, imp.id)).toEqual({ ok: true, removed: ["HH 5B Lee", "BS 4G TBD"], kept: [] });
-    expect((await listScenicTeams(deps(), dee, "Director"))!.teams).toEqual([]);
+    expect((await listScenicTeams(deps(), dee, "Director", "none"))!.teams).toEqual([]);
     expect(await listClubImports(deps(), dee)).toEqual([]); // undone: no longer listed
+    // Hixson Hoops was made by the import and has nothing left: gone from the partners too.
+    expect((await db.pool.query("select 1 from partners where name = 'Hixson Hoops'")).rowCount).toBe(0);
   });
 });

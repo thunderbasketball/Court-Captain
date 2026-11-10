@@ -18,6 +18,7 @@ import AddTeamButton from "../../../AddTeam";
 import { ImportTeamsButton, UndoImportButton } from "../../../TeamImport";
 import { addTeam, importTeams, previewImport, undoImport } from "./actions";
 import { followRename } from "@/lib/org-rename";
+import { recAllowed } from "@/lib/rec-orgs";
 
 export default function OrgTeamsPage({ params, searchParams }: PageProps<"/org/[slug]/teams">) {
   return (
@@ -53,6 +54,7 @@ async function OrgTeams({
   const register = !!progs && progs.programs.length > 0 && list.canManage;
   const tabs = teamTabs(list.teams, (await searchParams).view, register);
   const solo = o.kind === "Team";
+  const recOk = list.canManage && (await recAllowed(db, slug, new Date())); // REC only when invited to a League's REC
   const admin = await isOrgAdmin(db, user.coachId, slug); // Owners and Admins: 👁 View as on each coach // a CourtSolo account: its one team, no Add or Import
 
   return (
@@ -95,6 +97,7 @@ async function OrgTeams({
                   })}
                   create={addTeam.bind(null, slug)}
                   preK
+                  noRec={!recOk}
                   href={`/org/${slug}/teams/`}
                 />
               )}

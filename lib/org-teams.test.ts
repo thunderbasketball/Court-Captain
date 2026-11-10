@@ -49,6 +49,53 @@ describe("teams for a registered organization", () => {
     );
     const input = { name: "East Ridge Parks & Rec", short: "East Ridge", kind: "Organization", color: "#0f766e" };
     await createOrganization(deps(), jo, { ...input, features: ["court-org"] }, null);
+    // CourtSync with its own teams: REC is open to it (lib/rec-orgs.ts).
+    await db.pool.query(
+      "insert into org_features (org, feature, source, turned_on_by) select slug, 'court-sync', 'setup', 'test' from organizations where slug not in ('thunder', 'scenic-city') on conflict do nothing",
+    );
+  });
+
+  it("REC needs CourtSync, then an invitation to a current League's REC (or REC open to all); COMP always", async () => {
+    const add = (level: string) =>
+      createOrgTeam(deps(), jo, org, { level, gender: "Boys", grades: ["4"], headCoach: "none" } as Parameters<typeof createOrgTeam>[3]);
+    // No CourtSync: no REC.
+    await db.pool.query("delete from org_features where org = $1 and feature = 'court-sync'", [org]);
+    expect(await add("REC")).toMatchObject({ ok: false, message: expect.stringContaining("CourtSync") });
+    expect(await add("COMP")).toMatchObject({ ok: true });
+    await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ($1, 'court-sync', 'setup', 'test')", [org]);
+    // CourtSync and no current League: nothing more limits it.
+    expect(await add("REC")).toMatchObject({ ok: true });
+    const p = (
+      await db.pool.query<{ id: string }>(
+        `insert into scenic_programs (kind, name, starts_on, ends_on, reg_opens, reg_closes, created_by, updated_by)
+         values ('League', 'Winter', '2026-12-05', '2027-02-28', '2026-10-01', '2026-11-30', 'x', 'x') returning id::text`,
+      )
+    ).rows[0].id;
+    // A current League with REC open to everyone: still fine.
+    expect(await add("REC")).toMatchObject({ ok: true });
+    // REC limited to other organizations: COMP only, here and in an import.
+    await db.pool.query("update scenic_programs set rec_limited_by = 'x' where id = $1", [p]);
+    expect(await add("REC")).toMatchObject({ ok: false, message: expect.stringContaining("REC is only for organizations") });
+    expect(await add("COMP")).toMatchObject({ ok: true });
+    const preview = await previewTeamImport(deps(), jo, org, "Gender,Grade,Level\nGirls,5th,REC\nGirls,5th,COMP");
+    expect(preview.ok && preview.rows.map((r) => r.status)).toEqual(["error", "new"]);
+    // Picked for REC: open again.
+    const partner = (
+      await db.pool.query<{ id: string }>(
+        `insert into partners (name, kind, hosts_games, registers_teams, approved, created_by, org_slug)
+         values ('East Ridge', 'Organization', false, true, true, 'x', $1) returning id::text`,
+        [org],
+      )
+    ).rows[0].id;
+    await db.pool.query("insert into scenic_program_rec_partners (program_id, partner_id, added_by) values ($1, $2, 'x')", [p, partner]);
+    expect(await add("REC")).toMatchObject({ ok: true });
+    // Once that League has ended, no current League limits it.
+    await db.pool.query("delete from scenic_program_rec_partners");
+    await db.pool.query(
+      "update scenic_programs set reg_opens = '2026-08-01', reg_closes = '2026-08-30', starts_on = '2026-09-01', ends_on = '2026-10-01' where id = $1",
+      [p],
+    );
+    expect(await add("REC")).toMatchObject({ ok: true });
   });
 
   it("teams are named Grade + Gender + Head Coach (TBD until one), numbered when the same; renamed when the Head Coach changes", async () => {
