@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Chip, GroupCard } from "./ui";
+import { Chip, GroupCard, card, genderTint } from "./ui";
 import TeamRowMore, { type CardToggle } from "./TeamRowMore";
 import ChatPanel from "./ChatPanel";
 import { BellIcon, NotifyPanel } from "./NotifyButton";
@@ -215,8 +215,11 @@ export function GradeGroups<T>({
   );
 }
 
-// The tabs at the top of every Teams page: one per level and gender the organization has teams for (with how many), then
-// Register (league programs) when it registers teams into a league. `href(key)` is that tab's link.
+// Every Teams page (Thunder and each organization), no tabs: a card per level that opens when tapped (REC, COMP, then
+// Pre-K), each holding a card per gender (Boys, Girls; Pre-K is Coed) with its teams by grade, then a **Register** card
+// with the programs open for registration (when the organization registers teams into a League). With only one level
+// (all COMP, or all REC) there's no level card: the gender cards are the page's cards. ?view=comp-girls (or register)
+// opens that card. A level or gender with a team that has a problem shows ⚠ N.
 export const TEAM_GROUPS = [
   { key: "rec-boys", label: "REC – Boys", level: "REC", gender: "Boys" },
   { key: "rec-girls", label: "REC – Girls", level: "REC", gender: "Girls" },
@@ -225,49 +228,119 @@ export const TEAM_GROUPS = [
   { key: "prek-coed", label: "Pre-K – Coed", level: "REC", gender: "Coed" }, // Scenic City Leagues' Pre-K teams
 ] as const;
 
-export function teamTabs<T extends { level: string; gender: string }>(teams: T[], view: unknown, register: boolean) {
-  const groups = TEAM_GROUPS.map((g) => ({
-    ...g,
-    teams: teams.filter((t) => t.level === g.level && t.gender === g.gender),
-  })).filter((g) => g.teams.length);
-  const keys = [...groups.map((g) => g.key as string), ...(register ? ["register"] : [])];
-  const current = typeof view === "string" && keys.includes(view) ? view : (keys[0] ?? "");
-  return { groups, current, group: groups.find((g) => g.key === current) ?? null };
-}
+const LEVELS = [
+  { key: "rec", title: "REC", groups: ["rec-boys", "rec-girls"] },
+  { key: "comp", title: "COMP", groups: ["comp-boys", "comp-girls"] },
+  { key: "prek", title: "Pre-K", groups: ["prek-coed"] },
+] as const;
 
-export function TeamsTabs({
-  base,
-  current,
-  groups,
+const Chevron = () => (
+  <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden className="size-5 shrink-0 text-zinc-400 transition-transform group-open:rotate-180">
+    <path
+      fillRule="evenodd"
+      d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z"
+      clipRule="evenodd"
+    />
+  </svg>
+);
+const countPill = (n: number) => (
+  <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium tabular-nums text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+    {n}
+  </span>
+);
+const warnChip = (bad: number) =>
+  bad > 0 && (
+    <Chip tone="red">
+      ⚠ {bad} {bad === 1 ? "team" : "teams"}
+    </Chip>
+  );
+
+export function TeamsByLevel<T extends { level: string; gender: string }>({
+  teams,
+  view,
+  grade,
+  row,
+  warn,
   register,
 }: {
-  base: string; // the Teams page's path
-  current: string;
-  groups: { key: string; label: string; teams: unknown[] }[];
-  register: boolean;
+  teams: T[];
+  view: unknown; // ?view=: a group key ("comp-girls") or "register" opens that card
+  grade: (t: T) => string; // e.g. "1st Grade"
+  row: (t: T) => ReactNode;
+  warn?: (t: T) => boolean;
+  register?: { count: number; body: ReactNode } | null; // the Register card, when it registers teams into a League
 }) {
-  const tabs = [
-    ...groups.map((g) => ({ key: g.key, label: `${g.label} (${g.teams.length})` })),
-    ...(register ? [{ key: "register", label: "Register" }] : []),
-  ];
-  if (!tabs.length) return null;
+  const v = typeof view === "string" ? view : "";
+  const bad = (list: T[]) => (warn ? list.filter(warn).length : 0);
+  const levels = LEVELS.map((l) => ({
+    ...l,
+    groups: l.groups
+      .map((k) => TEAM_GROUPS.find((g) => g.key === k)!)
+      .map((g) => ({ ...g, teams: teams.filter((t) => t.level === g.level && t.gender === g.gender) }))
+      .filter((g) => g.teams.length),
+  })).filter((l) => l.groups.length);
+  type Group = (typeof levels)[number]["groups"][number];
+  // A gender's card (tinted: Boys blue, Girls pink): inside its level's card, or (only one level) a card of the page.
+  const genderCard = (g: Group, top: boolean, alone: boolean) => (
+    <details
+      key={g.key}
+      className={`group overflow-hidden ring-1 ${top ? "rounded-2xl shadow-sm" : "rounded-xl"} ${genderTint(g.gender)}`}
+      open={g.key === v || alone}
+    >
+      <summary
+        className={`flex cursor-pointer list-none items-center justify-between gap-3 px-4 select-none [&::-webkit-details-marker]:hidden ${top ? "py-3" : "py-2.5"}`}
+      >
+        <span className={`flex flex-wrap items-center gap-2 font-semibold ${top ? "text-lg" : ""}`}>
+          {g.gender}
+          {warnChip(bad(g.teams))}
+        </span>
+        <span className="flex items-center gap-2">
+          {countPill(g.teams.length)}
+          <Chevron />
+        </span>
+      </summary>
+      <div className={top ? "border-t border-zinc-950/5 p-3 dark:border-white/5" : "px-2 pb-2"}>
+        <GradeGroups teams={g.teams} grade={grade} row={row} warn={warn} />
+      </div>
+    </details>
+  );
   return (
-    <nav aria-label="Teams" className="mb-4 flex gap-1 overflow-x-auto border-b border-zinc-200 dark:border-white/10">
-      {tabs.map((t) => (
-        <Link
-          key={t.key}
-          href={`${base}?view=${t.key}`}
-          aria-current={current === t.key ? "page" : undefined}
-          className={`shrink-0 border-b-2 px-3 py-2 text-sm font-semibold whitespace-nowrap ${
-            current === t.key
-              ? "border-thunder-orange text-zinc-900 dark:text-white"
-              : "border-transparent text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
-          }`}
-        >
-          {t.label}
-        </Link>
-      ))}
-    </nav>
+    <div className="space-y-3">
+      {levels.length === 1 && levels[0].groups.map((g) => genderCard(g, true, false))}
+      {levels.length > 1 &&
+        levels.map((l) => {
+          const all = l.groups.flatMap((g) => g.teams);
+          return (
+            <details key={l.key} className={`${card} group overflow-hidden`} open={l.groups.some((g) => g.key === v)}>
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 select-none [&::-webkit-details-marker]:hidden">
+                <span className="flex flex-wrap items-center gap-2 text-lg font-semibold">
+                  {l.title}
+                  {warnChip(bad(all))}
+                </span>
+                <span className="flex items-center gap-2">
+                  {countPill(all.length)}
+                  <Chevron />
+                </span>
+              </summary>
+              <div className="space-y-2 border-t border-zinc-100 bg-zinc-50/60 p-3 dark:border-white/5 dark:bg-white/[0.02]">
+                {l.groups.map((g) => genderCard(g, false, l.groups.length === 1))}
+              </div>
+            </details>
+          );
+        })}
+      {register && (
+        <details className={`${card} group overflow-hidden`} open={v === "register"}>
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 select-none [&::-webkit-details-marker]:hidden">
+            <span className="text-lg font-semibold">Register</span>
+            <span className="flex items-center gap-2">
+              {countPill(register.count)}
+              <Chevron />
+            </span>
+          </summary>
+          <div className="border-t border-zinc-100 p-3 dark:border-white/5">{register.body}</div>
+        </details>
+      )}
+    </div>
   );
 }
 

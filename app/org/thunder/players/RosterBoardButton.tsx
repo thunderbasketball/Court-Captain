@@ -7,6 +7,7 @@ import type { BoardPlayer, RosterBoard } from "@/lib/rosters";
 import { Alert, CloseButton, Toast, dialogCls } from "../../../client-ui";
 import { loadRosterBoard, movePlayer } from "./actions";
 import { RosterZone, type Pick } from "./RosterZone";
+import { AddPlayersIcon, addIconBtn } from "../../../CardIcons";
 
 const FREE = "free";
 const gradeSort = (g: string) => (g === "K" ? 0 : Number(g));
@@ -88,9 +89,11 @@ export default function RosterBoardButton({ gender, grade }: { gender: "Boys" | 
           dialog.current?.showModal();
           load();
         }}
-        className="shrink-0 rounded-full bg-thunder-blue px-3 py-1.5 text-sm font-semibold whitespace-nowrap text-white shadow-sm hover:bg-thunder-blue-dark"
+        aria-label={`Roster ${gender} ${gradeLabel(grade)} players`}
+        title="Roster players"
+        className={addIconBtn}
       >
-        Roster players
+        <AddPlayersIcon />
       </button>
       {toast && <Toast key={toast} message={toast} />}
       <dialog

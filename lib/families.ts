@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { db } from "./db";
 import type { SessionUser } from "./auth/service";
 import { buildFamilies, type Family, type RegRow } from "./family-build";
@@ -44,3 +45,6 @@ export async function familyOf(coachId: string): Promise<Family | null> {
   if (!cell) return null;
   return (await allFamilies()).find((f) => f.guardians.some((g) => g.cell === cell)) ?? null;
 }
+
+// The same list once per page view (the Members Families card's (n) and its contents share it).
+export const familiesOf = cache(listFamilies);

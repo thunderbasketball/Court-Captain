@@ -1,37 +1,17 @@
-import Link from "next/link";
+import type { SessionUser } from "@/lib/auth/service";
+import { db } from "@/lib/db";
+import { hasFeature } from "@/lib/features";
+import { isOrgAdmin, orgHasArea } from "@/lib/org-admin";
+import type { OrgSlug } from "@/lib/orgs";
 
-// A registered organization's Members: Staff (its Admins) and Coaches (Admins and Directors of Teams).
-export default function OrgMembersNav({
-  slug,
-  current,
-  staff,
-  coaches,
-}: {
-  slug: string;
-  current: "staff" | "coaches";
-  staff: boolean;
-  coaches: boolean;
-}) {
-  const links = [
-    { key: "staff", href: `/org/${slug}/members`, label: "Staff", show: staff },
-    { key: "coaches", href: `/org/${slug}/members/coaches`, label: "Coaches", show: coaches },
-  ].filter((l) => l.show);
-  return (
-    <nav aria-label="Members" className="mb-5 flex gap-1 overflow-x-auto border-b border-zinc-200 dark:border-white/10">
-      {links.map((l) => (
-        <Link
-          key={l.key}
-          href={l.href}
-          aria-current={current === l.key ? "page" : undefined}
-          className={`shrink-0 border-b-2 px-3 py-2 text-sm font-semibold ${
-            current === l.key
-              ? "border-thunder-orange text-zinc-900 dark:text-white"
-              : "border-transparent text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
-          }`}
-        >
-          {l.label}
-        </Link>
-      ))}
-    </nav>
-  );
+// A registered organization's Members parts, the same as Thunder's: Staff (its Owners and Admins) and Coaches (Admins
+// and Directors of Teams; with Team Management).
+export async function orgMemberParts(user: SessionUser, slug: string) {
+  const admin = await isOrgAdmin(db, user.coachId, slug as OrgSlug);
+  const teams = await hasFeature(db, slug as OrgSlug, "team-building");
+  const parts: { key: "staff" | "coaches"; title: string; show: boolean }[] = [
+    { key: "staff", title: "Staff", show: admin },
+    { key: "coaches", title: "Coaches", show: teams && (admin || (await orgHasArea(db, user.coachId, slug, "teams"))) },
+  ];
+  return parts.filter((c) => c.show);
 }

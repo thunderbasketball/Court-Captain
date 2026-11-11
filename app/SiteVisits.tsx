@@ -23,17 +23,17 @@ const TICK: Record<VisitRange, Intl.DateTimeFormatOptions> = {
   year: { month: "short" },
 };
 
-export default function SiteVisits({ stats }: { stats: Record<VisitRange, VisitStats> }) {
+export default function SiteVisits({ stats, bare = false }: { stats: Record<VisitRange, VisitStats>; bare?: boolean }) {
   const [range, setRange] = useState<VisitRange>("today");
   const s = stats[range];
   const per = range === "today" ? "hour" : range === "year" ? "month" : "day";
   const views = (n: number) => `${n} visit${n === 1 ? "" : "s"}`;
   return (
-    <div className={`${card} p-4`}>
+    <div className={bare ? "" : `${card} p-4`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h2 className="text-sm font-semibold">Site visits</h2>
-          <p className="text-xs text-zinc-500">Page views on the website, per {per} (Eastern time)</p>
+          {!bare && <h2 className="text-sm font-semibold">Site visits</h2>}
+          <p className="text-xs text-zinc-500">Page views on the website, per {per} (Eastern time); coaches&apos; in green</p>
         </div>
         <div role="tablist" aria-label="Time range" className="flex rounded-full bg-zinc-100 p-0.5 text-xs dark:bg-white/10">
           {VISIT_RANGES.map((r) => (
@@ -66,7 +66,13 @@ export default function SiteVisits({ stats }: { stats: Record<VisitRange, VisitS
       </div>
       <BarChart
         key={range}
-        bars={s.buckets.map((b) => ({ key: b.start, n: b.n, label: `${fmt(b.start, BUCKET[range])}: ${views(b.n)}` }))}
+        bars={s.buckets.map((b) => ({
+          key: b.start,
+          n: b.n,
+          m: b.coach,
+          label: `${fmt(b.start, BUCKET[range])}: ${views(b.n)}, ${b.coach} by coaches`,
+        }))}
+        legend={["All visits", "Coaches"]}
         summary={`${views(s.views)} ${VISIT_RANGES.find((r) => r.key === range)!.label.toLowerCase()}`}
         first={fmt(s.buckets[0].start, TICK[range])}
         last={fmt(s.buckets.at(-1)!.start, TICK[range])}

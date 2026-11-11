@@ -22,7 +22,7 @@ const btn = {
 const shortDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "numeric", day: "numeric" });
 
-// The week grid, like the old Master Practice Schedule: a card per day, gyms inside, times down the left,
+// The week grid, like the old Master Practice Schedule: a card per day, gyms inside, each time centered with its goals under it,
 // one line per court. Director: Release / Block / Unblock / Book. Team: Book / Release with the limits applied.
 export default function WeekGridView({
   grid,
@@ -151,9 +151,9 @@ export default function WeekGridView({
         );
     }
     return (
-      <li key={s.id} className={`flex flex-wrap items-start justify-between gap-x-2 gap-y-1 py-1 ${s.past ? "opacity-50" : ""}`}>
-        <span className="min-w-[7.5rem] flex-1 text-sm font-semibold">{text}</span>
-        <span className="ml-auto flex shrink-0 gap-1">{actions}</span>
+      <li key={s.id} className={`py-1 ${s.past ? "opacity-50" : ""}`}>
+        <span className="block text-sm font-semibold">{text}</span>
+        {actions && <span className="mt-1 flex flex-wrap gap-1">{actions}</span>}
       </li>
     );
   };
@@ -214,9 +214,10 @@ export default function WeekGridView({
                     {g.gym}
                   </h3>
                   {g.times.map((t) => (
-                    <div key={t.label} className="grid grid-cols-[3rem_1fr] gap-1 py-1">
-                      <span className="pt-1 text-sm font-bold">{t.label}</span>
-                      <ul>{t.slots.map((s) => line(s, { when: `${d.label} · ${t.label}`, where: `${g.gym} ${s.court}` }))}</ul>
+                    // The time centered, its goals (courts) under it, so a narrow day card fits.
+                    <div key={t.label} className="py-1">
+                      <p className="rounded-md bg-zinc-100 py-0.5 text-center text-sm font-bold dark:bg-white/10">{t.label}</p>
+                      <ul className="divide-y divide-zinc-100 dark:divide-white/5">{t.slots.map((s) => line(s, { when: `${d.label} · ${t.label}`, where: `${g.gym} ${s.court}` }))}</ul>
                     </div>
                   ))}
                 </div>

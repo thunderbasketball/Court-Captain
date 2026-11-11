@@ -1,167 +1,17 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import { redirect } from "next/navigation";
-import { currentUser, devBypass } from "@/lib/auth/server";
-import { listVolunteerCoaches } from "@/lib/coaches";
-import { gradeLabel } from "@/lib/grades";
-import { hasArea } from "@/lib/org-admin";
-import { formatCell } from "@/lib/phone";
-import { listUsers } from "@/lib/users";
-import AppHeader from "../../../../AppHeader";
-import { TextPanel } from "../../../../Contacts";
-import { NotifyPanel } from "../../../../NotifyButton";
-import ChatPanel from "../../../../ChatPanel";
-import PageMenus, { MEGAPHONE_BTN, MegaphoneIcon } from "../../../../PageMenus";
-import { Chip, EmailLink, GroupCard, PageTitle, PersonRow, PhoneLink, Stats } from "../../../../ui";
-import UserList from "../../../../UserList";
-import MembersNav from "../MembersNav";
 
-export default function CoachesPage({ searchParams }: PageProps<"/org/thunder/members/coaches">) {
+// Members → coaches is a card on the Members page now: open it there.
+export default function Page(props: PageProps<"/org/thunder/members/coaches">) {
   return (
-    <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
-      <Coaches searchParams={searchParams} />
+    <Suspense fallback={null}>
+      <Go searchParams={props.searchParams} />
     </Suspense>
   );
 }
 
-const TABS = [
-  { key: "active", label: "Active" },
-  { key: "volunteers", label: "Volunteers" },
-  { key: "inactive", label: "Inactive" },
-] as const;
-
-// Members → Coaches (Directors of Coaches), in three tabs: Active (coaches, then team managers and parents) and Inactive,
-// listed like Staff (Edit and View as for Admins), grouped by grade; Volunteers from registration not on a team yet
-// (grade cards and cards collapsed).
-async function Coaches({ searchParams }: { searchParams: PageProps<"/org/thunder/members/coaches">["searchParams"] }) {
-  const user = await currentUser();
-  if (!user) redirect(devBypass ? "/dev-login" : "/login");
-  if (!hasArea(user, "teams")) redirect("/");
-  const sp = await searchParams;
-  const tab = TABS.find((t) => t.key === sp.view)?.key ?? "active";
-  const [users, groups] = await Promise.all([listUsers(user), listVolunteerCoaches(user)]);
-  const volunteers = groups.flatMap((g) => g.coaches);
-  const onStaff = volunteers.filter((c) => c.staff.length).length;
-  // The Volunteers tab lists only those not on a team yet (the others are under Active).
-  const open = groups.map((g) => ({ ...g, coaches: g.coaches.filter((c) => !c.staff.length) })).filter((g) => g.coaches.length);
-  const unassigned = open.flatMap((g) => g.coaches);
-  const active = users.filter((u) => u.active && !u.director && (u.coach || u.teams.length > 0));
-  const coachCells = active.filter((u) => u.coach || u.teams.some((t) => /(Head|Asst) Coach$/.test(t))).map((u) => u.cell);
-  const counts = {
-    active: active.length,
-    volunteers: unassigned.length,
-    inactive: users.filter((u) => !u.active && !u.director).length,
-  };
-
-  return (
-    <>
-      <AppHeader user={user} tab="members" context="director" />
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <MembersNav user={user} current="coaches" />
-        {/* 📣 opens Text, Chat and Alert right under the title (the same menu as the Teams page). */}
-        <PageMenus
-          title={<PageTitle title="Coaches" subtitle="Coaches and team staff, volunteers from registration, and inactive coaches" />}
-          menus={
-            tab === "active"
-              ? [
-                  {
-                    key: "coaches",
-                    icon: <MegaphoneIcon />,
-                    label: "Coaches: text, chat or alert",
-                    className: MEGAPHONE_BTN,
-                    items: [
-                      { key: "text", label: "💬 Text coaches", panel: <TextPanel cells={coachCells} label="Text coaches" /> },
-                      { key: "chat", label: "🗨️ Chat with coaches", panel: <ChatPanel chatKey="coaches" /> },
-                      {
-                        key: "alert",
-                        label: "🔔 Alert coaches",
-                        panel: <NotifyPanel audience={{ roles: ["HeadCoach", "AsstCoach"] }} to="all coaches" />,
-                      },
-                    ],
-                  },
-                ]
-              : tab === "volunteers"
-                ? [
-                    {
-                      key: "volunteers",
-                      icon: <MegaphoneIcon />,
-                      label: "Volunteer coaches: text or alert",
-                      className: MEGAPHONE_BTN,
-                      items: [
-                        {
-                          key: "text",
-                          label: "💬 Text volunteers",
-                          panel: <TextPanel cells={unassigned.map((c) => c.cell)} label="Text all" />,
-                        },
-                        {
-                          key: "alert",
-                          label: "🔔 Alert volunteers",
-                          panel: <NotifyPanel audience={{ volunteers: true }} to="all volunteer coaches" />,
-                        },
-                      ],
-                    },
-                  ]
-                : []
-          }
-        />
-        <nav className="mb-4 flex gap-1 overflow-x-auto rounded-full bg-zinc-100 p-1 [scrollbar-width:none] dark:bg-zinc-900">
-          {TABS.map((t) => (
-            <Link
-              key={t.key}
-              href={t.key === "active" ? "/org/thunder/members/coaches" : `/org/thunder/members/coaches?view=${t.key}`}
-              aria-current={t.key === tab ? "page" : undefined}
-              className={`shrink-0 rounded-full px-3 py-1.5 text-sm font-medium whitespace-nowrap ${
-                t.key === tab
-                  ? "bg-thunder-blue text-white shadow-sm"
-                  : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-              }`}
-            >
-              {t.label} <span className="tabular-nums opacity-70">{counts[t.key]}</span>
-            </Link>
-          ))}
-        </nav>
-
-        {tab === "active" && <UserList users={users} viewer={user} view="coaches" />}
-        {tab === "inactive" && <UserList users={users} viewer={user} view="inactive-coaches" />}
-        {tab === "volunteers" && (
-          <>
-            <Stats
-              items={[
-                { label: "Volunteers", value: volunteers.length },
-                { label: "Not on a team", value: volunteers.length - onStaff, tone: "text-amber-600 dark:text-amber-400" },
-                { label: "On a team", value: onStaff, tone: "text-emerald-600 dark:text-emerald-400" },
-              ]}
-            />
-            {!volunteers.length && <p className="text-zinc-500">No volunteers yet.</p>}
-            {volunteers.length > 0 && !unassigned.length && <p className="text-zinc-500">Every volunteer is on a team.</p>}
-            <div className="space-y-3">
-              {open.map((g) => (
-                <GroupCard
-                  key={`${g.gender}-${g.grade}`}
-                  title={`${g.gender} · ${gradeLabel(g.grade)}`}
-                  count={g.coaches.length}
-                  defaultOpen={false}
-                >
-                  {g.coaches.map((c) => (
-                    <PersonRow
-                      key={c.registrantId}
-                      first={c.firstName}
-                      last={c.lastName}
-                      avatarTone="zinc"
-                      chips={<Chip tone={c.isHead ? "blue" : "green"}>{c.isHead ? "Head Coach" : "Asst Coach"}</Chip>}
-                      collapsed
-                      always={<p className="text-zinc-500">Parent of {c.playerName}</p>}
-                    >
-                      <p>{c.cell && c.cell.length === 10 ? <PhoneLink cell={c.cell} label={formatCell(c.cell)} /> : "No cell"}</p>
-                      <p className="truncate">{c.email ? <EmailLink email={c.email} /> : "No email"}</p>
-                    </PersonRow>
-                  ))}
-                </GroupCard>
-              ))}
-            </div>
-          </>
-        )}
-      </main>
-    </>
-  );
+async function Go({ searchParams }: { searchParams: PageProps<"/org/thunder/members/coaches">["searchParams"] }) {
+  const view = (await searchParams).view;
+  redirect(`/org/thunder/members?open=coaches${typeof view === "string" ? `&coaches=${encodeURIComponent(view)}` : ""}`);
+  return null;
 }

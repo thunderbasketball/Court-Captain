@@ -1,16 +1,39 @@
 import Link from "next/link";
 import type { OrgMetrics as Metrics } from "@/lib/org-metrics";
-import { TZ } from "@/lib/time";
+import { TZ, easternDate } from "@/lib/time";
 import type { VisitRange, VisitStats } from "@/lib/site-visits";
 import RegistrationTrend from "./RegistrationTrend";
+import FeeTrend from "./FeeTrend";
 import SiteVisits from "./SiteVisits";
 import NotOnTeamBoard from "./org/thunder/players/NotOnTeamBoard";
-import { card } from "./ui";
+import SubCard from "./SubCard";
+import TeamUseList from "./TeamUseList";
+import { ordinal } from "@/lib/grades";
+import type { ReactNode } from "react";
 
-// An organization's Home metrics for its Owners and Admins (SPEC.md section 14): number tiles that open the page behind
-// them, the daily registration trend, teams missing something, and coaches' use of the app. `base` is the
-// organization's address ("/org/thunder"); Thunder's pages (players, uniforms, practices, requests) are only Thunder's.
-// `roster`: the viewer can roster players, so "Not on a team" opens every grade's roster board.
+// The To Do items that need someone (each flashes red, and so do To Do and the Home card): players not on a team,
+// uniforms missing a number or size, teams missing something, teams whose staff haven't used the app in 30 days, and
+// what's waiting (join requests, Support chats).
+export function todoCounts(m: Metrics) {
+  const idle = m.teamUse.filter((t) => !t.views).length;
+  const waiting = m.waiting.requests + m.waiting.newChats + m.waiting.workingChats;
+  const items = {
+    notOnTeam: m.notOnTeam?.total ?? 0,
+    uniforms: m.uniforms?.missing ?? 0,
+    missing: m.missing.length,
+    idle,
+    waiting,
+  };
+  return { ...items, open: Object.values(items).filter((n) => n > 0).length };
+}
+
+const grade = (g: number) => (g === -1 ? "Pre-K" : g === 0 ? "Kindergarten" : `${ordinal(String(g))} Grade`);
+
+// An organization's Home card for its Owners and Admins (SPEC.md section 14): cards that open on their own, each with its
+// count: Registrations (players, a bar a day from the first registration to the last), Teams, To Do (what needs
+// someone, flashing red), Coaches' use of the app, Site visits (average a day, coaches' visits in green)
+// and Fees paid and owed. `base` is the organization's address ("/org/thunder"); Thunder's pages (players, uniforms,
+// practices, requests) are only Thunder's. `roster`: the viewer can roster players (the roster board button).
 export default function OrgMetrics({
   m,
   visits,
@@ -26,159 +49,260 @@ export default function OrgMetrics({
   now: Date;
   roster?: boolean;
 }) {
-  const waiting = m.waiting.requests + m.waiting.newChats + m.waiting.workingChats;
-  const tiles = [
-    m.registrations && {
-      label: "Players registered",
-      value: m.registrations.total,
-      note: `${m.registrations.thisWeek} in the last 7 days`,
-      href: `${base}/members/players`,
-    },
-    m.teams && {
-      label: "Teams",
-      value: m.teams.total,
-      note: `REC ${m.teams.rec} · COMP ${m.teams.comp} · Boys ${m.teams.boys} · Girls ${m.teams.girls}`,
-      href: `${base}/teams`,
-    },
-    m.notOnTeam && {
-      label: "Not on a team",
-      value: m.notOnTeam.total,
-      note: m.notOnTeam.total
-        ? m.notOnTeam.groups
-            .slice(0, 4)
-            .map((g) => `${g.label} ${g.n}`)
-            .join(" · ") + (m.notOnTeam.groups.length > 4 ? " …" : "")
-        : "Every player is on a team",
-      href: `${base}/members/players`,
-      alert: m.notOnTeam.total > 0,
-      board: roster,
-    },
-    m.uniforms && {
-      label: "Uniform order prep",
-      value: `${m.uniforms.ready}/${m.uniforms.players}`,
-      note: m.uniforms.missing
-        ? `${m.uniforms.missing} need a number or size`
-        : m.uniforms.players
-          ? "✓ Ready to order"
-          : "No rostered players yet",
-      href: `${base}/uniforms`,
-      alert: m.uniforms.missing > 0,
-    },
-    m.practices && {
-      label: "Practice slots this week",
-      value: `${m.practices.thisWeek.booked} booked`,
-      note: `${m.practices.thisWeek.open} open · next week ${m.practices.nextWeek.booked} booked, ${m.practices.nextWeek.open} open · ${m.practices.blackoutDays} blackout day${m.practices.blackoutDays === 1 ? "" : "s"} in 30 days`,
-      href: `${base}/practice`,
-    },
-    {
-      label: "Waiting on you",
-      value: waiting,
-      note: waiting
-        ? [
-            m.waiting.requests && `${m.waiting.requests} join request${m.waiting.requests === 1 ? "" : "s"}`,
-            m.waiting.newChats && `${m.waiting.newChats} new Support chat${m.waiting.newChats === 1 ? "" : "s"}`,
-            m.waiting.workingChats && `${m.waiting.workingChats} chat${m.waiting.workingChats === 1 ? "" : "s"} in progress`,
-          ]
-            .filter(Boolean)
-            .join(" · ")
-        : "Nothing right now",
-      href: thunder && m.waiting.requests ? `${base}/members/requests` : null,
-      alert: waiting > 0,
-    },
-  ].filter((t) => !!t);
+  const todo = todoCounts(m);
+  const day = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric" });
+  // Site visits: the average a day this month (views so far over the days so far).
+  const avgDaily = visits ? Math.round(visits.month.views / Math.max(1, Number(easternDate(now).slice(8)))) : 0;
+  // Uniforms still needing a number or size: Boys then Girls, by grade, then team.
+  const uniformGroups = (() => {
+    const out: { gender: string; grades: { grade: number; teams: { id: string; name: string; players: NonNullable<Metrics["uniforms"]>["list"] }[] }[] }[] = [];
+    for (const u of m.uniforms?.list ?? []) {
+      let g = out.find((x) => x.gender === u.gender);
+      if (!g) out.push((g = { gender: u.gender, grades: [] }));
+      let gr = g.grades.find((x) => x.grade === u.grade);
+      if (!gr) g.grades.push((gr = { grade: u.grade, teams: [] }));
+      let t = gr.teams.find((x) => x.id === u.teamId);
+      if (!t) gr.teams.push((t = { id: u.teamId, name: u.team, players: [] }));
+      t.players.push(u);
+    }
+    return out;
+  })();
+  const fold = (summary: ReactNode, body: ReactNode, key: string, depth = 0) => (
+    <details key={key} className="group/u">
+      <summary
+        className="flex cursor-pointer list-none items-center gap-2 py-1.5 text-sm select-none [&::-webkit-details-marker]:hidden"
+        style={{ paddingLeft: `${depth * 0.9}rem` }}
+      >
+        <span className="min-w-0 flex-1">{summary}</span>
+        <span aria-hidden className="text-zinc-400 transition-transform group-open/u:rotate-90">
+          ›
+        </span>
+      </summary>
+      {body}
+    </details>
+  );
 
   return (
-    <section aria-label="Metrics" className="mb-5 space-y-3">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {tiles.map((t) => {
-          const body = (
-            <>
-              <p className="text-xs font-medium text-zinc-500">{t.label}</p>
-              <p className="mt-0.5 text-2xl font-semibold">{t.value}</p>
-              <p className={`mt-0.5 text-xs ${"alert" in t && t.alert ? "text-amber-700 dark:text-amber-300" : "text-zinc-500"}`}>
-                {t.note}
-              </p>
-            </>
-          );
-          if ("board" in t && t.board)
-            return (
-              <div key={t.label} className={`${card} p-3 hover:ring-zinc-400/40`}>
-                <NotOnTeamBoard>{body}</NotOnTeamBoard>
-              </div>
-            );
-          return t.href ? (
-            <Link key={t.label} href={t.href} className={`${card} block p-3 hover:ring-zinc-400/40`}>
-              {body}
-            </Link>
-          ) : (
-            <div key={t.label} className={`${card} p-3`}>
-              {body}
-            </div>
-          );
-        })}
-      </div>
-
-      {visits && <SiteVisits stats={visits} />}
-
+    <section aria-label="Metrics" className="space-y-2">
       {m.registrations && (
-        <div className={`${card} p-4`}>
-          <h2 className="text-sm font-semibold">Registrations per day</h2>
+        <SubCard title="Registrations" count={m.registrations.total}>
           <p className="mb-2 text-xs text-zinc-500">
-            Last 30 days
+            {m.registrations.thisWeek} in the last 7 days
+            {m.registrations.span.length > 0 &&
+              ` · ${day(m.registrations.span[0].day)} to ${day(m.registrations.span.at(-1)!.day)}`}
             {m.registrations.syncedAt &&
               ` · synced ${new Date(m.registrations.syncedAt).toLocaleString("en-US", { timeZone: TZ, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`}
           </p>
-          <RegistrationTrend daily={m.registrations.daily} />
-        </div>
+          {m.registrations.span.length > 0 ? (
+            <RegistrationTrend daily={m.registrations.span} lastLabel={day(m.registrations.span.at(-1)!.day)} />
+          ) : (
+            <p className="text-sm text-zinc-500">No registrations yet.</p>
+          )}
+        </SubCard>
       )}
 
       {m.teams && (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className={`${card} p-4`}>
-            <h2 className="text-sm font-semibold">
-              Teams missing something <span className="font-normal text-zinc-500">({m.missing.length})</span>
-            </h2>
-            {!m.missing.length && (
-              <p className="mt-1 text-sm text-zinc-500">✓ Every team has a Head Coach (with cell and email) and players.</p>
-            )}
-            <ul className="mt-1 max-h-64 divide-y divide-zinc-100 overflow-y-auto dark:divide-white/5">
-              {m.missing.map((t) => (
-                <li key={t.id} className="flex items-center justify-between gap-2 py-1.5 text-sm">
-                  <Link href={`${base}/teams/${t.id}`} className="min-w-0 truncate text-thunder-blue hover:underline">
-                    {t.name}
-                  </Link>
-                  <span className="flex shrink-0 gap-1">
-                    {t.noCoach && <Need>No Head Coach</Need>}
-                    {t.noCell && <Need>No coach cell</Need>}
-                    {t.noEmail && <Need>No coach email</Need>}
-                    {t.noPlayers && <Need>No players</Need>}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
+        <SubCard title="Teams" count={m.teams.total}>
+          <p className="text-sm">
+            REC {m.teams.rec} · COMP {m.teams.comp} · Boys {m.teams.boys} · Girls {m.teams.girls}
+          </p>
+          <Link href={`${base}/teams`} className="mt-1 inline-block text-sm font-medium text-thunder-blue hover:underline">
+            All teams →
+          </Link>
+        </SubCard>
+      )}
 
-          <div className={`${card} p-4`}>
-            <h2 className="text-sm font-semibold">
-              Coaches&apos; use of the app <span className="font-normal text-zinc-500">({m.coaches.length})</span>
-            </h2>
-            <p className="text-xs text-zinc-500">Last login, longest ago first</p>
-            {!m.coaches.length && <p className="mt-1 text-sm text-zinc-500">No coaches yet.</p>}
-            <ul className="mt-1 max-h-64 divide-y divide-zinc-100 overflow-y-auto dark:divide-white/5">
-              {m.coaches.map((c) => (
-                <li key={c.id} className="flex items-start justify-between gap-2 py-1.5 text-sm">
-                  <span className="min-w-0">
-                    <span className="block truncate font-medium">{c.name}</span>
-                    <span className="block truncate text-xs text-zinc-500">{c.teams.join(" · ")}</span>
-                  </span>
-                  <span className="shrink-0 text-right text-xs">{lastLogin(c.lastLogin, now)}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
+      <SubCard title="To Do" count={todo.open} alert={todo.open > 0}>
+        <div className="space-y-2">
+          {!todo.open && <p className="text-sm text-zinc-500">✓ Nothing to do right now.</p>}
+          {m.notOnTeam && (
+            <SubCard
+              title="Not on a team"
+              count={m.notOnTeam.total}
+              alert={m.notOnTeam.total > 0}
+              action={roster && m.notOnTeam.total > 0 ? <NotOnTeamBoard>
+                <span className="rounded-full px-2.5 py-1 text-xs font-semibold text-thunder-blue ring-1 ring-thunder-blue/30">Roster</span>
+              </NotOnTeamBoard> : undefined}
+            >
+              {!m.notOnTeam.total ? (
+                <p className="text-sm text-zinc-500">✓ Every player is on a team.</p>
+              ) : (
+                <ul className="divide-y divide-zinc-100 dark:divide-white/5">
+                  {m.notOnTeam.players.map((p) => (
+                    <li key={p.id} className="flex justify-between gap-2 py-1.5 text-sm">
+                      <span className="truncate font-medium">{p.name}</span>
+                      <span className={`shrink-0 text-xs ${p.gender === "Boys" ? "text-blue-700 dark:text-blue-300" : "text-pink-700 dark:text-pink-300"}`}>
+                        {ordinal(p.grade)} {p.gender}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </SubCard>
+          )}
+          {m.uniforms && (
+            <SubCard
+              title="Uniform order"
+              count={m.uniforms.missing ? `${m.uniforms.missing} need attention` : "ready"}
+              alert={m.uniforms.missing > 0}
+            >
+              <p className="mb-1 text-xs text-zinc-500">
+                {m.uniforms.ready}/{m.uniforms.players} rostered players have a number (and a size when they need a uniform).{" "}
+                {thunder && (
+                  <Link href={`${base}/uniforms`} className="font-medium text-thunder-blue hover:underline">
+                    Uniforms →
+                  </Link>
+                )}
+              </p>
+              {!m.uniforms.missing && <p className="text-sm text-zinc-500">✓ Ready to order.</p>}
+              {uniformGroups.map((g) =>
+                fold(
+                  <span className={`font-semibold ${g.gender === "Boys" ? "text-blue-700 dark:text-blue-300" : "text-pink-700 dark:text-pink-300"}`}>
+                    {g.gender} ({g.grades.reduce((n, x) => n + x.teams.reduce((k, t) => k + t.players.length, 0), 0)})
+                  </span>,
+                  g.grades.map((gr) =>
+                    fold(
+                      <span className="font-medium">
+                        {grade(gr.grade)} ({gr.teams.reduce((k, t) => k + t.players.length, 0)})
+                      </span>,
+                      gr.teams.map((t) =>
+                        fold(
+                          <span>
+                            {t.name} ({t.players.length})
+                          </span>,
+                          <ul className="pb-1" style={{ paddingLeft: "2.7rem" }}>
+                            {t.players.map((p, i) => (
+                              <li key={i} className="flex justify-between gap-2 py-0.5 text-sm">
+                                <span className="truncate">{p.name}</span>
+                                <span className="flex shrink-0 gap-1">
+                                  {p.noNumber && <Need>No number</Need>}
+                                  {p.noSize && <Need>No size</Need>}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>,
+                          `u-${t.id}`,
+                          2,
+                        ),
+                      ),
+                      `u-${g.gender}-${gr.grade}`,
+                      1,
+                    ),
+                  ),
+                  `u-${g.gender}`,
+                ),
+              )}
+            </SubCard>
+          )}
+          {m.teams && (
+            <SubCard title="Teams missing something" count={m.missing.length} alert={m.missing.length > 0}>
+              {!m.missing.length && (
+                <p className="text-sm text-zinc-500">✓ Every team has a Head Coach (with cell and email) and players.</p>
+              )}
+              <ul className="max-h-64 divide-y divide-zinc-100 overflow-y-auto dark:divide-white/5">
+                {m.missing.map((t) => (
+                  <li key={t.id} className="flex items-center justify-between gap-2 py-1.5 text-sm">
+                    <Link href={`${base}/teams/${t.id}`} className="min-w-0 truncate text-thunder-blue hover:underline">
+                      {t.name}
+                    </Link>
+                    <span className="flex shrink-0 gap-1">
+                      {t.noCoach && <Need>No Head Coach</Need>}
+                      {t.noCell && <Need>No coach cell</Need>}
+                      {t.noEmail && <Need>No coach email</Need>}
+                      {t.noPlayers && <Need>No players</Need>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </SubCard>
+          )}
+          {m.teams && (
+            <SubCard title="Teams not using the app" count={todo.idle} alert={todo.idle > 0}>
+              <TeamUseList teams={m.teamUse} base={base} />
+            </SubCard>
+          )}
+          <SubCard title="Waiting on you" count={todo.waiting} alert={todo.waiting > 0}>
+            {!todo.waiting ? (
+              <p className="text-sm text-zinc-500">Nothing right now.</p>
+            ) : (
+              <ul className="space-y-1 text-sm">
+                {m.waiting.requests > 0 && (
+                  <li>
+                    {thunder ? (
+                      <Link href={`${base}/members?open=requests`} className="text-thunder-blue hover:underline">
+                        {m.waiting.requests} join request{m.waiting.requests === 1 ? "" : "s"}
+                      </Link>
+                    ) : (
+                      `${m.waiting.requests} join request${m.waiting.requests === 1 ? "" : "s"}`
+                    )}
+                  </li>
+                )}
+                {m.waiting.newChats > 0 && <li>{m.waiting.newChats} new Support chat{m.waiting.newChats === 1 ? "" : "s"}</li>}
+                {m.waiting.workingChats > 0 && (
+                  <li>
+                    {m.waiting.workingChats} Support chat{m.waiting.workingChats === 1 ? "" : "s"} in progress
+                  </li>
+                )}
+              </ul>
+            )}
+          </SubCard>
         </div>
+      </SubCard>
+
+      {m.teams && (
+        <SubCard title="Coaches' use of the app" count={m.coaches.length}>
+          <p className="text-xs text-zinc-500">Last login, longest ago first</p>
+          {!m.coaches.length && <p className="mt-1 text-sm text-zinc-500">No coaches yet.</p>}
+          <ul className="mt-1 max-h-64 divide-y divide-zinc-100 overflow-y-auto dark:divide-white/5">
+            {m.coaches.map((c) => (
+              <li key={c.id} className="flex items-start justify-between gap-2 py-1.5 text-sm">
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{c.name}</span>
+                  <span className="block truncate text-xs text-zinc-500">{c.teams.join(" · ")}</span>
+                </span>
+                <span className="shrink-0 text-right text-xs">{lastLogin(c.lastLogin, now)}</span>
+              </li>
+            ))}
+          </ul>
+        </SubCard>
+      )}
+
+      {visits && (
+        <SubCard title="Site visits" count={`Avg ${avgDaily} a day`}>
+          <SiteVisits stats={visits} bare />
+        </SubCard>
+      )}
+
+      {m.registrations && m.registrations.fees.length > 0 && (
+        <SubCard title="Fees paid and owed" count={<OwedCount days={m.registrations.fees} />}>
+          <p className="mb-2 text-xs text-zinc-500">Totals to date, from the first payment ({day(m.registrations.fees[0].day)}) to today</p>
+          <FeeTrend days={m.registrations.fees} />
+        </SubCard>
       )}
     </section>
+  );
+}
+
+// "$7,002 owed ▼ $135": today's amount owed, and how it moved since yesterday (▲ red when it went up, ▼ green when down).
+function OwedCount({ days }: { days: { owed: number }[] }) {
+  const now = days.at(-1)!.owed;
+  const change = Math.round(now - (days.at(-2)?.owed ?? now));
+  const money = (n: number) => `$${Math.round(Math.abs(n)).toLocaleString("en-US")}`;
+  return (
+    <>
+      {money(now)} owed
+      {change !== 0 && (
+        <span
+          className={change > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}
+          title={`${change > 0 ? "Up" : "Down"} ${money(change)} since yesterday`}
+        >
+          {" "}
+          {change > 0 ? "▲" : "▼"} {money(change)}
+          <span className="sr-only"> {change > 0 ? "more" : "less"} than yesterday</span>
+        </span>
+      )}
+      {change === 0 && <span className="text-zinc-400"> · same as yesterday</span>}
+    </>
   );
 }
 

@@ -22,7 +22,7 @@ type Person = { id: string; name: string };
 export const menuItem =
   "block w-full rounded-xl px-3 py-2.5 text-left text-sm font-medium text-zinc-800 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-800";
 
-export function AddMenu({ children }: { children: ReactNode }) {
+export function AddMenu({ children, round = false }: { children: ReactNode; round?: boolean }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -38,9 +38,15 @@ export function AddMenu({ children }: { children: ReactNode }) {
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark"
+        aria-label="Add"
+        title="Add"
+        className={
+          round
+            ? "inline-flex size-9 items-center justify-center rounded-full bg-thunder-blue text-2xl leading-none font-light text-white shadow-sm hover:bg-thunder-blue-dark"
+            : "rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark"
+        }
       >
-        + Add
+        {round ? "+" : "+ Add"}
       </button>
       <div
         role="menu"

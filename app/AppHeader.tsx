@@ -312,12 +312,15 @@ export default async function AppHeader({
     !!teamTab?.alert?.includes(key as TeamTab) ||
     (key === "teams" && !!flags?.teams) ||
     (key === "uniforms" && !!flags?.uniforms);
-  const showTabs = !!orgTabs || !!scenicTabs || !!teamTab || (user.isDirector && context === "director");
+  // No tab row for Thunder's Directors, Scenic City or a registered organization: their Home is a stack of cards, one per
+  // part (the logo goes Home).
+  const orgPages = !!orgTabs || !!scenicTabs || (user.isDirector && context === "director");
+  const showTabs = !!teamTab;
   const activeBg = scenicTabs ? "bg-scenic-navy" : "bg-thunder-blue";
   // A registered organization's own color (set in its gear) marks the tab in use; Thunder and Scenic City keep theirs.
   const tabColor = registered ? brand.color : null;
   // The gear (features, logo, color, login link) after the last tab, for the organization's Admins.
-  const gear = showTabs && !teamTab && !platform && (await isOrgAdmin(db, user.coachId, org));
+  const gear = (showTabs || orgPages) && !teamTab && !platform && (await isOrgAdmin(db, user.coachId, org));
   // Alerts in every organization: its Directors' bell sends to everyone there (opens under the header); everyone
   // else's bell opens their inbox. Thunder keeps its own (all team staff) and its chat.
   const member = !platform && (thunder || orgChips.length > 0);
@@ -413,6 +416,8 @@ export default async function AppHeader({
             )}
             {/* With tabs, Chat and Alerts sit by the gear on the tab row (computers); on phones they stay up here. */}
             {showTabs ? <span className="flex items-center gap-1 sm:hidden">{orgIcons}</span> : orgIcons}
+            {/* Without the tab row, the gear sits up here. */}
+            {!showTabs && gear && <OrgGear org={org} coachId={user.coachId} />}
             {!showTabs && (
               <SupportButton
                 org={org}

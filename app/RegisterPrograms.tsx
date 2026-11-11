@@ -5,13 +5,21 @@ import { card } from "./ui";
 const day = (d: string) =>
   new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
-// The Register tab on a Teams page (Thunder and every organization): the league's programs whose registration hasn't
+// The Register card on a Teams page (Thunder and every organization): the league's programs whose registration hasn't
 // closed, how many of this organization's teams are in each, and Register all unregistered (ALL Season), with the last
 // Register all and its Undo (while registration is open).
-export default function RegisterPrograms({ org, progs }: { org: string; progs: { league: string; programs: OrgProgram[] } }) {
+export default function RegisterPrograms({
+  org,
+  progs,
+  bare = false,
+}: {
+  org: string;
+  progs: { league: string; programs: OrgProgram[] };
+  bare?: boolean; // inside another card: no card of its own
+}) {
   const slug = org;
   return (
-    <section className={`${card} p-4`}>
+    <section className={bare ? "px-1" : `${card} p-4`}>
       <h2 className="font-semibold">{progs.league} programs</h2>
       <p className="mb-2 text-sm text-zinc-500">
         Register your teams: each goes into its division (gender, grade and level). Coaches can be added later.

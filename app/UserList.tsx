@@ -16,7 +16,8 @@ import { resettable } from "@/lib/login-reset";
 import { ResetLoginButton } from "./ResetLoginButton";
 import { ViewAsButton } from "./ViewAsButton";
 import { AddUserButton, ApproveJoinButton, EditUserButton } from "./users/UserEditor";
-import { Chip, EmailLink, GroupCard, PageTitle, PersonRow, PhoneLink, Stats } from "./ui";
+import { PLUS_BTN } from "./PageMenus";
+import { Chip, EmailLink, GroupCard, PageTitle, PersonRow, PhoneLink } from "./ui";
 import GearPopUp from "./GearPopUp";
 import Link from "next/link";
 import { gradeLabel } from "@/lib/grades";
@@ -49,6 +50,7 @@ export default async function UserList({
   view = "staff",
   orgAdmin,
   org,
+  addOnCard = false,
 }: {
   users: UserListItem[];
   viewer: SessionUser;
@@ -56,6 +58,7 @@ export default async function UserList({
   view?: "staff" | "requests" | "coaches" | "inactive-coaches";
   orgAdmin?: boolean;
   org?: string; // another organization's list without `team`
+  addOnCard?: boolean; // the + Add is on the Members card's title line instead
 }) {
   const thunder = orgAdmin === undefined;
   const admin = thunder ? isThunderAdmin(viewer) : orgAdmin;
@@ -72,16 +75,7 @@ export default async function UserList({
         )
       : new Set<string>();
   const roleOf = (coachId: string) => team?.directors.find((d) => d.id === coachId);
-  const active = users.filter((u) => u.active);
-  const requests = active.filter((u) => u.request && !u.coach && !u.director && !u.teams.length);
-  const directors = active.filter((u) => u.director);
-  // Coaches: the Coach role or a Head / Assistant Coach spot; team helpers: only a Manager or Team Parent spot.
-  const coaches = active.filter((u) => !u.director && (u.coach || u.teams.some((t) => /(Head|Asst) Coach$/.test(t))));
-  const helpers = active.filter((u) => !u.director && !coaches.includes(u) && u.teams.length > 0);
-  const others = active.filter((u) => !u.director && !requests.includes(u) && !coaches.includes(u) && !helpers.includes(u));
-  // Inactive logins: Directors stay on Staff; everyone else is listed as an inactive coach (Members → Coaches).
-  const inactive = users.filter((u) => !u.active && u.director);
-  const inactiveCoaches = users.filter((u) => !u.active && !u.director);
+  const { requests, directors, coaches, helpers, others, inactive, inactiveCoaches } = sortUsers(users);
 
   // A team pill opens that team's page.
   const teamHref = (id: string) => (thunder ? `/org/thunder/teams/${id}` : `/org/${slug}/teams/${id}`);
@@ -261,6 +255,7 @@ export default async function UserList({
       .sort(([, a], [, b]) => order(a.gender) - order(b.gender) || a.grade - b.grade)
       .map(([key, g]) => ({
         key,
+        gender: g.gender,
         title: g.gender ? `${g.gender} · ${g.grade === -1 ? "Pre-K" : gradeLabel(gradeStr(g.grade))}` : "No team yet",
         count: g.people.size,
         people: [...g.people],
@@ -278,7 +273,7 @@ export default async function UserList({
     return (
       <div className="space-y-3">
         {byGrade(people).map((g) => (
-          <GroupCard key={g.key} title={g.title} count={g.count} defaultOpen={false}>
+          <GroupCard key={g.key} title={g.title} count={g.count} defaultOpen={false} gender={g.gender}>
             {g.teams.length
               ? g.teams.map((t) => (
                   <li key={t.id}>
@@ -309,6 +304,7 @@ export default async function UserList({
   return (
     <section>
       <div className="flex items-start justify-between gap-3">
+        {/* On the Members page the Staff card's + sits on its title line (StaffAdd), so not here. */}
         {view === "requests" ? (
           <PageTitle title="Requests" subtitle="People asking to join Thunder: approve or deny" />
         ) : (
@@ -317,7 +313,7 @@ export default async function UserList({
             subtitle="Admins and Directors, then other sign-ins (coaches are under Coaches), by last name"
           />
         )}
-        {team ? (
+        {addOnCard && view !== "requests" ? null : team ? (
           <AddMenu>
             {thunder && <AddUserButton label="New user (login)" className={menuItem} />}
             <DirectorButtons
@@ -343,12 +339,6 @@ export default async function UserList({
         </GroupCard>
       ) : (
         <>
-          <Stats
-            items={[
-              { label: "Users", value: users.length },
-              { label: "Active", value: active.length },
-            ]}
-          />
           <div className="space-y-3">
             {directors.length > 0 && (
               <GroupCard title="Admins & Directors" count={directors.length} defaultOpen={false}>
@@ -369,5 +359,47 @@ export default async function UserList({
         </>
       )}
     </section>
+  );
+}
+
+// Everyone sorted into the lists: join requests, Admins & Directors, coaches (the Coach role or a Head / Assistant Coach
+// spot; Directors too when they're on a team), team helpers (only a Manager or Team Parent spot), other logins, and the
+// inactive (Directors stay on Staff; everyone else is an inactive coach).
+export function sortUsers(users: UserListItem[]) {
+  const active = users.filter((u) => u.active);
+  const requests = active.filter((u) => u.request && !u.coach && !u.director && !u.teams.length);
+  const directors = active.filter((u) => u.director);
+  const coaches = active.filter(
+    (u) => (!u.director || u.teams.length > 0) && (u.coach || u.teams.some((t) => /(Head|Asst) Coach$/.test(t))),
+  );
+  const helpers = active.filter((u) => (!u.director || u.teams.length > 0) && !coaches.includes(u) && u.teams.length > 0);
+  const others = active.filter((u) => !u.director && !requests.includes(u) && !coaches.includes(u) && !helpers.includes(u));
+  const inactive = users.filter((u) => !u.active && u.director);
+  const inactiveCoaches = users.filter((u) => !u.active && !u.director);
+  return { requests, directors, coaches, helpers, others, inactive, inactiveCoaches };
+}
+
+// Staff (n) on the Members card: its Admins & Directors and other logins.
+export const staffCount = (users: UserListItem[]) => {
+  const g = sortUsers(users);
+  return g.directors.length + g.others.length;
+};
+
+// The Staff card's + on the Members page: Thunder adds a login, Directors, Admins and Owners; another organization its
+// Directors (Owners also Admins and Owners).
+export function StaffAdd({ team, thunder }: { team: DirectorTeam | null; thunder: boolean }) {
+  if (!team) return thunder ? <AddUserButton label="+" className={PLUS_BTN} /> : null;
+  return (
+    <AddMenu round>
+      {thunder && <AddUserButton label="New user (login)" className={menuItem} />}
+      <DirectorButtons
+        org={team.org}
+        areas={team.areas}
+        options={team.options}
+        canManageAdmins={team.canManageAdmins}
+        adminOptions={team.adminOptions}
+        ownerOptions={team.ownerOptions}
+      />
+    </AddMenu>
   );
 }

@@ -6,11 +6,8 @@ import { GRADES } from "@/lib/team-names";
 import { Alert, PopUp, Toast, useConfirm } from "../../../client-ui";
 import { fieldLabel, inputCls, primaryBtn } from "../../../ui";
 import { addPlayer, importPlayers, previewPlayers, removePlayer } from "./actions";
+import { AddPlayersIcon, ImportIcon, addIconBtn, iconBtn } from "../../../CardIcons";
 
-const blueBtn =
-  "shrink-0 rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-thunder-blue-dark";
-const outlineBtn =
-  "shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/40 hover:bg-thunder-blue/5";
 
 // + Add player: first, last, grade, optional jersey number. The pop-up stays open to add the next one.
 export function AddPlayerButton({ org, teamId }: { org: string; teamId: string }) {
@@ -20,7 +17,7 @@ export function AddPlayerButton({ org, teamId }: { org: string; teamId: string }
   const [done, setDone] = useState<string | null>(null);
   const [busy, start] = useTransition();
   return (
-    <PopUp label="+ Add" title="Add a player" className={blueBtn}>
+    <PopUp label={<AddPlayersIcon />} ariaLabel="Add a player" title="Add a player" className={addIconBtn}>
       {() => (
         <form
           className="space-y-3"
@@ -96,7 +93,7 @@ export function ImportPlayersButton({ org, teamId }: { org: string; teamId: stri
   const [msg, setMsg] = useState<string | null>(null);
   return (
     <>
-      <PopUp label="Import" title="Import players" className={outlineBtn}>
+      <PopUp label={<ImportIcon />} ariaLabel="Import players" title="Import players" className={iconBtn}>
         {(close) => (
           <ImportForm
             org={org}

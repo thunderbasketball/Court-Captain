@@ -64,7 +64,7 @@ describe("CourtSolo: a stand-alone team's own account", () => {
     );
     expect(t.rows).toEqual([{ name: "Magic", coach_id: "9913694", role: "HeadCoach", owner_coach_id: null, copy: "Magic" }]);
     // Still registered, and shown as (Solo).
-    expect((await publicLeague(db.pool, now, prog))?.groups[0].teams).toEqual([{ name: "Magic", tag: "Solo" }]);
+    expect((await publicLeague(db.pool, now, prog))?.groups[0].teams).toEqual([{ id: expect.any(String), name: "Magic", tag: "Solo" }]);
 
     // One team only.
     expect(
@@ -77,7 +77,7 @@ describe("CourtSolo: a stand-alone team's own account", () => {
     expect(
       (await db.pool.query("select p.name from partners p join organizations o on o.slug = p.org_slug where o.name = 'Magic Elite'")).rows,
     ).toEqual([{ name: "Magic Elite" }]);
-    expect((await publicLeague(db.pool, now, prog))?.groups[0].teams).toEqual([{ name: "Magic Elite", tag: "Solo" }]);
+    expect((await publicLeague(db.pool, now, prog))?.groups[0].teams).toEqual([{ id: expect.any(String), name: "Magic Elite", tag: "Solo" }]);
     // Not a Solo team any more.
     await expect(withTx(db.pool, (q) => makeSoloAccount(q, team, "Earl Epps", now))).rejects.toThrow();
   }, 60_000);

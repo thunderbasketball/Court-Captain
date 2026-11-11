@@ -385,14 +385,21 @@ export function GridBoard({
             </summary>
             {g.blocks.length ? (
               <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-xs">
+                {/* Every court's column the same width (the time column narrow); scrolls sideways when they don't fit. */}
+                <table className="w-full table-fixed border-collapse text-xs" style={{ minWidth: 80 + g.courts.length * 144 }}>
+                  <colgroup>
+                    <col style={{ width: 80 }} />
+                    {g.courts.map((c) => (
+                      <col key={c.id} />
+                    ))}
+                  </colgroup>
                   <thead>
                     <tr className="bg-white dark:bg-zinc-950">
                       <th className="sticky left-0 z-[1] bg-white px-2 py-1.5 text-left font-semibold whitespace-nowrap dark:bg-zinc-950">
                         Time
                       </th>
                       {g.courts.map((c) => (
-                        <th key={c.id} className="min-w-36 px-2 py-1.5 text-left font-semibold whitespace-nowrap">
+                        <th key={c.id} className="px-2 py-1.5 text-left align-top font-semibold">
                           {c.name}
                           {(c.starts !== g.opens || c.ends !== g.closes) && (
                             <span className="block font-normal text-zinc-500">
@@ -400,7 +407,7 @@ export function GridBoard({
                             </span>
                           )}
                           {c.divisions && (
-                            <span className="block max-w-48 font-normal whitespace-normal text-zinc-500">
+                            <span className="block font-normal text-zinc-500">
                               Only {c.divisions.map((d) => divisions[d] ?? "another division").join(", ")}
                             </span>
                           )}

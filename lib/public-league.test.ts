@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
-import { publicLeague, publicLeagues, setSchedulePublished } from "./public-league";
+import { followedTeams, publicLeague, publicLeagues, publicPrograms, setSchedulePublished } from "./public-league";
 import { listPrograms, setProgramLogo } from "./scenic-programs";
 import { createTestDb, grant } from "./testing/db";
 
@@ -61,13 +61,17 @@ describe("public League page (no login)", () => {
 
   it("lists Leagues with registration open, shows teams (no DEV, no sitting out, no contact) and the schedule once published", async () => {
     expect((await publicLeagues(db.pool, now)).map((l) => l.name)).toEqual(["Winter"]); // Spring not open yet; no Tournaments
+    // The login page's Programs list has every kind; a Tournament has teams but no schedule.
+    expect((await publicPrograms(db.pool, now)).map((l) => `${l.kind} ${l.name}`)).toEqual(["League Winter", "Tournament Classic"]);
+    const classic = (await publicPrograms(db.pool, now)).find((l) => l.name === "Classic")!;
+    expect(await publicLeague(db.pool, now, classic.id)).toMatchObject({ kind: "Tournament", groups: [], schedule: null });
     const before = await publicLeague(db.pool, now, prog);
     expect(before?.groups).toEqual([
       {
         label: "5th Boys COMP",
         teams: [
-          { name: "HH 5B Fay", tag: "HH" },
-          { name: "Magic", tag: "Solo" },
+          { id: expect.any(String), name: "HH 5B Fay", tag: "HH" },
+          { id: expect.any(String), name: "Magic", tag: "Solo" },
         ],
       },
     ]);
@@ -81,12 +85,61 @@ describe("public League page (no login)", () => {
     expect(after?.schedule).toEqual([
       {
         date: "2026-12-05",
-        games: [{ starts: null, gym: null, court: null, group: "5th Boys COMP", home: "HH 5B Fay", away: "Magic" }],
+        games: [
+          {
+            starts: null,
+            gym: null,
+            court: null,
+            group: "5th Boys COMP",
+            home: "HH 5B Fay",
+            away: "Magic",
+            homeId: expect.any(String),
+            awayId: expect.any(String),
+          },
+        ],
       },
     ]);
     expect(await setSchedulePublished(deps(), user("9913694"), prog, false)).toEqual({ ok: true });
     expect((await publicLeague(db.pool, now, prog))?.schedule).toBeNull();
     expect(await publicLeague(db.pool, now, "999")).toBeNull();
+  }, 60_000);
+
+  it("a device's followed teams: name, roster (public names), group in each public program, games once published; DEV and unknown dropped", async () => {
+    const ids = (await db.pool.query<{ id: string; name: string }>("select id::text, name from scenic_teams order by name")).rows;
+    const id = (name: string) => ids.find((t) => t.name === name)!.id;
+    const follow = [id("Magic"), "999999", id("Sim 1 (DEV)"), "x; drop", id("Magic"), id("HH 5B Fay")];
+    const before = await followedTeams(db.pool, now, follow);
+    expect(before).toEqual([
+      { id: id("Magic"), name: "Magic", roster: null, programs: [{ id: prog, name: "Winter", group: "5th Boys COMP", games: null }] },
+      { id: id("HH 5B Fay"), name: "HH 5B Fay", roster: null, programs: [{ id: prog, name: "Winter", group: "5th Boys COMP", games: null }] },
+    ]);
+    await setSchedulePublished(deps(), user("9913694"), prog, true);
+    const [magic, fay] = await followedTeams(db.pool, now, follow);
+    expect(magic.programs[0].games).toEqual([
+      { date: "2026-12-05", starts: null, gym: null, court: null, opponent: "HH 5B Fay", home: false },
+    ]);
+    expect(fay.programs[0].games).toEqual([{ date: "2026-12-05", starts: null, gym: null, court: null, opponent: "Magic", home: true }]);
+    // The whole schedule, games already played too (the device shows the next 21 days collapsed).
+    expect((await followedTeams(db.pool, new Date("2026-12-07T15:00:00Z"), [id("Magic")]))[0].programs[0].games).toHaveLength(1);
+    // An organization's team keeps a roster: first names and last initials, jerseys; never full last names.
+    const ot = (
+      await db.pool.query<{ id: string }>(
+        "insert into org_teams (org, name, gender, grade_low, grade, level, created_by) values ('scenic-city', 'Fay 5B', 'Boys', 5, 5, 'COMP', 't') returning id::text",
+      )
+    ).rows[0].id;
+    await db.pool.query(
+      `insert into org_team_players (team_id, first_name, last_name, grade, jersey, added_by) values ($1, 'Ava', 'lyons', 5, '12', 't'), ($1, 'Ben', 'Cole', 5, null, 't')`,
+      [ot],
+    );
+    await db.pool.query("update scenic_teams set org_team_id = $1 where name = 'HH 5B Fay'", [ot]);
+    const [withRoster] = await followedTeams(db.pool, now, [id("HH 5B Fay")]);
+    expect(withRoster.roster).toEqual([
+      { name: "Ava L.", jersey: "12" },
+      { name: "Ben C.", jersey: null },
+    ]);
+    expect(JSON.stringify(withRoster)).not.toMatch(/lyons|Cole/);
+    expect(await followedTeams(db.pool, now, "nope")).toEqual([]);
+    expect(JSON.stringify(before)).not.toMatch(/4235550|Sam|Lee/);
   }, 60_000);
 
   it("a program's logo: only a Director of Programs sets it, images only, shown everywhere the program is", async () => {

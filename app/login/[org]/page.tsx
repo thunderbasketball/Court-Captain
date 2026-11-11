@@ -12,10 +12,10 @@ import LoginFlow from "../LoginFlow";
 import { card } from "../../ui";
 import { followRename } from "@/lib/org-rename";
 import { hasFeature } from "@/lib/features";
-import Link from "next/link";
-import { openPrograms } from "@/lib/team-signup";
+import { publicPrograms } from "@/lib/public-league";
+import { easternDate } from "@/lib/time";
 import { shortDate } from "@/lib/program-options";
-import EventRegister from "./EventRegister";
+import PublicPrograms, { type ProgramCard } from "./PublicPrograms";
 
 // The organization's logo as the tab icon (and on a phone's home screen) and its name in the tab title.
 export async function generateMetadata({ params }: PageProps<"/login/[org]">): Promise<Metadata> {
@@ -41,17 +41,28 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
   if (!o) notFound();
   const into = `/switch?org=${org}`;
   if (await currentUser()) redirect(into);
-  // Outside teams register here while Team Registrations is on (Scenic City's League teams).
-  const teamSignup = org === "scenic-city" && (await hasFeature(db, org, "team-registration"));
-  const events = teamSignup
-    ? (await openPrograms(db, new Date())).map((p) => ({
+  // Scenic City's programs, no login (open for registration, under way, or ended in the last 30 days). Outside teams
+  // register here while Team Registrations is on.
+  const now = new Date();
+  const today = easternDate(now);
+  const showPrograms = org === "scenic-city" && (await hasFeature(db, org, "programs"));
+  const teamSignup = showPrograms && (await hasFeature(db, org, "team-registration"));
+  const programs: ProgramCard[] = showPrograms
+    ? (await publicPrograms(db, now)).map((p) => ({
         id: p.id,
         name: p.name,
         kind: p.kind,
         dates: `${shortDate(p.startsOn)} – ${shortDate(p.endsOn)}`,
-        closes: shortDate(p.regCloses),
+        status: p.registering
+          ? `Register by ${shortDate(p.regCloses)}`
+          : p.startsOn > today
+            ? `Starts ${shortDate(p.startsOn)}`
+            : p.endsOn >= today
+              ? `Under way · ends ${shortDate(p.endsOn)}`
+              : `Ended ${shortDate(p.endsOn)}`,
         logo: p.logo,
         recLimited: p.recLimited,
+        register: teamSignup && p.registering,
       }))
     : [];
   return (
@@ -74,15 +85,8 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
         {/* Thunder asks a new account why they're joining; any other organization's new account logs straight in. */}
         <LoginFlow join={org === "thunder" ? undefined : org} next={into} />
       </div>
-      {/* Events open for registration: Register asks one team (CourtSolo) or several (an organization, CourtOrg). */}
-      {teamSignup && <EventRegister org={org} events={events} />}
-      {/* The public League page: teams and (once published) the schedule, no login. Not needed when a League's card
-          above already opens it. */}
-      {org === "scenic-city" && !events.some((e) => e.kind === "League") && (await hasFeature(db, org, "programs")) && (
-        <Link href={`/league/${org}`} className="mt-4 block text-center text-sm font-medium text-thunder-blue hover:underline">
-          League teams &amp; schedule
-        </Link>
-      )}
+      {/* Programs: tap one to see its Teams and (a League's, once published) Schedule; Register while it's open. */}
+      <PublicPrograms org={org} programs={programs} />
     </>
   );
 }

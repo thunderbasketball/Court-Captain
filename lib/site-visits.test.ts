@@ -52,10 +52,12 @@ describe("site visits", () => {
     const s = (await visitStats({ pool: db.pool, now: () => NOW }, admin, "thunder"))!;
     expect(s.today).toMatchObject({ views: 3, people: 2 });
     expect(s.today.buckets).toHaveLength(24);
-    expect(s.today.buckets.filter((b) => b.n)).toEqual([
+    expect(s.today.buckets.filter((b) => b.n).map(({ start, n }) => ({ start, n }))).toEqual([
       { start: "2026-11-03T09:00", n: 2 },
       { start: "2026-11-03T10:00", n: 1 },
     ]);
+    // Coaches' visits counted apart (the green bars): none of these visitors coaches a team.
+    expect(s.today.buckets.every((b) => b.coach <= b.n)).toBe(true);
     expect(s.week).toMatchObject({ views: 4, people: 2 });
     expect(s.week.buckets.map((b) => b.n)).toEqual([1, 3, 0, 0, 0, 0, 0]); // Mon–Sun
     expect(s.month).toMatchObject({ views: 5 });

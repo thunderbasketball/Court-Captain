@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
@@ -9,13 +8,17 @@ import { isOrgAdmin, orgHasArea } from "@/lib/org-admin";
 import { orgInfo } from "@/lib/org-registry";
 import { isOrgSlug } from "@/lib/orgs";
 import AppHeader from "../../AppHeader";
-import { card } from "../../ui";
 import { followRename } from "@/lib/org-rename";
 import { orgShort } from "@/lib/org-registry";
 import { OrgSearchButton } from "../../OrgSearch";
 import { orgMetrics } from "@/lib/org-metrics";
 import { visitStats } from "@/lib/site-visits";
-import OrgMetrics from "../../OrgMetrics";
+import OrgMetrics, { todoCounts } from "../../OrgMetrics";
+import MembersCards from "../../MembersCards";
+import SupportCard from "../../SupportCard";
+import { OrgTeamsContent } from "./teams/content";
+import { OrgFacilitiesContent } from "./facilities/content";
+import { OrgMembersContent } from "./members/content";
 
 export default function OrgHomePage({ params }: PageProps<"/org/[slug]">) {
   return (
@@ -25,9 +28,10 @@ export default function OrgHomePage({ params }: PageProps<"/org/[slug]">) {
   );
 }
 
-// A registered organization's Home (SPEC.md section 14), the same layout as every organization's: the metrics for Owners
-// and Admins, then a card for each part
-// this person can open (the same parts as the tabs). Its name and logo are in the header; its settings in the gear.
+// A registered organization's Home (SPEC.md section 14), the same layout as every organization's: a stack of cards, one
+// per part this person can open (the same parts as the tabs): Home (the metrics, for Owners and Admins) open first, then
+// Teams, Facilities, Members and Support, each loading in the background and opening on its own. Its name and logo are
+// in the header; its settings in the gear.
 async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] }) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
@@ -65,28 +69,38 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
         visitStats({ pool: db, now: () => now }, user, slug),
       ])
     : [null, null];
-  const parts = [
+  // Home as a stack of cards, one per tab this person can open (the same parts, in the same order): Home first and open;
+  // the others load in the background after the page shows and open on their own.
+  const here = Promise.resolve({ slug });
+  const cards = [
+    ...(metrics
+      ? [
+          {
+            key: "home",
+            title: "Home",
+            alert: todoCounts(metrics).open > 0,
+            body: <OrgMetrics m={metrics} visits={visits} base={`/org/${slug}`} thunder={false} now={now} />,
+          },
+        ]
+      : []),
     ...(teams && (teamsArea || coaching.rowCount)
       ? [
           {
+            key: "teams",
             title: "Teams",
-            about: "Your teams and coaches, importing teams, and registering for league programs.",
-            href: `/org/${slug}/teams`,
+            count: metrics?.teams?.total,
+            alert: (metrics?.missing.length ?? 0) > 0,
+            body: <OrgTeamsContent params={here} embedded />,
           },
         ]
       : []),
     ...(hosting && facilities
-      ? [
-          {
-            title: "Facilities",
-            about: "Your gyms and courts, their availability, and hosting leagues' games.",
-            href: `/org/${slug}/facilities`,
-          },
-        ]
+      ? [{ key: "facilities", title: "Facilities", body: <OrgFacilitiesContent params={here} embedded /> }]
       : []),
     ...(admin || (teams && coachesArea)
-      ? [{ title: "Members", about: "Staff (Owners, Admins and Directors) and coaches.", href: `/org/${slug}/members` }]
+      ? [{ key: "members", title: "Members", alert: (metrics?.waiting.requests ?? 0) > 0, body: <OrgMembersContent params={here} embedded /> }]
       : []),
+    { key: "support", title: "Support", alert: (metrics?.waiting.newChats ?? 0) > 0, body: <SupportCard user={user} org={slug} /> },
   ];
 
   return (
@@ -99,16 +113,7 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
           </p>
           {search && <OrgSearchButton org={slug} orgName={orgName} />}
         </div>
-        {metrics && <OrgMetrics m={metrics} visits={visits} base={`/org/${slug}`} thunder={false} now={now} />}
-        {!parts.length && <p className="text-sm text-zinc-500">Nothing to show here yet.</p>}
-        <div className="grid gap-3 sm:grid-cols-2">
-          {parts.map((p) => (
-            <Link key={p.title} href={p.href} className={`${card} block p-4 hover:ring-zinc-400/40`}>
-              <h2 className="font-semibold">{p.title}</h2>
-              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">{p.about}</p>
-            </Link>
-          ))}
-        </div>
+        <MembersCards cards={cards} open={null} heading={null} />
       </main>
     </>
   );

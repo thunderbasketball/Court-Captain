@@ -61,6 +61,13 @@ export function Avatar({
   );
 }
 
+// A page's frame: the page itself (<main>), or inside a Home card (embedded) just its contents, with no page width or
+// padding (the card gives them).
+export function PageFrame({ embedded, className, children }: { embedded: boolean; className: string; children: ReactNode }) {
+  if (embedded) return <div className={/space-y-\d/.exec(className)?.[0] ?? ""}>{children}</div>;
+  return <main className={className}>{children}</main>;
+}
+
 export function PageTitle({ title, subtitle }: { title: string; subtitle?: ReactNode }) {
   return (
     <div className="mb-5">
@@ -87,22 +94,35 @@ export function Notice({ tone, children }: { tone: "green" | "red"; children: Re
   return <p className={`mb-5 rounded-xl px-4 py-3 text-sm ring-1 ring-inset ${tones[tone]}`}>{children}</p>;
 }
 
-// A collapsible card with a title, a count, and a list inside.
+// Boys cards are tinted blue, Girls pink and Coed green everywhere (like the team badges); background and ring classes.
+export const genderTint = (gender: string | null | undefined) =>
+  gender === "Boys"
+    ? "bg-blue-50 ring-blue-200 dark:bg-blue-500/10 dark:ring-blue-400/25"
+    : gender === "Girls"
+      ? "bg-pink-50 ring-pink-200 dark:bg-pink-500/10 dark:ring-pink-400/25"
+      : gender === "Coed"
+        ? "bg-emerald-50 ring-emerald-200 dark:bg-emerald-500/10 dark:ring-emerald-400/25"
+        : null;
+
+// A collapsible card with a title, a count, and a list inside. `gender` tints it (Boys blue, Girls pink).
 export function GroupCard({
   title,
   count,
   children,
   defaultOpen = true,
   action,
+  gender,
 }: {
   title: ReactNode;
   count: number;
   children: ReactNode;
   defaultOpen?: boolean;
   action?: ReactNode; // a button on the title line, left of the count (outside the summary, so tapping it doesn't toggle)
+  gender?: string | null;
 }) {
+  const tint = genderTint(gender);
   const box = (
-    <details className={`${card} group overflow-hidden`} open={defaultOpen}>
+    <details className={`${tint ? `rounded-2xl shadow-sm ring-1 ${tint}` : card} group overflow-hidden`} open={defaultOpen}>
       <summary className="flex cursor-pointer select-none items-center justify-between gap-3 px-4 py-3">
         <span className={`font-semibold ${action ? "min-w-0 pr-32" : ""}`}>{title}</span>
         <span className="flex items-center gap-2">

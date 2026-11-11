@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { NO_FEATURE } from "./features";
 import { createTestDb } from "./testing/db";
 import { addOwnPractice, canChangeOwnPractices, cleanLocation, ownPracticeLocations, removeOwnPractice, upcomingOwnPractices } from "./team-practices";
 
@@ -39,6 +40,7 @@ describe("a team's own practices", () => {
     await db.pool.query("delete from org_role_types where org = 'east-ridge'");
     await db.pool.query("delete from organizations where slug = 'east-ridge'");
     await db.pool.query("insert into organizations (slug, name, short_name, kind) values ('east-ridge', 'East Ridge', 'ER', 'Organization')");
+    await db.pool.query("insert into org_features (org, feature, source) values ('east-ridge', 'court-facility', 'setup') on conflict do nothing");
     er = (
       await db.pool.query<{ id: string }>(
         "insert into org_teams (org, name, gender, grade_low, grade, level, created_by) values ('east-ridge', '5B Ace', 'Boys', 5, 5, 'REC', 'x') returning id::text",
@@ -61,6 +63,12 @@ describe("a team's own practices", () => {
     expect(await canChangeOwnPractices(db.pool, person("5550004"), E)).toBe(true);
     expect(await canChangeOwnPractices(db.pool, coach, E)).toBe(false);
     expect(await canChangeOwnPractices(db.pool, person("5550004"), { org: "thunder", teamId: er })).toBe(false);
+    // Part of CourtFacility: without it, nothing is listed, added or removed.
+    expect(await addOwnPractice(deps(), person("5550004"), E, mon)).toMatchObject({ ok: true });
+    await db.pool.query("delete from org_features where org = 'east-ridge' and feature = 'court-facility'");
+    expect(await canChangeOwnPractices(db.pool, person("5550004"), E)).toBe(false);
+    expect(await upcomingOwnPractices(deps(), E)).toEqual([]);
+    expect(await addOwnPractice(deps(), person("5550004"), E, { ...mon, date: "2026-11-17" })).toMatchObject({ ok: false, message: NO_FEATURE });
   });
 
   it("one practice, any length, no limits; times are Eastern", async () => {

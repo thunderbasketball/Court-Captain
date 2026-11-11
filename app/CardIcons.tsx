@@ -123,6 +123,15 @@ export function AddPlayersIcon() {
   );
 }
 
+// A tray with an arrow in: Import (paste or a CSV file).
+export function ImportIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="size-4">
+      <path d="M12 3v11M7.5 9.5 12 14l4.5-4.5M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15" />
+    </svg>
+  );
+}
+
 // The filled blue round icon button used for a card's "add" action.
 export const addIconBtn =
   "flex size-8 shrink-0 items-center justify-center rounded-full bg-thunder-blue text-white shadow-sm hover:bg-thunder-blue-dark";

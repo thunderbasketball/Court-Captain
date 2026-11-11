@@ -1,6 +1,9 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState, useSyncExternalStore, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+
+const noop = () => () => {};
 
 export type PageMenu = {
   key: string;
@@ -13,15 +16,29 @@ export type PageMenu = {
 // A page's title with round menu buttons on its right (e.g. 📣 Text / Chat / Alert coaches, + Add / Import teams), sized
 // for a phone. Tapping a button opens its choices right under the title (no pop-up); tapping a choice opens it there
 // too (tap again, or the button, to close).
-export default function PageMenus({ title, menus, extra }: { title: ReactNode; menus: PageMenu[]; extra?: ReactNode }) {
+// `slot`: shown inside a Home card, the buttons sit on that card's title line instead (the element with this id, which
+// the card provides), so they show while it's closed; tapping one opens the card too.
+export default function PageMenus({
+  title,
+  menus,
+  extra,
+  slot,
+}: {
+  title: ReactNode;
+  menus: PageMenu[];
+  extra?: ReactNode;
+  slot?: string;
+}) {
   const [menu, setMenu] = useState<string | null>(null);
+  // The card's title-line spot (found after the page shows; none on the server).
+  const target = useSyncExternalStore(
+    noop,
+    () => (slot ? document.getElementById(slot) : null),
+    () => null,
+  );
   const [item, setItem] = useState<string | null>(null);
   const open = menus.find((m) => m.key === menu);
-  const panel = open?.items.find((i) => i.key === item);
-  return (
-    <div>
-      <div className="flex items-start justify-between gap-3">
-        {title}
+  const buttons = (
         <div className="flex shrink-0 items-center gap-2">
           {extra}
           {menus.map((m) => (
@@ -31,7 +48,10 @@ export default function PageMenus({ title, menus, extra }: { title: ReactNode; m
               aria-label={m.label}
               title={m.label}
               aria-expanded={menu === m.key}
-              onClick={() => {
+              onClick={(e) => {
+                // On a Home card's title line: open the card too.
+                const d = target && (e.currentTarget.closest(".relative")?.querySelector("details") as HTMLDetailsElement | null);
+                if (d) d.open = true;
                 setMenu(menu === m.key ? null : m.key);
                 setItem(null);
               }}
@@ -41,6 +61,13 @@ export default function PageMenus({ title, menus, extra }: { title: ReactNode; m
             </button>
           ))}
         </div>
+  );
+  const panel = open?.items.find((i) => i.key === item);
+  return (
+    <div>
+      <div className="flex items-start justify-between gap-3">
+        {title}
+        {slot ? (target ? createPortal(buttons, target) : null) : buttons}
       </div>
       {open && (
         <div className="-mt-2 mb-4 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-zinc-950/5 dark:bg-zinc-900 dark:ring-white/10">

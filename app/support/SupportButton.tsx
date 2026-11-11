@@ -39,7 +39,7 @@ export default function SupportButton({
   );
 }
 
-function SupportPanel({
+export function SupportPanel({
   org,
   articles,
   mine,

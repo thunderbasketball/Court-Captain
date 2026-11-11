@@ -1,20 +1,10 @@
 import { Suspense } from "react";
-import { redirect } from "next/navigation";
-import { currentUser, devBypass } from "@/lib/auth/server";
-import { memberLinks } from "./MembersNav";
+import { MembersContent } from "./content";
 
-export default function MembersPage() {
+export default function Page({ searchParams }: PageProps<"/org/thunder/members">) {
   return (
     <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
-      <FirstPart />
+      <MembersContent searchParams={searchParams} />
     </Suspense>
   );
-}
-
-// Members opens the first part this person can see.
-async function FirstPart() {
-  const user = await currentUser();
-  if (!user) redirect(devBypass ? "/dev-login" : "/login");
-  redirect(memberLinks(user)[0]?.href ?? "/");
-  return null;
 }

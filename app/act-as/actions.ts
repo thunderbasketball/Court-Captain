@@ -42,7 +42,7 @@ export async function stopActing() {
     back === "platform"
       ? "/platform"
       : back?.startsWith("org:") && isOrgSlug(back.slice(4))
-        ? `/org/${back.slice(4)}/members`
+        ? `/org/${back.slice(4)}/members?open=staff`
         : back?.startsWith("scenic:")
           ? "/org/scenic-city/users"
           : "/org/thunder/members/staff",

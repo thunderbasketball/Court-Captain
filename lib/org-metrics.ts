@@ -7,7 +7,8 @@ import { orgFeatures } from "./features";
 import { ordinal } from "./grades";
 import { isOrgAdmin } from "./org-admin";
 import type { Queryable } from "./sql";
-import { TZ, weekOf } from "./time";
+import { TZ, easternDate, weekOf } from "./time";
+import { feeTrend, type FeeDay, type FeeRow } from "./fee-trend";
 
 type Deps = { pool: Pick<Queryable, "query">; now: () => Date };
 
@@ -19,18 +20,32 @@ export type OrgMetrics = {
     thisWeek: number; // the last 7 days
     daily: { day: string; n: number }[]; // the last TREND_DAYS days, oldest first ("2026-11-03")
     syncedAt: Date | null;
+    fees: FeeDay[]; // fees paid and owed to date, each day from the first payment to today
+    span: { day: string; n: number }[]; // registrations each day, from the first registration to the last
   } | null;
   teams: { total: number; rec: number; comp: number; boys: number; girls: number } | null; // with Team Management
-  notOnTeam: { total: number; groups: { label: string; n: number }[] } | null; // "5th Boys"
+  notOnTeam: {
+    total: number;
+    groups: { label: string; n: number }[]; // "5th Boys"
+    players: { id: string; name: string; gender: string; grade: string }[]; // by grade, gender, last name
+  } | null;
   // by name. noCell: a Head Coach named without a cell yet; noEmail: a Head Coach without an email.
   missing: { id: string; name: string; noCoach: boolean; noCell: boolean; noEmail: boolean; noPlayers: boolean }[];
-  uniforms: { players: number; ready: number; missing: number } | null;
+  uniforms: {
+    players: number;
+    ready: number;
+    missing: number;
+    // Each player still needing a number or size: Boys then Girls, by grade, team, last name.
+    list: { gender: string; grade: number; team: string; teamId: string; name: string; noNumber: boolean; noSize: boolean }[];
+  } | null;
   practices: {
     thisWeek: { booked: number; open: number };
     nextWeek: { booked: number; open: number };
     blackoutDays: number;
   } | null;
   coaches: { id: string; name: string; teams: string[]; lastLogin: Date | null }[]; // never first, then longest ago
+  // Each team's use of the app: its staff's page views in the last 30 days and their last visit (least used first).
+  teamUse: { id: string; name: string; views: number; lastVisit: Date | null }[];
   waiting: { requests: number; newChats: number; workingChats: number };
 };
 
@@ -44,7 +59,7 @@ export async function orgMetrics(deps: Deps, viewer: SessionUser, org: string): 
   const has = await orgFeatures(q, org);
   const thunder = org === "thunder";
   const teamsOn = has.has("team-building");
-  const [registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting] = await Promise.all([
+  const [registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse] = await Promise.all([
     thunder && has.has("player-registration") ? registrationMetrics(q, now) : null,
     teamsOn ? teamCounts(q, org) : null,
     thunder && has.has("player-registration") ? notOnTeamMetrics(q) : null,
@@ -53,12 +68,13 @@ export async function orgMetrics(deps: Deps, viewer: SessionUser, org: string): 
     thunder && has.has("practice") ? practiceMetrics(q, now) : null,
     teamsOn ? coachLogins(q, org) : [],
     waitingOn(q, org),
+    teamsOn ? teamUsage(q, org, now) : [],
   ]);
-  return { registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting };
+  return { registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse };
 }
 
 async function registrationMetrics(q: Pick<Queryable, "query">, now: Date): Promise<OrgMetrics["registrations"]> {
-  const [total, thisWeek, days, sync] = await Promise.all([
+  const [total, thisWeek, days, sync, fees, span] = await Promise.all([
     count(q, "select count(*)::int as n from registrations"),
     count(q, "select count(*)::int as n from registrations where registered_at > $1::timestamptz - interval '7 days'", [now]),
     // Each of the last 30 days in Eastern time, including days with none.
@@ -70,8 +86,29 @@ async function registrationMetrics(q: Pick<Queryable, "query">, now: Date): Prom
       [now, TZ, TREND_DAYS],
     ),
     q.query<{ at: Date | null }>("select max(checked_at) as at from sync_status where ok"),
+    q.query<FeeRow>(
+      `select to_char((registered_at at time zone $1)::date, 'YYYY-MM-DD') as "registeredOn",
+              coalesce(amount_paid, 0)::float8 as paid, coalesce(amount_remaining, 0)::float8 as remaining,
+              array[raw->>'1st Payment', raw->>'2nd Payment', raw->>'3rd Payment'] as installments
+         from registrations where registered_at is not null`,
+      [TZ],
+    ),
+    // Each day from the first registration to the last (Eastern), including days with none.
+    q.query<{ day: string; n: number }>(
+      `with r as (select (registered_at at time zone $1)::date as d from registrations where registered_at is not null)
+       select to_char(g, 'YYYY-MM-DD') as day, (select count(*)::int from r where r.d = g::date) as n
+       from generate_series((select min(d) from r), (select max(d) from r), interval '1 day') g order by g`,
+      [TZ],
+    ),
   ]);
-  return { total, thisWeek, daily: days.rows, syncedAt: sync.rows[0]?.at ?? null };
+  return {
+    total,
+    thisWeek,
+    daily: days.rows,
+    syncedAt: sync.rows[0]?.at ?? null,
+    fees: feeTrend(fees.rows, easternDate(now)),
+    span: span.rows,
+  };
 }
 
 async function teamCounts(q: Pick<Queryable, "query">, org: string): Promise<OrgMetrics["teams"]> {
@@ -92,7 +129,12 @@ async function notOnTeamMetrics(q: Pick<Queryable, "query">): Promise<OrgMetrics
      group by r.grade, r.gender, r.grade_sort order by r.grade_sort, r.gender`,
   );
   const groups = r.rows.map((g) => ({ label: `${ordinal(g.grade)} ${g.gender}`, n: g.n }));
-  return { total: groups.reduce((a, g) => a + g.n, 0), groups };
+  const players = await q.query<{ id: string; name: string; gender: string; grade: string }>(
+    `select r.registrant_id as id, r.first_name || ' ' || r.last_name as name, r.gender, r.grade from registrations r
+     where not exists (select 1 from team_players p where p.registrant_id = r.registrant_id)
+     order by r.grade_sort, r.gender, lower(r.last_name), lower(r.first_name)`,
+  );
+  return { total: groups.reduce((a, g) => a + g.n, 0), groups, players: players.rows };
 }
 
 async function missingTeams(q: Pick<Queryable, "query">, org: string): Promise<OrgMetrics["missing"]> {
@@ -126,11 +168,22 @@ async function uniformMetrics(q: Pick<Queryable, "query">): Promise<OrgMetrics["
      left join registrations g on g.registrant_id = p.registrant_id`,
   );
   const { players, missing } = r.rows[0];
-  return { players, missing, ready: players - missing };
+  const list = await q.query<NonNullable<OrgMetrics["uniforms"]>["list"][number]>(
+    `select t.gender, t.grade_sort as grade, t.name as team, t.id::text as "teamId", g.first_name || ' ' || g.last_name as name,
+            u.number is null as "noNumber",
+            ((coalesce(g.uniform_needed, false) or u.needs_uniform_at is not null) and u.size is null) as "noSize"
+     from team_players p
+     join teams t on t.id = p.team_id
+     join registrations g on g.registrant_id = p.registrant_id
+     left join team_uniforms u on u.team_id = p.team_id and u.registrant_id = p.registrant_id
+     where u.number is null or ((coalesce(g.uniform_needed, false) or u.needs_uniform_at is not null) and u.size is null)
+     order by t.gender, t.grade_sort, lower(t.name), lower(g.last_name), lower(g.first_name)`,
+  );
+  return { players, missing, ready: players - missing, list: list.rows };
 }
 
 // Practice slots booked and open this week and next (blacked-out slots aren't open), and blackout days in the next 30.
-async function practiceMetrics(q: Pick<Queryable, "query">, now: Date): Promise<OrgMetrics["practices"]> {
+export async function practiceMetrics(q: Pick<Queryable, "query">, now: Date): Promise<OrgMetrics["practices"]> {
   const week = (start: Date, end: Date) =>
     q
       .query<{ booked: number; open: number }>(
@@ -190,4 +243,24 @@ async function waitingOn(q: Pick<Queryable, "query">, org: string): Promise<OrgM
   ]);
   const chat = (s: string) => chats.rows.find((c) => c.status === s)?.n ?? 0;
   return { requests, newChats: chat("new"), workingChats: chat("working") };
+}
+
+// Each team's use of the app: page views by its staff (Thunder: Head and Assistant Coaches, Managers, Team Parents;
+// another organization: its coaches) in the last 30 days, and their latest visit. Least used first.
+async function teamUsage(q: Pick<Queryable, "query">, org: string, now: Date): Promise<OrgMetrics["teamUse"]> {
+  const staff =
+    org === "thunder"
+      ? "select t.id, t.name, s.coach_id from teams t left join team_staff s on s.team_id = t.id"
+      : "select t.id, t.name, c.coach_id from org_teams t left join org_team_coaches c on c.team_id = t.id where t.org = $2";
+  const r = await q.query<OrgMetrics["teamUse"][number]>(
+    `select x.id::text, x.name,
+            coalesce(sum(v.views) filter (where v.hour >= $1::timestamptz - interval '30 days'), 0)::int as views,
+            max(v.hour) as "lastVisit"
+     from (${staff}) x
+     left join site_visits v on v.coach_id = x.coach_id and v.org = $2
+     group by x.id, x.name
+     order by 3, max(v.hour) asc nulls first, lower(x.name)`,
+    [now, org],
+  );
+  return r.rows;
 }

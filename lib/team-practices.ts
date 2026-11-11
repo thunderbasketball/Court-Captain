@@ -3,11 +3,14 @@
 // (same weekday and time) until a date the coach picks; those weeks share a series so they can be removed together.
 // Thunder's teams (teams) and every organization's teams (org_teams). Who adds or removes them: Thunder's Directors of
 // Practices or Teams and the team's Head Coach, Assistant Coaches and Manager; another organization's Admins and
-// Directors of Teams and the team's coaches. Checked here, on the server.
+// Directors of Teams and the team's coaches. Part of CourtFacility: an organization without it has none (nothing
+// listed, nothing added or removed). Checked here, on the server.
 import type { Pool, PoolClient } from "pg";
 import { randomUUID } from "node:crypto";
 import type { SessionUser } from "./auth/service";
+import { NO_FEATURE, hasFeature } from "./features";
 import { hasArea, orgHasArea } from "./org-admin";
+import type { OrgSlug } from "./orgs";
 import { withTx } from "./sql";
 import { localParts, zonedTime } from "./time";
 
@@ -41,8 +44,11 @@ function validRef(ref: TeamRef): boolean {
 }
 
 // May this person add and remove the team's own practices?
+// Own gym practices come with CourtFacility.
+export const ownPracticesOn = (q: Q, org: string) => hasFeature(q, org as OrgSlug, "practice");
+
 export async function canChangeOwnPractices(q: Q, viewer: SessionUser, ref: TeamRef): Promise<boolean> {
-  if (!validRef(ref)) return false;
+  if (!validRef(ref) || !(await ownPracticesOn(q, ref.org))) return false;
   if (ref.org === "thunder") {
     const t = await q.query("select 1 from teams where id = $1", [ref.teamId]);
     if (!t.rows[0]) return false;
@@ -64,7 +70,7 @@ export async function canChangeOwnPractices(q: Q, viewer: SessionUser, ref: Team
 // The team's own practices that haven't ended yet, soonest first. The page shows them only after checking the person
 // may see the team.
 export async function upcomingOwnPractices(deps: Deps, ref: TeamRef, limit = 60): Promise<OwnPractice[]> {
-  if (!validRef(ref)) return [];
+  if (!validRef(ref) || !(await ownPracticesOn(deps.pool, ref.org))) return [];
   const r = await deps.pool.query<OwnPractice>(
     `select id::text, starts_at as "startsAt", minutes, location, series::text, added_by as "addedBy"
        from team_practices
@@ -152,6 +158,7 @@ export async function addOwnPractice(
   }
   const series = starts.length > 1 ? randomUUID() : null;
 
+  if (!(await ownPracticesOn(deps.pool, ref.org))) return { ok: false, message: NO_FEATURE };
   return withTx(deps.pool, async (q) => {
     if (!(await canChangeOwnPractices(q, viewer, ref)))
       return { ok: false as const, message: "Only the team's coaches and the Directors can add its practices." };
@@ -179,6 +186,7 @@ export async function removeOwnPractice(
 ): Promise<Result<{ removed: number }>> {
   if (!ID.test(String(id ?? ""))) return { ok: false, message: "That practice wasn't found." };
   if (!validRef(ref)) return { ok: false, message: "That practice wasn't found." };
+  if (!(await ownPracticesOn(deps.pool, ref.org))) return { ok: false, message: NO_FEATURE };
   return withTx(deps.pool, async (q) => {
     if (!(await canChangeOwnPractices(q, viewer, ref)))
       return { ok: false as const, message: "Only the team's coaches and the Directors can remove its practices." };

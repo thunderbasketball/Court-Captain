@@ -106,18 +106,28 @@ describe("Home metrics", () => {
     expect(m.registrations!.daily.at(-2)).toEqual({ day: "2026-11-02", n: 2 }); // Eastern dates
     expect(m.registrations!.daily.find((d) => d.day === "2026-10-20")!.n).toBe(1);
     expect(m.teams).toEqual({ total: 2, rec: 1, comp: 1, boys: 1, girls: 1 });
-    expect(m.notOnTeam).toEqual({
+    expect(m.notOnTeam).toMatchObject({
       total: 2,
       groups: [
         { label: "K Girls", n: 1 },
         { label: "3rd Girls", n: 1 },
       ],
     });
+    // The players themselves (To Do → Not on a team), by grade.
+    expect(m.notOnTeam!.players.map((p) => [p.grade, p.gender])).toEqual([
+      ["K", "Girls"],
+      ["3", "Girls"],
+    ]);
     expect(m.missing).toEqual([
       { id: t2, name: "3G TBD", noCoach: true, noCell: false, noEmail: false, noPlayers: true },
       { id: expect.any(String), name: "5B Coach", noCoach: false, noCell: false, noEmail: true, noPlayers: false }, // Head Coach has no email
     ]);
-    expect(m.uniforms).toEqual({ players: 2, ready: 1, missing: 1 }); // r1 ordered a uniform and has no size
+    expect(m.uniforms).toMatchObject({ players: 2, ready: 1, missing: 1 }); // r1 ordered a uniform and has no size
+    expect(m.uniforms!.list).toHaveLength(1); // To Do → Uniform order lists that player
+    expect(m.uniforms!.list[0]).toMatchObject({ noSize: true });
+    // Every team's use of the app, least used first; the registrations span runs first day to last.
+    expect(m.teamUse).toHaveLength(2);
+    expect(m.registrations!.span.reduce((a, d) => a + d.n, 0)).toBe(m.registrations!.total);
     expect(m.practices).toEqual({ thisWeek: { booked: 1, open: 1 }, nextWeek: { booked: 0, open: 1 }, blackoutDays: 1 });
     expect(m.coaches.map((c) => [c.name, c.teams, c.lastLogin?.toISOString() ?? null])).toEqual([
       ["Cy Coach", ["5B Coach"], null],

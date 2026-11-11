@@ -23,7 +23,12 @@ export async function recordVisit(deps: Deps, viewer: SessionUser, org: string) 
 }
 
 // `start` is Eastern wall-clock time ("2026-11-03T14:00"); future buckets count 0.
-export type VisitStats = { views: number; people: number; buckets: { start: string; n: number }[] };
+// coach: of each bucket's views, those by the organization's coaches (its teams' Head and Assistant Coaches).
+// The organization's coaches: Thunder's teams' Head and Assistant Coaches, or another organization's team coaches.
+const COACHES = `select s.coach_id from team_staff s where $5 = 'thunder' and s.role in ('HeadCoach', 'AsstCoach')
+                 union select c.coach_id from org_team_coaches c join org_teams t on t.id = c.team_id where t.org = $5`;
+
+export type VisitStats = { views: number; people: number; buckets: { start: string; n: number; coach: number }[] };
 
 // Owners and Admins only (null otherwise): page views and different people in each range, with the views per bucket.
 export async function visitStats(deps: Deps, viewer: SessionUser, org: string): Promise<Record<VisitRange, VisitStats> | null> {
@@ -33,10 +38,12 @@ export async function visitStats(deps: Deps, viewer: SessionUser, org: string): 
     VISIT_RANGES.map(async ({ period, step }) => {
       // p.s: the range's first moment, Eastern wall-clock time.
       const [buckets, totals] = await Promise.all([
-        deps.pool.query<{ start: string; n: number }>(
+        deps.pool.query<{ start: string; n: number; coach: number }>(
           `with p as (select date_trunc($2, $1::timestamptz at time zone $4) as s),
-                b as (select g from p, generate_series(p.s, p.s + ('1 ' || $2)::interval - ('1 ' || $3)::interval, ('1 ' || $3)::interval) g)
-           select to_char(b.g, 'YYYY-MM-DD"T"HH24:MI') as start, coalesce(sum(v.views), 0)::int as n
+                b as (select g from p, generate_series(p.s, p.s + ('1 ' || $2)::interval - ('1 ' || $3)::interval, ('1 ' || $3)::interval) g),
+                c as (${COACHES})
+           select to_char(b.g, 'YYYY-MM-DD"T"HH24:MI') as start, coalesce(sum(v.views), 0)::int as n,
+                  coalesce(sum(v.views) filter (where v.coach_id in (select coach_id from c)), 0)::int as coach
            from b left join site_visits v on v.org = $5 and date_trunc($3, v.hour at time zone $4) = b.g
              and v.hour >= (select s from p) at time zone $4
            group by b.g order by b.g`,

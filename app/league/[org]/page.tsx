@@ -6,10 +6,11 @@ import { db } from "@/lib/db";
 import { hasFeature } from "@/lib/features";
 import { orgMetadata } from "@/lib/org-metadata";
 import { orgInfo } from "@/lib/org-registry";
-import { publicLeague, publicLeagues, type PublicDay } from "@/lib/public-league";
+import { publicLeague, publicLeagues } from "@/lib/public-league";
 import { REC_LIMITED, shortDate } from "@/lib/program-options";
-import { easternDate, timeLabel } from "@/lib/time";
+import { easternDate } from "@/lib/time";
 import OrgLogo from "../../OrgLogo";
+import { ProgramSchedule, ProgramTeams } from "../../PublicProgramViews";
 import RegisterChoice from "../../login/[org]/RegisterChoice";
 import { card } from "../../ui";
 
@@ -26,9 +27,6 @@ export default function LeaguePage({ params, searchParams }: PageProps<"/league/
     </main>
   );
 }
-
-const weekday = (iso: string) =>
-  new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 
 const tabCls = (on: boolean) =>
   `shrink-0 border-b-2 px-3 py-2 text-sm font-semibold ${
@@ -148,79 +146,12 @@ async function League({
             </div>
           )}
 
-          {tab === "teams" &&
-            (league.groups.length ? (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {league.groups.map((g) => (
-                  <section key={g.label} className={`${card} overflow-hidden`}>
-                    <h3 className="border-b border-zinc-100 px-4 py-2.5 text-sm font-semibold dark:border-white/5">
-                      {g.label} <span className="font-normal text-zinc-500">· {g.teams.length}</span>
-                    </h3>
-                    <ul className="divide-y divide-zinc-100 text-sm dark:divide-white/5">
-                      {g.teams.map((t) => (
-                        <li key={t.name} className="px-4 py-2">
-                          <span className="font-medium">{t.name}</span> <span className="text-zinc-500">({t.tag})</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                ))}
-              </div>
-            ) : (
-              <p className={`${card} p-5 text-sm text-zinc-600 dark:text-zinc-300`}>No teams registered yet.</p>
-            ))}
+          {tab === "teams" && <ProgramTeams org={org} groups={league.groups} wide />}
 
-          {tab === "schedule" &&
-            (league.schedule === null ? (
-              <p className={`${card} p-5 text-sm text-zinc-600 dark:text-zinc-300`}>
-                The schedule isn&apos;t posted yet. Check back soon.
-              </p>
-            ) : league.schedule.length ? (
-              <Schedule days={league.schedule} today={today} />
-            ) : (
-              <p className={`${card} p-5 text-sm text-zinc-600 dark:text-zinc-300`}>No games scheduled yet.</p>
-            ))}
+          {tab === "schedule" && <ProgramSchedule days={league.schedule} today={today} />}
         </>
       )}
 
     </>
-  );
-}
-
-// Game days, the next one open (past ones closed), games by time then gym and court.
-function Schedule({ days, today }: { days: PublicDay[]; today: string }) {
-  const next = days.find((d) => d.date >= today)?.date ?? days.at(-1)?.date;
-  return (
-    <div className="space-y-3">
-      {days.map((d) => (
-        <details key={d.date} className={`${card} group overflow-hidden`} open={d.date === next}>
-          <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 font-semibold [&::-webkit-details-marker]:hidden">
-            <span>
-              {weekday(d.date)} <span className="font-normal text-zinc-500">· {d.games.length} games</span>
-            </span>
-            <span aria-hidden className="text-xs text-zinc-400 transition group-open:rotate-90">
-              ▶
-            </span>
-          </summary>
-          <ul className="divide-y divide-zinc-100 border-t border-zinc-100 text-sm dark:divide-white/5 dark:border-white/5">
-            {d.games.map((g, i) => (
-              <li key={i} className="flex gap-3 px-4 py-2.5">
-                <span className="w-16 shrink-0 font-medium tabular-nums">{g.starts ? timeLabel(g.starts) : "TBA"}</span>
-                <span className="min-w-0">
-                  <span className="block">
-                    <span className="font-medium">{g.away}</span> <span className="text-zinc-500">at</span>{" "}
-                    <span className="font-medium">{g.home}</span>
-                  </span>
-                  <span className="block text-xs text-zinc-500">
-                    {g.group}
-                    {g.gym && ` · ${g.gym}${g.court ? `, ${g.court}` : ""}`}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </details>
-      ))}
-    </div>
   );
 }

@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import type { SessionUser } from "@/lib/auth/service";
@@ -11,7 +10,19 @@ import { OrgSearchButton } from "../../OrgSearch";
 import { scheduleAnalysis } from "@/lib/scenic-analysis";
 import { ScheduleAnalysis } from "./ScheduleAnalysis";
 import AppHeader from "../../AppHeader";
-import { card } from "../../ui";
+import MembersCards from "../../MembersCards";
+import SubCard from "../../SubCard";
+import SupportCard from "../../SupportCard";
+import { membersLinks } from "./ScenicNav";
+import { ScenicTeamsContent } from "./teams/content";
+import { ProgramsContent } from "./programs/content";
+import { SchedulerContent } from "./scheduler/content";
+import { GameDaysContent } from "./game-days/content";
+import { CourtsContent } from "./courts/content";
+import { PartnersContent } from "./partners/content";
+import { ScenicUsersContent } from "./users/content";
+import { ScenicCoachesContent } from "./members/coaches/content";
+import { HostingSitesMembersContent } from "./members/hosting-sites/content";
 
 export default function ScenicPage() {
   return (
@@ -93,6 +104,75 @@ async function Scenic() {
     ? (await db.query<{ n: number }>("select count(*)::int as n from access_requests where org = 'scenic-city'")).rows[0].n
     : 0;
 
+  // Home as a stack of cards, one per part this person can open (the same as every organization's): Home (the
+  // schedule analysis) first, then Teams, Programs, Scheduler, Facilities (Game days, Courts, Hosting Sites), Members
+  // (Staff, Hosting Sites, Coaches), Officials and Support. Each loads in the background and opens on its own.
+  const shown = new Set(parts.map((p) => p.title));
+  const facilities = shown.has("Game days") || shown.has("Hosting Sites");
+  const scheduler = director && areas.includes("scheduling") && features.has("programs");
+  const members = director ? await membersLinks(user) : [];
+  const cards = [
+    ...(director && features.has("programs")
+      ? [{ key: "home", title: "Home", body: <Analysis user={user} /> }]
+      : []),
+    ...(shown.has("Teams") ? [{ key: "teams", title: "Teams", body: <ScenicTeamsContent embedded /> }] : []),
+    ...(shown.has("Programs") ? [{ key: "programs", title: "Programs", body: <ProgramsContent embedded /> }] : []),
+    ...(scheduler ? [{ key: "scheduler", title: "Scheduler", body: <SchedulerContent embedded /> }] : []),
+    ...(facilities
+      ? [
+          {
+            key: "facilities",
+            title: "Facilities",
+            body: (
+              <div className="space-y-2">
+                <SubCard title="Game days">
+                  <GameDaysContent embedded />
+                </SubCard>
+                <SubCard title="Courts">
+                  <CourtsContent embedded />
+                </SubCard>
+                <SubCard title="Hosting Sites">
+                  <PartnersContent embedded />
+                </SubCard>
+              </div>
+            ),
+          },
+        ]
+      : []),
+    ...(members.length
+      ? [
+          {
+            key: "members",
+            title: "Members",
+            alert: requests > 0,
+            body: (
+              <div className="space-y-2">
+                {members.map((l) =>
+                  l.key === "staff" ? (
+                    <SubCard key="staff" title="Staff" count={requests ? `${requests} waiting` : undefined} alert={requests > 0}>
+                      <ScenicUsersContent embedded />
+                    </SubCard>
+                  ) : l.key === "hosting-sites" ? (
+                    <SubCard key="sites" title="Hosting Sites">
+                      <HostingSitesMembersContent embedded />
+                    </SubCard>
+                  ) : (
+                    <SubCard key="coaches" title="Coaches">
+                      <ScenicCoachesContent embedded />
+                    </SubCard>
+                  ),
+                )}
+              </div>
+            ),
+          },
+        ]
+      : []),
+    ...(shown.has("Officials")
+      ? [{ key: "officials", title: "Officials", count: "coming soon", body: <p className="text-sm text-zinc-500">Referees and scorekeepers for your games. Coming soon.</p> }]
+      : []),
+    { key: "support", title: "Support", body: <SupportCard user={user} org="scenic-city" /> },
+  ];
+
   return (
     <>
       <AppHeader user={user} context={scenic.key} tab="scenic-home" />
@@ -103,45 +183,7 @@ async function Scenic() {
           </p>
           {director && <OrgSearchButton org="scenic-city" orgName="Scenic City" />}
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {parts.map((p) => {
-            const body = (
-              <>
-                <div className="flex items-center justify-between gap-2">
-                  <h2 className="font-semibold">{p.title}</h2>
-                  {p.href ? (
-                    p.title === "Members" &&
-                    requests > 0 && (
-                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">
-                        {requests} waiting
-                      </span>
-                    )
-                  ) : (
-                    <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                      Coming soon
-                    </span>
-                  )}
-                </div>
-                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">{p.about}</p>
-              </>
-            );
-            return p.href ? (
-              <Link key={p.title} href={p.href} className={`${card} block p-4 hover:ring-scenic-navy/40`}>
-                {body}
-              </Link>
-            ) : (
-              <div key={p.title} className={`${card} p-4`}>
-                {body}
-              </div>
-            );
-          })}
-        </div>
-        {director && features.has("programs") && (
-          // Loads after the page shows, so Home stays fast.
-          <Suspense fallback={<p className="mt-6 text-sm text-zinc-500">Loading schedule analysis…</p>}>
-            <Analysis user={user} />
-          </Suspense>
-        )}
+        <MembersCards cards={cards} open={null} heading={null} />
       </main>
     </>
   );
@@ -150,5 +192,5 @@ async function Scenic() {
 // Schedule analysis: Admins and Directors of Scheduling (null for anyone else, checked in the lib).
 async function Analysis({ user }: { user: SessionUser }) {
   const days = await scheduleAnalysis({ pool: db, now: () => new Date() }, user);
-  return days && <ScheduleAnalysis days={days} />;
+  return days ? <ScheduleAnalysis days={days} /> : <p className="text-sm text-zinc-500">No upcoming Game Days.</p>;
 }
