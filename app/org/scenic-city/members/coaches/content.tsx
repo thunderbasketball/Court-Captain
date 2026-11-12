@@ -8,6 +8,9 @@ import { programCoaches } from "@/lib/scenic-members";
 import AppHeader from "../../../../AppHeader";
 import { MembersNav } from "../../ScenicNav";
 import { Chip, EmailLink, GroupCard, PageTitle, PersonRow, PhoneLink } from "../../../../ui";
+import { ChatToggle } from "../../../../InlineToggle";
+import { ChatIcon, iconBtn } from "../../../../CardIcons";
+import { orgKey } from "@/lib/chat";
 
 import { PageFrame } from "../../../../ui";
 
@@ -61,7 +64,16 @@ export async function ScenicCoachesContent({
           <p className="text-sm text-zinc-500">No active programs.</p>
         ) : (
           <div className="space-y-3">
-            {/* The program's coaches, each one line with their teams; opened to cell and email. */}
+            {/* The program's coaches chat (its coaches + Directors), opened right here. */}
+            {data.coaches.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-zinc-500">Chat with all of them</span>
+                <ChatToggle chatKey={orgKey("scenic-city", `program-${data.current}`)} label="Chat with this program's coaches" className={iconBtn}>
+                  <ChatIcon />
+                </ChatToggle>
+              </div>
+            )}
+            {/* The program's coaches, each one line with their teams; opened to cell and email, and a chat with them. */}
             <GroupCard
               title={`${data.programs.find((p) => p.id === data.current)?.name ?? "Program"} coaches`}
               count={data.coaches.length}
@@ -93,6 +105,14 @@ export async function ScenicCoachesContent({
                       <PhoneLink cell={c.cell} label={formatCell(c.cell)} />
                     </p>
                     <p className="truncate">{c.email ? <EmailLink email={c.email} /> : "No email"}</p>
+                    {c.id && (
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <span className="text-xs text-zinc-500">Chat with {first}</span>
+                        <ChatToggle chatKey={orgKey("scenic-city", `coach-${c.id}`)} label={`Chat with ${c.name}`} className={iconBtn}>
+                          <ChatIcon />
+                        </ChatToggle>
+                      </div>
+                    )}
                   </PersonRow>
                 );
               })}

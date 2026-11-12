@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
 import { userContexts } from "./contexts";
 import { hasFeature } from "./features";
-import { isPlatformAdmin, platformOverview, setOrgOwner, setOrgFeature, setPlatformAdmin } from "./platform";
+import { isPlatformAdmin, platformOverview, setOrgOwner, setOrgFeature, setPlatformAdmin, addOrgOwnerByCell } from "./platform";
 import { directorsPanel, isOrgOwner, orgHasArea } from "./org-admin";
 import { createTestDb, grant } from "./testing/db";
 
@@ -57,12 +57,12 @@ describe("CourtCaptain Admin", () => {
   });
 
   it("turns features on (free) and off; Alerts and unknown features are refused", async () => {
-    expect(await setOrgFeature(deps(), admin, "scenic-city", "court-facility", true)).toEqual({ ok: true });
+    expect(await setOrgFeature(deps(), admin, "scenic-city", "court-practice", true)).toEqual({ ok: true });
     const row = await db.pool.query(
-      "select source, turned_on_by from org_features where org = 'scenic-city' and feature = 'court-facility'",
+      "select source, turned_on_by from org_features where org = 'scenic-city' and feature = 'court-practice'",
     );
     expect(row.rows[0]).toEqual({ source: "comp", turned_on_by: "5550001" });
-    expect(await setOrgFeature(deps(), admin, "scenic-city", "court-facility", false)).toEqual({ ok: true });
+    expect(await setOrgFeature(deps(), admin, "scenic-city", "court-practice", false)).toEqual({ ok: true });
     expect(await hasFeature(db.pool, "scenic-city", "practice")).toBe(false);
     expect(await setOrgFeature(deps(), admin, "thunder", "alerts", false)).toMatchObject({ ok: false });
     expect(await setOrgFeature(deps(), admin, "thunder", "rockets", true)).toMatchObject({ ok: false });
@@ -73,7 +73,8 @@ describe("CourtCaptain Admin", () => {
     );
     try {
       expect(await setOrgFeature(deps(), admin, "east-ridge", "court-players", true)).toMatchObject({ ok: false });
-      expect(await setOrgFeature(deps(), admin, "east-ridge", "court-org", true)).toEqual({ ok: true });
+      expect(await setOrgFeature(deps(), admin, "east-ridge", "court-club", true)).toMatchObject({ ok: false }); // every organization has it
+      expect(await setOrgFeature(deps(), admin, "east-ridge", "court-sync", true)).toEqual({ ok: true });
     } finally {
       await db.pool.query("delete from organizations where slug = 'east-ridge'");
     }
@@ -115,6 +116,16 @@ describe("CourtCaptain Admin", () => {
     const left = await db.pool.query("select role from org_roles where coach_id = '5550003' and org = 'thunder' order by role");
     expect(left.rows.map((r) => r.role)).toEqual(["Admin", "Director"]); // stays an Admin
     expect(await setOrgOwner(deps(), admin, "thunder", "bad", true)).toMatchObject({ ok: false });
+  });
+
+  it("adds an Owner by name and cell: the person with that cell, or a new login", async () => {
+    const input = { first: "Olive", last: "Official", cell: "(423) 555-0077" };
+    expect(await addOrgOwnerByCell(deps(), other, "scenic-city", input)).toMatchObject({ ok: false }); // CourtCaptain staff only
+    expect(await addOrgOwnerByCell(deps(), admin, "scenic-city", { ...input, cell: "12" })).toMatchObject({ ok: false });
+    expect(await addOrgOwnerByCell(deps(), admin, "scenic-city", input)).toEqual({ ok: true, name: "Olive Official", newLogin: true });
+    const roles = await db.pool.query("select role from org_roles where coach_id = '5550077' and org = 'scenic-city' order by role");
+    expect(roles.rows.map((r) => r.role)).toEqual(["Admin", "Director", "Owner"]);
+    expect(await addOrgOwnerByCell(deps(), admin, "thunder", input)).toEqual({ ok: true, name: "Olive Official", newLogin: false });
   });
 
   it("CourtCaptain staff: Owner-level access to every organization in the background; Owners add and remove Admins", async () => {

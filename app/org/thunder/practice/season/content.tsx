@@ -34,7 +34,11 @@ export async function SeasonContent({
     <>
       {!embedded && <AppHeader user={user} tab="schedule" context="director" />}
       <PageFrame embedded={embedded} className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
-        <PageTitle title="Season calendar" subtitle="Practice days at a glance. Tap a day to open that week." />
+        {embedded ? (
+          <p className="mb-3 text-sm text-zinc-500">The season&apos;s practice days at a glance. Tap a day to open that week.</p>
+        ) : (
+          <PageTitle title="Practice Court Availability" subtitle="The season's practice days at a glance. Tap a day to open that week." />
+        )}
         {!embedded && <ScheduleNav user={user} current="season" />}
         <div className="mb-4 flex flex-wrap gap-3 text-xs text-zinc-600 dark:text-zinc-400">
           <span className="flex items-center gap-1.5">

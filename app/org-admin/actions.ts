@@ -55,3 +55,16 @@ export async function addPerson(org: string, input: { first: string; last: strin
     return { ok: false as const, message: "Something went wrong. Please try again." };
   }
 }
+
+// Admins: make someone an Assigner (CourtOfficials), or not (the Admin role is re-read inside lib/org-admin).
+export async function setAssigner(org: string, coachId: string, on: boolean) {
+  const user = await currentUser();
+  if (!user) return { ok: false as const, message: "Please log in again." };
+  if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  try {
+    return await orgAdmin.setAssigner({ pool: db, now: () => new Date() }, user, org, coachId, on === true);
+  } catch (e) {
+    console.error("Assigner change failed:", e);
+    return { ok: false as const, message: "Something went wrong. Please try again." };
+  }
+}

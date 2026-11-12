@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { orgFeatureKeys } from "./features";
+import { managesOfficials } from "./officials";
+import { hasDirectors } from "./org-admin";
 import type { SessionUser } from "./auth/service";
 import { userContexts } from "./contexts";
 import { hasFeature } from "./features";
@@ -32,7 +35,7 @@ describe("registering an organization", () => {
     short: "Baylor",
     kind: "School",
     color: "#0f766e",
-    features: ["court-sync", "court-facility"],
+    features: ["court-sync", "court-practice"],
   };
 
   beforeEach(async () => {
@@ -51,7 +54,7 @@ describe("registering an organization", () => {
       ok: true,
       slug: "baylor-school",
       on: ["court-sync"],
-      requested: ["court-facility"],
+      requested: ["court-practice"],
     });
     const o = await orgInfo(db.pool, "baylor-school");
     expect(o).toMatchObject({
@@ -70,13 +73,28 @@ describe("registering an organization", () => {
     expect(roles.rows.map((r) => r.role)).toEqual(["Admin", "Director", "Owner"]);
     expect(await hasFeature(db.pool, "baylor-school", "hosting-available")).toBe(true);
     expect(await hasFeature(db.pool, "baylor-school", "practice")).toBe(false);
-    expect((await db.pool.query("select feature from org_feature_requests")).rows).toEqual([{ feature: "court-facility" }]);
+    expect((await db.pool.query("select feature from org_feature_requests")).rows).toEqual([{ feature: "court-practice" }]);
     expect((await userContexts(db.pool, jo)).find((c) => c.key === "org:baylor-school")).toEqual({
       key: "org:baylor-school",
       org: "baylor-school",
       label: "Owner",
       href: "/org/baylor-school",
     });
+  });
+
+  it("an Officials Group: CourtOfficials and CourtSync on, no teams or gyms; its Owner keeps its officials", async () => {
+    expect(
+      await createOrganization(
+        deps(),
+        jo,
+        { name: "Scenic City Officials", short: "SC Officials", kind: "Officials", color: "#13294b", features: ["court-officials", "court-sync"] },
+        null,
+      ),
+    ).toEqual({ ok: true, slug: "scenic-city-officials", on: ["court-officials", "court-sync"], requested: [] });
+    expect(await orgInfo(db.pool, "scenic-city-officials")).toMatchObject({ kind: "Officials" });
+    expect([...(await orgFeatureKeys(db.pool, "scenic-city-officials"))].sort()).toEqual(["alerts", "court-officials", "court-sync"]);
+    expect(await managesOfficials(db.pool, jo, "scenic-city-officials")).toBe(true);
+    expect(await hasDirectors(db.pool, "scenic-city-officials")).toBe(true); // Directors of Officials assign
   });
 
   it("checks the name, picks, and logo on the server; names are unique; slugs don't clash", async () => {
@@ -186,7 +204,7 @@ describe("registering an organization", () => {
     expect(await openCourtsByDay(deps(), sue)).toEqual({ [day.rows[0].id]: 1 });
     const partnerId = (await db.pool.query<{ id: string }>("select id::text from partners where org_slug = $1", [org])).rows[0]
       .id;
-    expect((await partnerHours(deps(), sue, partnerId))!.courts).toEqual([{ id: gym, gym: "East Ridge MS", name: "Whole gym" }]);
+    expect((await partnerHours(deps(), sue, partnerId))!.courts).toEqual([{ id: gym, gym: "East Ridge MS", gymKey: `o${gym}`, name: "Whole gym" }]);
 
     expect(await removeOrgGym(deps(), jo, org, gym)).toEqual({ ok: true });
     expect(await openCourtsByDay(deps(), sue)).toEqual({});

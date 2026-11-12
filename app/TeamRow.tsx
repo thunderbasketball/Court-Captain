@@ -235,7 +235,7 @@ const LEVELS = [
 ] as const;
 
 const Chevron = () => (
-  <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden className="size-5 shrink-0 text-zinc-400 transition-transform group-open:rotate-180">
+  <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden className="size-5 shrink-0 text-zinc-400 transition-transform [details[open]>summary_&]:rotate-180">
     <path
       fillRule="evenodd"
       d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z"
@@ -254,6 +254,22 @@ const warnChip = (bad: number) =>
       ⚠ {bad} {bad === 1 ? "team" : "teams"}
     </Chip>
   );
+
+// A Teams card's line under its title: how many REC and COMP, Boys and Girls (any at 0 left out), e.g. "REC 15 · COMP 9 · Boys 17 · Girls 7".
+export function teamMix(teams: { level: string; gender: string }[]): string {
+  const n = (f: (t: { level: string; gender: string }) => boolean) => teams.filter(f).length;
+  return (
+    [
+      ["REC", n((t) => t.level === "REC")],
+      ["COMP", n((t) => t.level === "COMP")],
+      ["Boys", n((t) => t.gender === "Boys")],
+      ["Girls", n((t) => t.gender === "Girls")],
+    ] as const
+  )
+    .filter(([, c]) => c > 0)
+    .map(([k, c]) => `${k} ${c}`)
+    .join(" · ");
+}
 
 export function TeamsByLevel<T extends { level: string; gender: string }>({
   teams,

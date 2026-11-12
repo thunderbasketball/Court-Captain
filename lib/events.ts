@@ -56,6 +56,9 @@ export type EventInput = {
   location?: unknown;
   notes?: unknown;
   staff?: unknown; // coach IDs who run check-in
+  programId?: unknown; // the player program it's a Session of (default: Thunder's current one)
+  signupOpens?: unknown; // Tryouts: when players can join its list (free), YYYY-MM-DD; optional
+  signupCloses?: unknown;
 };
 
 function cleanInput(input: EventInput) {
@@ -82,6 +85,18 @@ function cleanInput(input: EventInput) {
   const genders = gendersOf(gender);
   const grades = pick(input.grades, GRADES);
   if (!grades.length) throw new UserError("Pick at least one grade.");
+  const day = (v: unknown, what: string) => {
+    if (v === undefined || v === null || v === "") return null;
+    if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new UserError(`Check the ${what} date.`);
+    return v;
+  };
+  const tryout = /^tryouts?$/i.test(kind);
+  const signupOpens = tryout ? day(input.signupOpens, "sign-up opens") : null;
+  const signupCloses = tryout ? day(input.signupCloses, "sign-up closes") : null;
+  if (signupOpens && signupCloses && signupCloses < signupOpens) throw new UserError("Sign-up can't close before it opens.");
+  if (input.programId !== undefined && input.programId !== null && input.programId !== "" && !isId(input.programId))
+    throw new UserError("That program no longer exists.");
+  const programId = isId(input.programId) ? input.programId : null;
   const staff = Array.isArray(input.staff)
     ? [...new Set(input.staff.filter((s): s is string => typeof s === "string" && /^\d{7}$/.test(s)))]
     : [];
@@ -94,6 +109,9 @@ function cleanInput(input: EventInput) {
     genders,
     grades,
     staff,
+    signupOpens,
+    signupCloses,
+    programId,
   };
 }
 
@@ -108,25 +126,43 @@ export async function createEvent(deps: Deps, viewer: SessionUser, input: EventI
       e.name = eventName(e.kind, genderChoiceOf(e.genders)!, e.grades);
       const ok = await q.query<{ coach_id: string }>("select coach_id from users where active and coach_id = any($1)", [e.staff]);
       if (ok.rows.length !== e.staff.length) throw new UserError("One of the check-in people is no longer active. Pick again.");
+      // A Session of the program picked (Thunder's), or else Thunder's current program (the latest by its season).
+      const prog = await q.query<{ id: string }>(
+        `select id::text from player_programs where org = 'thunder' and ($1::bigint is null or id = $1::bigint)
+         order by coalesce(starts_on, reg_opens) desc, id desc limit 1`,
+        [e.programId],
+      );
+      if (e.programId && !prog.rows[0]) throw new UserError("That program no longer exists.");
+      const programId = prog.rows[0]?.id ?? null;
       const ins = await q.query<{ id: string }>(
-        `insert into events (name, kind, starts_at, location, notes, genders, grades, created_by, created_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id::text`,
-        [e.name, e.kind, e.startsAt, e.location, e.notes, e.genders, e.grades, by(viewer), deps.now()],
+        `insert into events (name, kind, starts_at, location, notes, genders, grades, created_by, created_at, program_id,
+                             signup_opens, signup_closes)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         returning id::text`,
+        [e.name, e.kind, e.startsAt, e.location, e.notes, e.genders, e.grades, by(viewer), deps.now(), programId, e.signupOpens, e.signupCloses],
       );
       const id = ins.rows[0].id;
       await q.query("insert into event_staff (event_id, coach_id, added_by) select $1, unnest($2::text[]), $3", [id, e.staff, by(viewer)]);
-      const added = await addMatching(q, id, e.genders, e.grades);
+      const added = await addMatching(q, id, e.genders, e.grades, programId);
       return { id, players: added };
     });
   });
 }
 
-async function addMatching(q: Pick<Pool, "query">, eventId: string, genders: string[], grades: string[]): Promise<number> {
+// The players expected: registrations matching the genders and grades (in the session's program, when it has one).
+async function addMatching(
+  q: Pick<Pool, "query">,
+  eventId: string,
+  genders: string[],
+  grades: string[],
+  programId: string | null = null,
+): Promise<number> {
   const r = await q.query(
     `insert into event_attendees (event_id, registrant_id, first_name, last_name, gender, grade, grade_sort)
-     select $1, m.registrant_id, m.first_name, m.last_name, m.gender, m.grade, m.grade_sort from (${matching("$2", "$3")}) m
+     select $1, m.registrant_id, m.first_name, m.last_name, m.gender, m.grade, m.grade_sort
+     from (${matching("$2", "$3")} and ($4::bigint is null or program_id = $4::bigint)) m
      on conflict do nothing`,
-    [eventId, genders, grades],
+    [eventId, genders, grades, programId],
   );
   return r.rowCount ?? 0;
 }
@@ -137,11 +173,12 @@ export async function refreshPlayers(deps: Deps, viewer: SessionUser, eventId: u
   if (!isId(eventId)) return { ok: false, message: "That event no longer exists." };
   return run(() =>
     withTx(deps.pool, async (q) => {
-      const e = await q.query<{ genders: string[]; grades: string[] }>("select genders, grades from events where id = $1 for update", [
-        eventId,
-      ]);
+      const e = await q.query<{ genders: string[]; grades: string[]; program: string | null }>(
+        "select genders, grades, program_id::text as program from events where id = $1 for update",
+        [eventId],
+      );
       if (!e.rows[0]) throw new UserError("That event no longer exists.");
-      return { added: await addMatching(q, eventId, e.rows[0].genders, e.rows[0].grades) };
+      return { added: await addMatching(q, eventId, e.rows[0].genders, e.rows[0].grades, e.rows[0].program) };
     }),
   );
 }

@@ -7,17 +7,16 @@ import { hasArea } from "@/lib/org-admin";
 // Schedule (Thunder): Practice and Season (Directors of Facilities, with Practice Management), Events (Directors of
 // Programs, with Event Management). Admins see all three.
 export async function scheduleLinks(user: SessionUser) {
-  const [practice, events] = await Promise.all([hasFeature(db, "thunder", "practice"), hasFeature(db, "thunder", "events")]);
+  // Events moved into Programs (Home → Programs → a program's Sessions).
+  const practice = await hasFeature(db, "thunder", "practice");
   const facilities = practice && hasArea(user, "practices");
-  const programs = events && hasArea(user, "events");
   return [
     { key: "practice", href: "/org/thunder/practice", label: "Practice", show: facilities },
-    { key: "season", href: "/org/thunder/practice/season", label: "Season", show: facilities },
-    { key: "events", href: "/events", label: "Events", show: programs },
+    { key: "season", href: "/org/thunder/practice/season", label: "Court Availability", show: facilities },
   ].filter((l) => l.show);
 }
 
-export default async function ScheduleNav({ user, current }: { user: SessionUser; current: "practice" | "season" | "events" }) {
+export default async function ScheduleNav({ user, current }: { user: SessionUser; current: "practice" | "season" }) {
   const links = await scheduleLinks(user);
   if (links.length < 2) return null;
   return (

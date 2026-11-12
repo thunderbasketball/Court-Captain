@@ -9,10 +9,29 @@ import { inputCls, primaryBtn } from "./ui";
 
 // Import gyms (Thunder and every organization), like Import teams: paste rows or choose a CSV file, Preview what will
 // happen to each, then confirm to add the new ones.
-export default function ImportGymsButton({ org }: { org: string }) {
+// `inline`: the form right where it's put (the Gyms card's import icon), no button or pop-up.
+export default function ImportGymsButton({ org, inline = false }: { org: string; inline?: boolean }) {
   const router = useRouter();
   const [msg, setMsg] = useState<string | null>(null);
+  const [n, setN] = useState(0); // a fresh form after each import
   const thunder = org === "thunder";
+  if (inline)
+    return (
+      <>
+        <p className="mb-2 text-sm font-semibold">Import gyms</p>
+        <GymImportForm
+          key={n}
+          org={org}
+          thunder={thunder}
+          onDone={(text) => {
+            setMsg(text);
+            setN(n + 1);
+            router.refresh();
+          }}
+        />
+        {msg && <Toast key={msg} message={msg} />}
+      </>
+    );
   return (
     <>
       <PopUp

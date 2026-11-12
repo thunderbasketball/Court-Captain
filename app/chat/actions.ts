@@ -3,6 +3,7 @@
 import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
 import { featureRefusal } from "@/lib/features-server";
 import * as chat from "@/lib/chat";
+import { currentContexts } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
 
 const deps = { pool: db, now: () => new Date() };
@@ -43,5 +44,19 @@ export async function loadChat(key: string) {
       ok: false as const,
       message: "Something went wrong. Please try again.",
     };
+  }
+}
+
+// The Chat box under the header: every chat this person can open, grouped (lib/chat checks who sees what).
+export async function loadChatBox() {
+  const user = await currentUser();
+  if (!user) return { ok: false as const, message: "Please log in again." };
+  try {
+    const { active } = await currentContexts(user);
+    const org = active?.org && active.org !== "platform" ? active.org : "thunder";
+    return { ok: true as const, groups: await chat.chatBox(deps, user, org) };
+  } catch (e) {
+    console.error("Chat box failed:", e);
+    return { ok: false as const, message: "Something went wrong. Please try again." };
   }
 }

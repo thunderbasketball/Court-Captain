@@ -8,7 +8,8 @@ import type { SessionUser } from "./auth/service";
 import { TEAM_COACHES, isScheduler } from "./scenic-programs";
 import { withTx, type Queryable } from "./sql";
 import { timeLabel } from "./time";
-import { courtDivisions } from "./scenic-courts";
+import { courtDivisionsOn } from "./scenic-courts";
+import { memo, remembering } from "./request-memo";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -72,76 +73,100 @@ export function gridBlocks(starts: string, ends: string, minutes: number): [stri
 }
 
 // The Grid for one Game Day. Admins and Directors of Scheduling only (null for anyone else, or not a Game Day).
+// While a page is being built, the first Game Day asked for loads every Game Day's grid in one go and the rest come from
+// that (a page shows many: the Scheduler's day cards, each with its length and grid). Saving a change reads fresh.
 export async function dayGrid(deps: Deps, viewer: SessionUser, day: unknown): Promise<DayGrid | null> {
-  if (!isDate(day) || !(await isScheduler(deps.pool, viewer))) return null;
-  const d = await deps.pool.query<Omit<DayGrid, "gyms" | "slots"> & { id: string }>(
-    `select gd.id::text, coalesce(gd.minutes_override, p.game_minutes, 55) as minutes, gd.override_by as "setBy",
-            (gd.minutes_override is not null or gd.slot_breaks is not null) as override, gd.slot_breaks as breaks,
-            coalesce(p.game_minutes, 55) as "programMinutes", p.name as "programName"
+  if (!isDate(day)) return null;
+  if (!("totalCount" in deps.pool) || !remembering()) return (await dayGrids(deps, viewer, [day])).get(day) ?? null;
+  const all = await memo(deps.pool, `grids:${viewer.coachId}`, () => dayGrids(deps, viewer, null));
+  return all.get(day) ?? null;
+}
+
+// The Grids for several Game Days at once (the schedule analysis): three queries in all, not three a day. Days that
+// aren't Game Days are left out; an empty map for anyone but Admins and Directors of Scheduling.
+// `days` null: every Game Day.
+export async function dayGrids(deps: Deps, viewer: SessionUser, days: string[] | null): Promise<Map<string, DayGrid>> {
+  const out = new Map<string, DayGrid>();
+  const dates = days ? [...new Set(days.filter(isDate))] : null;
+  if ((dates && !dates.length) || !(await isScheduler(deps.pool, viewer))) return out;
+  const d = await deps.pool.query<Omit<DayGrid, "gyms" | "slots"> & { id: string; day: string }>(
+    `select gd.id::text, to_char(gd.day, 'YYYY-MM-DD') as day, coalesce(gd.minutes_override, p.game_minutes, 55) as minutes,
+            gd.override_by as "setBy", (gd.minutes_override is not null or gd.slot_breaks is not null) as override,
+            gd.slot_breaks as breaks, coalesce(p.game_minutes, 55) as "programMinutes", p.name as "programName"
        from game_days gd
        left join lateral (select p.game_minutes, p.name from program_game_days pg join scenic_programs p on p.id = pg.program_id
                            where pg.game_day_id = gd.id order by p.starts_on, p.id limit 1) p on true
-      where gd.day = $1::date`,
-    [day],
+      where $1::date[] is null or gd.day = any($1::date[])`,
+    [dates],
   );
-  if (!d.rows[0]) return null;
-  const rows = await deps.pool.query<{
-    gymKey: string;
-    gym: string;
-    host: string;
-    hostId: string;
-    address: string | null;
-    id: string;
-    court: string;
-    starts: string;
-    ends: string;
-  }>(
-    `-- Partners' own courts with hours that day (organization partners' gyms come from their Facilities, below)
-     select 'p' || g.id as "gymKey", g.name as gym, p.name as host, p.id::text as "hostId", g.address, c.id::text, c.name as court,
-            to_char(h.starts, 'HH24:MI') as starts, to_char(h.ends, 'HH24:MI') as ends
-       from court_hours h join partner_courts c on c.id = h.court_id join partner_gyms g on g.id = c.gym_id
-       join partners p on p.id = g.partner_id
-      where h.game_day_id = $1 and p.org_slug is null
-     union all
-     -- Organizations that are approved hosting partners: each gym marked Partner Games that day, all its courts (or the
-     -- whole gym when it has none) open those hours. Practice goals (Thunder's "Goal #1", "Goal #2") are halves of one
-     -- court, so a gym with only goals is one court for games.
-     select 'o' || g.id, g.name, p.name, p.id::text, null, 'o' || g.id || '-' || coalesce(c.id::text, 'gym'),
-            coalesce(c.name, 'Main'), to_char(a.starts, 'HH24:MI'), to_char(a.ends, 'HH24:MI')
-       from gym_availability a join gyms g on g.id = a.gym_id left join courts c on c.gym_id = g.id and c.name !~* '^goal'
-       join partners p on p.org_slug = g.org and p.approved and p.hosts_games
-      where a.use = 'partner' and a.day = $2::date and g.active
-     order by 3, 2, 7`,
-    [d.rows[0].id, day],
-  );
-  const allowed = await courtDivisions(deps.pool, day);
-  const gyms = new Map<string, GridGym>();
-  for (const r of rows.rows) {
-    const g = gyms.get(r.gymKey) ?? {
-      key: r.gymKey,
-      name: r.gym,
-      host: r.host,
-      hostId: r.hostId,
-      address: r.address,
-      courts: [],
-    };
-    g.courts.push({ id: r.id, name: r.court, starts: r.starts, ends: r.ends, divisions: allowed.get(r.id) ?? null });
-    gyms.set(r.gymKey, g);
+  if (!d.rows.length) return out;
+  const [rows, allowedOn] = await Promise.all([
+    deps.pool.query<{
+      day: string;
+      gymKey: string;
+      gym: string;
+      host: string;
+      hostId: string;
+      address: string | null;
+      id: string;
+      court: string;
+      starts: string;
+      ends: string;
+    }>(
+      `-- Partners' own courts with hours that day (organization partners' gyms come from their Facilities, below)
+       select to_char(gd.day, 'YYYY-MM-DD') as day, 'p' || g.id as "gymKey", g.name as gym, p.name as host, p.id::text as "hostId",
+              g.address, c.id::text, c.name as court, to_char(h.starts, 'HH24:MI') as starts, to_char(h.ends, 'HH24:MI') as ends
+         from court_hours h join game_days gd on gd.id = h.game_day_id
+         join partner_courts c on c.id = h.court_id join partner_gyms g on g.id = c.gym_id
+         join partners p on p.id = g.partner_id
+        where h.game_day_id = any($1::bigint[]) and p.org_slug is null
+       union all
+       -- Organizations that are approved hosting partners: each gym marked Partner Games that day, all its courts (or the
+       -- whole gym when it has none) open those hours. Practice goals (Thunder's "Goal #1", "Goal #2") are halves of one
+       -- court, so a gym with only goals is one court for games.
+       select to_char(a.day, 'YYYY-MM-DD'), 'o' || g.id, g.name, p.name, p.id::text, null, 'o' || g.id || '-' || coalesce(c.id::text, 'gym'),
+              coalesce(c.name, 'Main'), to_char(a.starts, 'HH24:MI'), to_char(a.ends, 'HH24:MI')
+         from gym_availability a join gyms g on g.id = a.gym_id left join courts c on c.gym_id = g.id and c.name !~* '^goal'
+         join partners p on p.org_slug = g.org and p.approved and p.hosts_games
+        where a.use = 'partner' and a.day = any($2::date[]) and g.active
+       order by 1, 4, 3, 8`,
+      [d.rows.map((x) => x.id), d.rows.map((x) => x.day)],
+    ),
+    courtDivisionsOn(deps.pool, d.rows.map((x) => x.day)),
+  ]);
+  for (const day0 of d.rows) {
+    const allowed = allowedOn(day0.day);
+    const gyms = new Map<string, GridGym>();
+    for (const r of rows.rows) {
+      if (r.day !== day0.day) continue;
+      const g = gyms.get(r.gymKey) ?? {
+        key: r.gymKey,
+        name: r.gym,
+        host: r.host,
+        hostId: r.hostId,
+        address: r.address,
+        courts: [],
+      };
+      g.courts.push({ id: r.id, name: r.court, starts: r.starts, ends: r.ends, divisions: allowed.get(r.id) ?? null });
+      gyms.set(r.gymKey, g);
+    }
+    // Partners' courts in number order ("Court 2" before "Court 10"); organizations' courts in the order they were added
+    // in their Facilities (e.g. Main, then Aux).
+    for (const g of gyms.values())
+      g.courts.sort((a, b) =>
+        g.key.startsWith("o")
+          ? Number(a.id.split("-")[1]) - Number(b.id.split("-")[1])
+          : a.name.localeCompare(b.name, undefined, { numeric: true }),
+      );
+    const { id: _id, day: _day, ...rest } = day0;
+    void _id;
+    void _day;
+    // Custom times run until the last host closes.
+    const closes = [...gyms.values()].flatMap((g) => g.courts).reduce((x, c) => (c.ends > x ? c.ends : x), "00:00");
+    const slots = rest.breaks ? slotsFromBreaks(rest.breaks, closes) : null;
+    out.set(day0.day, { ...rest, slots, gyms: [...gyms.values()] });
   }
-  // Partners' courts in number order ("Court 2" before "Court 10"); organizations' courts in the order they were added
-  // in their Facilities (e.g. Main, then Aux).
-  for (const g of gyms.values())
-    g.courts.sort((a, b) =>
-      g.key.startsWith("o")
-        ? Number(a.id.split("-")[1]) - Number(b.id.split("-")[1])
-        : a.name.localeCompare(b.name, undefined, { numeric: true }),
-    );
-  const { id: _id, ...day0 } = d.rows[0];
-  void _id;
-  // Custom times run until the last host closes.
-  const closes = [...gyms.values()].flatMap((g) => g.courts).reduce((x, c) => (c.ends > x ? c.ends : x), "00:00");
-  const slots = day0.breaks ? slotsFromBreaks(day0.breaks, closes) : null;
-  return { ...day0, slots, gyms: [...gyms.values()] };
+  return out;
 }
 
 const isMinutes = (m: unknown): m is number => typeof m === "number" && Number.isInteger(m) && m >= 20 && m <= 180;

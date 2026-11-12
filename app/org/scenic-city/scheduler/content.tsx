@@ -190,7 +190,7 @@ export async function SchedulerContent({
                         viewBox="0 0 20 20"
                         fill="currentColor"
                         aria-hidden
-                        className="size-5 shrink-0 text-zinc-400 transition-transform group-open:rotate-180"
+                        className="size-5 shrink-0 text-zinc-400 transition-transform [details[open]>summary_&]:rotate-180"
                       >
                         <path
                           fillRule="evenodd"
@@ -464,7 +464,7 @@ function Teams({ day, coaches, who }: { day: ScheduleDay; coaches: Map<string, C
                         <details className="group min-w-0 flex-1">
                           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
                             <span className={`min-w-0 ${t.removedBy || t.out ? "text-zinc-400 line-through" : ""}`}>
-                              <span className="mr-1 inline-block text-zinc-400 transition group-open:rotate-90">›</span>
+                              <span className="mr-1 inline-block text-zinc-400 transition [details[open]>summary_&]:rotate-90">›</span>
                               <TeamName name={t.name} className="font-medium" /> <CoachBadge tag={coaches.get(t.teamId)} />{" "}
                               <LevelTag level={t.level} />{" "}
                               <span className="text-xs text-zinc-500">
@@ -556,7 +556,7 @@ function Matchups({ day, coaches, who }: { day: ScheduleDay; coaches: Map<string
                 <details key={division} className="group overflow-hidden rounded-lg ring-1 ring-zinc-200 dark:ring-white/10">
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-zinc-50 px-3 py-2 dark:bg-white/5 [&::-webkit-details-marker]:hidden">
                     <span className="text-sm font-semibold">
-                      <span className="mr-1 inline-block text-zinc-400 transition group-open:rotate-90">›</span>
+                      <span className="mr-1 inline-block text-zinc-400 transition [details[open]>summary_&]:rotate-90">›</span>
                       {division}
                     </span>
                     <span

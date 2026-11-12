@@ -74,6 +74,38 @@ describe("events", () => {
     await reg("r4", "Dee", "Girls", "6");
   });
 
+  it("a Session of a program: its players only, tryout sign-up dates checked, kept with the program", async () => {
+    const prog = async (name: string, start: string) =>
+      (
+        await db.pool.query<{ id: string }>(
+          "insert into player_programs (org, name, reg_opens, starts_on, ends_on, created_by) values ('thunder', $1, $2, $2, $2::date + 60, 'x') returning id::text",
+          [name, start],
+        )
+      ).rows[0].id;
+    const fall = await prog("Fall", "2026-09-01");
+    const spring = await prog("Spring", "2027-03-01");
+    await db.pool.query("update registrations set program_id = $1", [fall]); // r1–r4 registered for Fall
+    await reg("r5", "Eve", "Girls", "4"); // a new registration joins the current (latest) program: Spring
+    expect((await db.pool.query("select program_id::text as p from registrations where registrant_id = 'r5'")).rows[0].p).toBe(spring);
+
+    const r = await createEvent(deps(), director, { ...tryouts, programId: fall, signupOpens: "2026-10-30", signupCloses: "2026-11-05" });
+    expect(r).toMatchObject({ ok: true, players: 2 }); // Ava and Bea; not Eve (Spring)
+    const row = await db.pool.query(
+      "select program_id::text as p, to_char(signup_opens, 'YYYY-MM-DD') as o, to_char(signup_closes, 'YYYY-MM-DD') as c from events where id = $1",
+      [(r as { id: string }).id],
+    );
+    expect(row.rows[0]).toEqual({ p: fall, o: "2026-10-30", c: "2026-11-05" });
+    expect(await createEvent(deps(), director, { ...tryouts, programId: fall, signupOpens: "2026-11-05", signupCloses: "2026-10-30" })).toMatchObject({
+      ok: false,
+      message: "Sign-up can't close before it opens.",
+    });
+    expect(await createEvent(deps(), director, { ...tryouts, programId: "999999" })).toMatchObject({ ok: false });
+    // Sign-up dates are for Tryouts only; without a program, Thunder's current one.
+    const g = await createEvent(deps(), director, { ...tryouts, kind: "Open Gym", signupOpens: "2026-10-30" });
+    const gr = await db.pool.query("select program_id::text as p, signup_opens from events where id = $1", [(g as { id: string }).id]);
+    expect(gr.rows[0]).toEqual({ p: spring, signup_opens: null });
+  });
+
   it("creates an event with the matching players, at 9:30 AM Eastern, and checks the input", async () => {
     expect(await countMatching(deps(), director, { genders: ["Girls"], grades: ["4", "5"] })).toBe(2);
     expect(await countMatching(deps(), director, { genders: ["Girls", "Boys"], grades: ["4"] })).toBe(2);

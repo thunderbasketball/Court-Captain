@@ -90,6 +90,7 @@ describe("public League page (no login)", () => {
             starts: null,
             gym: null,
             court: null,
+            map: null, // not placed on the Grid yet
             group: "5th Boys COMP",
             home: "HH 5B Fay",
             away: "Magic",
@@ -116,9 +117,9 @@ describe("public League page (no login)", () => {
     await setSchedulePublished(deps(), user("9913694"), prog, true);
     const [magic, fay] = await followedTeams(db.pool, now, follow);
     expect(magic.programs[0].games).toEqual([
-      { date: "2026-12-05", starts: null, gym: null, court: null, opponent: "HH 5B Fay", home: false },
+      { date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "HH 5B Fay", home: false },
     ]);
-    expect(fay.programs[0].games).toEqual([{ date: "2026-12-05", starts: null, gym: null, court: null, opponent: "Magic", home: true }]);
+    expect(fay.programs[0].games).toEqual([{ date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "Magic", home: true }]);
     // The whole schedule, games already played too (the device shows the next 21 days collapsed).
     expect((await followedTeams(db.pool, new Date("2026-12-07T15:00:00Z"), [id("Magic")]))[0].programs[0].games).toHaveLength(1);
     // An organization's team keeps a roster: first names and last initials, jerseys; never full last names.

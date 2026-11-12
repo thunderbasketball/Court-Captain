@@ -11,6 +11,8 @@ import { easternDate } from "@/lib/time";
 import { listPlayersByGrade, type MemberPlayer } from "@/lib/players";
 import { AddPlayerButton, RemoveAddedPlayer } from "../../players/AddPlayerButton";
 import PlayerEvalButton from "../../players/PlayerEvalButton";
+import BirthdateFix from "../../players/BirthdateFix";
+import { birthdateFixes } from "@/lib/birthdate-fix";
 import RosterBoardButton from "../../players/RosterBoardButton";
 import { Chip, EmailLink, GroupCard, Notice, PageTitle, PersonRow, PhoneLink, genderTint } from "../../../../ui";
 import { PlayerTeamButton } from "../../../../ViewAsButton";
@@ -32,6 +34,7 @@ export default async function PlayersPart({ user }: { user: SessionUser }) {
   const evaluations = await hasFeature(db, "thunder", "team-building"); // with Team Management only
   const who = await seesWho(db, user, "thunder"); // Owners and Admins see who did it
   const canAdd = hasArea(user, "players"); // Owners, Admins and Directors of Players add players (fees can be waived)
+  const fixes = await birthdateFixes(db); // birthdays fixed in the app (kept through sheet syncs)
 
   const today = easternDate(new Date());
   const schoolYear = schoolYearOf(today);
@@ -70,6 +73,7 @@ export default async function PlayersPart({ user }: { user: SessionUser }) {
         {p.birthdate && <> · born {birthday(p.birthdate)} (age {ageOn(p.birthdate, today)})</>}
         {p.team && <> · {p.team}</>}
       </p>
+      {canAdd && <BirthdateFix registrantId={p.registrantId} birthdate={p.birthdate} fix={fixes.get(p.registrantId) ?? null} />}
       {p.address && <p>{p.address}</p>}
       {(p.uniformSize || p.uniformNumber) && (
         <p>
@@ -158,7 +162,7 @@ export default async function PlayersPart({ user }: { user: SessionUser }) {
               <span className="text-lg font-semibold">
                 {sex} <span className="font-normal text-zinc-500">({sex === "Boys" ? boys : girls})</span>
               </span>
-              <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden className="size-5 shrink-0 text-zinc-400 transition-transform group-open/g:rotate-180">
+              <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden className="size-5 shrink-0 text-zinc-400 transition-transform [details[open]>summary_&]:rotate-180">
                 <path
                   fillRule="evenodd"
                   d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z"
@@ -214,7 +218,7 @@ export default async function PlayersPart({ user }: { user: SessionUser }) {
                               />
                             </svg>
                           </Link>
-                          <span className="text-base transition-transform group-open/t:rotate-90">›</span>
+                          <span className="text-base transition-transform [details[open]>summary_&]:rotate-90">›</span>
                         </span>
                       </summary>
                       <ul className="divide-y divide-zinc-100 dark:divide-white/5">{t.players.map((p) => row(p, true))}</ul>

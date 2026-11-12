@@ -33,6 +33,9 @@ export async function setPlatformAdmin(coachId: string, on: boolean) {
 export async function setOrgOwner(org: string, coachId: string, on: boolean) {
   return guarded((u) => platform.setOrgOwner(deps, u, org, coachId, on === true));
 }
+export async function addOrgOwnerByCell(org: string, input: { first: string; last: string; cell: string }) {
+  return guarded((u) => platform.addOrgOwnerByCell(deps, u, org, input));
+}
 
 // Delete an organization and all its teams (CourtCaptain Admins; its name typed to confirm; checked in lib/org-delete).
 export async function deleteOrganization(org: string, typedName: string) {

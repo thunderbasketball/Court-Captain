@@ -6,7 +6,7 @@ import { Alert } from "../client-ui";
 import { fieldLabel, inputCls, primaryBtn } from "../ui";
 import { switchSoloAccount } from "./actions";
 
-// "Switch to CourtOrg and bring <team>": the organization's name, then its Teams page.
+// "Switch to a club with more teams and bring <team>": the organization's name, then its Teams page.
 export default function SwitchSolo({ slug, team }: { slug: string; team: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -17,9 +17,9 @@ export default function SwitchSolo({ slug, team }: { slug: string; team: string 
   return (
     <div className="rounded-xl ring-1 ring-zinc-950/10 dark:ring-white/15">
       <button type="button" className="block w-full px-3 py-2.5 text-left" onClick={() => setOpen(!open)}>
-        <span className="block font-semibold">Switch to CourtOrg and bring {team}</span>
+        <span className="block font-semibold">Switch to a club with more teams and bring {team}</span>
         <span className="block text-xs text-zinc-500">
-          Your CourtSolo account becomes this organization; {team} keeps its name.
+          Your one-team club becomes this organization; {team} keeps its name.
         </span>
       </button>
       {open && (
@@ -45,7 +45,7 @@ export default function SwitchSolo({ slug, team }: { slug: string; team: string 
           </label>
           {error && <Alert tone="red">{error}</Alert>}
           <button className={primaryBtn} disabled={busy || !name.trim()}>
-            {busy ? "Switching…" : "Switch to CourtOrg"}
+            {busy ? "Switching…" : "Switch to a club with more teams"}
           </button>
         </form>
       )}

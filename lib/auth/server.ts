@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { connection } from "next/server";
 import { db } from "../db";
@@ -42,8 +43,12 @@ export async function clearSessionCookie() {
 export async function currentUser(): Promise<SessionUser | null> {
   // Always check at request time; never let Next.js pre-build a page with someone's login in it.
   await connection();
-  return getSessionUser(deps, await sessionToken());
+  return userFor(await sessionToken());
 }
+
+// Read once per page being built (a page's many cards each ask; roles are still re-read on every request). Outside a
+// page render (a server action) React's cache doesn't hold, so it reads fresh each time.
+const userFor = cache((token: string | undefined) => getSessionUser(deps, token));
 
 // The phone app sends its session token as "Authorization: Bearer <token>" instead of a cookie.
 export function phoneToken(request: Request): string | undefined {

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
-import { availableUses, facilitiesView, setAvailability } from "./facilities";
+import { availableUses, facilitiesView, renameGym, setAvailability } from "./facilities";
 import { createTestDb } from "./testing/db";
 
 const director: SessionUser = {
@@ -56,7 +56,9 @@ describe("Thunder Facilities: what each gym is for, by date", () => {
       }),
     ).toEqual({ ok: true, saved: 2, slotsAdded: 6 + 24, slotsRemoved: 0 }); // Fri 6, 7, 8 PM and Sat 9 AM–8 PM on both goals
     let v = (await facilitiesView(deps(), director))!;
-    expect(v.gyms).toEqual([{ id: gym, name: "Action Church", short: null, courts: ["Goal #1", "Goal #2"] }]);
+    expect(v.gyms).toEqual([
+      { id: gym, name: "Action Church", short: null, courts: ["Goal #1", "Goal #2"], address: null, lat: null, lng: null, placeId: null, pinLat: null, pinLng: null, pinAddress: null },
+    ]);
     expect(v.days[key("2026-11-06")]).toEqual({ use: "practice", starts: "18:00", ends: "21:00", setBy: "Earl Epps" });
     expect(v.days[key("2026-11-07")]).toEqual({ use: "practice", starts: "09:00", ends: "21:00", setBy: "Earl Epps" });
 
@@ -185,5 +187,25 @@ describe("Thunder Facilities: what each gym is for, by date", () => {
       { blackout: true, note: "Thanksgiving" },
       { blackout: true, note: "Thanksgiving" },
     ]);
+  });
+
+  it("renames a gym (Facilities only; unique names; its slots and courts stay with it)", async () => {
+    await db.pool.query("insert into gyms (name) values ('ERCC Main')");
+    expect(await renameGym(deps(), teamsOnly, "thunder", gym, { name: "Action Church Gym" })).toMatchObject({ ok: false });
+    expect(await renameGym(deps(), director, "thunder", gym, { name: "=HYPERLINK(1)" })).toMatchObject({ ok: false });
+    expect(await renameGym(deps(), director, "thunder", gym, { name: "ercc main" })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("already has that name"),
+    });
+    expect(await renameGym(deps(), director, "east-ridge", gym, { name: "Action Church Gym" })).toMatchObject({ ok: false }); // not theirs
+    expect(await renameGym(deps(), director, "thunder", gym, { name: "  Action  Church Gym " })).toEqual({ ok: true, name: "Action Church Gym" });
+    const row = await db.pool.query(
+      "select g.name, g.short_name, count(c.id)::int as courts from gyms g join courts c on c.gym_id = g.id where g.id = $1 group by g.id",
+      [gym],
+    );
+    expect(row.rows[0]).toEqual({ name: "Action Church Gym", short_name: null, courts: 2 });
+    expect(await renameGym(deps(), director, "thunder", gym, { name: "Action Church Gym", short: "" })).toMatchObject({ ok: false }); // short given must be real
+    expect(await renameGym(deps(), director, "thunder", gym, { name: "Action Church Gym", short: "ACG" })).toEqual({ ok: true, name: "Action Church Gym" });
+    expect((await db.pool.query("select short_name from gyms where id = $1", [gym])).rows[0].short_name).toBe("ACG");
   });
 });

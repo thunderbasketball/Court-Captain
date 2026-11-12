@@ -51,7 +51,7 @@ describe("an organization's teams in Scenic City programs", () => {
     );
     await grant(db.pool, "9913694 scenic-city Director", "9913694 scenic-city Admin");
     const input = { name: "East Ridge Parks & Rec", short: "East Ridge", kind: "Organization", color: "#0f766e" };
-    await createOrganization(deps(), jo, { ...input, features: ["court-org"] }, null);
+    await createOrganization(deps(), jo, { ...input, features: ["court-club"] }, null);
     // CourtSync with its own teams: REC is open to it (lib/rec-orgs.ts).
     await db.pool.query(
       "insert into org_features (org, feature, source, turned_on_by) select slug, 'court-sync', 'setup', 'test' from organizations where slug not in ('thunder', 'scenic-city') on conflict do nothing",

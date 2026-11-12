@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { addPerson, setAdmin, setDirectorAreas, setOwner } from "./org-admin/actions";
+import { addPerson, setAdmin, setAssigner, setDirectorAreas, setOwner } from "./org-admin/actions";
 import { PopUp, Toast, useConfirm } from "./client-ui";
 import { inputCls } from "./ui";
 
@@ -24,12 +24,22 @@ export const menuItem =
 
 export function AddMenu({ children, round = false }: { children: ReactNode; round?: boolean }) {
   const [open, setOpen] = useState(false);
+  // Placed on the screen under the button (fixed), so a card that trims its edges can't cut the menu off.
+  const [at, setAt] = useState<{ top: number; right: number } | null>(null);
   const box = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
     const away = (e: PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false);
+    const close = (e: Event) => !box.current?.contains(e.target as Node) && setOpen(false); // not when the menu itself scrolls
     document.addEventListener("pointerdown", away);
-    return () => document.removeEventListener("pointerdown", away);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
   }, [open]);
   return (
     <div ref={box} className="relative shrink-0">
@@ -37,7 +47,12 @@ export function AddMenu({ children, round = false }: { children: ReactNode; roun
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        ref={button}
+        onClick={() => {
+          const r = button.current?.getBoundingClientRect();
+          if (r) setAt({ top: r.bottom + 8, right: Math.max(8, window.innerWidth - r.right) });
+          setOpen((o) => !o);
+        }}
         aria-label="Add"
         title="Add"
         className={
@@ -51,7 +66,8 @@ export function AddMenu({ children, round = false }: { children: ReactNode; roun
       <div
         role="menu"
         onClick={() => setOpen(false)}
-        className={`absolute right-0 z-20 mt-2 w-60 rounded-2xl bg-white p-1.5 shadow-lg ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/15 ${open ? "" : "hidden"}`}
+        style={at ? { top: at.top, right: at.right } : undefined}
+        className={`fixed z-50 max-h-[70vh] w-60 overflow-y-auto rounded-2xl bg-white p-1.5 shadow-lg ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/15 ${open ? "" : "hidden"}`}
       >
         {children}
       </div>
@@ -67,19 +83,36 @@ export function DirectorButtons({
   canManageAdmins,
   adminOptions,
   ownerOptions = [],
+  directorsOn = true,
+  staff = [],
 }: {
   org: string;
   areas: AreaOption[];
   options: Person[];
+  directorsOn?: boolean; // CourtPlayers or CourtTeams: the organization has Directors
   canManageAdmins: boolean;
   adminOptions: Person[];
   ownerOptions?: Person[]; // Owners: who can be made another Owner
+  staff?: Director[]; // its Owners, Admins and Directors (any of them can be the Officials Assigner)
 }) {
+  // CourtOfficials: anyone on staff not yet an Officials Assigner, then everyone else who could be a Director.
+  const assigning = areas.some((a) => a.key === "officials");
+  const assignerOptions = [
+    ...staff.filter((d) => !d.areas.includes("officials")).map((d) => ({ id: d.id, name: d.name })),
+    ...options,
+  ].filter((p, i, all) => all.findIndex((x) => x.id === p.id) === i);
   return (
     <>
-      <PopUp label="Director (choose their areas)" title="Add a Director" className={menuItem} note={AREAS_NOTE}>
-        {(close) => <DirectorForm org={org} areas={areas} options={options} onDone={close} />}
-      </PopUp>
+      {assigning && (
+        <PopUp label="Officials Assigner (assigns officials to games)" title="Add an Officials Assigner" className={menuItem} note={AREAS_NOTE}>
+          {(close) => <AssignerForm org={org} options={assignerOptions} onDone={close} />}
+        </PopUp>
+      )}
+      {directorsOn && (
+        <PopUp label="Director (choose their areas)" title="Add a Director" className={menuItem} note={AREAS_NOTE}>
+          {(close) => <DirectorForm org={org} areas={areas} options={options} onDone={close} />}
+        </PopUp>
+      )}
       {canManageAdmins && (
         <PopUp label="Admin (every area)" title="Add an Admin" className={menuItem} note={AREAS_NOTE}>
           {(close) => <AdminForm org={org} options={adminOptions} onDone={close} />}
@@ -110,24 +143,103 @@ export function DirectorRole({
   canManageAdmins: boolean;
 }) {
   const names = Object.fromEntries(areas.map((a) => [a.key, a.name]));
+  // CourtOfficials: the Assigner (officials area) can be given to Owners and Admins too, by name.
+  const assigning = areas.some((a) => a.key === "officials");
+  const assigner = assigning && person.areas.includes("officials");
   const label = person.owner
-    ? "Owner · every area"
+    ? `Owner · every area${assigner ? " · Officials Assigner" : ""}`
     : person.admin
-      ? "Admin · every area"
+      ? `Admin · every area${assigner ? " · Officials Assigner" : ""}`
       : person.areas.length
-        ? person.areas.map((a) => `Director of ${names[a] ?? a}`).join(" · ")
+        ? person.areas.map((a) => (a === "officials" ? "Officials Assigner" : `Director of ${names[a] ?? a}`)).join(" · ")
         : "Director · no areas yet";
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
       <p className="text-xs font-medium text-thunder-blue dark:text-blue-300">{label}</p>
       {person.admin && !person.owner && canManageAdmins && <RemoveAdmin org={org} orgName={orgName} person={person} />}
       {person.owner && canManageAdmins && <RemoveOwner org={org} orgName={orgName} person={person} />}
+      {person.admin && assigning && <AssignerToggle org={org} person={person} on={assigner} />}
       {!person.admin && (
         <PopUp label="Edit areas" title={`${person.name}: Director areas`} link note={AREAS_NOTE}>
           {(close) => <DirectorForm org={org} orgName={orgName} areas={areas} person={person} onDone={close} />}
         </PopUp>
       )}
     </div>
+  );
+}
+
+// Admins: make an Owner or Admin the Assigner (CourtOfficials), or not. Directors get it under Edit areas.
+function AssignerToggle({ org, person, on }: { org: string; person: Director; on: boolean }) {
+  const router = useRouter();
+  const [busy, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <button
+        type="button"
+        disabled={busy}
+        className="text-xs font-medium text-thunder-blue underline dark:text-blue-300"
+        onClick={() =>
+          start(async () => {
+            setError(null);
+            const r = await setAssigner(org, person.id, !on);
+            if (!r.ok) return setError(r.message);
+            router.refresh();
+          })
+        }
+      >
+        {busy ? "Saving…" : on ? "Not Officials Assigner" : "Make Officials Assigner"}
+      </button>
+      {error && <span className="text-xs text-red-600 dark:text-red-400">{error}</span>}
+    </>
+  );
+}
+
+// Admins: pick a person (on staff already, or someone new by name and cell) to make an Officials Assigner.
+function AssignerForm({ org, options, onDone }: { org: string; options: Person[]; onDone: () => void }) {
+  const router = useRouter();
+  const [pick, setPick] = useState("");
+  const [person, setPerson] = useState({ first: "", last: "", cell: "" });
+  const [error, setError] = useState<string | null>(null);
+  const [busy, start] = useTransition();
+  return (
+    <form
+      className="grid gap-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          setError(null);
+          const id = await chosenId(org, pick, person, setError);
+          if (!id) return;
+          const r = await setAssigner(org, id, true);
+          if (!r.ok) return setError(r.message);
+          onDone();
+          router.refresh();
+        });
+      }}
+    >
+      <PersonPicker
+        options={options}
+        pick={pick}
+        setPick={setPick}
+        person={person}
+        setPerson={setPerson}
+        prompt="Pick a person to make an Officials Assigner…"
+      />
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className="flex items-center gap-3">
+        <button
+          type="submit"
+          disabled={busy || !pick}
+          className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
+        >
+          Make Officials Assigner
+        </button>
+        <button type="button" onClick={onDone} className="text-sm text-zinc-500">
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 

@@ -133,7 +133,7 @@ export function GroupCard({
             viewBox="0 0 20 20"
             fill="currentColor"
             aria-hidden
-            className="size-5 text-zinc-400 transition-transform group-open:rotate-180"
+            className="size-5 text-zinc-400 transition-transform [details[open]>summary_&]:rotate-180"
           >
             <path
               fillRule="evenodd"
@@ -190,7 +190,7 @@ export function CollapseCard({
             viewBox="0 0 20 20"
             fill="currentColor"
             aria-hidden
-            className="size-5 shrink-0 text-zinc-400 transition-transform group-open:rotate-180"
+            className="size-5 shrink-0 text-zinc-400 transition-transform [details[open]>summary_&]:rotate-180"
           >
             <path
               fillRule="evenodd"

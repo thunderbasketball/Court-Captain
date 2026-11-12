@@ -1,16 +1,18 @@
 import { Suspense } from "react";
+import { officiatesGames } from "@/lib/officiating";
+import { OfficiatingOffersCard } from "../../officiating/OfficiatingCards";
+import { managesOfficials } from "@/lib/officials";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import { canHost } from "@/lib/facilities";
 import { hasFeature } from "@/lib/features";
-import { isOrgAdmin, orgHasArea } from "@/lib/org-admin";
+import ProgramsCard, { programCount } from "../../ProgramsCard";
+import { assignerCount, isOrgAdmin, orgHasArea } from "@/lib/org-admin";
 import { orgInfo } from "@/lib/org-registry";
 import { isOrgSlug } from "@/lib/orgs";
 import AppHeader from "../../AppHeader";
 import { followRename } from "@/lib/org-rename";
-import { orgShort } from "@/lib/org-registry";
-import { OrgSearchButton } from "../../OrgSearch";
 import { orgMetrics } from "@/lib/org-metrics";
 import { visitStats } from "@/lib/site-visits";
 import OrgMetrics, { todoCounts } from "../../OrgMetrics";
@@ -57,10 +59,6 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
       [slug, user.coachId],
     ),
   ]);
-  // 🔍 search: Owners, Admins and Directors.
-  const search = (await db.query<{ ok: boolean }>("select acts_as($1, $2, 'Director') as ok", [user.coachId, slug])).rows[0].ok;
-  const orgName = await orgShort(db, slug);
-  const role = admin ? "Admin" : teamsArea || coachesArea || facilities ? "Director" : "Coach";
   // Owners and Admins: the organization's metrics above the cards.
   const now = new Date();
   const [metrics, visits] = admin
@@ -94,11 +92,28 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
           },
         ]
       : []),
+    // Programs: with CourtPlayers or CourtTeams (its Owners and Admins).
+    ...(admin && ((await hasFeature(db, slug, "player-registration")) || (await hasFeature(db, slug, "team-registration")))
+      ? [{ key: "programs", title: "Programs", count: await programCount(slug), body: <ProgramsCard org={slug} user={user} /> }]
+      : []),
     ...(hosting && facilities
       ? [{ key: "facilities", title: "Facilities", body: <OrgFacilitiesContent params={here} embedded /> }]
       : []),
-    ...(admin || (teams && coachesArea)
-      ? [{ key: "members", title: "Members", alert: (metrics?.waiting.requests ?? 0) > 0, body: <OrgMembersContent params={here} embedded /> }]
+    // Members: Staff, Coaches and (an Officials Group) Officials, as this person may see them.
+    ...(admin || (teams && coachesArea) || (await managesOfficials(db, user, slug))
+      ? [
+          {
+            key: "members",
+            title: "Members",
+            // Waiting requests, or CourtOfficials without an Assigner.
+            alert: (metrics?.waiting.requests ?? 0) > 0 || (await assignerCount(db, slug)) === 0,
+            body: <OrgMembersContent params={here} embedded />,
+          },
+        ]
+      : []),
+    // An Officials Group's CourtSync: ask leagues to officiate their games (its Admins and Directors of Officials).
+    ...((await officiatesGames(db, slug)) && (await managesOfficials(db, user, slug))
+      ? [{ key: "courtsync", title: "CourtSync", body: <OfficiatingOffersCard org={slug} user={user} /> }]
       : []),
     { key: "support", title: "Support", alert: (metrics?.waiting.newChats ?? 0) > 0, body: <SupportCard user={user} org={slug} /> },
   ];
@@ -107,12 +122,6 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
     <>
       <AppHeader user={user} context={`org:${slug}`} tab="org-home" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Welcome, {user.firstName} · {role}
-          </p>
-          {search && <OrgSearchButton org={slug} orgName={orgName} />}
-        </div>
         <MembersCards cards={cards} open={null} heading={null} />
       </main>
     </>

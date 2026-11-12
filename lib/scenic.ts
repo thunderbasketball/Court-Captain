@@ -61,7 +61,7 @@ export async function joinStatus(deps: Deps, viewer: SessionUser): Promise<JoinS
 }
 
 const SOLO_RETIRED =
-  "Stand-alone teams register on Scenic City's login page (Register → One team, their own CourtSolo account); organizations register with CourtOrg.";
+  "Stand-alone teams register on Scenic City's login page (Register → One team, their own one-team CourtClub account); organizations register with CourtClub.";
 const PARTNER_RETIRED =
   "Schools and organizations join as their own organization on CourtCaptain (logo menu → + Create a new organization).";
 

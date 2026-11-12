@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import TeamsIncluded from "../../../TeamsIncluded";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
@@ -10,7 +11,8 @@ import { TZ } from "@/lib/time";
 import { orgInfo } from "@/lib/org-registry";
 import AppHeader from "../../../AppHeader";
 import { CollapseCard, PageTitle } from "../../../ui";
-import TeamRow, { TeamsByLevel } from "../../../TeamRow";
+import TeamWarningsCard from "../../../warnings/TeamWarningsCard";
+import TeamRow, { TeamsByLevel, teamMix } from "../../../TeamRow";
 import { ContactChip, GroupTextButton, TextTeamsPanel } from "../../../Contacts";
 import { NotifyPanel } from "../../../NotifyButton";
 import { sendsAlerts } from "@/lib/announcements";
@@ -60,8 +62,9 @@ export async function OrgTeamsContent({
   const solo = o.kind === "Team";
   // Its Directors alert its coaches (📣 → Alert coaches) and each team's coaches (the bell on its card).
   const alerter = await sendsAlerts({ pool: db, now: () => new Date() }, user, slug);
-  // With Chat, its Directors also chat with its coaches (📣), each team's coaches (on its card) and one coach (their chip).
-  const chatter = alerter && (await hasFeature(db, slug, "chat"));
+  // With team chats (CourtPlayers), its Directors also chat with its coaches (📣), each team's coaches (on its card) and
+  // one coach (their chip).
+  const chatter = alerter && (await hasFeature(db, slug, "team-chat"));
   const recOk = list.canManage && (await recAllowed(db, slug, new Date())); // REC only when invited to a League's REC
   const admin = await isOrgAdmin(db, user.coachId, slug); // Owners and Admins: 👁 View as on each coach // a CourtSolo account: its one team, no Add or Import
 
@@ -75,7 +78,7 @@ export async function OrgTeamsContent({
           title={
             <PageTitle
               title={`Teams (${list.teams.length})`}
-              subtitle={list.canManage ? `${o.name}'s teams and coaches` : "Your teams"}
+              subtitle={teamMix(list.teams) || (list.canManage ? `${o.name}'s teams and coaches` : "Your teams")}
             />
           }
           menus={
@@ -163,6 +166,14 @@ export async function OrgTeamsContent({
               : []
           }
         />
+        {/* Warnings: the ones this organization turned on (its gear), streamed so the teams show first. */}
+        {list.canManage && !solo && list.teams.length > 0 && (
+          <div className="mb-3">
+            <Suspense fallback={null}>
+              <TeamWarningsCard org={slug} base={`/org/${slug}`} />
+            </Suspense>
+          </div>
+        )}
         {!list.teams.length && !solo && (
           <p className="text-sm text-zinc-500">No teams yet. Tap “+” to add or import some.</p>
         )}

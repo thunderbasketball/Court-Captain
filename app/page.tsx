@@ -51,7 +51,7 @@ function GetStarted({ firstName }: { firstName: string }) {
     {
       href: "/login/scenic-city",
       title: "Register a stand-alone team",
-      about: "A team of your own (CourtSolo): pick an event and tap Register, then One team.",
+      about: "A team of your own (CourtClub, one team): pick an event and tap Register, then One team.",
     },
     {
       href: "/register?need=court-sync",

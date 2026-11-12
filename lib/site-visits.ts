@@ -4,7 +4,7 @@
 import type { SessionUser } from "./auth/service";
 import { isOrgAdmin } from "./org-admin";
 import type { Queryable } from "./sql";
-import { TZ } from "./time";
+import { TZ, localParts } from "./time";
 import { VISIT_RANGES, type VisitRange } from "./visit-ranges";
 
 export { VISIT_RANGES, type VisitRange };
@@ -31,33 +31,59 @@ const COACHES = `select s.coach_id from team_staff s where $5 = 'thunder' and s.
 export type VisitStats = { views: number; people: number; buckets: { start: string; n: number; coach: number }[] };
 
 // Owners and Admins only (null otherwise): page views and different people in each range, with the views per bucket.
+// One query (this year's visits, or from this week's Monday if earlier, per person per hour) counted here into the four
+// ranges, in Eastern wall-clock time; it was eight slow ones.
 export async function visitStats(deps: Deps, viewer: SessionUser, org: string): Promise<Record<VisitRange, VisitStats> | null> {
   if (!(await isOrgAdmin(deps.pool, viewer.coachId, org))) return null;
-  const now = deps.now();
-  const all = await Promise.all(
-    VISIT_RANGES.map(async ({ period, step }) => {
-      // p.s: the range's first moment, Eastern wall-clock time.
-      const [buckets, totals] = await Promise.all([
-        deps.pool.query<{ start: string; n: number; coach: number }>(
-          `with p as (select date_trunc($2, $1::timestamptz at time zone $4) as s),
-                b as (select g from p, generate_series(p.s, p.s + ('1 ' || $2)::interval - ('1 ' || $3)::interval, ('1 ' || $3)::interval) g),
-                c as (${COACHES})
-           select to_char(b.g, 'YYYY-MM-DD"T"HH24:MI') as start, coalesce(sum(v.views), 0)::int as n,
-                  coalesce(sum(v.views) filter (where v.coach_id in (select coach_id from c)), 0)::int as coach
-           from b left join site_visits v on v.org = $5 and date_trunc($3, v.hour at time zone $4) = b.g
-             and v.hour >= (select s from p) at time zone $4
-           group by b.g order by b.g`,
-          [now, period, step, TZ, org],
-        ),
-        deps.pool.query<{ views: number; people: number }>(
-          `with p as (select date_trunc($2, $1::timestamptz at time zone $3) as s)
-           select coalesce(sum(views), 0)::int as views, count(distinct coach_id)::int as people from site_visits, p
-           where org = $4 and hour >= p.s at time zone $3 and hour < (p.s + ('1 ' || $2)::interval) at time zone $3`,
-          [now, period, TZ, org],
-        ),
-      ]);
-      return { ...totals.rows[0], buckets: buckets.rows };
-    }),
+  const now = localParts(deps.now());
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const ymd = (d: Date) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  const day = (offset: number) => new Date(Date.UTC(now.year, now.month - 1, now.day + offset));
+  const today = ymd(day(0));
+  const monday = day(-((now.weekday + 6) % 7));
+  const yearStart = `${now.year}-01-01`;
+  const from = ymd(monday) < yearStart ? ymd(monday) : yearStart;
+
+  const r = await deps.pool.query<{ day: string; hour: number; coach_id: string; views: number; coach: boolean }>(
+    `with c as (${COACHES.replaceAll("$5", "$1")})
+     select to_char(v.hour at time zone $3, 'YYYY-MM-DD') as day, extract(hour from v.hour at time zone $3)::int as hour,
+            v.coach_id, v.views, v.coach_id in (select coach_id from c) as coach
+       from site_visits v where v.org = $1 and v.hour >= ($2::date)::timestamp at time zone $3`,
+    [org, from, TZ],
   );
-  return Object.fromEntries(VISIT_RANGES.map((r, i) => [r.key, all[i]])) as Record<VisitRange, VisitStats>;
+
+  // Each range: its bucket starts, and which bucket a visit falls in (or none).
+  const weekDays = Array.from({ length: 7 }, (_, i) => ymd(new Date(monday.getTime() + i * 86_400_000)));
+  const monthDays = Array.from({ length: new Date(Date.UTC(now.year, now.month, 0)).getUTCDate() }, (_, i) =>
+    ymd(new Date(Date.UTC(now.year, now.month - 1, i + 1))),
+  );
+  const ranges: Record<VisitRange, { starts: string[]; bucket: (d: string, h: number) => string | null }> = {
+    today: {
+      starts: Array.from({ length: 24 }, (_, h) => `${today}T${pad(h)}:00`),
+      bucket: (d, h) => (d === today ? `${d}T${pad(h)}:00` : null),
+    },
+    week: { starts: weekDays.map((d) => `${d}T00:00`), bucket: (d) => (weekDays.includes(d) ? `${d}T00:00` : null) },
+    month: { starts: monthDays.map((d) => `${d}T00:00`), bucket: (d) => (d.slice(0, 7) === today.slice(0, 7) ? `${d}T00:00` : null) },
+    year: {
+      starts: Array.from({ length: 12 }, (_, m) => `${now.year}-${pad(m + 1)}-01T00:00`),
+      bucket: (d) => (d.slice(0, 4) === String(now.year) ? `${d.slice(0, 7)}-01T00:00` : null),
+    },
+  };
+  return Object.fromEntries(
+    VISIT_RANGES.map(({ key }) => {
+      const { starts, bucket } = ranges[key];
+      const by = new Map(starts.map((start) => [start, { start, n: 0, coach: 0 }]));
+      const people = new Set<string>();
+      let views = 0;
+      for (const v of r.rows) {
+        const b = by.get(bucket(v.day, v.hour) ?? "");
+        if (!b) continue;
+        b.n += v.views;
+        if (v.coach) b.coach += v.views;
+        views += v.views;
+        people.add(v.coach_id);
+      }
+      return [key, { views, people: people.size, buckets: [...by.values()] }];
+    }),
+  ) as Record<VisitRange, VisitStats>;
 }

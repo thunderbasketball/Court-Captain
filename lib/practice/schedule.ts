@@ -39,6 +39,13 @@ export type GymWithCourts = {
   id: string;
   name: string;
   active: boolean;
+  address?: string | null; // its real place (Google Places), when set
+  lat?: number | null;
+  lng?: number | null;
+  placeId?: string | null;
+  pinLat?: number | null; // its hand-set pin (Directions go there)
+  pinLng?: number | null;
+  pinAddress?: string | null;
   courts: { id: string; name: string; active: boolean }[];
 };
 
@@ -195,7 +202,8 @@ export async function weekGrid(
 
 export async function listGyms(deps: Pick<Deps, "pool">): Promise<GymWithCourts[]> {
   const r = await deps.pool.query<GymWithCourts>(
-    `select g.id::text, g.name, g.active,
+    `select g.id::text, g.name, g.active, g.address, g.lat, g.lng, g.place_id as "placeId",
+            g.pin_lat as "pinLat", g.pin_lng as "pinLng", g.pin_address as "pinAddress",
             coalesce(json_agg(json_build_object('id', c.id::text, 'name', c.name, 'active', c.active) order by c.name) filter (where c.id is not null), '[]') as courts
      from gyms g left join courts c on c.gym_id = g.id where g.org = 'thunder' group by g.id order by g.name`,
   );

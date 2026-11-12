@@ -35,7 +35,7 @@ export async function HostingSitesMembersContent({
       {!embedded && <AppHeader user={user} context={scenic.key} tab="scenic-members" />}
       <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
         {!embedded && <MembersNav user={user} current="hosting-sites" />}
-        <PageTitle title="Hosting Sites" subtitle="Who runs each site: Owners and Admins" />
+        <PageTitle title="Hosting Organizations" subtitle="Who runs each site: Owners and Admins" />
         {!sites.length && <p className="text-sm text-zinc-500">No hosting sites yet.</p>}
         {/* Each site a card (closed; tap to open), its ↗ opening the site's page; each person one line, opened to cell and email. */}
         <div className="space-y-3">

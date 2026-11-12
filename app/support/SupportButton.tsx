@@ -100,7 +100,7 @@ export function SupportPanel({
                 <details className="group px-3 py-2.5">
                   <summary className="flex cursor-pointer list-none items-start justify-between gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
                     {a.title}
-                    <span className="text-zinc-400 transition-transform group-open:rotate-90">›</span>
+                    <span className="text-zinc-400 transition-transform [details[open]>summary_&]:rotate-90">›</span>
                   </summary>
                   {a.kind === "howto" ? (
                     <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-zinc-600 dark:text-zinc-300">

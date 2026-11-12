@@ -47,14 +47,14 @@ describe("CourtSolo: a stand-alone team's own account", () => {
     );
   });
 
-  it("moves a Solo team into its own account: Owner, CourtSolo, one team named for it, still (Solo) in the League", async () => {
+  it("moves a Solo team into its own account: Owner, CourtClub, one team named for it, still (Solo) in the League", async () => {
     const slug = await withTx(db.pool, (q) => makeSoloAccount(q, team, "Earl Epps", now));
     expect(slug).toBe("magic");
     expect((await db.pool.query("select name, kind from organizations where slug = 'magic'")).rows[0]).toEqual({
       name: "Magic",
       kind: "Team",
     });
-    expect([...(await orgFeatureKeys(db.pool, "magic"))].sort()).toEqual(["alerts", "court-solo"]);
+    expect([...(await orgFeatureKeys(db.pool, "magic"))].sort()).toEqual(["alerts", "court-club", "court-facilities"]); // every organization's
     expect((await orgFeatures(db.pool, "magic")).has("team-building")).toBe(true);
     const roles = await db.pool.query("select role from org_roles where coach_id = '9913694' and org = 'magic' order by role");
     expect(roles.rows.map((r) => r.role)).toEqual(["Admin", "Coach", "Director", "Owner"]);
@@ -69,7 +69,7 @@ describe("CourtSolo: a stand-alone team's own account", () => {
     // One team only.
     expect(
       await createOrgTeam(deps(), earl, "magic", { gender: "Boys", grades: ["6"], level: "REC", headCoach: "none" }),
-    ).toEqual({ ok: false, message: "A CourtSolo account has one team: it can't add or import teams." });
+    ).toEqual({ ok: false, message: "A one-team club has one team: it can't add or import teams." });
     // Renaming the account renames the team, here and in the League.
     expect(await renameOrg(deps(), earl, "magic", { name: "Magic Elite", short: "Magic Elite" })).toMatchObject({ ok: true });
     expect((await db.pool.query("select name from org_teams")).rows).toEqual([{ name: "Magic Elite" }]);
@@ -124,7 +124,7 @@ describe("CourtSolo: a stand-alone team's own account", () => {
       kind: "Organization",
       abbr: "HH",
     });
-    expect([...(await orgFeatureKeys(db.pool, "hixson-hoops"))].sort()).toEqual(["alerts", "court-org"]);
+    expect([...(await orgFeatureKeys(db.pool, "hixson-hoops"))].sort()).toEqual(["alerts", "court-club", "court-facilities"]);
     expect((await db.pool.query("select name from scenic_teams where id = $1", [t1])).rows[0].name).toBe("HH Thunderbolts");
     expect((await myAccounts(db.pool, "9913694", "2027-03-15")).orgs).toEqual([{ slug: "hixson-hoops", name: "Hixson Hoops" }]);
     // Now it can add teams: COMP (REC needs CourtSync).

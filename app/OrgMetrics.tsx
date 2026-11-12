@@ -30,7 +30,7 @@ export function todoCounts(m: Metrics) {
 const grade = (g: number) => (g === -1 ? "Pre-K" : g === 0 ? "Kindergarten" : `${ordinal(String(g))} Grade`);
 
 // An organization's Home card for its Owners and Admins (SPEC.md section 14): cards that open on their own, each with its
-// count: Registrations (players, a bar a day from the first registration to the last), Teams, To Do (what needs
+// count: Registrations (players, a bar a day from the first registration to the last), To Do (what needs
 // someone, flashing red), Coaches' use of the app, Site visits (average a day, coaches' visits in green)
 // and Fees paid and owed. `base` is the organization's address ("/org/thunder"); Thunder's pages (players, uniforms,
 // practices, requests) are only Thunder's. `roster`: the viewer can roster players (the roster board button).
@@ -74,7 +74,7 @@ export default function OrgMetrics({
         style={{ paddingLeft: `${depth * 0.9}rem` }}
       >
         <span className="min-w-0 flex-1">{summary}</span>
-        <span aria-hidden className="text-zinc-400 transition-transform group-open/u:rotate-90">
+        <span aria-hidden className="text-zinc-400 transition-transform [details[open]>summary_&]:rotate-90">
           ›
         </span>
       </summary>
@@ -98,17 +98,6 @@ export default function OrgMetrics({
           ) : (
             <p className="text-sm text-zinc-500">No registrations yet.</p>
           )}
-        </SubCard>
-      )}
-
-      {m.teams && (
-        <SubCard title="Teams" count={m.teams.total}>
-          <p className="text-sm">
-            REC {m.teams.rec} · COMP {m.teams.comp} · Boys {m.teams.boys} · Girls {m.teams.girls}
-          </p>
-          <Link href={`${base}/teams`} className="mt-1 inline-block text-sm font-medium text-thunder-blue hover:underline">
-            All teams →
-          </Link>
         </SubCard>
       )}
 

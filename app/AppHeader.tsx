@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { after } from "next/server";
 import { popupAnnouncements, sendsAlerts, unreadCount } from "@/lib/announcements";
-import { chatUnreadCount, orgKey } from "@/lib/chat";
+import { chatUnreadCount } from "@/lib/chat";
 import type { SessionUser } from "@/lib/auth/service";
 import { PLATFORM } from "@/lib/contexts";
 import { currentContexts } from "@/lib/contexts-server";
@@ -21,13 +21,13 @@ import { syncIfStale } from "@/lib/teamsnap/scheduler";
 import { stopActing } from "./act-as/actions";
 import AnnouncementPopup from "./AnnouncementPopup";
 import OrgSwitcher from "./OrgSwitcher";
+import { OrgSearchButton } from "./OrgSearch";
 import OrgGear from "./OrgGear";
 import HeaderPanels from "./HeaderPanels";
 import { directorAlerts } from "@/lib/director-alerts";
 import SupportButton from "./support/SupportButton";
 import { listArticles, supportChats } from "@/lib/support";
 import { LogoutButton } from "./HomeActions";
-import { Avatar } from "./ui";
 
 type Tab =
   | "teams"
@@ -110,7 +110,7 @@ export default async function AppHeader({
   ]);
   // Only the features this organization has (SPEC section 14); tabs with no feature are always there.
   const has = (t: { feature?: Feature }) => !t.feature || features.has(t.feature);
-  const chatOn = features.has("chat");
+  const chatOn = features.has("chat") || features.has("hosting-available"); // a host-only organization: its CourtSync chats
   const supportStaff = contexts.some((c) => c.key === "platform");
   // Chips for this organization only; the logo next to Log out switches organizations (SPEC section 14).
   const orgChips = platform ? [] : contexts.filter((c) => c.org === org);
@@ -135,12 +135,8 @@ export default async function AppHeader({
     after(() => recordVisit(deps, user, org).catch((e) => console.error("Recording a visit failed:", e)));
   // `areas`: Director tabs show only for a Director with one of these areas (Admins have all; SPEC section 14).
   // `admin`: Admins only.
-  const scheduleHref =
-    features.has("practice") && hasArea(user, "practices")
-      ? "/org/thunder/practice"
-      : features.has("events") && hasArea(user, "events")
-        ? "/events"
-        : null;
+  // Schedule: Practice and Season (open gyms and tryouts are a program's Sessions, under Home → Programs).
+  const scheduleHref = features.has("practice") && hasArea(user, "practices") ? "/org/thunder/practice" : null;
   type TabLink = { key: string; href: string; label: string; icon: string; feature?: Feature; areas?: Area[]; admin?: boolean };
   // Every organization's tabs, in one order: Home · Teams · Programs · Schedule · Uniforms · Facilities · Members (each
   // shown only when its features and the person's role allow), then the gear for Admins.
@@ -148,7 +144,7 @@ export default async function AppHeader({
     { key: "thunder-home", href: "/org/thunder", label: "Home", icon: ICONS.home },
     { key: "teams", href: "/org/thunder/teams", label: "Teams", icon: ICONS.teams, feature: "team-building", areas: ["teams"] },
     // Schedule: Practice and Season (Facilities, Practice Management), Events (Programs, Event Management); opens the first.
-    ...(scheduleHref ? [{ key: "schedule", href: scheduleHref, label: "Schedule", icon: ICONS.practice }] : []),
+    ...(scheduleHref ? [{ key: "schedule", href: scheduleHref, label: "Practice", icon: ICONS.practice }] : []),
     {
       key: "uniforms",
       href: "/org/thunder/uniforms",
@@ -313,40 +309,40 @@ export default async function AppHeader({
     (key === "teams" && !!flags?.teams) ||
     (key === "uniforms" && !!flags?.uniforms);
   // No tab row for Thunder's Directors, Scenic City or a registered organization: their Home is a stack of cards, one per
-  // part (the logo goes Home).
-  const orgPages = !!orgTabs || !!scenicTabs || (user.isDirector && context === "director");
+  // part (the logo goes Home). Only a team's pages keep their tabs.
   const showTabs = !!teamTab;
   const activeBg = scenicTabs ? "bg-scenic-navy" : "bg-thunder-blue";
   // A registered organization's own color (set in its gear) marks the tab in use; Thunder and Scenic City keep theirs.
   const tabColor = registered ? brand.color : null;
   // The gear (features, logo, color, login link) after the last tab, for the organization's Admins.
-  const gear = (showTabs || orgPages) && !teamTab && !platform && (await isOrgAdmin(db, user.coachId, org));
+  const gear = !teamTab && !platform && !neutral && (await isOrgAdmin(db, user.coachId, org));
+  // 🔍 search (people, teams, players): the organization's Owners, Admins and Directors.
+  const search =
+    !platform &&
+    !neutral &&
+    (await db.query<{ ok: boolean }>("select acts_as($1, $2, 'Director') as ok", [user.coachId, org])).rows[0].ok;
   // Alerts in every organization: its Directors' bell sends to everyone there (opens under the header); everyone
   // else's bell opens their inbox. Thunder keeps its own (all team staff) and its chat.
   const member = !platform && (thunder || orgChips.length > 0);
   const alertSender = member && !thunder && (await sendsAlerts(deps, user, org));
   const orgIcons = (
     <>
-      {/* Directors: the bubble (chat with every Head Coach) and the bell (notify all team staff) open under the header. */}
+      {/* Directors: the bubble (the Chat box) and the bell (notify all team staff) open under the header; everyone else's bubble too. */}
       {thunder && user.isDirector && (
         <HeaderPanels
           className={headerBtn}
-          chat={chatOn ? { chatKey: `heads-${user.coachId}`, icon: <HeaderIcon d={ICONS.chat} badge={chatUnread} /> } : undefined}
+          chat={chatOn ? { unread: chatUnread, icon: <HeaderIcon d={ICONS.chat} badge={chatUnread} /> } : undefined}
           alert={{ audience: { roles: ALL_STAFF }, to: "all team staff", icon: <HeaderIcon d={ICONS.bell} badge={unread} /> }}
         />
       )}
       {thunder && chatOn && !user.isDirector && (
-        <Link href="/chat" aria-label={chatUnread ? `Chat, ${chatUnread} unread` : "Chat"} className={headerBtn}>
-          <HeaderIcon d={ICONS.chat} badge={chatUnread} />
-        </Link>
+        <HeaderPanels className={headerBtn} chat={{ unread: chatUnread, icon: <HeaderIcon d={ICONS.chat} badge={chatUnread} /> }} />
       )}
       {alertSender && (
         <HeaderPanels
           className={headerBtn}
-          // Its Directors' bubble: the chat with every Head Coach there (All chats → inside).
-          chat={
-            chatOn ? { chatKey: orgKey(org, `heads-${user.coachId}`), icon: <HeaderIcon d={ICONS.chat} badge={chatUnread} /> } : undefined
-          }
+          // Its Directors' bubble: the Chat box.
+          chat={chatOn ? { unread: chatUnread, icon: <HeaderIcon d={ICONS.chat} badge={chatUnread} /> } : undefined}
           alert={{
             audience: { org, everyone: true },
             to: `everyone at ${here?.short ?? here?.name ?? "this organization"}`,
@@ -355,9 +351,7 @@ export default async function AppHeader({
         />
       )}
       {member && !thunder && !alertSender && chatOn && (
-        <Link href="/chat" aria-label={chatUnread ? `Chat, ${chatUnread} unread` : "Chat"} className={headerBtn}>
-          <HeaderIcon d={ICONS.chat} badge={chatUnread} />
-        </Link>
+        <HeaderPanels className={headerBtn} chat={{ unread: chatUnread, icon: <HeaderIcon d={ICONS.chat} badge={chatUnread} /> }} />
       )}
       {member &&
         !alertSender &&
@@ -405,37 +399,8 @@ export default async function AppHeader({
               )}
             </span>
           </Link>
-          <div className="flex min-w-0 items-center gap-3">
-            {myEvents > 0 && (
-              <Link
-                href="/events"
-                className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold whitespace-nowrap text-white hover:bg-emerald-700"
-              >
-                ✓ Check-in
-              </Link>
-            )}
-            {/* With tabs, Chat and Alerts sit by the gear on the tab row (computers); on phones they stay up here. */}
-            {showTabs ? <span className="flex items-center gap-1 sm:hidden">{orgIcons}</span> : orgIcons}
-            {/* Without the tab row, the gear sits up here. */}
-            {!showTabs && gear && <OrgGear org={org} coachId={user.coachId} />}
-            {!showTabs && (
-              <SupportButton
-                org={org}
-                articles={articles}
-                mine={chats.mine}
-                inbox={chats.inbox}
-                staff={supportStaff}
-                className="rounded-full px-3 py-1.5 text-sm font-medium text-zinc-600 ring-1 ring-zinc-950/10 hover:bg-zinc-100 dark:text-zinc-300 dark:ring-white/15"
-              />
-            )}
-            <Link href="/me" className="hidden truncate text-sm font-medium hover:underline sm:block">
-              {user.firstName} {user.lastName}
-            </Link>
-            <span className={switchTo.length > 1 ? "hidden sm:block" : undefined}>
-              <Link href="/me" aria-label="My dashboard" title="My dashboard">
-                <Avatar first={user.firstName} last={user.lastName} tone="orange" />
-              </Link>
-            </span>
+          {/* The top row: logo and name, the organization switcher, Log out. Everything else is on the row below. */}
+          <div className="flex shrink-0 items-center gap-3">
             {switchTo.length > 0 && <OrgSwitcher current={platform ? PLATFORM : org} orgs={switchTo} />}
             <LogoutButton to={brand.login} />
           </div>
@@ -466,6 +431,27 @@ export default async function AppHeader({
             </div>
           </nav>
         )}
+
+        {/* The row under it: your name (My dashboard) on the left; Check-in, Chat, Alerts, the gear and 🔍 search on
+          the right. */}
+        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 pb-2">
+          <Link href="/me" className="min-w-0 truncate text-sm font-medium text-zinc-600 hover:underline dark:text-zinc-300">
+            {user.firstName} {user.lastName}
+          </Link>
+          <div className="flex shrink-0 items-center gap-1">
+            {myEvents > 0 && (
+              <Link
+                href="/events"
+                className="mr-1 rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold whitespace-nowrap text-white hover:bg-emerald-700"
+              >
+                ✓ Check-in
+              </Link>
+            )}
+            {orgIcons}
+            {gear && <OrgGear org={org} coachId={user.coachId} />}
+            {search && <OrgSearchButton org={org} orgName={here?.short ?? brand.name} />}
+          </div>
+        </div>
 
         {/* Tablets and computers: tabs under the header. */}
         {showTabs && (
@@ -503,11 +489,6 @@ export default async function AppHeader({
                   className="rounded-full px-5 py-1.5 text-center text-sm font-medium whitespace-nowrap text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
                 />
               </div>
-              {/* Far right: Chat and Alerts, then the gear. */}
-              <div className="flex shrink-0 items-center gap-1">
-                {orgIcons}
-                {gear && <OrgGear org={org} coachId={user.coachId} />}
-              </div>
             </div>
           </nav>
         )}
@@ -522,7 +503,7 @@ export default async function AppHeader({
           aria-label={scenicTabs ? "Scenic City" : teamTab ? "Team" : "Director"}
           className="fixed inset-x-0 bottom-0 z-20 border-t border-zinc-950/10 bg-white/95 backdrop-blur-xl sm:hidden dark:border-white/10 dark:bg-zinc-950/95"
         >
-          <div className="grid" style={{ gridTemplateColumns: `repeat(${tabs.length + (gear ? 1 : 0)}, minmax(0, 1fr))` }}>
+          <div className="grid" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
             {tabs.map((t) => {
               const on = activeTab === t.key;
               return (
@@ -561,11 +542,6 @@ export default async function AppHeader({
                 </Link>
               );
             })}
-            {gear && (
-              <div className="flex items-center justify-center">
-                <OrgGear org={org} coachId={user.coachId} />
-              </div>
-            )}
           </div>
           {/* A strip under the tabs for the host's "Powered by" badge (bottom right), so it never covers a tab.
             Also clears the iPhone home bar. Support fills the free left side. */}

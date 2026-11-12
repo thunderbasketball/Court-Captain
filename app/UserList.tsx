@@ -38,6 +38,7 @@ export type DirectorTeam = {
   directors: Director[];
   areas: { key: string; name: string; covers: string }[];
   options: { id: string; name: string }[];
+  directorsOn: boolean;
   canManageAdmins: boolean;
   adminOptions: { id: string; name: string }[];
   ownerOptions: { id: string; name: string }[];
@@ -63,8 +64,8 @@ export default async function UserList({
   const thunder = orgAdmin === undefined;
   const admin = thunder ? isThunderAdmin(viewer) : orgAdmin;
   const slug = thunder ? "thunder" : (org ?? team?.org);
-  // Each coach's chat with the Directors, opened on their card: Thunder, or another organization with Chat (its Admins).
-  const chatOn = thunder || (!!slug && admin && (await hasFeature(db, slug, "chat")));
+  // Each coach's chat with the Directors, opened on their card: organizations with team chats (CourtPlayers; others' Admins).
+  const chatOn = !!slug && (thunder || admin) && (await hasFeature(db, slug, "team-chat"));
   const canReset =
     admin && slug
       ? await resettable(
@@ -282,7 +283,7 @@ export default async function UserList({
                         <span>
                           {t.name} · {t.people.length}
                         </span>
-                        <span className="text-base transition-transform group-open/t:rotate-90">›</span>
+                        <span className="text-base transition-transform [details[open]>summary_&]:rotate-90">›</span>
                       </summary>
                       <ul className="divide-y divide-zinc-100 dark:divide-white/5">{rows(t.people, true, t.id)}</ul>
                     </details>
@@ -320,9 +321,11 @@ export default async function UserList({
               org={team.org}
               areas={team.areas}
               options={team.options}
+              directorsOn={team.directorsOn}
               canManageAdmins={team.canManageAdmins}
               adminOptions={team.adminOptions}
               ownerOptions={team.ownerOptions}
+              staff={team.directors}
             />
           </AddMenu>
         ) : (
@@ -396,9 +399,11 @@ export function StaffAdd({ team, thunder }: { team: DirectorTeam | null; thunder
         org={team.org}
         areas={team.areas}
         options={team.options}
+              directorsOn={team.directorsOn}
         canManageAdmins={team.canManageAdmins}
         adminOptions={team.adminOptions}
         ownerOptions={team.ownerOptions}
+        staff={team.directors}
       />
     </AddMenu>
   );

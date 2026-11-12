@@ -5,7 +5,7 @@
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { gameDaySchedule } from "./scenic-programs";
-import { dayGrid, gymBlocks } from "./scenic-grid";
+import { dayGrids, gymBlocks } from "./scenic-grid";
 
 type Deps = { pool: Pool; now: () => Date };
 
@@ -57,6 +57,12 @@ export async function scheduleAnalysis(deps: Deps, viewer: SessionUser): Promise
   // Every upcoming Game Day, and each League's Brackets (postseason) as one card over its Bracket Days.
   const last = (d: (typeof s.days)[number]) => d.programs.reduce((x, p) => (p.lastDate > x ? p.lastDate : x), d.date);
   const days = s.days.filter((d) => last(d) >= s.today);
+  // Every Game Day's grid in one go (three queries, not three a day).
+  const allGrids = await dayGrids(
+    deps,
+    viewer,
+    days.flatMap((day) => (day.programs.every((p) => p.bracket) ? day.programs.flatMap((p) => p.bracketDays) : [day.date])),
+  );
   return Promise.all(
     days.map(async (day): Promise<DayAnalysis> => {
       const brackets = day.programs.every((p) => p.bracket);
@@ -66,7 +72,7 @@ export async function scheduleAnalysis(deps: Deps, viewer: SessionUser): Promise
       const matchups = leagues.flatMap((p) => p.matchups).filter((m) => playing.has(m.a) && (!m.b || playing.has(m.b)));
       // The Brackets: game slots summed over every Bracket Day.
       const dates = brackets ? [...new Set(day.programs.flatMap((p) => p.bracketDays))].sort() : [day.date];
-      const grids = (await Promise.all(dates.map((d) => dayGrid(deps, viewer, d)))).filter((g) => !!g);
+      const grids = dates.map((d) => allGrids.get(d)).filter((g) => !!g);
       const minutes = grids[0]?.minutes ?? 0;
 
       const orgs = new Map<string, OrgDay>();

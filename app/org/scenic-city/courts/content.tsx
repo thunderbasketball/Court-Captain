@@ -12,6 +12,7 @@ import { CourtDivisions } from "./CourtDivisions";
 
 import { PageFrame } from "../../../ui";
 import { hasFeature } from "@/lib/features";
+import SchedulerPin from "./SchedulerPin";
 
 // Facilities → Courts (Admins and Directors of Facilities): every hosting site's gyms and courts; each court lists which
 // divisions may play there. The Scheduler Grid only places a division's games on courts approved for it.
@@ -59,12 +60,13 @@ export async function CourtsContent({
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
                   <span className="min-w-0">
                     <span className="font-semibold">
-                      <span className="mr-1 inline-block text-zinc-400 transition group-open:rotate-90">›</span>
+                      <span className="mr-1 inline-block text-zinc-400 transition [details[open]>summary_&]:rotate-90">›</span>
                       {g.name}
                     </span>
                     <span className="block text-xs text-zinc-500">
                       {g.host}
                       {g.address && ` · ${g.address}`}
+                      {g.pin && " · 📍 your pin"}
                     </span>
                   </span>
                   <span className="shrink-0 text-right text-xs text-zinc-500">
@@ -76,6 +78,8 @@ export async function CourtsContent({
                     </span>
                   </span>
                 </summary>
+                {/* Where it is: the host's location, and Scenic City's own pin for its schedules' Directions. */}
+                <SchedulerPin org="scenic-city" gymKey={g.key} host={g.host} address={g.address} hostMap={g.hostMap} pin={g.pin} />
                 <ul className="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-white/5 dark:border-white/5">
                   {g.courts.map((c) => (
                     <li key={c.key} className="px-4 py-3">

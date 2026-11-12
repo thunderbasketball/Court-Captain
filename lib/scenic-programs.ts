@@ -1167,10 +1167,11 @@ async function recOpen(q: Pick<Queryable, "query">, programId: string, teamId: s
   return r.rows[0]?.ok ?? false;
 }
 
-// The organizations REC can be limited to: CourtSync (no CourtSync, no REC) and teams of its own (CourtOrg, or
-// CourtPlayers like Thunder). Hosts with CourtSync only (high schools) and CourtSolo teams aren't listed. `p` is partners.
+// The organizations REC can be limited to: CourtSync (no CourtSync, no REC) and teams of its own (CourtClub, or
+// CourtPlayers like Thunder). Hosts with CourtSync only (high schools) and stand-alone teams (a club of one) aren't listed. `p` is partners.
 export const REC_ORG_SQL = (org: string) => `exists (select 1 from org_features f where f.org = ${org} and f.feature = 'court-sync')
-  and exists (select 1 from org_features f where f.org = ${org} and f.feature in ('court-org', 'court-players'))`;
+  and exists (select 1 from org_features f where f.org = ${org} and f.feature in ('court-club', 'court-players'))
+  and exists (select 1 from organizations o2 where o2.slug = ${org} and o2.kind <> 'Team')`;
 const REC_CHOICE_SQL = `p.approved and p.org_slug is not null and ${REC_ORG_SQL("p.org_slug")}`;
 
 export type RecLimit = {

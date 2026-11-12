@@ -40,6 +40,32 @@ export async function ProgramsContent({
   }
   const manage = data.canManage && scenic.role === "Director";
 
+  // The parts of a program's card: logo, kind and name, where registration stands, dates, divisions, teams, options.
+  const head = (p: (typeof data.programs)[number]) => (
+    <>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-3">
+          <ProgramLogo src={p.logo} />
+          <div className="min-w-0">
+            <p className="text-xs font-semibold tracking-wide text-scenic-navy uppercase dark:text-zinc-300">{p.kind}</p>
+            <h2 className="font-semibold">{p.name}</h2>
+          </div>
+        </div>
+        <RegBadge status={p.status} />
+      </div>
+      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+        {dayLabel(p.startsOn)} – {dayLabel(p.endsOn)}
+      </p>
+      <p className="text-xs text-zinc-500">
+        {p.divisions} division{p.divisions === 1 ? "" : "s"} · {p.teams} team{p.teams === 1 ? "" : "s"}
+        {p.kind === "League"
+          ? p.options.length > 0 && ` · ${p.options.map((o) => optionName(o.kind)).join(", ")}`
+          : p.feeCents !== null && ` · ${money(p.feeCents)} per team`}
+      </p>
+      {p.recLimited && <p className="text-xs font-medium text-amber-700 dark:text-amber-300">{REC_LIMITED}</p>}
+    </>
+  );
+
   return (
     <>
       {!embedded && <AppHeader user={user} context={scenic.key} tab="programs" />}
@@ -53,26 +79,7 @@ export async function ProgramsContent({
         <div className="grid gap-3 sm:grid-cols-2">
           {data.programs.map((p) => (
             <Link key={p.id} href={`/org/scenic-city/programs/${p.id}`} className={`${card} block p-4 hover:ring-scenic-navy/40`}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-3">
-                  <ProgramLogo src={p.logo} />
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold tracking-wide text-scenic-navy uppercase dark:text-zinc-300">{p.kind}</p>
-                    <h2 className="font-semibold">{p.name}</h2>
-                  </div>
-                </div>
-                <RegBadge status={p.status} />
-              </div>
-              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-                {dayLabel(p.startsOn)} – {dayLabel(p.endsOn)}
-              </p>
-              <p className="text-xs text-zinc-500">
-                {p.divisions} division{p.divisions === 1 ? "" : "s"} · {p.teams} team{p.teams === 1 ? "" : "s"}
-                {p.kind === "League"
-                  ? p.options.length > 0 && ` · ${p.options.map((o) => optionName(o.kind)).join(", ")}`
-                  : p.feeCents !== null && ` · ${money(p.feeCents)} per team`}
-              </p>
-              {p.recLimited && <p className="text-xs font-medium text-amber-700 dark:text-amber-300">{REC_LIMITED}</p>}
+              {head(p)}
             </Link>
           ))}
         </div>

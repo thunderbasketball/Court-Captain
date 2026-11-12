@@ -1,8 +1,12 @@
 import { notFound, redirect } from "next/navigation";
+import { OfficiatingRequestsCard, officiatingWaiting } from "../../../officiating/OfficiatingCards";
+import { AddIcon } from "../../../CardIcons";
+import OfficialsCard, { OFFICIALS_ADD, officialsCount } from "../../../officials/OfficialsCard";
+import type { OrgSlug } from "@/lib/orgs";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import { orgInfo } from "@/lib/org-registry";
-import { directorsPanel } from "@/lib/org-admin";
+import { assignerCount, directorsPanel } from "@/lib/org-admin";
 import { listOrgMembers } from "@/lib/org-members";
 import { StaffAdd, staffCount } from "../../../UserList";
 import { PanelIcon } from "../../../CardIcons";
@@ -44,9 +48,23 @@ export async function OrgMembersContent({
   }
   const sp = await searchParams;
   const open = typeof sp.open === "string" ? sp.open : sp.coaches ? "coaches" : null;
+  // CourtOfficials needs at least one Assigner: Staff flashes and says so until one is set.
+  const noAssigner = (await assignerCount(db, slug as OrgSlug)) === 0;
   const body = {
-    staff: <OrgStaffPart user={user} slug={slug} />,
+    staff: (
+      <>
+        {noAssigner && (
+          <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700 dark:bg-red-950/40 dark:text-red-300">
+            No Officials Assigner yet. CourtOfficials needs at least one: tap + → Officials Assigner, or Make
+            Officials Assigner on an Owner or Admin below.
+          </p>
+        )}
+        <OrgStaffPart user={user} slug={slug} />
+      </>
+    ),
     coaches: <OrgCoachesPart user={user} slug={slug} view={sp.coaches} />,
+    officials: <OfficialsCard org={slug as OrgSlug} user={user} inCard />,
+    "officials-groups": <OfficiatingRequestsCard org={slug as OrgSlug} user={user} />,
   };
   // Staff (n) and its + on the title line (Owners and Admins).
   // Coaches (n Active) and its 📣 on the title line (opens Text, Chat, Alert inside the card).
@@ -55,24 +73,33 @@ export async function OrgMembersContent({
     listOrgMembers(db, user, slug),
     staff ? directorsPanel({ pool: db, now: () => new Date() }, user, slug) : null,
   ]);
-  const cards = parts.map((p) => ({
+  const cards = await Promise.all(parts.map(async (p) => ({
     ...p,
+    alert: p.key === "staff" && noAssigner,
     count:
-      p.key === "staff" && members
+      p.key === "staff" && noAssigner
+        ? "No Officials Assigner"
+        : p.key === "staff" && members
         ? staffCount(members.users)
         : p.key === "coaches" && members
           ? `${activeCoaches(members.users).length} Active`
-          : undefined,
+          : p.key === "officials"
+            ? await officialsCount(slug as OrgSlug)
+            : p.key === "officials-groups" && (await officiatingWaiting(slug as OrgSlug))
+              ? `${await officiatingWaiting(slug as OrgSlug)} waiting`
+              : undefined,
     action:
       p.key === "staff" && panel ? (
         <StaffAdd team={{ org: slug, orgName: o.name, ...panel }} thunder={false} />
+      ) : p.key === "officials" ? (
+        <AddIcon id={OFFICIALS_ADD} label="Add an official" />
       ) : p.key === "coaches" ? (
         <PanelIcon id="coach-tools" label="Coaches: text, chat or alert" className={MEGAPHONE_BTN}>
           <MegaphoneIcon />
         </PanelIcon>
       ) : undefined,
     body: body[p.key],
-  }));
+  })));
   return (
     <>
       {!embedded && <AppHeader user={user} context={`org:${slug}`} tab="org-members" />}

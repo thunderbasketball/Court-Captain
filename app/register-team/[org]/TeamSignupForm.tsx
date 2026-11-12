@@ -225,7 +225,7 @@ export function TeamSignupForm({
             {/* Already in this event: a CourtSolo account has one team, so another team means switching to CourtOrg. */}
             {event && a.inPrograms.includes(event.id) && (
               <p className="rounded-xl bg-zinc-50 px-3 py-2.5 text-sm text-zinc-600 dark:bg-white/5 dark:text-zinc-300">
-                {a.teamName} is already registered for {event.name}. To register another team, switch to CourtOrg.
+                {a.teamName} is already registered for {event.name}. To register another team, switch to a club with more teams.
               </p>
             )}
             {a.teamName && !(event && a.inPrograms.includes(event.id)) && (
@@ -258,7 +258,7 @@ export function TeamSignupForm({
               <span className="block text-xs text-zinc-500">
                 {a.busyIn
                   ? `Not yet: ${a.teamName} is in ${a.busyIn} until it ends.`
-                  : "A CourtSolo account has one active team. The old one stays as history."}
+                  : "A one-team club has one active team. The old one stays as history."}
               </span>
             </button>
             )}
@@ -268,7 +268,7 @@ export function TeamSignupForm({
               disabled={busy}
               onClick={() => setSwitching(switching === a.slug ? null : a.slug)}
             >
-              <span className="block font-semibold">Switch to CourtOrg{a.teamName ? ` and bring ${a.teamName}` : ""}</span>
+              <span className="block font-semibold">Switch to a club with more teams{a.teamName ? ` and bring ${a.teamName}` : ""}</span>
               <span className="block text-xs text-zinc-500">For more than one team: your account becomes an organization.</span>
             </button>
             {switching === a.slug && (
@@ -293,7 +293,7 @@ export function TeamSignupForm({
                   <input className={inputCls} maxLength={20} value={orgShort} onChange={(e) => setOrgShort(e.target.value)} />
                 </Field>
                 <button className={primaryBtn} disabled={busy || !orgName.trim()}>
-                  {busy ? "Switching…" : "Switch to CourtOrg"}
+                  {busy ? "Switching…" : "Switch to a club with more teams"}
                 </button>
               </form>
             )}
@@ -314,7 +314,7 @@ export function TeamSignupForm({
         {!accounts.solo.length && (
           <button type="button" className={choiceBtn} disabled={busy} onClick={() => setScreen("form")}>
             <span className="block font-semibold">Create a separate stand-alone team</span>
-            <span className="block text-xs text-zinc-500">Its own CourtSolo account.</span>
+            <span className="block text-xs text-zinc-500">Its own one-team CourtClub account.</span>
           </button>
         )}
         {error && <Alert tone="red">{error}</Alert>}

@@ -41,7 +41,7 @@ export function ScheduleAnalysis({ days }: { days: DayAnalysis[] }) {
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
                 <span className="min-w-0">
                   <span className="block font-semibold">
-                    <span aria-hidden className="mr-1 inline-block text-zinc-400 transition-transform group-open:rotate-90">
+                    <span aria-hidden className="mr-1 inline-block text-zinc-400 transition-transform [details[open]>summary_&]:rotate-90">
                       ▸
                     </span>
                     {d.brackets

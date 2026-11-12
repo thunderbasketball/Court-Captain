@@ -3,7 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { currentUser } from "@/lib/auth/server";
 import { FEATURES, READY_FOR_ANY_ORG } from "@/lib/features";
-import { ORG_COLORS, ORG_KINDS } from "@/lib/org-signup";
+import { KIND_LABEL, KIND_PRESET, ORG_COLORS, ORG_KINDS } from "@/lib/org-signup";
 import LoginFlow from "../login/LoginFlow";
 import { card } from "../ui";
 import RegisterOrgForm from "./RegisterOrgForm";
@@ -19,7 +19,7 @@ export default function RegisterPage({ searchParams }: PageProps<"/register">) {
         <Image src="/brand/courtcaptain.png" alt="CourtCaptain" width={768} height={512} priority className="h-auto w-44" />
         <h1 className="text-xl font-semibold tracking-tight">Register your organization</h1>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Schools, clubs and leagues. Live right away; you&apos;ll be its Owner.
+          Schools, clubs, leagues and officials groups. Live right away; you&apos;ll be its Owner.
         </p>
       </div>
       <Suspense fallback={<p className="text-center text-zinc-500">Loading…</p>}>
@@ -33,8 +33,10 @@ export default function RegisterPage({ searchParams }: PageProps<"/register">) {
 // first, then the form.
 async function Register({ searchParams }: { searchParams: PageProps<"/register">["searchParams"] }) {
   const user = await currentUser();
-  // "Host games" from Get started arrives with ?need=court-sync ticked; "Register your organization's teams" with court-org.
-  const need = (await searchParams).need;
+  // "Host games" from Get started arrives with ?need=court-sync ticked; "Register your organization's teams" with court-club
+  // (old court-org links too).
+  const asked = (await searchParams).need;
+  const need = asked === "court-org" ? "court-club" : asked;
   if (!user)
     return (
       <>
@@ -51,7 +53,7 @@ async function Register({ searchParams }: { searchParams: PageProps<"/register">
     );
   // Multiple teams (CourtOrg) from an event, by someone who already has an organization or a CourtSolo team: ask first.
   const sp = await searchParams;
-  if (need === "court-org" && sp.new !== "1") {
+  if (need === "court-club" && sp.new !== "1") {
     const mine = await myAccounts(db, user.coachId, easternDate(new Date()));
     if (mine.orgs.length || mine.solo.length)
       return (
@@ -71,7 +73,7 @@ async function Register({ searchParams }: { searchParams: PageProps<"/register">
             <SwitchSolo key={a.slug} slug={a.slug} team={a.teamName ?? a.name} />
           ))}
           <Link
-            href="/register?need=court-org&new=1"
+            href="/register?need=court-club&new=1"
             className="block rounded-xl px-3 py-2.5 ring-1 ring-zinc-950/10 hover:bg-zinc-50 dark:ring-white/15 dark:hover:bg-white/5"
           >
             <span className="block font-semibold">Create a new organization</span>
@@ -98,7 +100,7 @@ async function Register({ searchParams }: { searchParams: PageProps<"/register">
           ← Back
         </Link>
       </p>
-      <RegisterOrgForm kinds={ORG_KINDS} colors={ORG_COLORS} features={features} preset={preset} />
+      <RegisterOrgForm kinds={ORG_KINDS} labels={KIND_LABEL} kindPreset={KIND_PRESET} colors={ORG_COLORS} features={features} preset={preset} />
     </div>
   );
 }

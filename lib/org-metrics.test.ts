@@ -139,7 +139,7 @@ describe("Home metrics", () => {
   it("another organization: only what its features have (teams and coaches; no registrations, uniforms or practices)", async () => {
     const org = "east-ridge-parks-and-rec";
     const input = { name: "East Ridge Parks & Rec", short: "East Ridge", kind: "Organization", color: "#0f766e" };
-    await createOrganization(deps(), admin, { ...input, features: ["court-org"] }, null);
+    await createOrganization(deps(), admin, { ...input, features: ["court-club"] }, null);
     // CourtSync with its own teams: REC is open to it (lib/rec-orgs.ts).
     await db.pool.query(
       "insert into org_features (org, feature, source, turned_on_by) select slug, 'court-sync', 'setup', 'test' from organizations where slug not in ('thunder', 'scenic-city') on conflict do nothing",

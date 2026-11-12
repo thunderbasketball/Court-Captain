@@ -1,9 +1,10 @@
-// Chat (SPEC.md section 11), for Thunder and every organization with the Chat feature. Conversations are fixed keys
+// Chat (SPEC.md section 11), by the organization's features: CourtPlayers has every chat below; CourtTeams has the
+// Directors chat and private chats (Directors); other organizations have none (Support chat is apart, lib/support.ts). Conversations are fixed keys
 // whose members follow the current roles in that organization:
 //   directors        Directors
 //   everyone         Directors + all coaches
 //   coaches          coaches (Directors can read and post, but aren't counted as members: no unread, no email)
-//   team-<id>        that team's staff + Directors
+//   team-<id>        that team's staff (Directors can read and post, hidden: not members, no unread, no email)
 //   teamcoaches-<id> that team's Head and Assistant Coaches + Directors
 //   parents-<id>     that team's staff + its players' parents with a login (cell is parent 1 or 2 on the registration;
 //                    Thunder only). Directors can read and post, but aren't counted as members.
@@ -13,12 +14,18 @@
 //   dm-<a>-<b>       two people (lower id first), one of them a Director
 //   staff-<by>-<id>  Director <by> + that team's whole staff
 //   heads-<by>       Director <by> + every Head Coach
+// CourtTeams (an organization's team programs: Leagues, Circuits, Tournaments):
+//   program-<id>     the organization's Directors + the coaches of the teams registered in that program
+//   (and coach-<id> / dm with a registered team's coach: they count as the organization's coaches while its program runs)
+// CourtSync (stored under the Scheduler's organization, whatever its other chats):
+//   host-<slug>      Scheduler ↔ Host: the Scheduler's Admins and Directors of Scheduling or Facilities + the host
+//                    organization's Admins and Directors of Facilities, while the hosting is approved and both have CourtSync
 // A "coach" has the Coach role or is a Head or Assistant Coach on a team. Directors can open every chat.
 // Thunder's keys are as above ("coaches"); another organization's carry its slug: "east-ridge~coaches" (its teams are
 // org_teams, their coaches org_team_coaches). A person's chat list and unread count cover every organization.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
-import { hasFeature } from "./features";
+import { orgFeatures } from "./features";
 import { withTx } from "./sql";
 import { TZ } from "./time";
 
@@ -54,7 +61,26 @@ type Ctx = {
   teams: { id: string; name: string; coach: boolean; head: boolean }[];
   events: string[];
   parentOf: string[]; // Thunder teams with this person's children on the roster
+  programs: string[]; // this organization's running team programs where this person coaches a registered team
+  syncer: boolean; // CourtSync Scheduler side: an Admin or Director of Scheduling or Facilities here
+  hostFor: string[]; // approved hosts of this organization where this person is an Admin or Director of Facilities
 };
+
+// An Admin, or a Director with one of these areas, in an organization (roles only; CourtCaptain staff aren't counted).
+const areaSql = (who: string, org: string, areas: string) =>
+  `(has_role(${who}, ${org}, 'Admin') or (has_role(${who}, ${org}, 'Director') and exists (
+     select 1 from director_areas a where a.coach_id = ${who} and a.org = ${org} and a.area = any(${areas}))))`;
+const SCHEDULER_AREAS = "array['scheduling', 'facilities']";
+// A coach of a team registered in one of the organization's running team programs (until the program ends; removed
+// registrations don't count): the team's listed coach, or a Head or Assistant Coach of the club team it comes from.
+const COACHES_TEAM_SQL = (who: string) =>
+  `(t.coach_id = ${who}
+    or exists (select 1 from org_team_coaches c where c.team_id = t.org_team_id and c.coach_id = ${who} and c.role in ('HeadCoach', 'AsstCoach'))
+    or exists (select 1 from team_staff s where s.team_id = t.thunder_team_id and s.coach_id = ${who} and s.role in ('HeadCoach', 'AsstCoach')))`;
+const REGISTERED_SQL = (who: string, org: string, program = "") =>
+  `select p.id from scenic_registrations r join scenic_teams t on t.id = r.team_id join scenic_programs p on p.id = r.program_id
+    where r.removed_by is null and p.org = ${org} and p.ends_on >= current_date and ${COACHES_TEAM_SQL(who)}${program ? ` and p.id = ${program}` : ""}`;
+const HOST_AREAS = "array['facilities']";
 
 // Roles in one organization, fresh from the database (for the viewer, or anyone when working out who gets an email).
 async function contextFor(q: Q, coachId: string, org: string = THUNDER): Promise<Ctx | null> {
@@ -82,11 +108,21 @@ async function contextFor(q: Q, coachId: string, org: string = THUNDER): Promise
           [coachId],
         )
       : { rows: [] };
+  // CourtSync: this organization's approved hosts, and which side of each chat this person is on.
+  const sync = await q.query<{ host: string; syncer: boolean; host_ok: boolean }>(
+    `select p.host_org as host, ${areaSql("$1", "$2", SCHEDULER_AREAS)} as syncer, ${areaSql("$1", "p.host_org", HOST_AREAS)} as host_ok
+       from org_partnerships p where p.for_org = $2 and p.status = 'approved'`,
+    [coachId, org],
+  );
+  const reg = await q.query<{ id: string }>(`select distinct x.id::text from (${REGISTERED_SQL("$1", "$2")}) x`, [coachId, org]);
   return {
     org,
     coachId,
+    programs: reg.rows.map((x) => x.id),
+    syncer: sync.rows.some((x) => x.syncer),
+    hostFor: sync.rows.filter((x) => x.host_ok).map((x) => x.host),
     director: u.rows[0].director,
-    coach: u.rows[0].coach || t.rows.some((x) => x.coach),
+    coach: u.rows[0].coach || t.rows.some((x) => x.coach) || reg.rows.length > 0,
     teams: t.rows,
     events: e.rows.map((x) => x.id),
     parentOf: kids.rows.map((x) => x.id),
@@ -99,7 +135,9 @@ type Key =
   | { kind: "coach"; id: string }
   | { kind: "dm"; a: string; b: string }
   | { kind: "staff"; by: string; id: string }
-  | { kind: "heads"; by: string };
+  | { kind: "heads"; by: string }
+  | { kind: "host"; host: string }
+  | { kind: "program"; id: string };
 
 // The private chat between two people (the same key whoever opens it); `org` for another organization's.
 export const dmKey = (x: string, y: string, org: string = THUNDER) => orgKey(org, x < y ? `dm-${x}-${y}` : `dm-${y}-${x}`);
@@ -124,7 +162,11 @@ export function parseKey(key: unknown): Key | null {
   const s = key.match(/^staff-(\d{7})-(\d{1,18})$/);
   if (s) return { kind: "staff", by: s[1], id: s[2] };
   const h = key.match(/^heads-(\d{7})$/);
-  return h ? { kind: "heads", by: h[1] } : null;
+  if (h) return { kind: "heads", by: h[1] };
+  const pr = key.match(/^program-(\d{1,18})$/);
+  if (pr) return { kind: "program", id: pr[1] };
+  const ho = key.match(/^host-([a-z0-9-]{1,80})$/);
+  return ho ? { kind: "host", host: ho[1] } : null;
 }
 
 // A full key: the organization and the chat. Events are Thunder's only.
@@ -135,7 +177,32 @@ function parseFull(key: unknown): { org: string; k: Key } | null {
   if (!SLUG.test(org) || (i >= 0 && org === THUNDER)) return null;
   const k = parseKey(i < 0 ? key : key.slice(i + 1));
   if (!k || ((k.kind === "event" || k.kind === "parents") && org !== THUNDER)) return null;
+  if (k.kind === "host" && k.host === org) return null;
   return { org, k };
+}
+
+// Which chats an organization has (its features): all (CourtPlayers), Directors' (CourtTeams: the Directors chat, its
+// programs' coaches chats, a Director's chat with one registered coach, and private chats), or none.
+export type ChatLevel = "all" | "directors" | "none";
+export async function chatLevel(q: Q, org: string): Promise<ChatLevel> {
+  if (!SLUG.test(org)) return "none";
+  const has = await orgFeatures(q, org);
+  return has.has("team-chat") ? "all" : has.has("chat") ? "directors" : "none";
+}
+const TEAMS_KINDS = new Set<Key["kind"]>(["directors", "dm", "program", "coach"]);
+const kindOn = (level: ChatLevel, k: Key) => level === "all" || (level === "directors" && TEAMS_KINDS.has(k.kind));
+
+// A Scheduler ↔ Host chat is on while the hosting is approved and both still have CourtSync (their side of it).
+async function hostChatOn(q: Q, org: string, host: string): Promise<boolean> {
+  const p = await q.query("select 1 from org_partnerships where for_org = $1 and host_org = $2 and status = 'approved'", [org, host]);
+  if (!p.rowCount) return false;
+  const [mine, theirs] = await Promise.all([orgFeatures(q, org), orgFeatures(q, host)]);
+  return mine.has("hosting-partners") && theirs.has("hosting-available");
+}
+
+// Is this chat on in its organization (its features)?
+async function chatOn(q: Q, org: string, k: Key, level?: ChatLevel): Promise<boolean> {
+  return k.kind === "host" ? hostChatOn(q, org, k.host) : kindOn(level ?? (await chatLevel(q, org)), k);
 }
 
 // member: in the chat (unread counts, emails). seen: can read and post (members, plus Directors everywhere).
@@ -148,8 +215,8 @@ function access(ctx: Ctx, key: Key): { member: boolean; seen: boolean } {
         return ctx.director || ctx.coach;
       case "coaches":
         return ctx.coach;
-      case "team":
-        return ctx.director || ctx.teams.some((t) => t.id === key.id);
+      case "team": // Directors not on the team can open it, hidden (not listed or counted, no unread or email)
+        return ctx.teams.some((t) => t.id === key.id);
       case "teamcoaches":
         return ctx.director || ctx.teams.some((t) => t.id === key.id && t.coach);
       case "parents":
@@ -164,6 +231,10 @@ function access(ctx: Ctx, key: Key): { member: boolean; seen: boolean } {
         return key.by === ctx.coachId || ctx.teams.some((t) => t.id === key.id);
       case "heads":
         return key.by === ctx.coachId || ctx.teams.some((t) => t.head);
+      case "host":
+        return ctx.syncer || ctx.hostFor.includes(key.host);
+      case "program":
+        return ctx.director || ctx.programs.includes(key.id);
     }
   })();
   return { member, seen: member || ctx.director };
@@ -177,6 +248,10 @@ function keyText(k: Key): string {
       return `staff-${k.by}-${k.id}`;
     case "heads":
       return `heads-${k.by}`;
+    case "host":
+      return `host-${k.host}`;
+    case "program":
+      return `program-${k.id}`;
     default:
       return "id" in k ? `${k.kind}-${k.id}` : k.kind;
   }
@@ -229,11 +304,22 @@ async function titleOf(q: Q, ctx: Ctx, k: Key): Promise<string | null> {
       if (!by) return null;
       return k.by === ctx.coachId ? "All Head Coaches" : `Head Coaches + ${by}`;
     }
+    case "program": {
+      const p = await q.query<{ name: string }>("select name from scenic_programs where id = $1 and org = $2", [k.id, ctx.org]);
+      return p.rows[0] ? `${p.rows[0].name} · Coaches` : null;
+    }
+    case "host": {
+      // Named for the other side: the host for the Scheduler's people, the Scheduler for the host's.
+      const other = ctx.hostFor.includes(k.host) && !ctx.syncer ? ctx.org : k.host;
+      const o = await q.query<{ name: string }>("select name from organizations where slug = $1", [other]);
+      return o.rows[0] ? `${o.rows[0].name} · CourtSync` : null;
+    }
   }
 }
 
 const isCoachSql = (S: Scope) =>
-  `(${role(S, "u.coach_id", "Coach")} or exists (select 1 from ${S.staff} s where s.coach_id = u.coach_id and s.role in ('HeadCoach', 'AsstCoach')))`;
+  `(${role(S, "u.coach_id", "Coach")} or exists (select 1 from ${S.staff} s where s.coach_id = u.coach_id and s.role in ('HeadCoach', 'AsstCoach'))
+    or exists (${REGISTERED_SQL("u.coach_id", `'${S.org}'`)}))`;
 
 // Chats started by one person must have been started by a Director (with a real coach, for a private chat).
 async function startable(q: Q, k: Key, S: Scope): Promise<boolean> {
@@ -260,14 +346,59 @@ async function startable(q: Q, k: Key, S: Scope): Promise<boolean> {
 
 export type ChatOption = { key: string; title: string; group: string };
 
-// The chats this person can start in one organization (or open, if they already have messages).
+// The chats this person can start in one organization (or open, if they already have messages), then its CourtSync chats.
 export async function newChatOptions(deps: Deps, viewer: SessionUser, org: string = THUNDER): Promise<ChatOption[]> {
   if (!SLUG.test(org)) return [];
+  return [...(await orgChatOptions(deps, viewer, org)), ...(await syncChatOptions(deps.pool, viewer.coachId, org))];
+}
+
+// CourtSync chats from this organization's side: as the Scheduler (each approved host) and as a host (each Scheduler it
+// hosts for), where this person handles that side.
+async function syncChatOptions(q: Q, coachId: string, org: string): Promise<ChatOption[]> {
+  const r = await q.query<{ sched: string; host: string; name: string }>(
+    `select p.for_org as sched, p.host_org as host, o.name from org_partnerships p
+       join organizations o on o.slug = case when p.for_org = $2 then p.host_org else p.for_org end
+      where p.status = 'approved' and (
+            (p.for_org = $2 and ${areaSql("$1", "$2", SCHEDULER_AREAS)})
+         or (p.host_org = $2 and ${areaSql("$1", "$2", HOST_AREAS)}))
+      order by lower(o.name)`,
+    [coachId, org],
+  );
+  const out: ChatOption[] = [];
+  for (const x of r.rows)
+    if (await hostChatOn(q, x.sched, x.host))
+      out.push({ key: orgKey(x.sched, `host-${x.host}`), title: `${x.name} · CourtSync`, group: "CourtSync" });
+  return out;
+}
+
+async function orgChatOptions(deps: Deps, viewer: SessionUser, org: string): Promise<ChatOption[]> {
   const S = scopeOf(org);
-  const ctx = await contextFor(deps.pool, viewer.coachId, org);
+  const level = await chatLevel(deps.pool, org);
+  const ctx = level === "none" ? null : await contextFor(deps.pool, viewer.coachId, org);
   if (!ctx) return [];
   const key = (k: string) => orgKey(org, k);
   const out: ChatOption[] = [];
+  if (level === "directors") {
+    // CourtTeams: the Directors chat, each running program's coaches, and one registered coach; a coach: theirs.
+    const progs = await deps.pool.query<{ id: string; name: string }>(
+      `select id::text, name from scenic_programs where org = $1 and ends_on >= current_date
+        ${ctx.director ? "" : "and id = any($2::bigint[])"} order by starts_on, lower(name)`,
+      ctx.director ? [org] : [org, ctx.programs],
+    );
+    const programs = progs.rows.map((p) => ({ key: key(`program-${p.id}`), title: `${p.name} · Coaches`, group: "Groups" }));
+    if (!ctx.director) return ctx.coach ? [{ key: key(`coach-${ctx.coachId}`), title: "Directors", group: "Groups" }, ...programs] : [];
+    const coaches = await deps.pool.query<{ id: string; name: string }>(
+      `select u.coach_id as id, u.first_name || ' ' || u.last_name as name from users u
+        where u.active and u.coach_id <> $1 and exists (${REGISTERED_SQL("u.coach_id", "$2")})
+        order by lower(u.last_name), lower(u.first_name)`,
+      [ctx.coachId, org],
+    );
+    return [
+      { key: key("directors"), title: "Directors", group: "Groups" },
+      ...programs,
+      ...coaches.rows.map((c) => ({ key: key(`coach-${c.id}`), title: c.name, group: "A single coach" })),
+    ];
+  }
   if (ctx.director) {
     out.push({ key: key("directors"), title: "Directors", group: "Groups" });
     out.push({ key: key("everyone"), title: "Directors & all coaches", group: "Groups" });
@@ -305,14 +436,15 @@ export async function newChatOptions(deps: Deps, viewer: SessionUser, org: strin
 
 export type ChatSummary = { key: string; title: string; last: { body: string; sender: string; at: Date } | null; unread: number };
 
-// Every chat with messages, in organizations that still have Chat (Thunder: as before).
+// Every chat with messages that its organization's features still have (chatLevel).
 async function allConvs(q: Q): Promise<{ conv: string; org: string }[]> {
   const r = await q.query<{ conv: string; org: string }>("select distinct conv, org from chat_messages");
-  const on = new Map<string, boolean>();
+  const level = new Map<string, ChatLevel>();
   const out: { conv: string; org: string }[] = [];
   for (const x of r.rows) {
-    if (!on.has(x.org)) on.set(x.org, x.org === THUNDER || (await hasFeature(q, x.org, "chat")));
-    if (on.get(x.org)) out.push(x);
+    if (!level.has(x.org)) level.set(x.org, await chatLevel(q, x.org));
+    const f = parseFull(x.conv);
+    if (f && (await chatOn(q, x.org, f.k, level.get(x.org)))) out.push(x);
   }
   return out;
 }
@@ -359,12 +491,127 @@ export async function listChats(deps: Deps, viewer: SessionUser): Promise<ChatSu
     if (!title) continue;
     out.push({
       key: row.conv,
-      title: v.org === THUNDER ? title : `${title} · ${shorts.get(v.org) ?? v.org}`,
+      title: v.org === THUNDER || v.k.kind === "host" ? title : `${title} · ${shorts.get(v.org) ?? v.org}`,
       last: { body: row.body, sender: row.sender, at: row.at },
       unread: v.member ? row.unread : 0,
     });
   }
   return out.sort((a, b) => b.last!.at.getTime() - a.last!.at.getTime());
+}
+
+// ---- Chat's setting (the organization gear → Feature Settings → Chat) ----
+
+export type ChatEmailSetting = { on: boolean; hours: number };
+
+export async function chatEmailSetting(q: Q, org: string): Promise<ChatEmailSetting> {
+  const r = await q.query<{ on: boolean; hours: number | null }>(
+    "select chat_emails_on as on, chat_email_hours as hours from organizations where slug = $1",
+    [org],
+  );
+  return { on: r.rows[0]?.on ?? true, hours: r.rows[0]?.hours ?? EMAIL_AFTER_HOURS };
+}
+
+// The organization's Admins: email unseen chat messages after 1–72 hours, or not at all.
+export async function setChatEmailSetting(deps: { pool: Q }, viewer: SessionUser, org: string, input: unknown): Promise<Result> {
+  const v = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const hours = v.hours;
+  if (!Number.isInteger(hours) || (hours as number) < 1 || (hours as number) > 72) return { ok: false, message: "Hours must be 1–72." };
+  if (!SLUG.test(org)) return { ok: false, message: "That organization doesn't exist." };
+  const admin = await deps.pool.query<{ ok: boolean }>("select acts_as($1, $2, 'Admin') as ok", [viewer.coachId, org]);
+  if (!admin.rows[0]?.ok) return { ok: false, message: "Only an Admin of this organization can change its Chat settings." };
+  if ((await chatLevel(deps.pool, org)) === "none") return { ok: false, message: "This organization doesn't have Chat." };
+  await deps.pool.query("update organizations set chat_emails_on = $2, chat_email_hours = $3 where slug = $1", [org, v.on === true, hours]);
+  return { ok: true };
+}
+
+// ---- The Chat box (the header's chat icon) ----
+
+export type BoxChat = { key: string; title: string; last: ChatSummary["last"]; unread: number };
+export type BoxGroup = { name: string; chats: BoxChat[]; teams?: { name: string; chats: BoxChat[] }[] };
+
+const TEAM_PART: Record<string, string> = { team: "Team chat", teamcoaches: "Coaches", parents: "Parents", staff: "Director + staff" };
+
+// Every chat this person can open, grouped: Groups (the organization-wide ones), Teams (each team's chats together),
+// Coaches (a Director's chat with one coach), Direct messages, Events, then chats in their other organizations.
+// `org` is the organization in use; its startable chats are listed even before they have messages.
+export async function chatBox(deps: Deps, viewer: SessionUser, org: string): Promise<BoxGroup[]> {
+  if (!SLUG.test(org)) return [];
+  const level = await chatLevel(deps.pool, org);
+  const chatHere = level !== "none";
+  const [options, chats, ctx] = await Promise.all([
+    newChatOptions(deps, viewer, org), // with no chats here, still its CourtSync chats
+    listChats(deps, viewer),
+    chatHere ? contextFor(deps.pool, viewer.coachId, org) : Promise.resolve(null),
+  ]);
+  const S = scopeOf(org);
+  // Each team's Parents chat (Thunder): its staff and parents, and Directors.
+  const teams = (
+    await deps.pool.query<{ id: string; name: string }>(
+      `select t.id::text, t.name from ${S.teams} t order by t.level = 'COMP' desc, t.gender, t.grade_sort, lower(t.name)`,
+    )
+  ).rows;
+  const keys = new Set(options.map((o) => o.key));
+  if (ctx && org === THUNDER && level === "all")
+    for (const t of teams)
+      if (ctx.director || ctx.teams.some((x) => x.id === t.id) || ctx.parentOf.includes(t.id))
+        if (!keys.has(`parents-${t.id}`)) {
+          keys.add(`parents-${t.id}`);
+          options.push({ key: `parents-${t.id}`, title: `${t.name} · Parents`, group: "Team chats" });
+        }
+
+  const summary = new Map(chats.map((c) => [c.key, c]));
+  const all: { key: string; title: string }[] = [
+    ...options.map((o) => ({ key: o.key, title: summary.get(o.key)?.title ?? o.title })),
+    ...chats.filter((c) => !keys.has(c.key)).map((c) => ({ key: c.key, title: c.title })),
+  ];
+  const shorts = chats.some((c) => chatOrg(c.key) !== org) ? await orgShorts(deps.pool) : new Map<string, string>();
+  const order = ["Groups", "Teams", "Coaches", "Direct messages", "Events", "CourtSync"];
+  const groups = new Map<string, BoxGroup>();
+  const teamChats = new Map<string, BoxChat[]>();
+  const add = (name: string, c: BoxChat) => {
+    if (!groups.has(name)) groups.set(name, { name, chats: [] });
+    groups.get(name)!.chats.push(c);
+  };
+  for (const { key, title } of all) {
+    const f = parseFull(key);
+    if (!f) continue;
+    const s = summary.get(key);
+    const c: BoxChat = { key, title, last: s?.last ?? null, unread: s?.unread ?? 0 };
+    if (f.k.kind === "host") {
+      add("CourtSync", c);
+      continue;
+    }
+    if (f.org !== org) {
+      add(shorts.get(f.org) ?? f.org, c);
+      continue;
+    }
+    const k = f.k;
+    if ("id" in k && TEAM_PART[k.kind] && teams.some((t) => t.id === k.id)) {
+      c.title = TEAM_PART[k.kind];
+      teamChats.set(k.id, [...(teamChats.get(k.id) ?? []), c]);
+    } else if (k.kind === "coach" && ctx?.director) add("Coaches", { ...c, title: title.replace(/ · Directors$/, "") });
+    else if (k.kind === "dm") add("Direct messages", c);
+    else if (k.kind === "event") add("Events", c);
+    else add("Groups", c);
+  }
+  if (teamChats.size) {
+    const partOrder = Object.values(TEAM_PART);
+    groups.set("Teams", {
+      name: "Teams",
+      chats: [],
+      teams: teams
+        .filter((t) => teamChats.has(t.id))
+        .map((t) => ({
+          name: t.name,
+          chats: teamChats.get(t.id)!.sort((a, b) => partOrder.indexOf(a.title) - partOrder.indexOf(b.title)),
+        })),
+    });
+  }
+  // Within a group: chats with news first (newest), then the rest as listed.
+  const recent = (a: BoxChat, b: BoxChat) => (b.last?.at.getTime() ?? 0) - (a.last?.at.getTime() ?? 0);
+  for (const g of groups.values()) if (g.name !== "Groups") g.chats.sort(recent);
+  const rank = (n: string) => (order.includes(n) ? order.indexOf(n) : order.length);
+  return [...groups.values()].sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
 }
 
 // Unread messages across the chats the viewer is a member of, in every organization (the header badge).
@@ -403,7 +650,7 @@ function membersWhere(k: Key, S: Scope): [string, string[]] {
     case "coaches":
       return [isCoachSql(S), []];
     case "team":
-      return [`${dir} or ${onTeam()}`, [k.id]];
+      return [onTeam(), [k.id]];
     case "teamcoaches":
       return [`${dir} or ${onTeam("'HeadCoach', 'AsstCoach'")}`, [k.id]];
     case "parents":
@@ -422,6 +669,10 @@ function membersWhere(k: Key, S: Scope): [string, string[]] {
       return [`u.coach_id = $1 or exists (select 1 from ${S.staff} s where s.coach_id = u.coach_id and s.team_id = $2)`, [k.by, k.id]];
     case "heads":
       return [`u.coach_id = $1 or exists (select 1 from ${S.staff} s where s.coach_id = u.coach_id and s.role = 'HeadCoach')`, [k.by]];
+    case "program":
+      return [`${dir} or exists (${REGISTERED_SQL("u.coach_id", `'${S.org}'`, "$1")})`, [k.id]];
+    case "host":
+      return [`${areaSql("u.coach_id", `'${S.org}'`, SCHEDULER_AREAS)} or ${areaSql("u.coach_id", "$1", HOST_AREAS)}`, [k.host]];
   }
 }
 
@@ -438,7 +689,7 @@ async function memberNames(q: Q, k: Key, S: Scope): Promise<string[]> {
 // Director started it. Null when they can't.
 async function opened(q: Q, viewer: SessionUser, key: unknown, activeOnly = false) {
   const f = parseFull(key);
-  if (!f) return null;
+  if (!f || !(await chatOn(q, f.org, f.k))) return null;
   const S = scopeOf(f.org);
   const ctx = await contextFor(q, viewer.coachId, f.org);
   if (!ctx || !access(ctx, f.k).seen) return null;
@@ -516,8 +767,20 @@ const when = (d: Date) => d.toLocaleString("en-US", { timeZone: TZ, weekday: "sh
 // from the organization's name, or CourtCaptain when it covers several (each chat then names its organization).
 export async function sendUnreadChatEmails(deps: DigestDeps): Promise<number> {
   const now = deps.now();
-  const cutoff = new Date(now.getTime() - EMAIL_AFTER_HOURS * HOUR);
-  const convs = await allConvs(deps.pool);
+  // Each organization's setting: emails on or off, and after how many hours (its gear → Feature Settings → Chat).
+  const orgRows = (
+    await deps.pool.query<{ slug: string; name: string; hours: number | null; on: boolean }>(
+      "select slug, name, chat_email_hours as hours, chat_emails_on as on from organizations",
+    )
+  ).rows;
+  const names = new Map(orgRows.map((x) => [x.slug, x.name]));
+  const hoursOf = new Map(orgRows.filter((x) => x.on).map((x) => [x.slug, x.hours ?? EMAIL_AFTER_HOURS]));
+  const cutoffOf = (org: string) => new Date(now.getTime() - (hoursOf.get(org) ?? EMAIL_AFTER_HOURS) * HOUR);
+  const convs = (await allConvs(deps.pool)).filter((c) => hoursOf.has(c.org) || (c.org === THUNDER && !names.has(THUNDER)));
+  if (!convs.length) return 0;
+  // A person gets at most one email per the shortest wait among these organizations.
+  const shortest = Math.min(...convs.map((c) => hoursOf.get(c.org) ?? EMAIL_AFTER_HOURS));
+  const cutoff = new Date(now.getTime() - shortest * HOUR);
   const recent = new Set(
     (await deps.pool.query<{ conv: string }>("select distinct conv from chat_messages where created_at <= $1", [cutoff])).rows.map(
       (x) => x.conv,
@@ -525,9 +788,6 @@ export async function sendUnreadChatEmails(deps: DigestDeps): Promise<number> {
   );
   const due = convs.filter((c) => recent.has(c.conv));
   if (!due.length) return 0;
-  const names = new Map(
-    (await deps.pool.query<{ slug: string; name: string }>("select slug, name from organizations")).rows.map((x) => [x.slug, x.name]),
-  );
   const people = await deps.pool.query<{ coach_id: string; email: string; first_name: string }>(
     `select u.coach_id, u.email, u.first_name from users u left join notify_state n on n.coach_id = u.coach_id
      where u.active and u.email is not null and (n.last_chat_email_at is null or n.last_chat_email_at <= $1)`,
@@ -555,7 +815,7 @@ export async function sendUnreadChatEmails(deps: DigestDeps): Promise<number> {
            where m.conv = $1 and m.sender_id <> $2 and m.created_at <= $3
              and m.created_at > greatest(coalesce(r.last_read_at, '-infinity'), coalesce(r.emailed_until, '-infinity'))
            order by m.id`,
-          [conv, p.coach_id, cutoff],
+          [conv, p.coach_id, cutoffOf(org)],
         );
         if (!m.rows.length) continue;
         const title = await titleOf(q, ctx, f.k);

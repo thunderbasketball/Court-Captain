@@ -2,13 +2,14 @@
 // 'Team' named for the team, with the court-solo feature and one team. Its Head Coach is its Owner (also Admin and
 // Director). It registers into Scenic City's programs like any organization's team; its copy there is named just the
 // team's name and shows "(Solo)".
+import { featuresChanged } from "./features";
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { partnerFor } from "./org-leagues";
 import { abbrFor, renameOrg } from "./org-signup";
 import { slugFor } from "./org-slug";
 import { dropScenicCoachIfIdle } from "./scenic-teams";
-import { withTx, type Queryable } from "./sql";
+import type { Queryable } from "./sql";
 
 import { SOLO_KIND } from "./solo-names";
 
@@ -70,9 +71,10 @@ export async function makeSoloAccount(
     [t.owner, slug, byName],
   );
   await q.query(
-    "insert into org_features (org, feature, source, turned_on_by, turned_on_at) values ($1, 'court-solo', 'setup', $2, $3)",
+    "insert into org_features (org, feature, source, turned_on_by, turned_on_at) values ($1, 'court-club', 'setup', $2, $3)",
     [slug, byName, now],
   );
+  featuresChanged();
   const team = await q.query<{ id: string }>(
     `insert into org_teams (org, name, gender, grade_low, grade, level, created_by, created_at, own_name)
      values ($1, $2, $3, $4, $5, $6, $7, $8, true) returning id::text`,
@@ -131,7 +133,7 @@ export async function myAccounts(
     q.query<OrgAccount>(
       `select o.slug, o.name from organizations o
         where o.kind <> $2 and has_role($1, o.slug, 'Admin')
-          and exists (select 1 from org_features f where f.org = o.slug and f.feature = 'court-org')
+          and exists (select 1 from org_features f where f.org = o.slug and f.feature = 'court-club')
         order by lower(o.name)`,
       [coachId, SOLO_KIND],
     ),
@@ -153,7 +155,7 @@ export async function replaceSoloTeam(
   today: string,
 ): Promise<void> {
   const acct = (await myAccounts(q, ownerId, today)).solo.find((a) => a.slug === slug);
-  if (!acct) throw new Error("That isn't your CourtSolo account.");
+  if (!acct) throw new Error("That isn't your team's account.");
   if (acct.busyIn) throw new Error(`${acct.teamName} is still in ${acct.busyIn}: it can be archived once that ends.`);
   await q.query("select 1 from organizations where slug = $1 for update", [slug]);
   if (acct.teamId)
@@ -202,21 +204,16 @@ export async function switchSoloToOrg(
     "select 1 from organizations where slug = $1 and kind = $2 and has_role($3, slug, 'Owner')",
     [slug, SOLO_KIND, viewer.coachId],
   );
-  if (!mine.rowCount) return { ok: false, message: "Only the Owner of a CourtSolo account can switch it to CourtOrg." };
-  const swap = (kind: string, on: string, off: string) =>
-    withTx(deps.pool, async (q) => {
-      await q.query("update organizations set kind = $2 where slug = $1", [slug, kind]);
-      await q.query("delete from org_features where org = $1 and feature = $2", [slug, off]);
-      await q.query(
-        `insert into org_features (org, feature, source, turned_on_by, turned_on_at) values ($1, $2, 'setup', $3, $4)
-         on conflict (org, feature) do nothing`,
-        [slug, on, `${viewer.firstName} ${viewer.lastName}`, deps.now()],
-      );
-    });
-  await swap("Organization", "court-org", "court-solo");
+  if (!mine.rowCount) return { ok: false, message: "Only the Owner of a one-team club can switch it to a club with more teams." };
+  // Both have CourtClub: switching is the kind (a club of one, or an organization with any number of teams).
+  const swap = async (kind: string) => {
+    await deps.pool.query("update organizations set kind = $2 where slug = $1", [slug, kind]);
+    featuresChanged();
+  };
+  await swap("Organization");
   const r = await renameOrg(deps, viewer, slug, input);
   if (!r.ok) {
-    await swap(SOLO_KIND, "court-solo", "court-org"); // back as it was
+    await swap(SOLO_KIND); // back as it was
     return r;
   }
   const abbr = abbrFor(String(input.name).trim()); // like a new organization's: "Hixson Hoops" → HH

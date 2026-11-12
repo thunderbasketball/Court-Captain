@@ -10,6 +10,7 @@ import { hasFeature } from "./features";
 import { hasArea, orgHasArea } from "./org-admin";
 import { orgShort } from "./org-registry";
 import { isOrgSlug, type OrgSlug } from "./orgs";
+import { managesGyms } from "./places";
 import { syncPracticeSlots } from "./practice/admin";
 import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
@@ -78,7 +79,19 @@ export type FacilitiesView = {
   today: string;
   uses: { key: Use; name: string }[];
   partnerNote: string | null;
-  gyms: { id: string; name: string; short: string | null; courts: string[] }[]; // courts = the gym's practice goals, by name
+  gyms: {
+    id: string;
+    name: string;
+    short: string | null;
+    courts: string[]; // the gym's practice goals, by name
+    address: string | null; // its real place (Google Places), when set
+    lat: number | null;
+    lng: number | null;
+    placeId: string | null;
+    pinLat: number | null; // its hand-set pin (Directions go there)
+    pinLng: number | null;
+    pinAddress: string | null;
+  }[];
   days: Record<string, CourtDay>; // key `${gymId}:${YYYY-MM-DD}`, today on
   gameDays: Record<string, string>; // YYYY-MM-DD → who plays then ("Scenic City"): leagues that approved this host
 };
@@ -88,8 +101,9 @@ export async function facilitiesView(deps: Deps, viewer: SessionUser, org: OrgSl
   const today = easternDate(deps.now());
   const [{ uses, partnerNote, leagues }, gyms, days, gameDays] = await Promise.all([
     availableUses(deps.pool, org),
-    deps.pool.query<{ id: string; name: string; short: string | null; courts: string[] }>(
-      `select g.id::text, g.name, g.short_name as short,
+    deps.pool.query<FacilitiesView["gyms"][number]>(
+      `select g.id::text, g.name, g.short_name as short, g.address, g.lat, g.lng, g.place_id as "placeId",
+              g.pin_lat as "pinLat", g.pin_lng as "pinLng", g.pin_address as "pinAddress",
               array(select c.name from courts c where c.gym_id = g.id and c.active order by length(c.name), c.name) as courts
        from gyms g where g.active and g.org = $1 order by lower(g.name)`,
       [org],
@@ -228,6 +242,39 @@ export async function addOrgGym(
     ]);
     await q.query("insert into courts (gym_id, name) select $1, unnest($2::text[])", [g.rows[0].id, courts]);
     return { ok: true as const, id: g.rows[0].id };
+  });
+}
+
+// Rename a gym (its ⚙ menu): those who manage the organization's gyms. Its slots, courts, availability, bookings and
+// games follow it (they point at the gym, not its name). `short` (another organization's gyms, required there) is left
+// alone when undefined (Thunder's gyms have none).
+export async function renameGym(
+  deps: Deps,
+  viewer: SessionUser,
+  org: unknown,
+  gymId: unknown,
+  input: { name: unknown; short?: unknown },
+): Promise<Result<{ name: string }>> {
+  if (typeof org !== "string" || !(await managesGyms(deps.pool, viewer, org)))
+    return { ok: false, message: "Only an Admin or Director of Facilities can rename gyms." };
+  if (!isId(gymId)) return { ok: false, message: "That gym no longer exists." };
+  const name = cleanPlace(input.name);
+  if (!name) return { ok: false, message: "Enter the gym's name (letters and numbers, up to 60)." };
+  const short = typeof input.short === "string" ? input.short.trim() : undefined;
+  if (input.short !== undefined && !(short && /^[A-Za-z0-9][A-Za-z0-9 .&-]{0,7}$/.test(short)))
+    return { ok: false, message: "Enter a short name of up to 8 letters or numbers." };
+  return withTx(deps.pool, async (q) => {
+    const taken = await q.query<{ name: string }>(
+      `select name from gyms where org = $1 and id <> $2
+          and (lower(name) = lower($3) or ($4::text is not null and lower(short_name) = lower($4))) limit 1`,
+      [org, gymId, name, short ?? null],
+    );
+    if (taken.rows[0]) return { ok: false as const, message: `"${taken.rows[0].name}" already has that name or short name.` };
+    const r = await q.query(
+      "update gyms set name = $3, short_name = coalesce($4, short_name) where id = $1 and org = $2",
+      [gymId, org, name, short ?? null],
+    );
+    return r.rowCount ? { ok: true as const, name } : { ok: false as const, message: "That gym no longer exists." };
   });
 }
 

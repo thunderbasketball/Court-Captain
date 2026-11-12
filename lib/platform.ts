@@ -3,12 +3,16 @@
 // The admin role belongs to no organization; it's re-read from `platform_admins` on every request.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
-import { FEATURES, READY_FOR_ANY_ORG, syncPart, type FeatureKey } from "./features";
+import { FEATURES, READY_FOR_ANY_ORG, featuresChanged, syncPart, type FeatureKey } from "./features";
+import { memo } from "./request-memo";
 import { listDirectors, type DirectorRow } from "./org-admin";
 import { BUILT_IN, isOrgSlug, type OrgSlug } from "./orgs";
 import { listOrgs, orgInfo, orgName } from "./org-registry";
 import { withTx, type Queryable } from "./sql";
 import { TZ } from "./time";
+import { cleanName } from "./auth/validate";
+import { normalizeCell } from "./phone";
+import { matchOrCreateUser } from "./user-match";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result = { ok: true } | { ok: false; message: string };
@@ -17,8 +21,10 @@ const adminOnly = "Only a CourtCaptain Admin can do that.";
 const isCoachId = (v: unknown): v is string => typeof v === "string" && /^\d{7}$/.test(v);
 
 export async function isPlatformAdmin(pool: Pick<Queryable, "query">, coachId: string): Promise<boolean> {
-  const r = await pool.query("select 1 from platform_admins where coach_id = $1", [coachId]);
-  return r.rowCount === 1;
+  return memo(pool, `staff:${coachId}`, async () => {
+    const r = await pool.query("select 1 from platform_admins where coach_id = $1", [coachId]);
+    return r.rowCount === 1;
+  });
 }
 
 export type StaffMember = { id: string; name: string; cell: string; role: "Owner" | "Admin"; grantedBy: string };
@@ -157,8 +163,10 @@ export async function platformOverview(
       )
     ).rows.map((r) => [r.id, r.email]),
   );
-  const orgs = all.map(({ slug, name, abbr, logo, color }, i): PlatformOrg => {
+  const orgs = all.map(({ slug, name, abbr, logo, color, kind }, i): PlatformOrg => {
     const mine = new Map(feats.rows.filter((f) => f.org === slug).map((f) => [f.feature, f]));
+    // CourtFacilities comes with every organization but an Officials Group (it decides CourtSync's part).
+    const keys = new Set<string>([...mine.keys(), ...((kind as string) === "Officials" ? [] : ["court-facilities"])]);
     const team = people[i];
     const ownerIds = new Set(team.filter((d) => d.owner).map((d) => d.id));
     return {
@@ -172,7 +180,7 @@ export async function platformOverview(
         const row = mine.get(f.key);
         return {
           key: f.key,
-          name: f.key === "court-sync" ? `CourtSync · ${syncPart(new Set(mine.keys()))}` : f.name,
+          name: f.key === "court-sync" ? `CourtSync · ${syncPart(keys)}` : f.name,
           on: always || !!row,
           always,
           source: row?.source ?? null,
@@ -218,6 +226,7 @@ export async function setOrgFeature(
       [org, f.key, viewer.coachId, deps.now()],
     );
   else await deps.pool.query("delete from org_features where org = $1 and feature = $2", [org, f.key]);
+  featuresChanged();
   return { ok: true };
 }
 
@@ -249,4 +258,25 @@ export async function setOrgOwner(deps: Deps, viewer: SessionUser, org: unknown,
     await q.query("select set_role($1, $2, 'Owner', false, $3)", [coachId, org, who]);
     return { ok: true as const };
   });
+}
+
+// Make a person an Owner by name and cell: the person with that cell, or a new login for them (they finish it at first
+// sign-in). For an organization whose Owner isn't on CourtCaptain yet.
+export async function addOrgOwnerByCell(
+  deps: Deps,
+  viewer: SessionUser,
+  org: unknown,
+  input: { first: unknown; last: unknown; cell: unknown },
+): Promise<Result | { ok: true; name: string; newLogin: boolean }> {
+  if (!(await isPlatformAdmin(deps.pool, viewer.coachId))) return { ok: false, message: adminOnly };
+  if (!isOrgSlug(org)) return { ok: false, message: "Pick an organization." };
+  const first = cleanName(input.first);
+  const last = cleanName(input.last);
+  const cell = typeof input.cell === "string" ? normalizeCell(input.cell) : null;
+  if (!first || !last) return { ok: false, message: "Enter a first and last name (letters only)." };
+  if (!cell) return { ok: false, message: "Enter a 10-digit cell number." };
+  const m = await withTx(deps.pool, (q) => matchOrCreateUser(q, { first, last, cell, email: null }, deps.now()));
+  if ("error" in m) return { ok: false, message: m.error };
+  const r = await setOrgOwner(deps, viewer, org, m.coachId, true);
+  return r.ok ? { ok: true, name: m.who, newLogin: m.newLogin } : r;
 }

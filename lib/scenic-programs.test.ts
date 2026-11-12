@@ -297,8 +297,8 @@ describe("Scenic City programs", () => {
     await db.pool.query("update partners set org_slug = 'other-club' where id = $1", [other]);
     await db.pool.query("update partners set org_slug = 'baylor' where id = $1", [baylor]);
     await db.pool.query(
-      `insert into org_features (org, feature, source) values ('other-club', 'court-org', 'setup'),
-              ('other-club', 'court-sync', 'setup'), ('baylor', 'court-org', 'setup'), ('baylor', 'court-sync', 'setup'),
+      `insert into org_features (org, feature, source) values ('other-club', 'court-club', 'setup'),
+              ('other-club', 'court-sync', 'setup'), ('baylor', 'court-club', 'setup'), ('baylor', 'court-sync', 'setup'),
               ('high', 'court-sync', 'setup')`,
     );
     expect((await recLimit(db.pool, id)).choices.map((c) => c.name)).toEqual(["Baylor School", "Other Club"]);

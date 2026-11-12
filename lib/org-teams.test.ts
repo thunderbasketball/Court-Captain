@@ -48,7 +48,7 @@ describe("teams for a registered organization", () => {
       "insert into users (coach_id, first_name, last_name, cell) values ('5550001', 'Jordan', 'Harris', '4235550001')",
     );
     const input = { name: "East Ridge Parks & Rec", short: "East Ridge", kind: "Organization", color: "#0f766e" };
-    await createOrganization(deps(), jo, { ...input, features: ["court-org"] }, null);
+    await createOrganization(deps(), jo, { ...input, features: ["court-club"] }, null);
     // CourtSync with its own teams: REC is open to it (lib/rec-orgs.ts).
     await db.pool.query(
       "insert into org_features (org, feature, source, turned_on_by) select slug, 'court-sync', 'setup', 'test' from organizations where slug not in ('thunder', 'scenic-city') on conflict do nothing",
@@ -203,10 +203,9 @@ describe("teams for a registered organization", () => {
     });
   });
 
-  it("needs Team Management, and isn't for Thunder or Scenic City", async () => {
-    await db.pool.query("delete from org_features where org = $1 and feature = 'court-org'", [org]);
-    expect(await listOrgTeams(deps(), jo, org)).toBeNull();
-    expect(await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: ["4"], level: "REC" })).toMatchObject({ ok: false });
+  it("comes with every organization (CourtClub), and isn't for Thunder or Scenic City", async () => {
+    await db.pool.query("delete from org_features where org = $1 and feature = 'court-club'", [org]);
+    expect(await listOrgTeams(deps(), jo, org)).not.toBeNull(); // CourtClub can't be turned off
     expect(await listOrgTeams(deps(), jo, "thunder")).toBeNull();
   });
 

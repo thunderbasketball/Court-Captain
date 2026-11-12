@@ -2,7 +2,7 @@
 
 import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { deleteOrganization, setOrgOwner, setOrgFeature, setPlatformAdmin } from "./actions";
+import { addOrgOwnerByCell, deleteOrganization, setOrgOwner, setOrgFeature, setPlatformAdmin } from "./actions";
 import { PopUp, Toast, useConfirm } from "../client-ui";
 import { inputCls } from "../ui";
 import { GearIcon } from "../OrgSettings";
@@ -82,6 +82,8 @@ export function AddOwner({ org, options }: { org: string; options: { id: string;
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pick, setPick] = useState("");
+  const [fresh, setFresh] = useState(false); // someone new: name and cell (the person with that cell, or a new login)
+  const [p, setP] = useState({ first: "", last: "", cell: "" });
   const [error, setError] = useState<string | null>(null);
   const [busy, start] = useTransition();
 
@@ -91,6 +93,8 @@ export function AddOwner({ org, options }: { org: string; options: { id: string;
         type="button"
         onClick={() => {
           setPick("");
+          setFresh(false);
+          setP({ first: "", last: "", cell: "" });
           setError(null);
           setOpen(true);
         }}
@@ -105,13 +109,20 @@ export function AddOwner({ org, options }: { org: string; options: { id: string;
       onSubmit={(e) => {
         e.preventDefault();
         start(async () => {
-          const r = await setOrgOwner(org, pick, true);
+          const r = fresh ? await addOrgOwnerByCell(org, p) : await setOrgOwner(org, pick, true);
           if (!r.ok) return setError(r.message);
           setOpen(false);
           router.refresh();
         });
       }}
     >
+      {fresh ? (
+        <>
+          <input className={`${inputCls} max-w-36 py-2`} placeholder="First name" aria-label="First name" value={p.first} onChange={(e) => setP({ ...p, first: e.target.value })} autoFocus />
+          <input className={`${inputCls} max-w-36 py-2`} placeholder="Last name" aria-label="Last name" value={p.last} onChange={(e) => setP({ ...p, last: e.target.value })} />
+          <input className={`${inputCls} max-w-40 py-2`} placeholder="Cell" aria-label="Cell" inputMode="tel" value={p.cell} onChange={(e) => setP({ ...p, cell: e.target.value })} />
+        </>
+      ) : (
       <select className={`${inputCls} max-w-64 py-2`} value={pick} onChange={(e) => setPick(e.target.value)} autoFocus>
         <option value="" disabled>
           Pick a person…
@@ -122,12 +133,16 @@ export function AddOwner({ org, options }: { org: string; options: { id: string;
           </option>
         ))}
       </select>
+      )}
       <button
         type="submit"
-        disabled={busy || !pick}
+        disabled={busy || (fresh ? !p.first.trim() || !p.last.trim() || !p.cell.trim() : !pick)}
         className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
       >
         Add
+      </button>
+      <button type="button" onClick={() => setFresh(!fresh)} className="text-sm font-medium text-thunder-blue hover:underline">
+        {fresh ? "Pick someone on CourtCaptain" : "Someone new (name and cell)"}
       </button>
       <button type="button" onClick={() => setOpen(false)} className="text-sm text-zinc-500">
         Cancel

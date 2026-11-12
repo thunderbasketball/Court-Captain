@@ -368,7 +368,7 @@ export function GridBoard({
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-zinc-50 px-3 py-2 dark:bg-white/5 [&::-webkit-details-marker]:hidden">
               <span className="min-w-0 text-sm">
                 <span className="font-semibold">
-                  <span className="mr-1 inline-block text-zinc-400 transition group-open:rotate-90">›</span>
+                  <span className="mr-1 inline-block text-zinc-400 transition [details[open]>summary_&]:rotate-90">›</span>
                   {g.name}
                 </span>
                 <span className="block text-xs text-zinc-500">

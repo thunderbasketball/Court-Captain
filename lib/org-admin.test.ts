@@ -9,6 +9,7 @@ import {
   directorAreas,
   directorsPanel,
   hasArea,
+  hasDirectors,
   isOrgAdmin,
   orgAreas,
   setAdmin,
@@ -70,7 +71,6 @@ describe("Admins and Director areas", () => {
       "facilities",
       "programs",
       "scheduling",
-      "officials",
       "support",
     ]);
   });
@@ -115,6 +115,27 @@ describe("Admins and Director areas", () => {
     expect(await setDirectorAreas(deps(), ada, "thunder", cy.coachId, [])).toEqual({ ok: true });
     expect(await roles()).toEqual([]);
     expect(await directorAreas(db.pool, cy.coachId, "thunder")).toEqual([]);
+  });
+
+  it("only CourtPlayers and CourtTeams organizations have Directors", async () => {
+    await db.pool.query("delete from organizations where slug = 'east-ridge'");
+    await db.pool.query("insert into organizations (slug, name, short_name, kind) values ('east-ridge', 'East Ridge', 'ER', 'Organization')");
+    await db.pool.query(
+      "insert into org_role_types (org, role) values ('east-ridge', 'Owner'), ('east-ridge', 'Admin'), ('east-ridge', 'Director'), ('east-ridge', 'Request') on conflict do nothing",
+    );
+    await grant(db.pool, "5550001 east-ridge Admin", "5550001 east-ridge Director");
+    expect(await hasDirectors(db.pool, "east-ridge")).toBe(false);
+    expect((await directorsPanel(deps(), ada, "east-ridge"))!.directorsOn).toBe(false);
+    expect(await setDirectorAreas(deps(), ada, "east-ridge", cy.coachId, ["teams"])).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("CourtPlayers, CourtTeams or CourtOfficials"),
+    });
+    await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ('east-ridge', 'court-teams', 'setup', 'test')");
+    expect(await hasDirectors(db.pool, "east-ridge")).toBe(true);
+    expect(await setDirectorAreas(deps(), ada, "east-ridge", cy.coachId, ["programs"])).toEqual({ ok: true });
+    await db.pool.query("delete from org_features where org = 'east-ridge'");
+    expect(await setDirectorAreas(deps(), ada, "east-ridge", cy.coachId, [])).toEqual({ ok: true }); // removing still works
+    expect(await hasDirectors(db.pool, "thunder")).toBe(true);
   });
 
   it("only that organization's Admins can, and not on Admins or areas it doesn't offer", async () => {

@@ -144,8 +144,8 @@ describe("organizations partnering to host games", () => {
     expect(await openCourtsByDay(deps(), sue)).toEqual({ [dec5]: 2 }); // Dec 12 is Practice; Dec 19 isn't a game day
     const h = (await partnerHours(deps(), sal, partnerId))!;
     expect(h.courts).toEqual([
-      { id: ac, gym: "Action Church", name: "Whole gym" },
-      { id: er, gym: "East Ridge MS", name: "Whole gym" },
+      { id: ac, gym: "Action Church", gymKey: `o${ac}`, name: "Whole gym" },
+      { id: er, gym: "East Ridge MS", gymKey: `o${er}`, name: "Whole gym" },
     ]);
     expect(h.hours).toEqual({
       [`${ac}:${dec5}`]: { starts: "09:00", ends: "21:00", setBy: "Tee X" },

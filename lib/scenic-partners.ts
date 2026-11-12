@@ -358,7 +358,8 @@ export async function listGameDays(deps: Deps, viewer: SessionUser, from?: strin
 export type HoursWindow = { starts: string; ends: string; setBy: string }; // "HH:MM", Eastern
 export type PartnerHours = {
   days: GameDay[]; // upcoming game days
-  courts: { id: string; gym: string; name: string }[]; // by gym, then court number
+  gyms: { key: string; name: string }[]; // its gyms by name: 'o<id>' (an organization's) or 'p<id>' (typed in)
+  courts: { id: string; gym: string; gymKey: string; name: string }[]; // by gym, then court number
   hours: Record<string, HoursWindow>; // key `${courtId}:${dayId}`
 };
 
@@ -370,8 +371,8 @@ export async function partnerHours(deps: Deps, viewer: SessionUser, partnerId: u
   const org = (await deps.pool.query<{ org: string | null }>("select org_slug as org from partners where id = $1", [partnerId]))
     .rows[0]?.org;
   if (org) {
-    const gyms = await deps.pool.query<{ id: string; gym: string; name: string }>(
-      "select id::text, name as gym, 'Whole gym' as name from gyms where active and org = $1 order by lower(name)",
+    const gyms = await deps.pool.query<{ id: string; gym: string; gymKey: string; name: string }>(
+      `select id::text, name as gym, 'o' || id as "gymKey", 'Whole gym' as name from gyms where active and org = $1 order by lower(name)`,
       [org],
     );
     const a = await deps.pool.query<HoursWindow & { key: string }>(
@@ -380,10 +381,19 @@ export async function partnerHours(deps: Deps, viewer: SessionUser, partnerId: u
        where a.use = 'partner' and g.org = $2 and d.id = any($1::bigint[])`,
       [days.map((d) => d.id), org],
     );
-    return { days, courts: gyms.rows, hours: Object.fromEntries(a.rows.map(({ key, ...w }) => [key, w])) };
+    return {
+      days,
+      gyms: gyms.rows.map((g) => ({ key: g.gymKey, name: g.gym })),
+      courts: gyms.rows,
+      hours: Object.fromEntries(a.rows.map(({ key, ...w }) => [key, w])),
+    };
   }
-  const courts = await deps.pool.query<{ id: string; gym: string; name: string }>(
-    `select c.id::text, g.name as gym, c.name from partner_courts c join partner_gyms g on g.id = c.gym_id
+  const pgyms = await deps.pool.query<{ key: string; name: string }>(
+    "select 'p' || id as key, name from partner_gyms where partner_id = $1 order by lower(name)",
+    [partnerId],
+  );
+  const courts = await deps.pool.query<{ id: string; gym: string; gymKey: string; name: string }>(
+    `select c.id::text, g.name as gym, 'p' || g.id as "gymKey", c.name from partner_courts c join partner_gyms g on g.id = c.gym_id
      where g.partner_id = $1 order by lower(g.name), length(c.name), lower(c.name)`,
     [partnerId],
   );
@@ -394,7 +404,7 @@ export async function partnerHours(deps: Deps, viewer: SessionUser, partnerId: u
      where g.partner_id = $1 and h.game_day_id = any($2::bigint[])`,
     [partnerId, days.map((d) => d.id)],
   );
-  return { days, courts: courts.rows, hours: Object.fromEntries(h.rows.map(({ key, ...w }) => [key, w])) };
+  return { days, gyms: pgyms.rows, courts: courts.rows, hours: Object.fromEntries(h.rows.map(({ key, ...w }) => [key, w])) };
 }
 
 const isTime = (v: unknown): v is string => typeof v === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);

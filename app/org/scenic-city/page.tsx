@@ -1,4 +1,7 @@
 import { Suspense } from "react";
+import { gymsWithoutOfficials, officiatingRequests } from "@/lib/officiating";
+import { OfficiatingRequestsCard } from "../../officiating/OfficiatingCards";
+import OfficialsCard, { officialsCount } from "../../officials/OfficialsCard";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import type { SessionUser } from "@/lib/auth/service";
@@ -6,7 +9,6 @@ import { currentScenic } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
 import { orgFeatures, type Feature } from "@/lib/features";
 import { directorAreas, isOrgAdmin, type Area } from "@/lib/org-admin";
-import { OrgSearchButton } from "../../OrgSearch";
 import { scheduleAnalysis } from "@/lib/scenic-analysis";
 import { ScheduleAnalysis } from "./ScheduleAnalysis";
 import AppHeader from "../../AppHeader";
@@ -15,7 +17,7 @@ import SubCard from "../../SubCard";
 import SupportCard from "../../SupportCard";
 import { membersLinks } from "./ScenicNav";
 import { ScenicTeamsContent } from "./teams/content";
-import { ProgramsContent } from "./programs/content";
+import ProgramsCard, { programCount } from "../../ProgramsCard";
 import { SchedulerContent } from "./scheduler/content";
 import { GameDaysContent } from "./game-days/content";
 import { CourtsContent } from "./courts/content";
@@ -60,7 +62,7 @@ const PARTS: { title: string; about: string; who: string[]; href?: string; featu
     area: "facilities",
   },
   {
-    title: "Hosting Sites",
+    title: "Hosting Organizations",
     about: "Organizations and schools that host games: their gyms, courts and open hours (under Facilities).",
     who: ["Director"],
     href: "/org/scenic-city/partners",
@@ -76,7 +78,7 @@ const PARTS: { title: string; about: string; who: string[]; href?: string; featu
   },
   {
     title: "Officials",
-    about: "Referees and scorekeepers for your games.",
+    about: "Your referees (CourtSync): add them by cell; assigning them to games comes next.",
     who: ["Director"],
     feature: "officials",
     area: "officials",
@@ -108,21 +110,30 @@ async function Scenic() {
   // schedule analysis) first, then Teams, Programs, Scheduler, Facilities (Game days, Courts, Hosting Sites), Members
   // (Staff, Hosting Sites, Coaches), Officials and Support. Each loads in the background and opens on its own.
   const shown = new Set(parts.map((p) => p.title));
-  const facilities = shown.has("Game days") || shown.has("Hosting Sites");
+  const facilities = shown.has("Game days") || shown.has("Hosting Organizations");
+  // Hosting gyms without an officials group: the Hosting Organizations and Facilities cards flash.
+  const noOfficials = facilities ? await gymsWithoutOfficials(db, "scenic-city") : 0;
   const scheduler = director && areas.includes("scheduling") && features.has("programs");
   const members = director ? await membersLinks(user) : [];
+  // Officials groups asking to officiate its games (Admins and Directors of Scheduling or Programs).
+  const officiating = director ? await officiatingRequests({ pool: db }, user, "scenic-city") : null;
+  const officiatingWait = officiating?.filter((r) => r.status === "pending").length ?? 0;
   const cards = [
     ...(director && features.has("programs")
       ? [{ key: "home", title: "Home", body: <Analysis user={user} /> }]
       : []),
     ...(shown.has("Teams") ? [{ key: "teams", title: "Teams", body: <ScenicTeamsContent embedded /> }] : []),
-    ...(shown.has("Programs") ? [{ key: "programs", title: "Programs", body: <ProgramsContent embedded /> }] : []),
+    // Programs: the same card as every organization's (its programs open right there).
+    ...(shown.has("Programs")
+      ? [{ key: "programs", title: "Programs", count: await programCount("scenic-city"), body: <ProgramsCard org="scenic-city" user={user} /> }]
+      : []),
     ...(scheduler ? [{ key: "scheduler", title: "Scheduler", body: <SchedulerContent embedded /> }] : []),
     ...(facilities
       ? [
           {
             key: "facilities",
             title: "Facilities",
+            alert: noOfficials > 0,
             body: (
               <div className="space-y-2">
                 <SubCard title="Game days">
@@ -131,7 +142,11 @@ async function Scenic() {
                 <SubCard title="Courts">
                   <CourtsContent embedded />
                 </SubCard>
-                <SubCard title="Hosting Sites">
+                <SubCard
+                  title="Hosting Organizations"
+                  count={noOfficials ? `${noOfficials} ${noOfficials === 1 ? "gym" : "gyms"} without officials` : undefined}
+                  alert={noOfficials > 0}
+                >
                   <PartnersContent embedded />
                 </SubCard>
               </div>
@@ -139,12 +154,12 @@ async function Scenic() {
           },
         ]
       : []),
-    ...(members.length
+    ...(members.length || officiating
       ? [
           {
             key: "members",
             title: "Members",
-            alert: requests > 0,
+            alert: requests > 0 || officiatingWait > 0,
             body: (
               <div className="space-y-2">
                 {members.map((l) =>
@@ -153,7 +168,7 @@ async function Scenic() {
                       <ScenicUsersContent embedded />
                     </SubCard>
                   ) : l.key === "hosting-sites" ? (
-                    <SubCard key="sites" title="Hosting Sites">
+                    <SubCard key="sites" title="Hosting Organizations">
                       <HostingSitesMembersContent embedded />
                     </SubCard>
                   ) : (
@@ -162,13 +177,23 @@ async function Scenic() {
                     </SubCard>
                   ),
                 )}
+                {officiating && (
+                  <SubCard
+                    title="Officials Groups"
+                    count={officiatingWait ? `${officiatingWait} waiting` : officiating.length}
+                    alert={officiatingWait > 0}
+                  >
+                    <OfficiatingRequestsCard org="scenic-city" user={user} />
+                  </SubCard>
+                )}
               </div>
             ),
           },
         ]
       : []),
+    // Officials (CourtSync Scheduler): its referees, with + to add; assigning them to games comes next.
     ...(shown.has("Officials")
-      ? [{ key: "officials", title: "Officials", count: "coming soon", body: <p className="text-sm text-zinc-500">Referees and scorekeepers for your games. Coming soon.</p> }]
+      ? [{ key: "officials", title: "Officials", count: await officialsCount("scenic-city"), body: <OfficialsCard org="scenic-city" user={user} /> }]
       : []),
     { key: "support", title: "Support", body: <SupportCard user={user} org="scenic-city" /> },
   ];
@@ -177,12 +202,6 @@ async function Scenic() {
     <>
       <AppHeader user={user} context={scenic.key} tab="scenic-home" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Welcome, {user.firstName} · {scenic.role}
-          </p>
-          {director && <OrgSearchButton org="scenic-city" orgName="Scenic City" />}
-        </div>
         <MembersCards cards={cards} open={null} heading={null} />
       </main>
     </>

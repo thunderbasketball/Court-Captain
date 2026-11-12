@@ -8,12 +8,21 @@ import { isScenicFacilities } from "./scenic";
 import { gradeRange } from "./scenic-teams";
 import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
+import { directionsUrl } from "./directions";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
 
 export type CourtRow = { key: string; name: string; divisions: string[]; setBy: string | null };
-export type CourtGym = { key: string; name: string; host: string; address: string | null; courts: CourtRow[] };
+export type CourtGym = {
+  key: string;
+  name: string;
+  host: string;
+  address: string | null; // the host's (its Google address, else its pin's)
+  hostMap: string | null; // Directions to the host's location (its pin, else its Google place)
+  pin: { label: string; map: string; setBy: string } | null; // Scenic City's own pin: its schedules' Directions go here
+  courts: CourtRow[];
+};
 export type DivisionOption = { id: string; label: string; program: string };
 
 const COURT_KEY = /^(\d{1,18}|o\d{1,18}-(\d{1,18}|gym))$/;
@@ -23,12 +32,25 @@ const isId = (v: unknown): v is string => typeof v === "string" && /^\d{1,18}$/.
 // organizations' active gyms (their courts, not practice goals; a gym with none is one court, Main).
 async function allCourts(q: Queryable) {
   return (
-    await q.query<{ gymKey: string; gym: string; host: string; address: string | null; key: string; court: string }>(
-      `select 'p' || g.id as "gymKey", g.name as gym, p.name as host, g.address, c.id::text as key, c.name as court
+    await q.query<{
+      gymKey: string;
+      gym: string;
+      host: string;
+      address: string | null;
+      lat: number | null;
+      lng: number | null;
+      place: string | null;
+      key: string;
+      court: string;
+    }>(
+      `select 'p' || g.id as "gymKey", g.name as gym, p.name as host, g.address, null::float8 as lat, null::float8 as lng,
+              null as place, c.id::text as key, c.name as court
          from partner_courts c join partner_gyms g on g.id = c.gym_id join partners p on p.id = g.partner_id
         where p.org_slug is null
        union all
-       select 'o' || g.id, g.name, p.name, null, 'o' || g.id || '-' || coalesce(c.id::text, 'gym'), coalesce(c.name, 'Main')
+       select 'o' || g.id, g.name, p.name, coalesce(g.address, g.pin_address), coalesce(g.pin_lat, g.lat), coalesce(g.pin_lng, g.lng),
+              case when g.pin_lat is null then g.place_id end,
+              'o' || g.id || '-' || coalesce(c.id::text, 'gym'), coalesce(c.name, 'Main')
          from gyms g join partners p on p.org_slug = g.org and p.approved and p.hosts_games
          left join courts c on c.gym_id = g.id and c.name !~* '^goal'
         where g.active
@@ -56,17 +78,30 @@ export async function listCourts(
   viewer: SessionUser,
 ): Promise<{ gyms: CourtGym[]; divisions: DivisionOption[] } | null> {
   if (!(await isScenicFacilities(deps.pool, viewer.coachId))) return null;
-  const [courts, divisions, set] = await Promise.all([
+  const [courts, divisions, set, pins] = await Promise.all([
     allCourts(deps.pool),
     currentDivisions(deps.pool, easternDate(deps.now())),
     deps.pool.query<{ key: string; division: string; by: string }>(
       `select court_key as key, division_id::text as division, set_by as by from scenic_court_divisions order by set_at`,
     ),
+    deps.pool.query<{ key: string; lat: number; lng: number; label: string; by: string }>(
+      "select gym_key as key, pin_lat as lat, pin_lng as lng, label, set_by as by from scheduler_gym_pins where org = 'scenic-city'",
+    ),
   ]);
+  const pinOf = new Map(pins.rows.map((p) => [p.key, p]));
   const current = new Set(divisions.map((d) => d.id));
   const gyms = new Map<string, CourtGym>();
   for (const r of courts) {
-    const g = gyms.get(r.gymKey) ?? { key: r.gymKey, name: r.gym, host: r.host, address: r.address, courts: [] };
+    const pin = pinOf.get(r.gymKey);
+    const g = gyms.get(r.gymKey) ?? {
+      key: r.gymKey,
+      name: r.gym,
+      host: r.host,
+      address: r.address,
+      hostMap: directionsUrl(r.lat, r.lng, r.place),
+      pin: pin ? { label: pin.label, map: directionsUrl(pin.lat, pin.lng)!, setBy: pin.by } : null,
+      courts: [],
+    };
     const rows = set.rows.filter((x) => x.key === r.key && current.has(x.division));
     g.courts.push({ key: r.key, name: r.court, divisions: rows.map((x) => x.division), setBy: rows.at(-1)?.by ?? null });
     gyms.set(r.gymKey, g);
@@ -113,13 +148,24 @@ export async function setCourtDivisions(
 // For the Grid on a Game Day: each court with divisions set (in Leagues still running that day) → the division ids
 // allowed there. Courts not listed take any division.
 export async function courtDivisions(q: Queryable, day: string): Promise<Map<string, string[]>> {
-  const r = await q.query<{ key: string; ids: string[] }>(
-    `select x.court_key as key, array_agg(x.division_id::text) as ids
-       from scenic_court_divisions x join scenic_divisions d on d.id = x.division_id
-       join scenic_programs p on p.id = d.program_id
-      where p.ends_on >= $1::date
-      group by x.court_key`,
-    [day],
-  );
-  return new Map(r.rows.map((x) => [x.key, x.ids]));
+  return (await courtDivisionsOn(q, [day]))(day);
+}
+
+// The same for several Game Days with one query: a lookup by day.
+export async function courtDivisionsOn(q: Queryable, days: string[]): Promise<(day: string) => Map<string, string[]>> {
+  const first = [...days].sort()[0];
+  const r = first
+    ? await q.query<{ key: string; id: string; ends: string }>(
+        `select x.court_key as key, x.division_id::text as id, to_char(p.ends_on, 'YYYY-MM-DD') as ends
+           from scenic_court_divisions x join scenic_divisions d on d.id = x.division_id
+           join scenic_programs p on p.id = d.program_id
+          where p.ends_on >= $1::date`,
+        [first],
+      )
+    : { rows: [] };
+  return (day) => {
+    const m = new Map<string, string[]>();
+    for (const x of r.rows) if (x.ends >= day) m.set(x.key, [...(m.get(x.key) ?? []), x.id]);
+    return m;
+  };
 }

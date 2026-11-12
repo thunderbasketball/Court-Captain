@@ -70,8 +70,8 @@ async function OrgTeam({
     new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
   const roleName = (r: string) => COACH_ROLES.find((x) => x.key === r)?.name ?? r;
   const hasHead = t.coaches.some((c) => c.role === "HeadCoach");
-  // Team chat (with Chat): the team's coaches and the Directors, opened right here (who can open it is checked again).
-  const teamChat = (await hasFeature(db, slug, "chat")) && (canManage || t.coaches.some((c) => c.id === user.coachId));
+  // Team chat (CourtPlayers): the team's coaches and the Directors, opened right here (who can open it is checked again).
+  const teamChat = (await hasFeature(db, slug, "team-chat")) && (canManage || t.coaches.some((c) => c.id === user.coachId));
   // Practices: its own-gym practices (a place the team found itself: any time and length, no limits).
   const ref = { org: slug, teamId: t.id };
   const own = await upcomingOwnPractices({ pool: db, now: () => new Date() }, ref, 12); // also for Next 7 days

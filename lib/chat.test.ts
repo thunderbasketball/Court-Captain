@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
-import { chatUnreadCount, dmKey, getChat, listChats, markChatRead, newChatOptions, postMessage, sendUnreadChatEmails } from "./chat";
+import { chatBox, chatEmailSetting, chatLevel, setChatEmailSetting, chatUnreadCount, dmKey, getChat, listChats, markChatRead, newChatOptions, postMessage, sendUnreadChatEmails } from "./chat";
 import { createTestDb, grant } from "./testing/db";
 
 const person = (coachId: string, firstName: string, isDirector = false): SessionUser => ({
@@ -61,12 +61,124 @@ describe("chat", () => {
     return postMessage(deps(), u, key, body);
   };
 
-  it("every organization with Chat: its own chats, its own people, kept apart from Thunder's", async () => {
+  const eastRidge = async (...features: string[]) => {
     await db.pool.query("delete from org_role_types where org = 'east-ridge'");
     await db.pool.query("delete from organizations where slug = 'east-ridge'");
     await db.pool.query("insert into organizations (slug, name, short_name, kind) values ('east-ridge', 'East Ridge', 'ER', 'Organization')");
     await db.pool.query("insert into org_role_types (org, role) values ('east-ridge', 'Director'), ('east-ridge', 'Coach')");
-    await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ('east-ridge', 'court-sync', 'setup', 'test')");
+    for (const f of features)
+      await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ('east-ridge', $1, 'setup', 'test')", [f]);
+  };
+
+  it("chats follow features: CourtPlayers every chat, CourtTeams the Directors' only, others none", async () => {
+    await eastRidge("court-sync");
+    await grant(db.pool, "5550004 east-ridge Director", "5550002 east-ridge Coach");
+    const erDir = person("5550004", "Max");
+    expect(await chatLevel(db.pool, "east-ridge")).toBe("none");
+    expect(await newChatOptions(deps(), erDir, "east-ridge")).toEqual([]);
+    expect(await post(erDir, "east-ridge~directors")).toMatchObject({ ok: false });
+    await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ('east-ridge', 'court-teams', 'setup', 'test')");
+    expect(await chatLevel(db.pool, "east-ridge")).toBe("directors");
+    expect((await newChatOptions(deps(), erDir, "east-ridge")).map((o) => o.key)).toEqual(["east-ridge~directors"]);
+    expect((await newChatOptions(deps(), ace, "east-ridge")).map((o) => o.key)).toEqual(["east-ridge~coach-5550002"]); // a coach there: their chat with the Directors
+    expect(await post(erDir, "east-ridge~directors")).toMatchObject({ ok: true });
+    expect(await post(erDir, "east-ridge~coaches")).toMatchObject({ ok: false }); // own-coach chats need CourtPlayers
+    expect(await post(erDir, dmKey("5550004", "5550002", "east-ridge"))).toMatchObject({ ok: true });
+    await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ('east-ridge', 'court-players', 'setup', 'test')");
+    expect(await post(erDir, "east-ridge~coaches")).toMatchObject({ ok: true });
+    // Dropping CourtPlayers hides its chats (kept, not deleted).
+    await db.pool.query("delete from org_features where org = 'east-ridge' and feature = 'court-players'");
+    expect(await getChat(deps(), erDir, "east-ridge~coaches")).toBeNull();
+    expect((await listChats(deps(), erDir)).map((c) => c.key).filter((k) => k.startsWith("east-ridge~"))).toEqual([
+      dmKey("5550004", "5550002", "east-ridge"),
+      "east-ridge~directors",
+    ]);
+  });
+
+  it("CourtTeams: Directors chat with each program's registered teams' coaches, and one coach", async () => {
+    await db.pool.query("delete from org_features where org = 'scenic-city'");
+    await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ('scenic-city', 'court-teams', 'setup', 'test')");
+    await db.pool.query("insert into users (coach_id, first_name, last_name, cell) values ('5550009', 'Sue', 'S', '4235550009')");
+    await grant(db.pool, "5550009 scenic-city Director");
+    const sue = person("5550009", "Sue");
+    const prog = (
+      await db.pool.query<{ id: string }>(
+        `insert into scenic_programs (kind, name, starts_on, ends_on, reg_opens, reg_closes, created_by, updated_by)
+         values ('League', 'Winter', '2026-12-05', '2099-02-28', '2026-10-01', '2027-02-14', 't', 't') returning id::text`,
+      )
+    ).rows[0].id;
+    await db.pool.query(
+      `insert into scenic_divisions (program_id, gender, grade_low, grade_high) values (${prog}, 'Boys', 5, 5);
+       insert into scenic_grade_groups (division_id, grade, level) select id, 5, 'COMP' from scenic_divisions;
+       insert into scenic_pools (group_id, name) select id, 'A' from scenic_grade_groups;
+       insert into scenic_teams (name, gender, grade_low, grade, level, owner_coach_id, coach_id, created_by, updated_by)
+         values ('Magic', 'Boys', 5, 5, 'COMP', '5550002', '5550002', 't', 't'), ('Gone', 'Boys', 5, 5, 'COMP', '5550003', '5550003', 't', 't');
+       insert into scenic_teams (name, gender, grade_low, grade, level, thunder_team_id, owner_coach_id, created_by, updated_by)
+         values ('Thunder 4G A', 'Girls', 4, 4, 'COMP', ${A}, '9913694', 't', 't'); -- a club team: its Head Coach (Cal) counts
+       insert into scenic_registrations (program_id, team_id, pool_id, registered_by)
+         select ${prog}, t.id, (select id from scenic_pools), 't' from scenic_teams t;
+       update scenic_registrations set removed_by = 't' where team_id = (select id from scenic_teams where name = 'Gone');`,
+    );
+    const progKey = `scenic-city~program-${prog}`;
+    expect((await newChatOptions(deps(), sue, "scenic-city")).map((o) => o.key)).toEqual([
+      "scenic-city~directors",
+      progKey,
+      "scenic-city~coach-5550002", // Ace coaches a registered team; Pam's team was removed
+      "scenic-city~coach-5550001", // Cal: Head Coach of the club team registered
+    ]);
+    expect((await newChatOptions(deps(), cal, "scenic-city")).map((o) => o.key)).toEqual(["scenic-city~coach-5550001", progKey]);
+    expect((await newChatOptions(deps(), ace, "scenic-city")).map((o) => o.key)).toEqual(["scenic-city~coach-5550002", progKey]);
+    expect(await newChatOptions(deps(), pam, "scenic-city")).toEqual([]);
+    expect(await post(sue, progKey, "Schedules are out")).toMatchObject({ ok: true });
+    expect(await chatUnreadCount(deps(), ace)).toBe(1);
+    expect((await getChat(deps(), ace, progKey))?.members).toEqual(["Sue S", "Ace X", "Cal X"]);
+    expect((await listChats(deps(), ace)).map((c) => c.title)).toEqual(["Winter · Coaches · Scenic City"]);
+    expect(await getChat(deps(), pam, progKey)).toBeNull();
+    expect(await post(sue, "scenic-city~coach-5550002", "Got a minute?")).toMatchObject({ ok: true });
+    expect(await post(ace, "scenic-city~coach-5550002", "Sure")).toMatchObject({ ok: true });
+    expect(await post(sue, "scenic-city~coach-5550003")).toMatchObject({ ok: false }); // not a coach there any more
+    expect(await post(sue, "scenic-city~coaches")).toMatchObject({ ok: false }); // own-coach chats need CourtPlayers
+  });
+
+  it("CourtSync: the Scheduler's and the host's Facilities people chat while the hosting is approved", async () => {
+    await eastRidge("court-sync"); // a host only: no chats of its own
+    await db.pool.query(
+      "insert into org_features (org, feature, source, turned_on_by) values ('scenic-city', 'court-teams', 'setup', 'test'), ('scenic-city', 'court-sync', 'setup', 'test') on conflict do nothing",
+    );
+    await db.pool.query("insert into users (coach_id, first_name, last_name, cell) values ('5550009', 'Sue', 'S', '4235550009')");
+    await db.pool.query("insert into org_role_types (org, role) values ('east-ridge', 'Admin') on conflict do nothing");
+    await grant(db.pool, "5550009 scenic-city Admin", "5550004 east-ridge Admin", "5550002 east-ridge Coach");
+    const sue = person("5550009", "Sue");
+    const erAdmin = person("5550004", "Max");
+    const key = "scenic-city~host-east-ridge";
+    // Not approved yet: no chat.
+    await db.pool.query(
+      "insert into org_partnerships (host_org, for_org, status, requested_by) values ('east-ridge', 'scenic-city', 'pending', 'x')",
+    );
+    expect(await post(sue, key)).toMatchObject({ ok: false });
+    expect(await newChatOptions(deps(), erAdmin, "east-ridge")).toEqual([]);
+    await db.pool.query("update org_partnerships set status = 'approved' where host_org = 'east-ridge'");
+    // Each side sees it from its own organization, named for the other side.
+    expect(await newChatOptions(deps(), erAdmin, "east-ridge")).toEqual([{ key, title: "Scenic City Basketball · CourtSync", group: "CourtSync" }]);
+    expect((await newChatOptions(deps(), sue, "scenic-city")).filter((o) => o.group === "CourtSync")).toEqual([
+      { key, title: "East Ridge · CourtSync", group: "CourtSync" },
+    ]);
+    expect(await post(erAdmin, key, "Gym 2 is closed Saturday")).toMatchObject({ ok: true });
+    expect(await chatUnreadCount(deps(), sue)).toBe(1);
+    expect((await getChat(deps(), sue, key))?.members).toEqual(["Sue S", "Max X"]); // by last name
+    expect((await chatBox(deps(), erAdmin, "east-ridge")).map((g) => g.name)).toEqual(["CourtSync"]);
+    // Not for their coaches, Thunder, or the other side's coaches.
+    expect(await getChat(deps(), ace, key)).toBeNull();
+    expect(await getChat(deps(), dir, key)).toBeNull();
+    expect(await post(sue, "scenic-city~host-scenic-city")).toMatchObject({ ok: false });
+    // The host turns CourtSync off: the chat is hidden (kept).
+    await db.pool.query("delete from org_features where org = 'east-ridge' and feature = 'court-sync'");
+    expect(await getChat(deps(), sue, key)).toBeNull();
+    expect(await chatUnreadCount(deps(), sue)).toBe(0);
+  });
+
+  it("every organization with Chat: its own chats, its own people, kept apart from Thunder's", async () => {
+    await eastRidge("court-players");
     await grant(db.pool, "5550004 east-ridge Director", "5550002 east-ridge Coach");
     const t = await db.pool.query<{ id: string }>(
       `insert into org_teams (org, name, gender, grade_low, grade, level, created_by) values ('east-ridge', '5B Ace', 'Boys', 5, 5, 'REC', 'x') returning id::text`,
@@ -118,7 +230,8 @@ describe("chat", () => {
     expect(await post(pam, `team-${A}`, "Snacks Saturday")).toMatchObject({ ok: true });
     expect(await getChat(deps(), max, `team-${A}`)).toBeNull();
     expect(await getChat(deps(), pam, `teamcoaches-${A}`)).toBeNull();
-    expect((await getChat(deps(), cal, `team-${A}`))?.members).toEqual(["Cal X", "Dee X", "Pam X"]);
+    expect((await getChat(deps(), cal, `team-${A}`))?.members).toEqual(["Cal X", "Pam X"]); // Directors are hidden
+    expect((await getChat(deps(), dir, `team-${A}`))?.messages.length).toBe(1); // but can read it
     expect(await post(pam, "coaches")).toMatchObject({ ok: false });
     expect(await post(pam, "directors")).toMatchObject({ ok: false });
     expect(await post(cal, "directors")).toMatchObject({ ok: false });
@@ -200,9 +313,9 @@ describe("chat", () => {
     await post(pam, `team-${A}`, "team");
     expect(await chatUnreadCount(deps(), cal)).toBe(1); // Pam's team message
     expect(await chatUnreadCount(deps(), ace)).toBe(3); // everyone ×2 + coaches
-    expect(await chatUnreadCount(deps(), dir)).toBe(3); // everyone ×2 + team, not the coaches' chat
+    expect(await chatUnreadCount(deps(), dir)).toBe(2); // everyone ×2; not the coaches' chat or a team chat (hidden there)
     expect((await listChats(deps(), dir)).map((c) => [c.title, c.unread])).toEqual([
-      ["4G A · Team", 1],
+      ["4G A · Team", 0],
       ["Coaches", 0],
       ["Directors & all coaches", 2],
     ]);
@@ -248,6 +361,28 @@ describe("chat", () => {
     expect(mail.at(-1)?.text).not.toContain("Practice plans posted");
   });
 
+  it("each organization's Chat setting: email after its own hours, or not at all; only its Admins change it", async () => {
+    const mail: string[] = [];
+    const run = () =>
+      sendUnreadChatEmails({ ...deps(), appUrl: "https://app.example", sendEmail: async (to) => void mail.push(to) });
+    expect(await chatEmailSetting(db.pool, "thunder")).toEqual({ on: true, hours: 8 });
+    expect(await setChatEmailSetting({ pool: db.pool }, cal, "thunder", { on: true, hours: 2 })).toMatchObject({ ok: false });
+    await grant(db.pool, "9913694 thunder Admin");
+    expect(await setChatEmailSetting({ pool: db.pool }, dir, "thunder", { on: true, hours: 0 })).toMatchObject({ ok: false });
+    expect(await setChatEmailSetting({ pool: db.pool }, dir, "thunder", { on: true, hours: 2 })).toEqual({ ok: true });
+
+    await post(cal, "everyone", "Gym change");
+    later(2 * 60 + 5);
+    expect(await run()).toBe(2); // after 2 hours: Ace and Dee
+
+    expect(await setChatEmailSetting({ pool: db.pool }, dir, "thunder", { on: false, hours: 2 })).toEqual({ ok: true });
+    expect(await chatEmailSetting(db.pool, "thunder")).toEqual({ on: false, hours: 2 });
+    await post(cal, "everyone", "Another");
+    later(24 * 60);
+    expect(await run()).toBe(0); // turned off
+    expect(mail).toHaveLength(2);
+  });
+
   it("a team's parents chat: its staff and its players' parents with a login; Directors can read but aren't members", async () => {
     const fam = person("5550005", "Fay");
     await db.pool.query("insert into users (coach_id, first_name, last_name, cell) values ('5550005', 'Fay', 'X', '4235550005')");
@@ -273,5 +408,33 @@ describe("chat", () => {
     expect(await getChat(deps(), fam, `east-ridge~parents-${A}`)).toBeNull();
     // The parent gets it in their list and unread count.
     expect(await chatUnreadCount(deps(), fam)).toBe(1);
+  });
+
+  it("the Chat box: every chat the person can open, grouped, each team's chats together", async () => {
+    await post(cal, `team-${A}`, "practice moved");
+    const names = (g: Awaited<ReturnType<typeof chatBox>>) => g.map((x) => x.name);
+    // Cal (Head Coach of A): the group chats, then team A's chats (team, coaches, parents), with the unread message.
+    const c = await chatBox(deps(), cal, "thunder");
+    expect(names(c)).toEqual(["Groups", "Teams"]);
+    expect(c[0].chats.map((x) => x.title)).toEqual(["Directors", "Directors & all coaches", "Coaches"]);
+    expect(c[1].teams).toEqual([
+      {
+        name: "4G A",
+        chats: [
+          expect.objectContaining({ title: "Team chat", last: expect.objectContaining({ body: "practice moved" }) }),
+          expect.objectContaining({ title: "Coaches", last: null }),
+          expect.objectContaining({ title: "Parents", last: null }),
+        ],
+      },
+    ]);
+    // Pam (Team Parent on A) sees it unread; no coach groups.
+    const p = await chatBox(deps(), pam, "thunder");
+    expect(names(p)).toEqual(["Teams"]);
+    expect(p[0].teams![0].chats.find((x) => x.title === "Team chat")!.unread).toBe(1);
+    // A Director: Groups, every team, and each coach on their own.
+    const d = await chatBox(deps(), dir, "thunder");
+    expect(names(d)).toEqual(["Groups", "Teams", "Coaches"]);
+    expect(d[1].teams!.map((t) => t.name)).toEqual(["5B B", "4G A"]); // as the Teams page: Boys first
+    expect(d[2].chats.map((x) => x.title)).toContain("Cal X");
   });
 });

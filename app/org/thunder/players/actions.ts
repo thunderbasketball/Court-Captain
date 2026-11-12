@@ -8,6 +8,7 @@ import { playerEvaluations } from "@/lib/evaluations";
 import { playerTeam } from "@/lib/player-team";
 import * as rosters from "@/lib/rosters";
 import { addPlayer, removeAddedPlayer, type AddedPlayerInput } from "@/lib/added-players";
+import { fixBirthdate } from "@/lib/birthdate-fix";
 
 // Director only (checked again inside lib/player-team). Viewing, so allowed while viewing as someone.
 export async function loadPlayerTeam(registrantId: string) {
@@ -116,6 +117,22 @@ export async function removeAddedPlayerAction(registrantId: string) {
     return await removeAddedPlayer({ pool: db, now: () => new Date() }, user, String(registrantId));
   } catch (e) {
     console.error("Remove added player failed:", e);
+    return { ok: false as const, message: "Something went wrong. Please try again." };
+  }
+}
+
+// Fix a player's birthday in the app, or (null) go back to the sheet's (Admins and Directors of Players; checked again
+// in lib/birthdate-fix).
+export async function fixBirthdateAction(registrantId: string, date: string | null) {
+  const user = await currentUser();
+  if (!user) return { ok: false as const, message: "Please log in again." };
+  if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  const refused = await featureRefusal("thunder", "player-registration");
+  if (refused) return refused;
+  try {
+    return await fixBirthdate({ pool: db, now: () => new Date() }, user, registrantId, date);
+  } catch (e) {
+    console.error("Fix birthday failed:", e);
     return { ok: false as const, message: "Something went wrong. Please try again." };
   }
 }

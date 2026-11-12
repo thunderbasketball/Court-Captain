@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore, useTransition } fro
 import type { FollowedGame, FollowedTeam } from "@/lib/public-league";
 import { timeLabel } from "@/lib/time";
 import { loadFollowedTeams } from "./league/actions";
+import DirectionsLink from "./DirectionsLink";
 
 // Following teams with no login (SPEC.md section 14): the followed team ids live on this device only (browser storage,
 // one list per organization), never on the server. A private window or cleared site data forgets them.
@@ -136,6 +137,7 @@ function GameLine({ g, past = false }: { g: Game; past?: boolean }) {
           <span className="block text-xs text-zinc-500">
             {g.gym}
             {g.court ? `, ${g.court}` : ""}
+            <DirectionsLink href={g.map} />
           </span>
         )}
       </span>

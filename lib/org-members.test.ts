@@ -36,7 +36,7 @@ describe("a registered organization's Members", () => {
          ('5550002', 'Bo', 'X', '4235550002'), ('5550003', 'Cy', 'X', '4235550003')`,
     );
     const input = { name: "East Ridge Parks & Rec", short: "East Ridge", kind: "Organization", color: "#0f766e" };
-    await createOrganization(deps(), owner, { ...input, features: ["court-org"] }, null);
+    await createOrganization(deps(), owner, { ...input, features: ["court-club"] }, null);
     // CourtSync with its own teams: REC is open to it (lib/rec-orgs.ts).
     await db.pool.query(
       "insert into org_features (org, feature, source, turned_on_by) select slug, 'court-sync', 'setup', 'test' from organizations where slug not in ('thunder', 'scenic-city') on conflict do nothing",

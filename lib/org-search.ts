@@ -1,6 +1,8 @@
-// Home's 🔍 search (SPEC.md section 10): an organization's Owners, Admins and Directors find a coach or player by name.
+// Home's 🔍 search (SPEC.md section 10): an organization's Owners, Admins and Directors find anything in it. Each word
+// typed may be any part of: a coach's name, cell (partial numbers, typed any way) or email; a player's name, parents'
+// names, cells and emails, address and other registration details; or a team, gym, program, session or scrimmage.
 // Coaches: anyone with a role in the organization or coaching one of its teams. Players: Thunder's registrations (with
-// their parents), another organization's team rosters. Scenic City has no players of its own, so coaches only.
+// their parents), another organization's team rosters. Scenic City has no players of its own.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { gradeLabel } from "./grades";
@@ -21,7 +23,9 @@ export type CoachHit = {
   dashboard: string | null; // their dashboard, for the organization's Owners and Admins
 };
 export type PlayerHit = { key: string; name: string; detail: string; team: TeamLink | null; parents: Parent[] };
-export type SearchResult = { coaches: CoachHit[]; players: PlayerHit[] };
+// Everything else: a team, gym, program, session or scrimmage, with its page.
+export type ThingHit = { key: string; kind: string; name: string; detail: string; href: string };
+export type SearchResult = { coaches: CoachHit[]; players: PlayerHit[]; things: ThingHit[] };
 
 const LIMIT = 10;
 const ROLE_LABEL: Record<string, string> = {
@@ -32,17 +36,26 @@ const ROLE_LABEL: Record<string, string> = {
 };
 const ORG_ROLES = ["Owner", "Admin", "Director", "Coach"];
 
-// The words typed, each matched to the start of a first or last name ("jo sm" finds John Smith). Null when too short.
+// The words typed, each matched anywhere in what's searched ("jo sm" finds John Smith; "423 55" or "(423) 55" a cell).
+// A word of only digits and phone punctuation is matched as its digits. Null when too short.
 export function searchWords(q: unknown): string[] | null {
-  if (typeof q !== "string") return null;
-  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean).slice(0, 4);
-  if (!words.length || words.join("").length < 2 || q.length > 60) return null;
-  return words.map((w) => w.replace(/[\\%_]/g, (c) => `\\${c}`) + "%");
+  if (typeof q !== "string" || q.length > 60) return null;
+  const words = q
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => (/^[\d()+.\-]+$/.test(w) && /\d/.test(w) ? w.replace(/\D/g, "") : w))
+    .filter(Boolean)
+    .slice(0, 6);
+  if (!words.length || words.join("").length < 2) return null;
+  return words.map((w) => "%" + w.replace(/[\\%_]/g, (c) => `\\${c}`) + "%");
 }
 
-// Each word must start the first or last name ($1 is the words array).
-const nameMatch = (first: string, last: string) =>
-  `(select bool_and(lower(${first}) like w or lower(${last}) like w) from unnest($1::text[]) w)`;
+// Each word must be somewhere in these fields ($1 is the words array). Cells are also matched as digits only.
+const digits = (cell: string) => `regexp_replace(coalesce(${cell}, ''), '\\D', '', 'g')`;
+const matches = (fields: string[], cells: string[] = []) =>
+  `(select bool_and(lower(concat_ws(' ', ${[...fields, ...cells.map(digits)].join(", ")})) like w) from unnest($1::text[]) w)`;
+const nameMatch = (first: string, last: string) => matches([first, last]);
 
 // Null when the viewer isn't an Owner, Admin or Director of the organization (checked here, on the server).
 export async function searchOrg(deps: Deps, viewer: SessionUser, org: unknown, q: unknown): Promise<SearchResult | null> {
@@ -50,7 +63,7 @@ export async function searchOrg(deps: Deps, viewer: SessionUser, org: unknown, q
   const ok = await deps.pool.query<{ ok: boolean }>("select acts_as($1, $2, 'Director') as ok", [viewer.coachId, org]);
   if (!ok.rows[0].ok) return null;
   const words = searchWords(q);
-  if (!words) return { coaches: [], players: [] };
+  if (!words) return { coaches: [], players: [], things: [] };
   const admin = await isOrgAdmin(deps.pool, viewer.coachId, org);
 
   // Their teams in this organization, by kind.
@@ -68,7 +81,7 @@ export async function searchOrg(deps: Deps, viewer: SessionUser, org: unknown, q
                   order by array_position($3::text[], r.role)) as roles,
             coalesce((select json_agg(x order by x.name) from (${teamsSql}) x), '[]') as teams
      from users u
-     where u.active and ${nameMatch("u.first_name", "u.last_name")}
+     where u.active and ${matches(["u.first_name", "u.last_name", "u.email"], ["u.cell"])}
        and (exists (select 1 from org_roles r where r.coach_id = u.coach_id and r.org = $2 and r.role = any($3::text[]))
             or exists (${teamsSql}))
      order by lower(u.last_name), lower(u.first_name) limit ${LIMIT}`,
@@ -94,7 +107,14 @@ export async function searchOrg(deps: Deps, viewer: SessionUser, org: unknown, q
        from registrations g
        left join lateral (select t.id, t.name from team_players tp join teams t on t.id = tp.team_id
                           where tp.registrant_id = g.registrant_id order by t.name limit 1) t on true
-       where ${nameMatch("g.first_name", "g.last_name")}
+       where ${matches(
+         [
+           "g.first_name", "g.last_name", "g.parent1_first", "g.parent1_last", "g.parent1_email", "g.parent2_first",
+           "g.parent2_last", "g.parent2_email", "g.address", "g.city", "g.zip", "g.uniform_number", "g.uniform_size",
+           "g.coach_request", "g.notes", "t.name",
+         ],
+         ["g.parent1_cell", "g.parent2_cell"],
+       )}
        order by lower(g.last_name), lower(g.first_name) limit ${LIMIT}`,
       [words],
     );
@@ -121,5 +141,52 @@ export async function searchOrg(deps: Deps, viewer: SessionUser, org: unknown, q
       parents: [],
     }));
   }
-  return { coaches, players };
+  return { coaches, players, things: await searchThings(deps, org, words) };
+}
+
+// Teams, gyms, programs, sessions and scrimmages whose name or place holds every word.
+async function searchThings(deps: Deps, org: string, words: string[]): Promise<ThingHit[]> {
+  const base = `/org/${org}`;
+  const teams =
+    org === "thunder"
+      ? `select 'team' as kind, t.id::text as id, t.name, 'Team' as detail, '${base}/teams/' || t.id as href from teams t
+          where ${matches(["t.name", "t.alt_name", "t.coach_first", "t.coach_last"])}`
+      : org === "scenic-city"
+        ? `select 'team' as kind, t.id::text as id, t.name, 'Team' as detail, '${base}/teams' as href from scenic_teams t
+            where ${matches(["t.name", "t.alt_name", "t.coach_first", "t.coach_last"])}`
+        : `select 'team' as kind, t.id::text as id, t.name, 'Team' as detail, '${base}/teams/' || t.id as href from org_teams t
+            where t.org = $2 and ${matches(["t.name", "t.alt_name", "t.coach_first", "t.coach_last"])}`;
+  const r = await deps.pool.query<ThingHit & { id: string }>(
+    `select kind || ':' || id as key, kind, name, detail, href from (
+       ${teams}
+       union all
+       select 'gym', g.id::text, g.name, coalesce(nullif(g.address, ''), 'Gym'),
+              case when $2 = 'thunder' then '${base}/facilities/gyms' else '${base}/facilities' end
+         from gyms g where g.org = $2 and g.active and ${matches(["g.name", "g.short_name", "g.address"])}
+       union all
+       select 'program', p.id::text, p.name, 'Program', '${base}' from player_programs p
+        where p.org = $2 and ${matches(["p.name"])}
+       union all
+       select 'program', p.id::text, p.name, p.kind, '${base}' from scenic_programs p
+        where p.org = $2 and ${matches(["p.name", "p.kind"])}
+       union all
+       select 'session', e.id::text, e.name, to_char(e.starts_at at time zone 'America/New_York', 'Mon FMDD, FMHH12:MI AM') ||
+              coalesce(' · ' || nullif(e.location, ''), ''), '/events/' || e.id
+         from events e where e.org = $2 and ${matches(["e.name", "e.location", "e.notes"])}
+       union all
+       select 'scrimmage', s.id::text,
+              coalesce((select name from teams where id = s.home_thunder_team_id), (select name from org_teams where id = s.home_org_team_id), 'TBD')
+              || ' vs ' ||
+              coalesce(s.away_name, (select name from teams where id = s.away_thunder_team_id), (select name from org_teams where id = s.away_org_team_id), 'TBD'),
+              to_char(s.starts_at at time zone 'America/New_York', 'Mon FMDD, FMHH12:MI AM') || ' · ' || s.place, '${base}'
+         from scrimmages s where s.org = $2 and ${matches([
+           "s.place",
+           "s.away_name",
+           "(select string_agg(name, ' ') from teams where id in (s.home_thunder_team_id, s.away_thunder_team_id))",
+           "(select string_agg(name, ' ') from org_teams where id in (s.home_org_team_id, s.away_org_team_id))",
+         ])}
+     ) x order by array_position(array['team', 'program', 'session', 'scrimmage', 'gym'], kind), lower(name) limit 20`,
+    [words, org],
+  );
+  return r.rows.map(({ key, kind, name, detail, href }) => ({ key, kind, name, detail, href }));
 }

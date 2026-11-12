@@ -11,7 +11,6 @@ import AppHeader from "../AppHeader";
 import { PageTitle, card } from "../ui";
 import { eventWhen } from "./format";
 import { hasArea } from "@/lib/org-admin";
-import ScheduleNav from "../ScheduleNav";
 
 import { PageFrame } from "../ui";
 import { hasFeature } from "@/lib/features";
@@ -87,7 +86,6 @@ export async function EventsContent({
     <>
       {!embedded && <AppHeader user={user} tab="schedule" context={user.isDirector ? "director" : active?.org === "thunder" ? active.key : undefined} />}
       <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        {!embedded && user.isDirector && <ScheduleNav user={user} current="events" />}
         <div className="flex items-start justify-between gap-3">
           <PageTitle
             title="Events"

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import TeamsIncluded from "../../../TeamsIncluded";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
@@ -23,7 +24,8 @@ import { createTeam, importThunderTeams, previewThunderImport, undoThunderImport
 import { gradeSort } from "@/lib/team-names";
 import AppHeader from "../../../AppHeader";
 import { CollapseCard, PageTitle } from "../../../ui";
-import TeamRow, { TeamsByLevel } from "../../../TeamRow";
+import TeamWarningsCard from "../../../warnings/TeamWarningsCard";
+import TeamRow, { TeamsByLevel, teamMix } from "../../../TeamRow";
 import { ContactChip, GroupTextButton, TextTeamsPanel } from "../../../Contacts";
 import ChatPanel from "../../../ChatPanel";
 import PageMenus, { MEGAPHONE_BTN, MegaphoneIcon, PLUS_BTN, PlusIcon } from "../../../PageMenus";
@@ -85,7 +87,7 @@ export async function TeamsContent({
         {/* Phone-sized: 📣 opens Text, Chat and Alert coaches; + opens Add a team and Import teams, right under the title. */}
         <PageMenus
           slot={embedded ? "card-slot-teams" : undefined}
-          title={<PageTitle title={`Teams (${teams.length})`} subtitle="Thunder Basketball's teams and coaches" />}
+          title={<PageTitle title={`Teams (${teams.length})`} subtitle={teamMix(teams) || "Thunder Basketball's teams and coaches"} />}
           menus={[
             {
               key: "coaches",
@@ -144,6 +146,14 @@ export async function TeamsContent({
             },
           ]}
         />
+        {/* Warnings: the ones this organization turned on (its gear), streamed so the teams show first. */}
+        {teams.length > 0 && (
+          <div className="mb-3">
+            <Suspense fallback={null}>
+              <TeamWarningsCard org="thunder" base="/org/thunder" />
+            </Suspense>
+          </div>
+        )}
         {!teams.length && <p className="text-zinc-500">No teams yet. Tap “+” to add or import some.</p>}
         {(teams.length > 0 || register) && (
           <TeamsByLevel

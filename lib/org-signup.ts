@@ -3,7 +3,7 @@
 // turned on; the others are recorded as requested.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
-import { FEATURES, READY_FOR_ANY_ORG, type FeatureKey } from "./features";
+import { FEATURES, READY_FOR_ANY_ORG, featuresChanged, type FeatureKey } from "./features";
 import { slugFor } from "./org-slug";
 import { withTx } from "./sql";
 
@@ -12,7 +12,16 @@ export { slugFor };
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
 
-export const ORG_KINDS = ["School", "Club", "League", "Organization"] as const;
+export const ORG_KINDS = ["School", "Club", "League", "Officials", "Organization"] as const;
+// How each type reads on the form ("Officials Group"), and what it starts with ticked.
+export const KIND_LABEL: Record<(typeof ORG_KINDS)[number], string> = {
+  School: "School",
+  Club: "Club",
+  League: "League",
+  Officials: "Officials Group",
+  Organization: "Organization",
+};
+export const KIND_PRESET: Partial<Record<(typeof ORG_KINDS)[number], FeatureKey[]>> = { Officials: ["court-officials", "court-sync"] };
 export const ORG_COLORS = [
   "#1d4ed8",
   "#0f766e",
@@ -59,7 +68,7 @@ export async function createOrganization(
     typeof input.short === "string" && input.short.trim() ? cleanOrgName(input.short, 20) : name.length <= 20 ? name : null;
   if (!short) return { ok: false, message: 'Enter a short name (up to 20 characters), e.g. "Baylor".' };
   const kind = ORG_KINDS.find((k) => k === input.kind);
-  if (!kind) return { ok: false, message: "Choose School, Club, League or Organization." };
+  if (!kind) return { ok: false, message: "Choose School, Club, League, Officials Group or Organization." };
   const color = ORG_COLORS.find((c) => c === input.color) ?? ORG_COLORS[0];
   const picked = Array.isArray(input.features)
     ? [...new Set(input.features)].filter((f): f is FeatureKey => FEATURES.some((x) => x.key === f) && f !== "alerts")
@@ -107,6 +116,7 @@ export async function createOrganization(
         "insert into org_features (org, feature, source, turned_on_by, turned_on_at) values ($1, $2, 'setup', $3, $4)",
         [slug, f, by(viewer), deps.now()],
       );
+    featuresChanged();
     for (const f of requested)
       await q.query("insert into org_feature_requests (org, feature, asked_by, asked_at) values ($1, $2, $3, $4)", [
         slug,

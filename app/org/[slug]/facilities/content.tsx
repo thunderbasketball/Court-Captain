@@ -9,10 +9,13 @@ import { isOrgSlug } from "@/lib/orgs";
 import AppHeader from "../../../AppHeader";
 import FacilityCalendar from "../../thunder/facilities/FacilityCalendar";
 import { RequestHostingButton } from "../../../hosting/HostingButtons";
-import { PageTitle, card } from "../../../ui";
-import Link from "next/link";
-import FacilitiesNav from "../../thunder/facilities/FacilitiesNav";
-import { orgFacilityLinks } from "./links";
+import { PageTitle } from "../../../ui";
+import SubCard from "../../../SubCard";
+import { ChatToggle } from "../../../InlineToggle";
+import { ChatIcon, iconBtn } from "../../../CardIcons";
+import { orgKey } from "@/lib/chat";
+import OrgGyms from "./OrgGyms";
+import { GymToolIcons, GymToolPanels } from "../../../GymTools";
 import { followRename } from "@/lib/org-rename";
 
 import { PageFrame } from "../../../ui";
@@ -55,42 +58,46 @@ export async function OrgFacilitiesContent({
     <>
       {!embedded && <AppHeader user={user} context={`org:${slug}`} tab="org-facilities" />}
       <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 space-y-5 px-4 py-6">
-        <PageTitle title="Facilities" subtitle="Gyms, availability by date, and hosting other organizations' games" />
-        <FacilitiesNav current="availability" links={orgFacilityLinks(slug)} />
-
-        <section className={`${card} p-4`}>
-          <h2 className="mb-1 font-semibold">Gym availability</h2>
-          {!view.gyms.length ? (
-            <p className="text-sm text-zinc-500">
-              No gyms yet.{" "}
-              <Link href={`/org/${slug}/facilities/gyms`} className="font-medium text-thunder-blue hover:underline">
-                Add one under Gyms
-              </Link>
-              .
+        {!embedded && <PageTitle title="Facilities" subtitle="Gyms, availability by date, and hosting other organizations' games" />}
+        {/* Each part is a card that opens right here (no tabs, no new page), the same as Thunder's. */}
+        <div className="space-y-2">
+        {/* Gyms: each gym a card with its courts and its availability calendar. */}
+        <SubCard title="Gyms" count={view.gyms.length} action={<GymToolIcons org={slug} />}>
+          <GymToolPanels org={slug} />
+          {view.gyms.length > 0 && (
+            <p className="mb-3 text-sm text-zinc-500">
+              {view.uses.length
+                ? "Open a gym to mark its dates: tap dates, choose what each is for, keep the default hours or set your own, then Save."
+                : (view.partnerNote ?? "Nothing to mark yet.")}
             </p>
-          ) : !view.uses.length ? (
-            <p className="text-sm text-zinc-500">{view.partnerNote ?? "Nothing to mark yet."}</p>
-          ) : (
-            <>
-              <p className="mb-4 text-sm text-zinc-500">
-                Tap dates, choose what each is for, keep the default hours or set your own, then Save.
-              </p>
-              <FacilityCalendar
-                org={slug}
-                today={view.today}
-                gyms={view.gyms}
-                uses={view.uses}
-                days={view.days}
-                gameDays={view.gameDays}
-              />
-            </>
           )}
-        </section>
-
-        <section className={`${card} p-4`}>
-          <h2 className="mb-1 font-semibold">Host games for other organizations</h2>
+          <OrgGyms
+            org={slug}
+            gyms={view.gyms}
+            tools={false}
+            calendars={
+              view.uses.length
+                ? Object.fromEntries(
+                    view.gyms.map((g) => [
+                      g.id,
+                      <FacilityCalendar
+                        key={g.id}
+                        org={slug}
+                        today={view.today}
+                        gyms={[g]}
+                        uses={view.uses}
+                        days={view.days}
+                        gameDays={view.gameDays}
+                      />,
+                    ]),
+                  )
+                : undefined
+            }
+          />
+        </SubCard>
+        <SubCard title="CourtSync" count={offers.filter((x) => x.status === "approved").length || undefined}>
           <p className="mb-3 text-sm text-zinc-500">
-            Ask to host; once a league approves, your gyms marked for that league show as available on its game days.
+            Ask to host; once a league approves, your gyms marked for that league show as available on its game days, and 🗨️ chats with its schedulers.
           </p>
           {!offers.length && <p className="text-sm text-zinc-500">No organization is looking for hosting sites right now.</p>}
           <ul className="divide-y divide-zinc-100 dark:divide-white/5">
@@ -108,13 +115,20 @@ export async function OrgFacilitiesContent({
                     </p>
                   )}
                 </div>
+                {/* Approved: the CourtSync chat with that Scheduler, opened right here. */}
+                {x.status === "approved" && (
+                  <ChatToggle chatKey={orgKey(x.org, `host-${slug}`)} label={`CourtSync chat with ${x.name}`} className={iconBtn}>
+                    <ChatIcon />
+                  </ChatToggle>
+                )}
                 {(x.status === "none" || x.status === "declined") && (
                   <RequestHostingButton hostOrg={slug} forOrg={x.org} name={x.name} again={x.status === "declined"} />
                 )}
               </li>
             ))}
           </ul>
-        </section>
+        </SubCard>
+        </div>
       </PageFrame>
     </>
   );

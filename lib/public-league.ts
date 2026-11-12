@@ -6,6 +6,7 @@ import type { SessionUser } from "./auth/service";
 import { clubAbbr } from "./scenic-club-teams";
 import { orgHasArea } from "./org-admin";
 import { PLACE_SQL } from "./scenic-games";
+import { directionsUrl } from "./directions";
 import { PROGRAM_LOGO_SQL } from "./scenic-programs";
 import { gradeLabel } from "./scenic-teams";
 import type { Queryable } from "./sql";
@@ -57,6 +58,7 @@ export type PublicGame = {
   starts: string | null; // "HH:MM" Eastern, once placed
   gym: string | null;
   court: string | null;
+  map: string | null; // Directions to the gym
   group: string;
   home: string; // "TBD" when there's no opponent yet
   away: string;
@@ -117,6 +119,9 @@ export async function programSchedule(q: Pick<Queryable, "query">, id: string): 
     starts: string | null;
     gym: string | null;
     court: string | null;
+    map_lat: number | null;
+    map_lng: number | null;
+    map_place: string | null;
     grade: number;
     gender: string;
     level: string;
@@ -127,7 +132,7 @@ export async function programSchedule(q: Pick<Queryable, "query">, id: string): 
     home_side: string | null;
   }>(
     `select m.day::text as date, to_char(m.starts, 'HH24:MI') as starts, place.gym, place.court,
-            g.grade, d.gender, g.level, ta.name as a, tb.name as b, ta.id::text as a_id, tb.id::text as b_id, m.home_side
+            place.map_lat, place.map_lng, place.map_place, g.grade, d.gender, g.level, ta.name as a, tb.name as b, ta.id::text as a_id, tb.id::text as b_id, m.home_side
        from scenic_matchups m
        join scenic_teams ta on ta.id = m.team_a
        left join scenic_teams tb on tb.id = m.team_b
@@ -150,6 +155,7 @@ export async function programSchedule(q: Pick<Queryable, "query">, id: string): 
       starts: m.starts,
       gym: m.gym,
       court: m.court,
+      map: directionsUrl(m.map_lat, m.map_lng, m.map_place),
       group: groupLabel(m.grade, m.gender, m.level),
       home: aHome ? m.a : b,
       away: aHome ? b : m.a,
@@ -165,7 +171,15 @@ export async function programSchedule(q: Pick<Queryable, "query">, id: string): 
 // group and (a published League) all its games. Unknown ids, simulated (DEV) teams and anything past MAX_FOLLOWED are
 // dropped.
 export const MAX_FOLLOWED = 30;
-export type FollowedGame = { date: string; starts: string | null; gym: string | null; court: string | null; opponent: string; home: boolean };
+export type FollowedGame = {
+  date: string;
+  starts: string | null;
+  gym: string | null;
+  court: string | null;
+  map: string | null; // Directions to the gym
+  opponent: string;
+  home: boolean;
+};
 export type FollowedProgram = { id: string; name: string; group: string; games: FollowedGame[] | null }; // null: no schedule posted
 export type PublicPlayer = { name: string; jersey: string | null }; // "Ava L."
 // roster null: the team keeps no roster in the app (a Solo team).
@@ -221,7 +235,7 @@ export async function followedTeams(q: Pick<Queryable, "query">, now: Date, ids:
           for (const g of d.games) {
             const home = g.homeId === r.team;
             if (!home && g.awayId !== r.team) continue;
-            games.push({ date: d.date, starts: g.starts, gym: g.gym, court: g.court, opponent: home ? g.away : g.home, home });
+            games.push({ date: d.date, starts: g.starts, gym: g.gym, court: g.court, map: g.map, opponent: home ? g.away : g.home, home });
           }
         }
       }

@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import { withTx, type Queryable } from "../sql";
 import type { ParseResult } from "./parse";
+import { applyBirthdateFixes } from "../birthdate-fix";
 
 // Replaces TeamSnap's registrations in one transaction (players added in the app stay); players no longer registered
 // come off their teams. Refuses if the file had errors,
@@ -28,6 +29,7 @@ export async function replaceRegistrations(
   const r = await q.query("insert into registrations select * from jsonb_populate_recordset(null::registrations, $1)", [
     JSON.stringify(rows),
   ]);
+  await applyBirthdateFixes(q, true); // birthdays fixed in the app stay fixed
   // A player no longer in registrations comes off every roster (with their uniform there); past check-ins stay.
   await q.query(
     "delete from team_players p where not exists (select 1 from registrations g where g.registrant_id = p.registrant_id)",

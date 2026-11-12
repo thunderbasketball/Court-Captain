@@ -38,7 +38,7 @@ describe("renaming an organization", () => {
     const made = await createOrganization(
       deps(),
       owner,
-      { name: "Esst Hamilton High Dchool", short: "East Ham", kind: "School", color: "#1d4ed8", features: ["court-org"] },
+      { name: "Esst Hamilton High Dchool", short: "East Ham", kind: "School", color: "#1d4ed8", features: ["court-club"] },
       null,
     );
     expect(made).toMatchObject({ ok: true, slug: "esst-hamilton-high-dchool" });

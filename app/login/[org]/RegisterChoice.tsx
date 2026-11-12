@@ -15,7 +15,7 @@ export default function RegisterChoice({ org, programId }: { org: string; progra
           <span className="block text-xs text-zinc-500">A stand-alone team</span>
         </Link>
         <Link
-          href="/register?need=court-org"
+          href="/register?need=court-club"
           className="rounded-xl px-3 py-2.5 text-center ring-1 ring-thunder-blue/40 hover:bg-blue-50 dark:hover:bg-white/5"
         >
           <span className="block font-semibold text-thunder-blue">Multiple teams</span>

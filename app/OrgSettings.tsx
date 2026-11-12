@@ -3,12 +3,16 @@
 import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { changeOrgAbbr, changeOrgColor, changeOrgLogo, renameOrganization } from "./register/actions";
-import { Alert, PopUp, Toast } from "./client-ui";
+import { Alert, Toast } from "./client-ui";
+import HeaderDrop from "./HeaderDrop";
 import { slugFor } from "@/lib/org-slug";
 import { fieldLabel, inputCls, primaryBtn } from "./ui";
+import SubCard from "./SubCard";
 
-// Admins: the gear after the last tab opens the organization's settings: its login link, features (and the ones it asked
-// for), color (tabs, header line, letter badge) and logo (PNG, JPEG or WebP, up to 512 KB).
+// Admins: the gear opens the organization's settings as three cards. General: its login link, name, abbreviation, color
+// (tabs, header line, letter badge) and logo (PNG, JPEG or WebP, up to 512 KB). Features & Upgrades: what it has and can
+// add (and the ones it asked for). Feature Settings: a card per feature
+// with settings (CourtClub, Chat). Warning Configurations: a card for each feature it has, with that feature's warnings.
 export default function OrgSettings({
   org,
   logo,
@@ -21,9 +25,11 @@ export default function OrgSettings({
   name,
   short,
   canRename,
-  gradeRules,
+  warnings,
+  featureSettings,
 }: {
-  gradeRules?: ReactNode; // Grade requirements (not for Scenic City: its Leagues have their own)
+  featureSettings?: ReactNode; // a card per feature with settings (CourtClub, Chat), when it has any
+  warnings: ReactNode; // Warning Configurations' inside: a card per feature it has (passed in)
   org: string;
   logo: ReactNode;
   features: ReactNode;
@@ -40,34 +46,19 @@ export default function OrgSettings({
   const [msg, setMsg] = useState<string | null>(null);
   return (
     <>
-      <PopUp
+      <HeaderDrop
         label={<GearIcon />}
         ariaLabel="Organization settings"
         title="Organization settings"
-        className="shrink-0 rounded-full p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+        className="shrink-0 rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
       >
         {(close) => (
+          <div className="space-y-3">
+          <SubCard title="General">
           <div className="space-y-5">
             <p className="text-sm text-zinc-500">
               Login link: <span className="font-mono text-zinc-800 dark:text-zinc-200">{login}</span>
             </p>
-            {/* Collapsed until tapped: the full list is long. */}
-            <details className="group">
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-sm font-semibold [&::-webkit-details-marker]:hidden">
-                <span>
-                  Features <span className="font-normal text-zinc-500">· {featuresOn} on</span>
-                </span>
-                <svg
-                  viewBox="0 0 20 20"
-                  fill="currentColor"
-                  aria-hidden
-                  className="size-4 text-zinc-400 transition-transform group-open:rotate-180"
-                >
-                  <path d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" />
-                </svg>
-              </summary>
-              <div className="mt-2">{features}</div>
-            </details>
             {canRename && (
               <NameForm
                 org={org}
@@ -82,7 +73,6 @@ export default function OrgSettings({
                 }}
               />
             )}
-            {gradeRules}
             <AbbrForm
               org={org}
               abbr={abbr}
@@ -110,8 +100,15 @@ export default function OrgSettings({
               }}
             />
           </div>
+          </SubCard>
+          <SubCard title="Features & Upgrades" count={`${featuresOn} on`}>
+            {features}
+          </SubCard>
+          {featureSettings && <SubCard title="Feature Settings">{featureSettings}</SubCard>}
+          <SubCard title="Warning Configurations">{warnings}</SubCard>
+          </div>
         )}
-      </PopUp>
+      </HeaderDrop>
       {msg && <Toast key={msg} message={msg} />}
     </>
   );

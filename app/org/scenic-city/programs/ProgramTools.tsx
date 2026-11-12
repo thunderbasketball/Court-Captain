@@ -1,5 +1,7 @@
 "use client";
 
+import { PLUS_BTN, PlusIcon } from "../../../PageMenus";
+
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -78,10 +80,13 @@ const CLOSE_MODES: { key: CloseMode; label: string }[] = [
 ];
 
 // Directors of Programs: new program, or edit its details. Divisions are set up on the program page.
-export function ProgramEditor({ program }: { program?: ProgramFields }) {
+// `round`: a round + (on the Home Programs card's title line); a new program then stays on Home instead of opening its page.
+// `inline`: the form right where it's put (the Home Programs card's +), no button or pop-up; `inline` runs when it's
+// saved or closed.
+export function ProgramEditor({ program, round = false, inline }: { program?: ProgramFields; round?: boolean; inline?: () => void }) {
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
-  const close = () => dialog.current?.close();
+  const close = () => (inline ? inline() : dialog.current?.close());
   const start0 = () =>
     program
       ? { ...program, fee: dollars(program.feeCents) }
@@ -109,24 +114,11 @@ export function ProgramEditor({ program }: { program?: ProgramFields }) {
       if (!r.ok) return setError(r.message);
       close();
       if (program) router.refresh();
+      else if (round || inline) router.refresh();
       else router.push(`/org/scenic-city/programs/${r.id}`);
     });
 
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => {
-          setF(start0());
-          setOpts(optionsForm(program?.options ?? [{ kind: "all_season", feeCents: null }]));
-          setError(null);
-          dialog.current?.showModal();
-        }}
-        className={program ? `${smallBtn} text-scenic-navy ring-scenic-navy/30 dark:text-zinc-200 dark:ring-white/20` : navyBtn}
-      >
-        {program ? "Edit" : "+ New program"}
-      </button>
-      <dialog ref={dialog} className={dialogCls} onClick={(e) => e.target === dialog.current && close()}>
+  const form = (
         <form
           className="space-y-4 p-5"
           onSubmit={(e) => {
@@ -274,6 +266,29 @@ export function ProgramEditor({ program }: { program?: ProgramFields }) {
             {program ? "Save" : "Create program"}
           </button>
         </form>
+  );
+  if (inline) return form;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          setF(start0());
+          setOpts(optionsForm(program?.options ?? [{ kind: "all_season", feeCents: null }]));
+          setError(null);
+          dialog.current?.showModal();
+        }}
+        aria-label={round ? "New program" : undefined}
+        title={round ? "New program" : undefined}
+        className={
+          round ? PLUS_BTN : program ? `${smallBtn} text-scenic-navy ring-scenic-navy/30 dark:text-zinc-200 dark:ring-white/20` : navyBtn
+        }
+      >
+        {round ? <PlusIcon /> : program ? "Edit" : "+ New program"}
+      </button>
+      <dialog ref={dialog} className={dialogCls} onClick={(e) => e.target === dialog.current && close()}>
+        {form}
       </dialog>
     </>
   );
@@ -1265,7 +1280,7 @@ function RecLimitEditor({ programId, rec, onSaved }: { programId: string; rec: R
         </button>
       </div>
       {limited && !rec.choices.length && (
-        <p className="text-sm text-zinc-500">No organization has CourtSync with CourtOrg or CourtPlayers yet.</p>
+        <p className="text-sm text-zinc-500">No organization has CourtSync with CourtClub or CourtPlayers yet.</p>
       )}
       {limited && rec.choices.length > 0 && (
         <ul className="max-h-56 divide-y divide-zinc-100 overflow-y-auto rounded-xl ring-1 ring-zinc-950/10 dark:divide-white/5 dark:ring-white/10">
@@ -1285,7 +1300,7 @@ function RecLimitEditor({ programId, rec, onSaved }: { programId: string; rec: R
         </ul>
       )}
       <p className="text-xs text-zinc-500">
-        Organizations with CourtSync and their own teams (CourtOrg or CourtPlayers). COMP stays open to all. While REC is limited, stand-alone teams can&apos;t
+        Organizations with CourtSync and their own teams (CourtClub or CourtPlayers). COMP stays open to all. While REC is limited, stand-alone teams can&apos;t
         register REC. Teams already registered stay.
         {rec.by && ` Limited by ${rec.by}.`}
       </p>

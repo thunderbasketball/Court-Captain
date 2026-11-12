@@ -11,11 +11,15 @@ type FeatureChoice = { key: string; name: string; about: string; ready: boolean 
 // The new organization's details and what it needs. Live at once; the person registering is its Owner.
 export default function RegisterOrgForm({
   kinds,
+  labels,
+  kindPreset,
   colors,
   features,
   preset = [],
 }: {
   kinds: readonly string[];
+  labels: Record<string, string>; // "Officials" reads "Officials Group"
+  kindPreset: Partial<Record<string, string[]>>; // what picking a type ticks (an Officials Group: CourtOfficials, CourtSync)
   colors: readonly string[];
   features: FeatureChoice[];
   preset?: string[];
@@ -43,7 +47,7 @@ export default function RegisterOrgForm({
           const r = await registerOrganization(form);
           if (!r.ok) return setError(r.message);
           // The server made it the role in use (switch back from the logo menu). With CourtOrg: straight to its Teams.
-          router.push(picked.includes("court-org") ? `/org/${r.slug}/teams` : `/org/${r.slug}`);
+          router.push(picked.includes("court-club") && kind !== "Officials" ? `/org/${r.slug}/teams` : `/org/${r.slug}`);
         });
       }}
     >
@@ -59,8 +63,17 @@ export default function RegisterOrgForm({
         <span className={fieldLabel}>Type</span>
         <div className="flex flex-wrap gap-2">
           {kinds.map((k) => (
-            <button key={k} type="button" className={pillCls(kind === k)} onClick={() => setKind(k)}>
-              {k}
+            <button
+              key={k}
+              type="button"
+              className={pillCls(kind === k)}
+              onClick={() => {
+                setKind(k);
+                const add = kindPreset[k] ?? [];
+                if (add.length) setPicked((p) => [...new Set([...p, ...add])]);
+              }}
+            >
+              {labels[k] ?? k}
             </button>
           ))}
         </div>

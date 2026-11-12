@@ -5,6 +5,7 @@ import type { TeamPractice } from "@/lib/practice/schedule";
 import type { OwnPractice } from "@/lib/team-practices";
 import { easternDate, localParts, timeLabel } from "@/lib/time";
 import { TeamName } from "./ui";
+import DirectionsLink from "./DirectionsLink";
 
 // Where and when a League game is: "9:00 AM · East Hamilton High School · Main", or not set yet.
 export function GamePlace({ g }: { g: ScheduledGame }) {
@@ -13,6 +14,7 @@ export function GamePlace({ g }: { g: ScheduledGame }) {
       {timeLabel(g.starts)} · {g.gym}
       {g.court && ` · ${g.court}`}
       {g.address && <span className="text-zinc-500"> · {g.address}</span>}
+      <DirectionsLink href={g.map} />
     </span>
   ) : (
     <span className="block font-normal text-zinc-400 italic">Time and gym not set yet</span>
@@ -39,7 +41,7 @@ export function LeagueGames({ games, today }: { games: ScheduledGame[]; today: s
     <details className="group mt-1.5">
       <summary className="cursor-pointer list-none text-xs [&::-webkit-details-marker]:hidden">
         <span className="font-semibold text-scenic-navy dark:text-zinc-200">
-          <span className="mr-1 inline-block text-zinc-400 transition group-open:rotate-90">›</span>
+          <span className="mr-1 inline-block text-zinc-400 transition [details[open]>summary_&]:rotate-90">›</span>
           {games.length} game{games.length === 1 ? "" : "s"}
         </span>
         {next && (

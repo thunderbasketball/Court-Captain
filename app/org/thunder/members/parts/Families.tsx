@@ -46,7 +46,7 @@ export default async function FamiliesPart({ user }: { user: SessionUser }) {
         <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-sm select-none [&::-webkit-details-marker]:hidden">
           <span className="min-w-0 flex-1 truncate font-semibold">{f.name}</span>
           {feeChip(f)}
-          <span aria-hidden className="text-zinc-400 transition-transform group-open/f:rotate-90">
+          <span aria-hidden className="text-zinc-400 transition-transform [details[open]>summary_&]:rotate-90">
             ›
           </span>
         </summary>

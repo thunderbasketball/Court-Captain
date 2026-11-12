@@ -292,7 +292,7 @@ export async function ScenicTeamsContent({
         {!teams.length && (
           <p className="text-zinc-500">
             {program === "none"
-              ? "Every outside club's and CourtSolo team is in a current program."
+              ? "Every outside club's and stand-alone team is in a current program."
               : "No teams registered in this program."}
             {director && program === "none" && " Tap “+ Add” (or Import) for an outside club's teams."}
           </p>

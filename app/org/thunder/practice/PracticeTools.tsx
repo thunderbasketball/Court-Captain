@@ -1,5 +1,9 @@
 "use client";
 
+import PlaceSearch from "../../../PlaceSearch";
+import { setGymLocation, setGymPinLocation } from "../facilities/actions";
+import PinFields, { NO_PIN, type PinInput } from "../../../PinFields";
+
 import { useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { repeatOptions, ruleStart, type RuleKind, type RuleSpec } from "@/lib/practice/rule-dates";
@@ -23,7 +27,9 @@ function ToolDialog({
   beforeSubmit,
   onSubmit,
   children,
+  inline = false,
 }: {
+  inline?: boolean; // the form right where it's put (a card's panel), no button or pop-up
   label: string;
   title: string;
   tone?: "blue" | "red";
@@ -40,6 +46,49 @@ function ToolDialog({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [busy, start] = useTransition();
+  const form = (
+    <form
+      className={inline ? "space-y-3" : "space-y-4 p-5"}
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setError(null);
+        if (beforeSubmit && !(await beforeSubmit())) return;
+        start(async () => {
+          const r = await onSubmit();
+          if (r.error) return setError(r.error);
+          close();
+          if (inline) onOpen?.();
+          setDone(r.done ?? "Done.");
+          router.refresh();
+        });
+      }}
+    >
+      {inline ? (
+        <p className="text-sm font-semibold">{title}</p>
+      ) : (
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <CloseButton onClick={close} />
+        </div>
+      )}
+      {children}
+      {error && <Alert tone="red">{error}</Alert>}
+      <button
+        type="submit"
+        disabled={busy || !canSubmit}
+        className={tone === "red" ? `${primaryBtn} !bg-red-600 hover:!bg-red-700` : primaryBtn}
+      >
+        {busy ? "Working…" : submitLabel}
+      </button>
+    </form>
+  );
+  if (inline)
+    return (
+      <>
+        {form}
+        {done && <Toast key={done} message={done} />}
+      </>
+    );
   return (
     <>
       <button
@@ -59,35 +108,7 @@ function ToolDialog({
       </button>
       {done && <Toast key={done} message={done} />}
       <dialog ref={dialog} className={dialogCls} onClick={(e) => e.target === dialog.current && close()}>
-        <form
-          className="space-y-4 p-5"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setError(null);
-            if (beforeSubmit && !(await beforeSubmit())) return;
-            start(async () => {
-              const r = await onSubmit();
-              if (r.error) return setError(r.error);
-              close();
-              setDone(r.done ?? "Done.");
-              router.refresh();
-            });
-          }}
-        >
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">{title}</h2>
-            <CloseButton onClick={close} />
-          </div>
-          {children}
-          {error && <Alert tone="red">{error}</Alert>}
-          <button
-            type="submit"
-            disabled={busy || !canSubmit}
-            className={tone === "red" ? `${primaryBtn} !bg-red-600 hover:!bg-red-700` : primaryBtn}
-          >
-            {busy ? "Working…" : submitLabel}
-          </button>
-        </form>
+        {form}
       </dialog>
     </>
   );
@@ -142,27 +163,56 @@ function DateRange({
   );
 }
 
-export function AddGymButton() {
+export function AddGymButton({ inline = false }: { inline?: boolean } = {}) {
   const [name, setName] = useState("");
+  const [place, setPlace] = useState<{ placeId: string; address: string; session: string } | null>(null); // its real place
+  const [byHand, setByHand] = useState(false); // or a pin from Google Maps and the address
+  const [pin, setPin] = useState<PinInput>(NO_PIN);
   const [courts, setCourts] = useState(["Court 1", "Court 2"]);
   const setCount = (n: number) => setCourts((c) => Array.from({ length: n }, (_, i) => c[i] ?? `Court ${i + 1}`));
   return (
     <ToolDialog
+      inline={inline}
       label="+ Add"
       title="Add gym"
       submitLabel="Add gym"
       canSubmit={!!name.trim() && courts.every((c) => c.trim())}
       onOpen={() => {
         setName("");
+        setPlace(null);
+        setByHand(false);
+        setPin(NO_PIN);
         setCourts(["Court 1", "Court 2"]);
       }}
       onSubmit={async () => {
         const r = await addGym({ name, courts });
-        return r.ok
-          ? { done: `${name.trim()} added with ${courts.length} court${courts.length > 1 ? "s" : ""}.` }
-          : { error: r.message };
+        if (!r.ok) return { error: r.message };
+        // Then its location (the place picked from the search), when one was picked.
+        // Then its Google place and its Directions pin, each when given.
+        const id = "id" in r ? String(r.id) : null;
+        const atPlace = id && place ? await setGymLocation("thunder", id, place.placeId, place.session) : null;
+        const atPin = id && byHand && pin.pin.trim() ? await setGymPinLocation("thunder", id, pin.pin, pin.address) : null;
+        const at = atPlace && !atPlace.ok ? atPlace : atPin;
+        return {
+          done: `${name.trim()} added with ${courts.length} court${courts.length > 1 ? "s" : ""}${at && !at.ok ? `, but its location wasn't saved: ${at.message}` : ""}.`,
+        };
       }}
     >
+      <div className="space-y-1">
+        <span className={fieldLabel}>Find the gym</span>
+        <PlaceSearch
+          org="thunder"
+          onPick={(hit, session) => {
+            setName(hit.name);
+            setPlace({ placeId: hit.placeId, address: hit.address, session });
+          }}
+        />
+        {place && <p className="text-xs text-zinc-500">📍 {place.address}</p>}
+        <button type="button" onClick={() => setByHand(!byHand)} className="text-xs font-medium text-thunder-blue hover:underline dark:text-blue-400">
+          {byHand ? "Hide the Directions pin" : "Add a Directions pin (optional: the right door or parking lot)"}
+        </button>
+        {byHand && <PinFields value={pin} onChange={setPin} />}
+      </div>
       <div className="grid grid-cols-[1fr_auto] gap-3">
         <label className="block">
           <span className={fieldLabel}>Gym name</span>
@@ -207,7 +257,8 @@ const addDays = (iso: string, n: number) => isoDay(new Date(Date.parse(`${iso}T0
 const spanOf = (from: string, to: string) =>
   Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
 
-export function BlackoutButton({ gyms }: { gyms: GymWithCourts[] }) {
+// `inline`: the form right in the Blackout Dates card (its + on the title line), no button or pop-up.
+export function BlackoutButton({ gyms, inline = false }: { gyms: GymWithCourts[]; inline?: boolean }) {
   const [mode, setMode] = useState<"block" | "restore">("block");
   const [gymId, setGymId] = useState("all");
   const [from, setFrom] = useState(todayIso());
@@ -240,6 +291,7 @@ export function BlackoutButton({ gyms }: { gyms: GymWithCourts[] }) {
     <>
       {confirmDialog}
       <ToolDialog
+        inline={inline}
         label="Blackout dates"
         title="Blackout dates"
         tone={mode === "block" ? "red" : "blue"}

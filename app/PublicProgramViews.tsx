@@ -4,6 +4,7 @@ import type { PublicDay, PublicGroup } from "@/lib/public-league";
 import { timeLabel } from "@/lib/time";
 import { FollowStar } from "./FollowTeams";
 import { card } from "./ui";
+import DirectionsLink from "./DirectionsLink";
 
 const weekday = (iso: string) =>
   new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
@@ -52,7 +53,7 @@ export function ProgramSchedule({ days, today }: { days: PublicDay[] | null; tod
             <span>
               {weekday(d.date)} <span className="font-normal text-zinc-500">· {d.games.length} games</span>
             </span>
-            <span aria-hidden className="text-xs text-zinc-400 transition group-open:rotate-90">
+            <span aria-hidden className="text-xs text-zinc-400 transition [details[open]>summary_&]:rotate-90">
               ▶
             </span>
           </summary>
@@ -68,6 +69,7 @@ export function ProgramSchedule({ days, today }: { days: PublicDay[] | null; tod
                   <span className="block text-xs text-zinc-500">
                     {g.group}
                     {g.gym && ` · ${g.gym}${g.court ? `, ${g.court}` : ""}`}
+                    <DirectionsLink href={g.map} />
                   </span>
                 </span>
               </li>

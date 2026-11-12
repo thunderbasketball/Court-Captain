@@ -81,7 +81,7 @@ export async function membersLinks(user: SessionUser) {
   ]);
   return [
     ...(staff ? [{ key: "staff", href: "/org/scenic-city/users", label: "Staff" }] : []),
-    ...(sites ? [{ key: "hosting-sites", href: "/org/scenic-city/members/hosting-sites", label: "Hosting Sites" }] : []),
+    ...(sites ? [{ key: "hosting-sites", href: "/org/scenic-city/members/hosting-sites", label: "Hosting Organizations" }] : []),
     ...(coaches ? [{ key: "coaches", href: "/org/scenic-city/members/coaches", label: "Coaches" }] : []),
   ];
 }

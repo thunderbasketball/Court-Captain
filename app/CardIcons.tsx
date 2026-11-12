@@ -71,6 +71,20 @@ export function PanelIcon({ id, label, children, className = iconBtn }: { id: st
   );
 }
 
+// The standard way to add something (SPEC.md section 14, "Cards, not tabs"): a round + on the card's title line that
+// opens the card and expands its form (a CardPanel with the same id) at the top of the card. Tap again to close.
+export const ADD_BTN =
+  "flex size-8 shrink-0 items-center justify-center rounded-full bg-thunder-blue text-white shadow-sm hover:bg-thunder-blue-dark";
+export function AddIcon({ id, label }: { id: string; label: string }) {
+  return (
+    <PanelIcon id={id} label={label} className={ADD_BTN}>
+      <span aria-hidden className="text-xl leading-none font-light">
+        +
+      </span>
+    </PanelIcon>
+  );
+}
+
 // The panel a PanelIcon opens, at the top of the card's inside.
 export function CardPanel({ id, children, className = "border-b border-zinc-100 px-4 pb-3 dark:border-white/5" }: { id: string; children: ReactNode; className?: string }) {
   const [open, setOpen] = useState(false);

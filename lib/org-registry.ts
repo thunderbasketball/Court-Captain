@@ -1,4 +1,5 @@
 import type { Queryable } from "./sql";
+import { memo, remembering } from "./request-memo";
 import type { OrgSlug } from "./orgs";
 
 // Organizations as the app shows them (SPEC.md section 14): name, short name, type, color, logo and login link.
@@ -47,13 +48,21 @@ const toOrg = (r: Row): Org => {
   };
 };
 
-// Every organization: Thunder and Scenic City first, then by name.
+// Every organization: Thunder and Scenic City first, then by name. While a page is being built this is read once and
+// reused (orgInfo too); saving a change, or inside a transaction, reads fresh.
 export async function listOrgs(q: Pick<Queryable, "query">): Promise<Org[]> {
-  const r = await q.query<Row>(`${SELECT} order by (slug = 'thunder') desc, (slug = 'scenic-city') desc, lower(name)`);
-  return r.rows.map(toOrg);
+  const read = async () => {
+    const r = await q.query<Row>(`${SELECT} order by (slug = 'thunder') desc, (slug = 'scenic-city') desc, lower(name)`);
+    return r.rows.map(toOrg);
+  };
+  return "totalCount" in q && remembering() ? memo(q, "orgs", read) : read();
 }
 
 export async function orgInfo(q: Pick<Queryable, "query">, slug: string): Promise<Org | null> {
+  if ("totalCount" in q && remembering()) {
+    const hit = (await listOrgs(q)).find((o) => o.slug === slug);
+    if (hit) return hit;
+  }
   const r = await q.query<Row>(`${SELECT} where slug = $1`, [slug]);
   return r.rows[0] ? toOrg(r.rows[0]) : null;
 }

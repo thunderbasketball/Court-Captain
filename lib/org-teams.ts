@@ -253,7 +253,7 @@ async function settleOrgName(q: Pick<Queryable, "query">, org: string, base: str
 // A CourtSolo account's one team is made with the account: it can't add or import teams.
 async function oneSoloTeam(q: Pick<Queryable, "query">, org: string) {
   const r = await q.query("select 1 from organizations where slug = $1 and kind = $2", [org, SOLO_KIND]);
-  if (r.rowCount) throw new TeamError("A CourtSolo account has one team: it can't add or import teams.");
+  if (r.rowCount) throw new TeamError("A one-team club has one team: it can't add or import teams.");
 }
 
 const lockTeams = (q: Pick<Queryable, "query">, org: string) =>

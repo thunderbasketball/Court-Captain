@@ -1,20 +1,19 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import ChatPanel from "./ChatPanel";
+import ChatBox from "./ChatBox";
 import { NotifyPanel } from "./NotifyButton";
 import type { AudienceInput } from "@/lib/announcements";
 
-// The Director's chat bubble and bell in the header: each opens right under the header (no pop-up): the chat with every
-// Head Coach (with All chats →), or the alert to all team staff (with My announcements →). Tap the icon again, the ×,
-// or anywhere outside it to close.
+// The header's chat bubble and (Directors) bell: each opens right under the header (no pop-up): the Chat box (every
+// chat the person can open, grouped), or the alert to all team staff (with My announcements →). Tap the icon again,
+// the ×, or anywhere outside it to close.
 export default function HeaderPanels({
   chat,
   alert,
   className,
 }: {
-  chat?: { chatKey: string; icon: ReactNode };
+  chat?: { icon: ReactNode; unread: number };
   alert?: { audience: AudienceInput; to: string; icon: ReactNode };
   className: string;
 }) {
@@ -34,8 +33,8 @@ export default function HeaderPanels({
       {chat && (
         <button
           type="button"
-          aria-label="Chat with all Head Coaches"
-          title="Chat with all Head Coaches"
+          aria-label={chat.unread ? `Chat, ${chat.unread} unread` : "Chat"}
+          title="Chat"
           aria-expanded={open === "chat"}
           onClick={() => toggle("chat")}
           className={`${className} ${open === "chat" ? "bg-zinc-100 dark:bg-zinc-800" : ""}`}
@@ -60,13 +59,8 @@ export default function HeaderPanels({
         <div className="absolute inset-x-0 top-full z-20 px-4 pt-2">
           <div className="mx-auto max-w-3xl rounded-2xl bg-white p-3 shadow-lg ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="text-sm font-semibold">{open === "chat" && "Head Coaches chat"}</span>
+              <span className="text-sm font-semibold">{open === "chat" && "Chat"}</span>
               <span className="flex items-center gap-3">
-                {open === "chat" && (
-                  <Link href="/chat" className="text-sm font-medium text-thunder-blue dark:text-blue-400">
-                    All chats →
-                  </Link>
-                )}
                 <button
                   type="button"
                   aria-label="Close"
@@ -78,7 +72,7 @@ export default function HeaderPanels({
               </span>
             </div>
             <div className="max-h-[70dvh] overflow-y-auto">
-              {open === "chat" && chat && <ChatPanel chatKey={chat.chatKey} />}
+              {open === "chat" && chat && <ChatBox />}
               {open === "alert" && alert && <NotifyPanel audience={alert.audience} to={alert.to} inbox />}
             </div>
           </div>

@@ -5,7 +5,7 @@ export default function TeamsIncluded({ summary, names }: { summary: ReactNode; 
   return (
     <details className="group min-w-0 flex-1">
       <summary className="flex cursor-pointer list-none items-start gap-1.5 [&::-webkit-details-marker]:hidden">
-        <span className="mt-px inline-block shrink-0 text-zinc-400 transition-transform group-open:rotate-90">›</span>
+        <span className="mt-px inline-block shrink-0 text-zinc-400 transition-transform [details[open]>summary_&]:rotate-90">›</span>
         <span className="min-w-0">{summary}</span>
       </summary>
       <ul className="mt-1.5 mb-1 ml-4 flex flex-wrap gap-1.5">

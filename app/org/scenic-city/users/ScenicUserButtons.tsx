@@ -10,7 +10,7 @@ import { primaryBtn } from "../../../ui";
 const ABOUT: Record<ScenicRole, string> = {
   Director: "Runs Scenic City: programs, hosting sites, members",
   Partner: "Retired",
-  Solo: "Retired (stand-alone teams have CourtSolo)",
+  Solo: "Retired (stand-alone teams have CourtClub)",
   Coach: "Coaches a Scenic City team",
 };
 

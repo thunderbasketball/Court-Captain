@@ -73,6 +73,7 @@ export async function ScenicUsersContent({
                 org="scenic-city"
                 areas={panel.areas}
                 options={panel.options}
+                directorsOn={panel.directorsOn}
                 canManageAdmins={panel.canManageAdmins}
                 adminOptions={panel.adminOptions}
                 ownerOptions={panel.ownerOptions}

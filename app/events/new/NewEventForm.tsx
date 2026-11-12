@@ -10,7 +10,21 @@ import { addEventType, countMatching, createEvent, removeEventType } from "../ac
 
 const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
-export default function NewEventForm({ people, gyms, types }: { people: { id: string; name: string }[]; gyms: string[]; types: string[] }) {
+// `programId`: a Session of that program (from its card on Home); then it stays there when made (`onDone`), instead of
+// opening the event's page.
+export default function NewEventForm({
+  people,
+  gyms,
+  types,
+  programId,
+  onDone,
+}: {
+  people: { id: string; name: string }[];
+  gyms: string[];
+  types: string[];
+  programId?: string;
+  onDone?: () => void;
+}) {
   const router = useRouter();
   const [kinds, setKinds] = useState(types);
   const [kind, setKind] = useState("");
@@ -20,6 +34,9 @@ export default function NewEventForm({ people, gyms, types }: { people: { id: st
   const [confirm, confirmDialog] = useConfirm();
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
+  const [signupOpens, setSignupOpens] = useState("");
+  const [signupCloses, setSignupCloses] = useState("");
+  const tryout = /^tryouts?$/i.test(kind);
   const [location, setLocation] = useState("");
   const [notes, setNotes] = useState("");
   const [grades, setGrades] = useState<string[]>([]);
@@ -54,9 +71,12 @@ export default function NewEventForm({ people, gyms, types }: { people: { id: st
         e.preventDefault();
         start(async () => {
           setError(null);
-          const r = await createEvent({ kind, gender, date, time, location, notes, grades, staff });
+          const r = await createEvent({ kind, gender, date, time, location, notes, grades, staff, programId, signupOpens, signupCloses });
           if (!r.ok) return setError(r.message);
-          router.push(`/events/${r.id}`);
+          if (onDone) {
+            router.refresh();
+            onDone();
+          } else router.push(`/events/${r.id}`);
         });
       }}
     >
@@ -189,6 +209,19 @@ export default function NewEventForm({ people, gyms, types }: { people: { id: st
           <span className={label}>Start time</span>
           <input className={inputCls} type="time" step={900} value={time} onChange={(e) => setTime(e.target.value)} />
         </label>
+        {/* Tryouts: when players can join its list (free). */}
+        {tryout && (
+          <>
+            <label className="block">
+              <span className={label}>Sign-up opens (optional)</span>
+              <input className={inputCls} type="date" value={signupOpens} onChange={(e) => setSignupOpens(e.target.value)} />
+            </label>
+            <label className="block">
+              <span className={label}>Sign-up closes (optional)</span>
+              <input className={inputCls} type="date" value={signupCloses} onChange={(e) => setSignupCloses(e.target.value)} />
+            </label>
+          </>
+        )}
       </div>
       <label className="block">
         <span className={label}>Location (optional)</span>

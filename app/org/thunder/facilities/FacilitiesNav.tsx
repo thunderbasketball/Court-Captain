@@ -3,7 +3,7 @@ import Link from "next/link";
 const LINKS = [
   { key: "availability", href: "/org/thunder/facilities", label: "Availability" },
   { key: "gyms", href: "/org/thunder/facilities/gyms", label: "Gyms" },
-  { key: "blackouts", href: "/org/thunder/facilities/blackouts", label: "Blackouts" },
+  { key: "blackouts", href: "/org/thunder/facilities/blackouts", label: "Blackout Dates" },
   { key: "rentals", href: "/org/thunder/facilities/rentals", label: "Rentals" }, // coming soon
 ] as const;
 

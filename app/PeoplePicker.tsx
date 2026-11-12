@@ -51,7 +51,7 @@ export default function PeoplePicker({ tree, textLabel, empty }: { tree: PickNod
           {box(n)}
           <span className={`min-w-0 flex-1 truncate ${depth === 0 ? "font-semibold" : "font-medium"}`}>{n.label}</span>
           <span className="text-xs text-zinc-500 tabular-nums">{leaves(n).length}</span>
-          <span aria-hidden className="text-zinc-400 transition-transform group-open/p:rotate-90">
+          <span aria-hidden className="text-zinc-400 transition-transform [details[open]>summary_&]:rotate-90">
             ›
           </span>
         </summary>

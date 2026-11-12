@@ -1,22 +1,23 @@
 "use client";
 
-// Home's 🔍 button (Owners, Admins and Directors): pops up a search of the organization. As they type a name, a list of
-// coaches and players fills in; tapping one opens its card (cell, email, teams, parents) with links to its pages.
+// The header's 🔍 button (Owners, Admins and Directors): opens a search of the organization right under the header. As
+// they type any part of a name, cell, email or place, coaches, players (also found by their parents' names and cells),
+// and teams, programs, sessions, scrimmages and gyms fill in; tapping a person opens their card (cell, email, teams,
+// parents) with links to their pages; anything else opens its page.
 import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { formatCell } from "@/lib/phone";
-import type { CoachHit, PlayerHit } from "@/lib/org-search";
+import type { CoachHit, PlayerHit, ThingHit } from "@/lib/org-search";
 import { searchOrganization } from "./search-actions";
-import { Alert, CloseButton, dialogCls } from "./client-ui";
+import { Alert } from "./client-ui";
+import HeaderDrop from "./HeaderDrop";
 import { Chip, EmailLink, PhoneLink, inputCls } from "./ui";
 
 const linkCls = "font-medium text-thunder-blue hover:underline dark:text-blue-400";
 
 export function OrgSearchButton({ org, orgName }: { org: string; orgName: string }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  const input = useRef<HTMLInputElement>(null);
   const [q, setQ] = useState("");
-  const [res, setRes] = useState<{ coaches: CoachHit[]; players: PlayerHit[] } | null>(null);
+  const [res, setRes] = useState<{ coaches: CoachHit[]; players: PlayerHit[]; things: ThingHit[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<string | null>(null); // the card shown: "c:<id>" or "p:<key>"
@@ -34,15 +35,14 @@ export function OrgSearchButton({ org, orgName }: { org: string; orgName: string
       setBusy(false);
       if (!r.ok) return setError(r.message);
       setError(null);
-      setRes({ coaches: r.coaches, players: r.players });
+      setRes({ coaches: r.coaches, players: r.players, things: r.things });
       setOpen(null);
     }, 250);
     return () => clearTimeout(t);
   }, [q, org]);
 
-  const close = () => dialog.current?.close();
   const short = q.trim().replace(/\s/g, "").length < 2;
-  const none = !short && res && !busy && !res.coaches.length && !res.players.length;
+  const none = !short && res && !busy && !res.coaches.length && !res.players.length && !res.things.length;
 
   const row = (key: string, name: string, sub: string, body: ReactNode) => (
     <li key={key}>
@@ -65,17 +65,11 @@ export function OrgSearchButton({ org, orgName }: { org: string; orgName: string
   );
 
   return (
-    <>
-      <button
-        type="button"
-        aria-label={`Search ${orgName}`}
-        title={`Search ${orgName}`}
-        onClick={() => {
-          dialog.current?.showModal();
-          input.current?.focus();
-        }}
-        className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-zinc-600 ring-1 ring-zinc-950/15 hover:bg-zinc-100 dark:text-zinc-300 dark:ring-white/20 dark:hover:bg-white/10"
-      >
+    <HeaderDrop
+      ariaLabel={`Search ${orgName}`}
+      title={`Search ${orgName}`}
+      className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-white/10"
+      label={
         <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden className="size-5">
           <path
             fillRule="evenodd"
@@ -83,30 +77,25 @@ export function OrgSearchButton({ org, orgName }: { org: string; orgName: string
             clipRule="evenodd"
           />
         </svg>
-      </button>
-      <dialog ref={dialog} className={dialogCls} onClick={(e) => e.target === dialog.current && close()}>
-        <div className="flex max-h-[85dvh] flex-col p-5">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold">Search {orgName}</h2>
-              <p className="text-sm text-zinc-500">Type a name to find a coach or player.</p>
-            </div>
-            <CloseButton onClick={close} />
-          </div>
+      }
+    >
+      {(close) => (
+        <div className="flex flex-col">
+          <p className="text-sm text-zinc-500">Type any part of a name, cell, email, team, gym or program. Parents find their players.</p>
           <input
-            ref={input}
+            autoFocus
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Name…"
-            aria-label="Name"
+            placeholder="Name, cell, email, team…"
+            aria-label="Search"
             autoComplete="off"
             className={`${inputCls} mt-3`}
           />
-          <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
+          <div className="mt-3">
             {error && <Alert tone="red">{error}</Alert>}
             {busy && <p className="py-2 text-sm text-zinc-500">Searching…</p>}
-            {none && <p className="py-2 text-sm text-zinc-500">No one by that name.</p>}
+            {none && <p className="py-2 text-sm text-zinc-500">Nothing found.</p>}
             {!short && res && res.coaches.length > 0 && (
               <section>
                 <h3 className="mt-1 text-xs font-bold tracking-wide text-zinc-500 uppercase">Coaches & staff</h3>
@@ -199,9 +188,33 @@ export function OrgSearchButton({ org, orgName }: { org: string; orgName: string
                 </ul>
               </section>
             )}
+            {!short && res && res.things.length > 0 && (
+              <section className="mt-3">
+                <h3 className="text-xs font-bold tracking-wide text-zinc-500 uppercase">Teams, programs & more</h3>
+                <ul className="divide-y divide-zinc-100 dark:divide-white/5">
+                  {res.things.map((t) => (
+                    <li key={t.key}>
+                      <Link
+                        href={t.href}
+                        onClick={close}
+                        className="flex w-full items-center justify-between gap-3 px-1 py-2.5 hover:bg-zinc-50 dark:hover:bg-white/5"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-semibold">{t.name}</span>
+                          <span className="block truncate text-xs text-zinc-500">{t.detail}</span>
+                        </span>
+                        <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-600 capitalize dark:bg-white/10 dark:text-zinc-300">
+                          {t.kind}
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
           </div>
         </div>
-      </dialog>
-    </>
+      )}
+    </HeaderDrop>
   );
 }
