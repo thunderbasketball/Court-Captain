@@ -35,6 +35,7 @@ import { AddPlayersButton, RemovePlayerButton } from "./RosterTools";
 import { scheduledGames } from "@/lib/scenic-games";
 import { easternDate } from "@/lib/time";
 import { ScheduleList } from "../../../../LeagueGames";
+import { teamScrimmages } from "@/lib/scrimmages";
 import NextSevenDays from "../../../../NextSevenDays";
 import { myPlayers, rsvpsFor, takesAttendance } from "@/lib/event-attendance";
 import { AddStaffButton, DeleteTeamButton, RemoveStaffButton, TeamEditForm } from "./TeamEditor";
@@ -112,6 +113,8 @@ async function Team({
     : {};
   // Its own-gym practices (a place the team found itself: any time and length, no limits), with the booked ones.
   const own = await upcomingOwnPractices(deps, { org: "thunder", teamId: team.id }, 12);
+  // Its scrimmages (another Thunder team, an outside team, or TBD), on Next 7 days and Games.
+  const scrims = (await teamScrimmages({ pool: db, now: () => new Date() }, "thunder", [team.id]))[team.id] ?? [];
   const canOwn = !user.actingBy && (await canChangeOwnPractices(db, user, { org: "thunder", teamId: team.id }));
   // Staff whose own children are on the team answer ✓ / ✗ for them in Next 7 days (as their parent).
   const myKids = await myPlayers(db, user, { org: "thunder", teamId: team.id }); // shown while viewing as them too (view only)
@@ -188,6 +191,7 @@ async function Team({
           games={published}
           practices={practices}
           own={own}
+          scrims={scrims}
           now={new Date()}
           team={{ org: "thunder", teamId: team.id }}
           staff={await takesAttendance(db, user, { org: "thunder", teamId: team.id })}
@@ -199,6 +203,7 @@ async function Team({
               ...practices.map((p) => ({ kind: "slot" as const, id: p.id })),
               ...own.map((p) => ({ kind: "own" as const, id: p.id })),
               ...published.map((g) => ({ kind: "game" as const, id: g.id })),
+              ...scrims.map((x) => ({ kind: "scrimmage" as const, id: x.id })),
             ],
             myKids.map((p) => p.player),
           )}
@@ -418,10 +423,10 @@ async function Team({
             </div>
           )}
         </CollapseCard>
-        <CollapseCard title="Games" count={published.length} open={opened === "games"}>
+        <CollapseCard title="Games" count={published.length + scrims.length} open={opened === "games"}>
           <div className="px-4 pb-4">
-            {published.length ? (
-              <ScheduleList games={published} practices={[]} today={easternDate(new Date())} />
+            {published.length + scrims.length ? (
+              <ScheduleList games={published} practices={[]} scrims={scrims} today={easternDate(new Date())} />
             ) : (
               <p className="text-sm text-zinc-500">The game schedule shows here once it&apos;s published.</p>
             )}

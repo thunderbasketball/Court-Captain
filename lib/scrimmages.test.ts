@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createTestDb } from "./testing/db";
-import { addScrimmage, addsScrimmages, removeScrimmage, scrimmageChoices, updateScrimmage, upcomingScrimmages } from "./scrimmages";
+import { createTestDb, grant } from "./testing/db";
+import { addScrimmage, addsScrimmages, gamesToOfficiate, removeScrimmage, scrimmageChoices, teamScrimmages, updateScrimmage, upcomingScrimmages } from "./scrimmages";
+import { eventWhen } from "./event-attendance";
 
 describe("scrimmages", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -109,11 +110,56 @@ describe("scrimmages", () => {
     });
   });
 
+  it("shows on both teams' schedules (vs each other, an outside team or TBD), with attendance by that team's scrimmage", async () => {
+    const r = await addScrimmage(deps(), director, "thunder", program, { home: a, away: b, ...when, gymId: gym });
+    if (!r.ok) throw new Error(r.message);
+    const o = await addScrimmage(deps(), director, "thunder", program, { home: b, away: "", awayName: "Signal 4G", ...when, date: "2026-11-15", gymId: "", location: "Signal Mountain MS" });
+    if (!o.ok) throw new Error(o.message);
+    const t = await teamScrimmages(deps(), "thunder", [a, b]);
+    expect(t[a]).toMatchObject([{ id: r.id, opponent: "4G B", outside: false, minutes: 90 }]);
+    expect(t[b]).toMatchObject([{ id: r.id, opponent: "4G A", outside: false }, { id: o.id, opponent: "Signal 4G", outside: true, place: "Signal Mountain MS" }]);
+    expect(await eventWhen(db.pool, { org: "thunder", teamId: a }, "scrimmage", r.id)).toMatchObject({ timed: true });
+    expect(await eventWhen(db.pool, { org: "thunder", teamId: a }, "scrimmage", o.id)).toBeNull(); // not its scrimmage
+    // Once over, it's off the schedule.
+    expect(await teamScrimmages({ pool: db.pool, now: () => new Date("2026-11-20T12:00:00Z") }, "thunder", [a, b])).toEqual({});
+  });
+
+  it("schedules officials from an Officials Group: shows on that group's page for its Officials Assigners", async () => {
+    const ORG = "sc-officials";
+    await db.pool.query(`delete from org_role_types where org = '${ORG}'; delete from organizations where slug = '${ORG}'`);
+    await db.pool.query(`insert into organizations (slug, name, short_name, kind) values ('${ORG}', 'Scenic City Officials', 'SCO', 'Officials')`);
+    await db.pool.query(`insert into org_role_types (org, role) select '${ORG}', r from unnest(array['Request', 'Coach', 'Director', 'Admin', 'Owner']) r`);
+    await db.pool.query("insert into users (coach_id, first_name, last_name, cell) values ('5550008', 'Otto', 'X', '4235550008')");
+    await grant(db.pool, `5550008 ${ORG} Director`);
+    await db.pool.query(`insert into director_areas (coach_id, org, area, granted_by) values ('5550008', '${ORG}', 'officials', 't')`);
+    const otto = person("5550008");
+    expect((await scrimmageChoices(deps(), "thunder")).officials).toEqual([]); // not a group until CourtSync is on
+    await db.pool.query(
+      `insert into org_features (org, feature, source, turned_on_by) values ('${ORG}', 'court-officials', 'setup', 't'), ('${ORG}', 'court-sync', 'setup', 't')`,
+    );
+    expect((await scrimmageChoices(deps(), "thunder")).officials).toEqual([{ org: ORG, name: "Scenic City Officials" }]);
+
+    const outside = { home: a, away: "", awayName: "Signal 4G", ...when, gymId: "", location: "Signal Mountain MS" };
+    expect(await addScrimmage(deps(), director, "thunder", program, { ...outside, officials: "scenic-city" })).toMatchObject({ ok: false }); // not a group
+    const r = await addScrimmage(deps(), director, "thunder", program, { ...outside, officials: ORG });
+    if (!r.ok) throw new Error(r.message);
+    await addScrimmage(deps(), director, "thunder", program, { ...outside, date: "2026-11-15" }); // no officials
+    expect(await gamesToOfficiate(deps(), director, ORG)).toBeNull(); // not the group's
+    expect(await gamesToOfficiate(deps(), otto, ORG)).toMatchObject([
+      { id: r.id, org: "thunder", home: "4G A", away: "Signal 4G", minutes: 90, place: "Signal Mountain MS" },
+    ]);
+    const [s] = await upcomingScrimmages(deps(), "thunder", program);
+    expect(s).toMatchObject({ officials: "Scenic City Officials", form: { officials: ORG } });
+    // Unticked on edit: off the group's page.
+    expect(await updateScrimmage(deps(), director, "thunder", r.id, { ...s.form, away: "", gymId: "", officials: "" })).toMatchObject({ ok: true });
+    expect(await gamesToOfficiate(deps(), otto, ORG)).toEqual([]);
+  });
+
   it("edits one: its gym time is freed and the new time checked and blocked; a Head Coach keeps their team in it", async () => {
     const r = await addScrimmage(deps(), director, "thunder", program, { home: a, away: b, ...when, gymId: gym });
     if (!r.ok) throw new Error(r.message);
     const [s] = await upcomingScrimmages(deps(), "thunder", program);
-    expect(s.form).toEqual({ home: a, away: b, awayName: "", date: "2026-11-14", time: "10:00", minutes: "90", gymId: gym, location: "" });
+    expect(s.form).toEqual({ home: a, away: b, awayName: "", date: "2026-11-14", time: "10:00", minutes: "90", gymId: gym, location: "", officials: "" });
     // Move it an hour later, as TBD vs an outside team: 10 AM opens, noon is blocked.
     expect(await updateScrimmage(deps(), director, "thunder", r.id, { ...s.form, home: "tbd", away: "", awayName: "Signal 4G", time: "11:00" })).toMatchObject({
       ok: true,

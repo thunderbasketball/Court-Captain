@@ -17,6 +17,7 @@ export type ProgramCard = {
   logo: string | null;
   recLimited: boolean;
   register: boolean; // Register button (registration open and Team Registrations on)
+  openable: boolean; // taps open its Teams (and a League's Schedule); a player program (season) just shows
 };
 
 type Loaded = { groups: PublicGroup[]; schedule: PublicDay[] | null; today: string };
@@ -74,7 +75,8 @@ function Program({ org, p }: { org: string; p: ProgramCard }) {
       <div className="flex items-center justify-between gap-3">
         <button
           type="button"
-          aria-expanded={open}
+          aria-expanded={p.openable ? open : undefined}
+          disabled={!p.openable}
           onClick={toggle}
           className="-m-1 flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 text-left hover:bg-zinc-50 dark:hover:bg-white/5"
         >
@@ -85,16 +87,19 @@ function Program({ org, p }: { org: string; p: ProgramCard }) {
           <span className="min-w-0 flex-1">
             <span className="block font-semibold">{p.name}</span>
             <span className="block text-xs text-zinc-500">
-              {p.kind} · {p.dates}
+              {p.kind}
+              {p.dates && ` · ${p.dates}`}
             </span>
             <span className="block text-xs text-zinc-500">{p.status}</span>
             {p.recLimited && p.register && (
               <span className="block text-xs font-medium text-amber-700 dark:text-amber-300">{REC_LIMITED}</span>
             )}
           </span>
-          <span aria-hidden className={`shrink-0 text-zinc-400 transition ${open ? "rotate-90" : ""}`}>
-            ›
-          </span>
+          {p.openable && (
+            <span aria-hidden className={`shrink-0 text-zinc-400 transition ${open ? "rotate-90" : ""}`}>
+              ›
+            </span>
+          )}
         </button>
         {p.register && !asking && (
           <button

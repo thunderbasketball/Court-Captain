@@ -1,6 +1,8 @@
 import { Suspense } from "react";
 import { officiatesGames } from "@/lib/officiating";
 import { OfficiatingOffersCard } from "../../officiating/OfficiatingCards";
+import { GamesToOfficiate } from "../../officiating/GamesToOfficiate";
+import { officialsBoard } from "@/lib/officiating-schedule";
 import { managesOfficials } from "@/lib/officials";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
@@ -70,6 +72,8 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
   // Home as a stack of cards, one per tab this person can open (the same parts, in the same order): Home first and open;
   // the others load in the background after the page shows and open on their own.
   const here = Promise.resolve({ slug });
+  // An Officials Group: the games organizations scheduled with it (its Admins and Officials Assigners).
+  const toOfficiate = (await officiatesGames(db, slug)) ? await officialsBoard({ pool: db, now: () => now }, user, slug) : null;
   const cards = [
     ...(metrics
       ? [
@@ -108,6 +112,17 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
             // Waiting requests, or CourtOfficials without an Assigner.
             alert: (metrics?.waiting.requests ?? 0) > 0 || (await assignerCount(db, slug)) === 0,
             body: <OrgMembersContent params={here} embedded />,
+          },
+        ]
+      : []),
+    ...(toOfficiate
+      ? [
+          {
+            key: "games",
+            title: "Games to officiate",
+            count: toOfficiate.days.reduce((n, d) => n + d.games, 0),
+            alert: toOfficiate.open > 0, // referee spots still open
+            body: <GamesToOfficiate org={slug} board={toOfficiate} />,
           },
         ]
       : []),

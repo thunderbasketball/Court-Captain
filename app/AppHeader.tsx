@@ -388,7 +388,10 @@ export default async function AppHeader({
           </form>
         )}
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
-          <Link href="/" className="flex min-w-0 items-center gap-2">
+          {/* The organization's logo and name open its main page (what anyone sees: programs, teams, officials). A plain
+              link, loaded fresh each time: that page used to send logged-in people straight back in, and the app's link
+              preloading could keep that old answer. */}
+          <a href={platform || neutral ? "/" : brand.login} className="flex min-w-0 items-center gap-2">
             <OrgLogo src={brand.logo} name={brand.name} color={brand.color} className="h-9 w-auto min-w-9 rounded-md" />
             <span className="min-w-0 leading-tight">
               <span className="block truncate font-semibold tracking-tight">{brand.name}</span>
@@ -398,7 +401,7 @@ export default async function AppHeader({
                 </span>
               )}
             </span>
-          </Link>
+          </a>
           {/* The top row: logo and name, the organization switcher, Log out. Everything else is on the row below. */}
           <div className="flex shrink-0 items-center gap-3">
             {switchTo.length > 0 && <OrgSwitcher current={platform ? PLATFORM : org} orgs={switchTo} />}

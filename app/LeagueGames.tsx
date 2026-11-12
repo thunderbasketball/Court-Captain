@@ -3,6 +3,7 @@ import { shortDate } from "@/lib/program-options";
 import type { ReactNode } from "react";
 import type { TeamPractice } from "@/lib/practice/schedule";
 import type { OwnPractice } from "@/lib/team-practices";
+import type { TeamScrimmage } from "@/lib/scrimmages";
 import { easternDate, localParts, timeLabel } from "@/lib/time";
 import { TeamName } from "./ui";
 import DirectionsLink from "./DirectionsLink";
@@ -74,10 +75,19 @@ export function LeagueGames({ games, today }: { games: ScheduledGame[]; today: s
 
 // One line of a team's schedule: its date and time for sorting, what shows, and (games and practices) which event it is,
 // for attendance.
-export type ScheduleItem = { date: string; time: string; node: ReactNode; event: { kind: "slot" | "own" | "game"; id: string } };
+export type ScheduleItem = { date: string; time: string; node: ReactNode; event: { kind: "slot" | "own" | "game" | "scrimmage"; id: string } };
 
-// A team's published League games, booked practices and own-gym practices, together by date and time.
-export function scheduleItems(games: ScheduledGame[], practices: TeamPractice[], own: OwnPractice[] = []): ScheduleItem[] {
+// A team's published League games, scrimmages, booked practices and own-gym practices, together by date and time.
+export function scheduleItems(
+  games: ScheduledGame[],
+  practices: TeamPractice[],
+  own: OwnPractice[] = [],
+  scrims: TeamScrimmage[] = [],
+): ScheduleItem[] {
+  const hm = (d: Date) => {
+    const t = localParts(d);
+    return `${String(t.hour).padStart(2, "0")}:${String(t.minute).padStart(2, "0")}`;
+  };
   const items: ScheduleItem[] = [
     ...games.map((g) => ({
       date: g.date,
@@ -114,11 +124,29 @@ export function scheduleItems(games: ScheduledGame[], practices: TeamPractice[],
         ),
       };
     }),
-    ...own.map((p) => {
-      const hm = (d: Date) => {
-        const t = localParts(d);
-        return `${String(t.hour).padStart(2, "0")}:${String(t.minute).padStart(2, "0")}`;
+    ...scrims.map((x) => {
+      const time = hm(x.startsAt);
+      return {
+        date: easternDate(x.startsAt),
+        time,
+        event: { kind: "scrimmage" as const, id: x.id },
+        node: (
+          <>
+            <span className="rounded bg-orange-100 px-1 text-[10px] font-bold text-orange-800 uppercase dark:bg-orange-500/15 dark:text-orange-300">
+              Scrimmage
+            </span>{" "}
+            <span className="font-medium">
+              vs <TeamName name={x.opponent} />
+            </span>
+            {x.outside && <span className="text-xs text-zinc-500"> (outside)</span>}
+            <span className="block text-zinc-600 dark:text-zinc-300">
+              {timeLabel(time)}–{timeLabel(hm(new Date(x.startsAt.getTime() + x.minutes * 60_000)))} · {x.place}
+            </span>
+          </>
+        ),
       };
+    }),
+    ...own.map((p) => {
       const time = hm(p.startsAt);
       return {
         date: easternDate(p.startsAt),
@@ -146,16 +174,18 @@ export function ScheduleList({
   games,
   practices,
   own = [],
+  scrims = [],
   today,
   empty = "No games published or practices booked yet.",
 }: {
   games: ScheduledGame[];
   practices: TeamPractice[];
   own?: OwnPractice[];
+  scrims?: TeamScrimmage[];
   today: string;
   empty?: string;
 }) {
-  const items = scheduleItems(games, practices, own);
+  const items = scheduleItems(games, practices, own, scrims);
   if (!items.length) return <p className="text-sm text-zinc-500">{empty}</p>;
   return (
     <ul className="divide-y divide-zinc-100 rounded-xl bg-zinc-50 px-3 text-sm dark:divide-white/5 dark:bg-white/5">

@@ -14,12 +14,24 @@ const ELSEWHERE = "elsewhere";
 type Choices = {
   teams: { id: string; name: string }[];
   gyms: { id: string; name: string }[];
+  officials: { org: string; name: string }[];
 };
 
-type Fields = { home: string; away: string; awayName: string; date: string; time: string; minutes: string; gymId: string; location: string };
+type Fields = {
+  home: string;
+  away: string;
+  awayName: string;
+  date: string;
+  time: string;
+  minutes: string;
+  gymId: string;
+  location: string;
+  officials: string;
+};
 
 // + Scrimmage's form, right in the program's card: your team; the other team (one of yours, or an outside team typed
-// in); date, start and length; where (one of your gyms, the whole gym, which blocks its time, or any place typed in).
+// in); date, start and length; where (one of your gyms, the whole gym, which blocks its time, or any place typed in);
+// Schedule officials (ticked: pick the Officials Group, and it shows on that group's page to be scheduled).
 // With `edit`: the same form filled in, saving changes to that scrimmage.
 export function NewScrimmageForm({
   org,
@@ -35,15 +47,16 @@ export function NewScrimmageForm({
   onDone?: () => void;
 }) {
   const router = useRouter();
-  const blank: Fields = { home: "", away: "", awayName: "", date: "", time: "", minutes: "60", gymId: "", location: "" };
+  const blank: Fields = { home: "", away: "", awayName: "", date: "", time: "", minutes: "60", gymId: "", location: "", officials: "" };
   const [f, setF] = useState<Fields>(edit?.form ?? blank);
+  const [refs, setRefs] = useState(!!edit?.form.officials); // Schedule officials ticked
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, start] = useTransition();
   const set = (k: keyof typeof blank) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const outside = f.away === OUTSIDE;
   const elsewhere = f.gymId === ELSEWHERE;
   const ready =
-    f.home && f.away && (!outside || f.awayName.trim()) && f.date && f.time && f.gymId && (!elsewhere || f.location.trim());
+    f.home && f.away && (!outside || f.awayName.trim()) && f.date && f.time && f.gymId && (!elsewhere || f.location.trim()) && (!refs || f.officials);
   return (
     <form
       className="space-y-3"
@@ -59,6 +72,7 @@ export function NewScrimmageForm({
             minutes: Number(f.minutes),
             gymId: elsewhere ? "" : f.gymId,
             location: elsewhere ? f.location : "",
+            officials: refs ? f.officials : "",
           };
           const r = edit ? await updateScrimmageAction(org, edit.id, input) : await addScrimmageAction(org, programId ?? "", input);
           setMsg(
@@ -67,7 +81,10 @@ export function NewScrimmageForm({
               : { ok: false, text: r.message },
           );
           if (r.ok) {
-            if (!edit) setF(blank);
+            if (!edit) {
+              setF(blank);
+              setRefs(false);
+            }
             router.refresh();
             onDone?.();
           }
@@ -146,6 +163,32 @@ export function NewScrimmageForm({
             <input className={input} maxLength={80} placeholder="Signal Mountain Middle School" value={f.location} onChange={set("location")} />
           </label>
         )}
+        <label className="flex items-center gap-2 text-sm sm:col-span-2">
+          <input
+            type="checkbox"
+            className="size-5 accent-thunder-blue"
+            checked={refs}
+            disabled={!choices.officials.length}
+            onChange={(e) => setRefs(e.target.checked)}
+          />
+          <span>
+            Schedule officials
+            {!choices.officials.length && <span className="text-zinc-400"> (no officials groups on CourtCaptain yet)</span>}
+          </span>
+        </label>
+        {refs && (
+          <label className="block sm:col-span-2">
+            <span className={label}>Officials group</span>
+            <select className={input} value={f.officials} onChange={set("officials")}>
+              <option value="">Pick an officials group…</option>
+              {choices.officials.map((g) => (
+                <option key={g.org} value={g.org}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
       <button
         type="submit"
@@ -210,7 +253,17 @@ export function ScrimmageItem({
   choices,
 }: {
   org: string;
-  s: { id: string; home: string; away: string; outside: boolean; place: string; minutes: number; addedBy: string; form: Fields };
+  s: {
+    id: string;
+    home: string;
+    away: string;
+    outside: boolean;
+    place: string;
+    minutes: number;
+    addedBy: string;
+    officials: string | null;
+    form: Fields;
+  };
   when: string;
   choices: Choices | null; // null: view only
 }) {
@@ -227,6 +280,7 @@ export function ScrimmageItem({
           <span className="block text-xs text-zinc-500">
             {when} · {length} · {s.place}
           </span>
+          {s.officials && <span className="block text-xs text-zinc-500">Officials: {s.officials}</span>}
           <span className="block text-xs text-zinc-400">Added by {s.addedBy}</span>
         </span>
         {choices && (

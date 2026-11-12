@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { addPerson, setAdmin, setAssigner, setDirectorAreas, setOwner } from "./org-admin/actions";
-import { PopUp, Toast, useConfirm } from "./client-ui";
+import { PopUp, useConfirm } from "./client-ui";
 import { inputCls } from "./ui";
+import { iconBtn } from "./CardIcons";
+import { GearIcon } from "./OrgSettings";
 
 const AREAS_NOTE =
   "Each Director manages only their areas. Admins have every area and choose Directors; Owners also choose Admins.";
@@ -128,7 +130,8 @@ export function DirectorButtons({
 }
 
 // A Director's role in their row: "Owner · every area", "Admin · every area" or "Director of Players · …", with Edit
-// (areas) for Directors and Remove Admin for Admins (Owners only).
+// areas for Directors, and a gear at the top right with Remove Owner / Remove Admin (Owners only) and Make / Remove
+// Officials Assigner (Admins; CourtOfficials), each removal asking right there.
 export function DirectorRole({
   org,
   orgName,
@@ -153,47 +156,138 @@ export function DirectorRole({
       : person.areas.length
         ? person.areas.map((a) => (a === "officials" ? "Officials Assigner" : `Director of ${names[a] ?? a}`)).join(" · ")
         : "Director · no areas yet";
+  // The row's gear (top right): Remove Owner, Remove Admin, Make / Remove Officials Assigner, each asking right there.
+  const actions: RoleAction[] = [
+    ...(person.owner && canManageAdmins
+      ? [
+          {
+            key: "owner",
+            label: "Remove Owner",
+            danger: true,
+            ask: `Remove ${person.name} as Owner of ${orgName}? They stay an Admin.`,
+            run: () => setOwner(org, person.id, false),
+          },
+        ]
+      : []),
+    ...(person.admin && !person.owner && canManageAdmins
+      ? [
+          {
+            key: "admin",
+            label: "Remove Admin",
+            danger: true,
+            ask: `Remove ${person.name} as Admin of ${orgName}? They stay a Director with no areas until an Admin gives them some.`,
+            run: () => setAdmin(org, person.id, false),
+          },
+        ]
+      : []),
+    ...(person.admin && assigning
+      ? [
+          assigner
+            ? {
+                key: "assigner",
+                label: "Remove Officials Assigner",
+                danger: true,
+                ask: `Remove ${person.name} as Officials Assigner? They won't schedule officials any more.`,
+                run: () => setAssigner(org, person.id, false),
+              }
+            : { key: "assigner", label: "Make Officials Assigner", danger: false, ask: null, run: () => setAssigner(org, person.id, true) },
+        ]
+      : []),
+  ];
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-      <p className="text-xs font-medium text-thunder-blue dark:text-blue-300">{label}</p>
-      {person.admin && !person.owner && canManageAdmins && <RemoveAdmin org={org} orgName={orgName} person={person} />}
-      {person.owner && canManageAdmins && <RemoveOwner org={org} orgName={orgName} person={person} />}
-      {person.admin && assigning && <AssignerToggle org={org} person={person} on={assigner} />}
-      {!person.admin && (
-        <PopUp label="Edit areas" title={`${person.name}: Director areas`} link note={AREAS_NOTE}>
-          {(close) => <DirectorForm org={org} orgName={orgName} areas={areas} person={person} onDone={close} />}
-        </PopUp>
+    <div>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <p className="text-xs font-medium text-thunder-blue dark:text-blue-300">{label}</p>
+          {!person.admin && (
+            <PopUp label="Edit areas" title={`${person.name}: Director areas`} link note={AREAS_NOTE}>
+              {(close) => <DirectorForm org={org} orgName={orgName} areas={areas} person={person} onDone={close} />}
+            </PopUp>
+          )}
+        </div>
+        {actions.length > 0 && <RoleGear name={person.name} actions={actions} />}
+      </div>
+    </div>
+  );
+}
+
+type RoleAction = {
+  key: string;
+  label: string;
+  danger: boolean;
+  ask: string | null; // asked right there before it's done (null: done at once)
+  run: () => Promise<{ ok: true } | { ok: false; message: string }>;
+};
+
+// A staff row's gear: opens right under it with the row's role changes; a removal asks "Are you sure?" in place (Keep /
+// Remove) before it's done.
+function RoleGear({ name, actions }: { name: string; actions: RoleAction[] }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [asking, setAsking] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, start] = useTransition();
+  const run = (a: RoleAction) =>
+    start(async () => {
+      setError(null);
+      const r = await a.run();
+      if (!r.ok) return setError(r.message);
+      setAsking(null);
+      setOpen(false);
+      router.refresh();
+    });
+  return (
+    <div className="flex shrink-0 flex-col items-end">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={`${name}: change roles`}
+        onClick={() => (setOpen((o) => !o), setAsking(null), setError(null))}
+        className={`${iconBtn} ${open ? "ring-thunder-blue" : ""}`}
+      >
+        <GearIcon className="size-5" />
+      </button>
+      {open && (
+        <div className="mt-1 w-64 max-w-[80vw] space-y-1 rounded-xl bg-zinc-50 p-2 text-sm ring-1 ring-zinc-950/10 dark:bg-white/5 dark:ring-white/10">
+          {actions.map((a) =>
+            asking === a.key ? (
+              <div key={a.key} className="space-y-2 rounded-lg bg-white p-2 dark:bg-zinc-900">
+                <p className="text-xs">{a.ask}</p>
+                <div className="flex justify-end gap-2 text-xs">
+                  <button type="button" onClick={() => setAsking(null)} className="rounded-full px-2.5 py-1 ring-1 ring-zinc-950/10 dark:ring-white/15">
+                    Keep
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => run(a)}
+                    className="rounded-full bg-red-600 px-2.5 py-1 font-semibold text-white disabled:opacity-50"
+                  >
+                    {busy ? "Removing…" : "Remove"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                key={a.key}
+                type="button"
+                disabled={busy}
+                onClick={() => (a.ask ? setAsking(a.key) : run(a))}
+                className={`block w-full rounded-lg px-2 py-1.5 text-left font-medium hover:bg-white dark:hover:bg-zinc-900 ${
+                  a.danger ? "text-red-600 dark:text-red-400" : "text-thunder-blue dark:text-blue-300"
+                }`}
+              >
+                {a.label}
+              </button>
+            ),
+          )}
+          {error && <p className="px-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
+        </div>
       )}
     </div>
   );
 }
 
-// Admins: make an Owner or Admin the Assigner (CourtOfficials), or not. Directors get it under Edit areas.
-function AssignerToggle({ org, person, on }: { org: string; person: Director; on: boolean }) {
-  const router = useRouter();
-  const [busy, start] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <>
-      <button
-        type="button"
-        disabled={busy}
-        className="text-xs font-medium text-thunder-blue underline dark:text-blue-300"
-        onClick={() =>
-          start(async () => {
-            setError(null);
-            const r = await setAssigner(org, person.id, !on);
-            if (!r.ok) return setError(r.message);
-            router.refresh();
-          })
-        }
-      >
-        {busy ? "Saving…" : on ? "Not Officials Assigner" : "Make Officials Assigner"}
-      </button>
-      {error && <span className="text-xs text-red-600 dark:text-red-400">{error}</span>}
-    </>
-  );
-}
 
 // Admins: pick a person (on staff already, or someone new by name and cell) to make an Officials Assigner.
 function AssignerForm({ org, options, onDone }: { org: string; options: Person[]; onDone: () => void }) {
@@ -291,74 +385,7 @@ function AdminForm({ org, options, onDone, owner }: { org: string; options: Pers
   );
 }
 
-// Owners: take Owner away from someone (they stay an Admin). The last Owner can't be removed.
-function RemoveOwner({ org, orgName, person }: { org: string; orgName: string; person: Person }) {
-  const router = useRouter();
-  const [busy, start] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const [confirm, confirmDialog] = useConfirm();
-  return (
-    <>
-      <button
-        type="button"
-        disabled={busy}
-        className="shrink-0 text-xs font-medium text-red-600 hover:underline"
-        onClick={async () => {
-          if (
-            await confirm({
-              title: `Remove ${person.name} as Owner?`,
-              message: `${person.name} won't be an Owner of ${orgName} any more. They stay an Admin.`,
-              confirmLabel: "Remove",
-            })
-          )
-            start(async () => {
-              const r = await setOwner(org, person.id, false);
-              if (r.ok) router.refresh();
-              else setError(r.message);
-            });
-        }}
-      >
-        Remove Owner
-      </button>
-      {error && <Toast key={error} message={error} />}
-      {confirmDialog}
-    </>
-  );
-}
 
-function RemoveAdmin({ org, orgName, person }: { org: string; orgName: string; person: Person }) {
-  const router = useRouter();
-  const [busy, start] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const [confirm, confirmDialog] = useConfirm();
-  return (
-    <>
-      <button
-        type="button"
-        disabled={busy}
-        className="shrink-0 text-xs font-medium text-red-600 hover:underline"
-        onClick={async () => {
-          if (
-            await confirm({
-              title: `Remove ${person.name} as Admin?`,
-              message: `${person.name} won't be an Admin of ${orgName} any more. They stay a Director with no areas until an Admin gives them some.`,
-              confirmLabel: "Remove",
-            })
-          )
-            start(async () => {
-              const r = await setAdmin(org, person.id, false);
-              if (r.ok) router.refresh();
-              else setError(r.message);
-            });
-        }}
-      >
-        Remove Admin
-      </button>
-      {error && <Toast key={error} message={error} />}
-      {confirmDialog}
-    </>
-  );
-}
 
 // Add (pick a person) or edit (a Director's areas). Saving with no areas removes the Director role.
 function DirectorForm({

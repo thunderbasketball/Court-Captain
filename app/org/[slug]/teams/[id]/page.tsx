@@ -27,6 +27,7 @@ import { canChangeOwnPractices, ownPracticeLocations, ownPracticesOn, upcomingOw
 import TeamPractices from "../../../../TeamPractices";
 import NextSevenDays from "../../../../NextSevenDays";
 import { takesAttendance } from "@/lib/event-attendance";
+import { teamScrimmages } from "@/lib/scrimmages";
 import { BookPracticesButton, BookPracticesPanel } from "../../../../BookPractices";
 
 export default function OrgTeamPage({ params, searchParams }: PageProps<"/org/[slug]/teams/[id]">) {
@@ -77,6 +78,8 @@ async function OrgTeam({
   const own = await upcomingOwnPractices({ pool: db, now: () => new Date() }, ref, 12); // also for Next 7 days
   const canOwn = practicesOn && !user.actingBy && (await canChangeOwnPractices(db, user, ref));
   const published = games.filter((g) => g.published);
+  // Its scrimmages (another of the organization's teams, an outside team, or TBD), on Next 7 days and Games.
+  const scrims = (await teamScrimmages({ pool: db, now: () => new Date() }, slug, [t.id]))[t.id] ?? [];
 
   return (
     <>
@@ -125,6 +128,7 @@ async function OrgTeam({
           games={published}
           practices={[]}
           own={own}
+          scrims={scrims}
           now={new Date()}
           team={ref}
           staff={await takesAttendance(db, user, ref)}
@@ -242,10 +246,10 @@ async function OrgTeam({
           )}
         </CollapseCard>
 
-        <CollapseCard title="Games" count={published.length} open={opened === "games"}>
+        <CollapseCard title="Games" count={published.length + scrims.length} open={opened === "games"}>
           <div className="px-4 pb-4">
-            {published.length ? (
-              <ScheduleList games={published} practices={[]} today={today} />
+            {published.length + scrims.length ? (
+              <ScheduleList games={published} practices={[]} scrims={scrims} today={today} />
             ) : (
               <p className="text-sm text-zinc-500">The game schedule shows here once it&apos;s published.</p>
             )}

@@ -1,5 +1,5 @@
 // Attendance on a team's events (SPEC.md section 12, "Team events attendance"): its booked practices (slots), own-gym
-// practices and League games, for Thunder's teams and every organization's.
+// practices, League games and scrimmages, for Thunder's teams and every organization's.
 //   Attendance (✓ here / ✗ absent): only the team's staff and the Directors who manage its teams, from 15 minutes before
 //     the start until 24 hours after it.
 //   Intention (✓ coming / ✗ not coming): only the player's parent (their cell is parent 1 or 2 on the registration),
@@ -15,8 +15,8 @@ type Deps = { pool: Pool; now: () => Date };
 type Q = Pick<Pool, "query">;
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
 
-export type EventKind = "slot" | "own" | "game";
-export const EVENT_KINDS: readonly EventKind[] = ["slot", "own", "game"];
+export type EventKind = "slot" | "own" | "game" | "scrimmage";
+export const EVENT_KINDS: readonly EventKind[] = ["slot", "own", "game", "scrimmage"];
 export type TeamRef = { org: string; teamId: string };
 export type Mark = "unknown" | "here" | "absent";
 export type Rsvp = "yes" | "no";
@@ -101,6 +101,13 @@ export async function eventWhen(q: Q, ref: TeamRef, kind: EventKind, eventId: st
     const [y, mo, d] = g.day.split("-").map(Number);
     const [hh, mm] = (g.starts ?? "00:00").split(":").map(Number);
     return { start: zonedTime(y, mo, d, hh, mm), timed: !!g.starts };
+  }
+  if (kind === "scrimmage") {
+    const r = await q.query<{ starts_at: Date }>(
+      `select starts_at from scrimmages where id = $1 and org = $2 and $3::bigint in (home_${col}, away_${col})`,
+      [eventId, ref.org, ref.teamId],
+    );
+    return r.rows[0] ? { start: r.rows[0].starts_at, timed: true } : null;
   }
   const r =
     kind === "slot"

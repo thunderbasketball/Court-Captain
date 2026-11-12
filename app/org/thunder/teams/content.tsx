@@ -18,6 +18,7 @@ import { rosterIssue, schoolYearOf } from "@/lib/eligibility";
 import { orgGradeRules } from "@/lib/grade-rules";
 import { scheduledGames, type ScheduledGame } from "@/lib/scenic-games";
 import { ScheduleList } from "../../../LeagueGames";
+import { teamScrimmages } from "@/lib/scrimmages";
 import { upcomingForTeams } from "@/lib/practice/schedule";
 import { ImportTeamsPanel, UndoImportButton } from "../../../TeamImport";
 import { createTeam, importThunderTeams, previewThunderImport, undoThunderImport } from "./actions";
@@ -78,6 +79,7 @@ export async function TeamsContent({
   const today = easternDate(new Date());
   const schoolYear = schoolYearOf(today); // each roster's grade eligibility (a red name and badge when off)
   const { rules: gradeRules } = await orgGradeRules(db, "thunder", new Date()); // set in the organization's gear
+  const scrims = await teamScrimmages({ pool: db, now: () => new Date() }, "thunder", teams.map((t) => t.id)); // and scrimmages
   const practices = await upcomingForTeams({ pool: db, now: () => new Date() }, teams.map((t) => t.id)); // and practices
 
   return (
@@ -195,8 +197,8 @@ export async function TeamsContent({
               lead={t.staff.length > 0 && <GroupTextButton small cells={t.staff.map((p) => p.cell)} label="Text coaches" />}
               roster={{ count: t.players.length, list: <TeamRosterList team={t} who={who} rules={gradeRules} /> }}
               schedule={{
-                items: (schedules[t.id] ?? []).length + (practices[t.id] ?? []).length,
-                list: <ScheduleList games={schedules[t.id] ?? []} practices={practices[t.id] ?? []} today={today} />,
+                items: (schedules[t.id] ?? []).length + (practices[t.id] ?? []).length + (scrims[t.id] ?? []).length,
+                list: <ScheduleList games={schedules[t.id] ?? []} practices={practices[t.id] ?? []} scrims={scrims[t.id] ?? []} today={today} />,
               }}
               chat={t.staff.length > 0 ? { chatKey: `staff-${user.coachId}-${t.id}`, label: `Chat with ${t.name} staff` } : undefined}
               notify={t.staff.length > 0 ? { teams: [t.id] } : undefined}

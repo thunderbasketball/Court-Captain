@@ -33,16 +33,17 @@ export type PublicLeagueSummary = {
 
 // Programs (Leagues, Circuits, Tournaments) whose registration has opened and that ended no more than 30 days ago,
 // soonest first: the login page's Programs list.
-export async function publicPrograms(q: Pick<Queryable, "query">, now: Date): Promise<PublicLeagueSummary[]> {
+// `org`: only that organization's (its main page); left out: every organization's (the public League page).
+export async function publicPrograms(q: Pick<Queryable, "query">, now: Date, org?: string): Promise<PublicLeagueSummary[]> {
   const r = await q.query<PublicLeagueSummary>(
     `select id::text, kind, name, starts_on::text as "startsOn", ends_on::text as "endsOn",
             schedule_published_at is not null as published, ${PROGRAM_LOGO_SQL} as logo,
             reg_closes::text as "regCloses", reg_closes >= $1::date as registering,
             rec_limited_by is not null as "recLimited"
        from scenic_programs p
-      where reg_opens <= $1::date and ends_on >= $1::date - 30
+      where reg_opens <= $1::date and ends_on >= $1::date - 30 and ($2::text is null or p.org = $2)
       order by starts_on, lower(name)`,
-    [easternDate(now)],
+    [easternDate(now), org ?? null],
   );
   return r.rows;
 }
@@ -71,9 +72,9 @@ export type PublicLeague = PublicLeagueSummary & { groups: PublicGroup[]; schedu
 
 const groupLabel = (grade: number, gender: string, level: string) => `${gradeLabel(grade, grade)} ${gender} ${level}`;
 
-export async function publicLeague(q: Pick<Queryable, "query">, now: Date, id: unknown): Promise<PublicLeague | null> {
+export async function publicLeague(q: Pick<Queryable, "query">, now: Date, id: unknown, org?: string): Promise<PublicLeague | null> {
   if (!isId(id)) return null;
-  const league = (await publicPrograms(q, now)).find((l) => l.id === id);
+  const league = (await publicPrograms(q, now, org)).find((l) => l.id === id);
   if (!league) return null;
   const teams = await q.query<{
     id: string;
@@ -187,7 +188,7 @@ export type FollowedTeam = { id: string; name: string; roster: PublicPlayer[] | 
 
 const publicName = (first: string, last: string) => `${first.trim()} ${last.trim().charAt(0).toUpperCase()}.`.trim();
 
-export async function followedTeams(q: Pick<Queryable, "query">, now: Date, ids: unknown): Promise<FollowedTeam[]> {
+export async function followedTeams(q: Pick<Queryable, "query">, now: Date, ids: unknown, org?: string): Promise<FollowedTeam[]> {
   const list = [...new Set(Array.isArray(ids) ? ids.filter(isId) : [])].slice(0, MAX_FOLLOWED);
   if (!list.length) return [];
   const names = await q.query<{ id: string; name: string; keeps: boolean }>(
@@ -211,7 +212,7 @@ export async function followedTeams(q: Pick<Queryable, "query">, now: Date, ids:
   );
   for (const p of players.rows)
     teams.get(p.team)?.roster?.push({ name: publicName(p.first, p.last), jersey: p.jersey });
-  const programs = await publicPrograms(q, now);
+  const programs = await publicPrograms(q, now, org);
   const regs = await q.query<{ team: string; program: string; grade: number; gender: string; level: string }>(
     `select r.team_id::text as team, r.program_id::text as program, g.grade, d.gender, g.level
        from scenic_registrations r

@@ -85,6 +85,12 @@ export function AddIcon({ id, label }: { id: string; label: string }) {
   );
 }
 
+// Close the panel with this id (e.g. once its form is saved).
+export function closeCardPanel(id: string) {
+  window.dispatchEvent(new CustomEvent(CLOSE, { detail: id }));
+}
+const CLOSE = "card-panel-close";
+
 // The panel a PanelIcon opens, at the top of the card's inside.
 export function CardPanel({ id, children, className = "border-b border-zinc-100 px-4 pb-3 dark:border-white/5" }: { id: string; children: ReactNode; className?: string }) {
   const [open, setOpen] = useState(false);
@@ -92,8 +98,15 @@ export function CardPanel({ id, children, className = "border-b border-zinc-100 
     const on = (e: Event) => {
       if ((e as CustomEvent).detail === id) setOpen((o) => !o);
     };
+    const off = (e: Event) => {
+      if ((e as CustomEvent).detail === id) setOpen(false);
+    };
     window.addEventListener(EVENT, on);
-    return () => window.removeEventListener(EVENT, on);
+    window.addEventListener(CLOSE, off);
+    return () => {
+      window.removeEventListener(EVENT, on);
+      window.removeEventListener(CLOSE, off);
+    };
   }, [id]);
   return open ? <div className={className}>{children}</div> : null;
 }

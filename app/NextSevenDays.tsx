@@ -1,6 +1,7 @@
 import type { ScheduledGame } from "@/lib/scenic-games";
 import type { TeamPractice } from "@/lib/practice/schedule";
 import type { OwnPractice } from "@/lib/team-practices";
+import type { TeamScrimmage } from "@/lib/scrimmages";
 import { eventHours, type Rsvp } from "@/lib/event-attendance";
 import { shortDate } from "@/lib/program-options";
 import { easternDate, zonedTime } from "@/lib/time";
@@ -9,13 +10,14 @@ import { scheduleItems } from "./LeagueGames";
 import { card } from "./ui";
 
 // The team page's "Next 7 days", just above Staff (Thunder's teams and every organization's): its published games,
-// booked practices and own-gym practices from now through the next 7 days, by date and time. The team's staff (and the
+// scrimmages, booked practices and own-gym practices from now through the next 7 days, by date and time. The team's staff (and the
 // Directors) open each one for attendance; a viewer whose own children are on the team answers ✓ / ✗ for them right on
 // the line, until the event starts.
 export default function NextSevenDays({
   games,
   practices,
   own,
+  scrims = [],
   now,
   team,
   staff,
@@ -25,6 +27,7 @@ export default function NextSevenDays({
   games: ScheduledGame[]; // published only
   practices: TeamPractice[]; // upcoming
   own: OwnPractice[]; // upcoming
+  scrims?: TeamScrimmage[]; // upcoming
   now: Date;
   team: { org: string; teamId: string };
   staff: boolean; // takes the team's attendance
@@ -38,6 +41,7 @@ export default function NextSevenDays({
     games.filter((g) => g.date >= today && g.date <= lastDay),
     practices.filter((p) => p.startsAt < until),
     own.filter((p) => p.startsAt < until),
+    scrims.filter((x) => x.startsAt < until),
   );
   const rsvpOpen = (date: string, time: string) => {
     const [y, m, d] = date.split("-").map(Number);
@@ -55,7 +59,7 @@ export default function NextSevenDays({
         </p>
       )}
       {!items.length ? (
-        <p className="text-sm text-zinc-500">No games or practices in the next 7 days.</p>
+        <p className="text-sm text-zinc-500">No games, scrimmages or practices in the next 7 days.</p>
       ) : (
         <ul className="divide-y divide-zinc-100 rounded-xl bg-zinc-50 px-3 text-sm dark:divide-white/5 dark:bg-white/5">
           {items.map((x) => {
