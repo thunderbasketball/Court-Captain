@@ -1,4 +1,6 @@
 import { Suspense } from "react";
+import DocumentsCard from "../../documents/DocumentsCard";
+import { innerParams } from "@/lib/home-card-href";
 import { officiatesGames } from "@/lib/officiating";
 import { OfficiatingOffersCard } from "../../officiating/OfficiatingCards";
 import { GamesToOfficiate } from "../../officiating/GamesToOfficiate";
@@ -24,10 +26,10 @@ import { OrgTeamsContent } from "./teams/content";
 import { OrgFacilitiesContent } from "./facilities/content";
 import { OrgMembersContent } from "./members/content";
 
-export default function OrgHomePage({ params }: PageProps<"/org/[slug]">) {
+export default function OrgHomePage({ params, searchParams }: PageProps<"/org/[slug]">) {
   return (
     <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
-      <OrgHome params={params} />
+      <OrgHome params={params} searchParams={searchParams} />
     </Suspense>
   );
 }
@@ -36,10 +38,20 @@ export default function OrgHomePage({ params }: PageProps<"/org/[slug]">) {
 // per part this person can open (the same parts as the tabs): Home (the metrics, for Owners and Admins) open first, then
 // Teams, Facilities, Members and Support, each loading in the background and opening on its own. Its name and logo are
 // in the header; its settings in the gear.
-async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] }) {
+// `?open=members&sub=staff`: a link (old Members page links too) opens that card, and the part inside it.
+async function OrgHome({
+  params,
+  searchParams,
+}: {
+  params: PageProps<"/org/[slug]">["params"];
+  searchParams: PageProps<"/org/[slug]">["searchParams"];
+}) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   const { slug } = await params;
+  const sp = await searchParams;
+  const openCard = typeof sp.open === "string" ? sp.open : null;
+  const inner = Promise.resolve(innerParams(sp));
   await followRename(slug, (s) => `/org/${s}`);
   const o = isOrgSlug(slug) ? await orgInfo(db, slug) : null;
   if (!o) notFound();
@@ -92,7 +104,7 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
             title: "Teams",
             count: metrics?.teams?.total,
             alert: (metrics?.missing.length ?? 0) > 0,
-            body: <OrgTeamsContent params={here} embedded />,
+            body: <OrgTeamsContent params={here} searchParams={inner} embedded />,
           },
         ]
       : []),
@@ -103,6 +115,8 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
     ...(hosting && facilities
       ? [{ key: "facilities", title: "Facilities", body: <OrgFacilitiesContent params={here} embedded /> }]
       : []),
+    // Documents: a hosting organization's League rules and scoresheets (Owners, Admins and Directors of Facilities).
+    ...(hosting && facilities ? [{ key: "documents", title: "Documents", body: <DocumentsCard org={slug} user={user} /> }] : []),
     // Members: Staff, Coaches and (an Officials Group) Officials, as this person may see them.
     ...(admin || (teams && coachesArea) || (await managesOfficials(db, user, slug))
       ? [
@@ -111,7 +125,7 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
             title: "Members",
             // Waiting requests, or CourtOfficials without an Assigner.
             alert: (metrics?.waiting.requests ?? 0) > 0 || (await assignerCount(db, slug)) === 0,
-            body: <OrgMembersContent params={here} embedded />,
+            body: <OrgMembersContent params={here} searchParams={inner} embedded />,
           },
         ]
       : []),
@@ -137,7 +151,7 @@ async function OrgHome({ params }: { params: PageProps<"/org/[slug]">["params"] 
     <>
       <AppHeader user={user} context={`org:${slug}`} tab="org-home" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <MembersCards cards={cards} open={null} heading={null} />
+        <MembersCards cards={cards} open={openCard} heading={null} />
       </main>
     </>
   );

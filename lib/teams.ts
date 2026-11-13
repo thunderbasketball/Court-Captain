@@ -472,8 +472,12 @@ export async function updateTeam(
     return withTx(deps.pool, async (q) => {
       const r = await q.query(
         `update teams set gender = $2, grades = $3, grade_sort = $4, level = $5, practice_locations = $6,
+                practice_locations_by = case when practice_locations is distinct from $6 then $9 else practice_locations_by end,
+                practice_locations_at = case when practice_locations is distinct from $6 then $10 else practice_locations_at end,
+                practice_gyms_set = case when practice_locations is distinct from $6 then cardinality($6::text[]) > 0 else practice_gyms_set end,
                 alt_name = case when $8 then $7 else alt_name end where id = $1`,
-        [id, f.gender, f.grades, f.gradeSort, f.level, locations, cleanAltName(input.altName), input.altName !== undefined],
+        [id, f.gender, f.grades, f.gradeSort, f.level, locations, cleanAltName(input.altName), input.altName !== undefined,
+         `${viewer.firstName} ${viewer.lastName}`, deps.now()],
       );
       if (!r.rowCount) throw new UserError("That team no longer exists.");
       return { name: await rename(q, id) };

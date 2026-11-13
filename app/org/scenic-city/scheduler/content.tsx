@@ -710,6 +710,7 @@ function Grid({ day, grid, coaches }: { day: ScheduleDay; grid: DayGrid; coaches
         </p>
       )}
       <GridBoard
+        day={day.date}
         gyms={gyms}
         games={games}
         minutes={grid.minutes}

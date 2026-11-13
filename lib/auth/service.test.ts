@@ -717,7 +717,7 @@ describe("sessions", () => {
     expect(await auth.setActingAs(deps, "junk", "5550002")).toEqual({ ok: false, message: "Please log in again." });
   });
 
-  it("act as: a Scenic City Admin views Scenic City people only; leaving the organization ends it", async () => {
+  it("act as: a Scenic City Admin views Scenic City people (and its officials) only; leaving the organization ends it", async () => {
     await addUser({}); // Earl: no Thunder role
     await grant(db.pool, "5551234 scenic-city Director", "5551234 scenic-city Admin");
     await addUser({ cell: "4235550002", email: "pat@example.com" });
@@ -729,6 +729,10 @@ describe("sessions", () => {
       ok: false,
       message: "You can only view people in your organization.",
     });
+    // One of Scenic City's officials (no role there): viewable too.
+    await db.pool.query("insert into org_officials (org, coach_id, added_by) values ('scenic-city', '5550003', 'x')");
+    expect(await auth.setActingAs(deps, t, "5550003")).toEqual({ ok: true });
+    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5550003", actingBy: { coachId: "5551234" } });
     expect(await auth.setActingAs(deps, t, "5550002")).toEqual({ ok: true });
     expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5550002", actingBy: { coachId: "5551234" } });
 

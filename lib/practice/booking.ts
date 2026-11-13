@@ -92,7 +92,10 @@ export async function bookSlot(
   const exempt = hasArea(viewer, "practices") && input.asTeam !== true;
   try {
     return await withTx(deps.pool, async (q) => {
-      const team = await q.query("select 1 from teams where id = $1", [teamId]);
+      const team = await q.query<{ locations: string[]; set: boolean }>(
+        "select practice_locations as locations, practice_gyms_set or practice_locations <> '{}' as set from teams where id = $1",
+        [teamId],
+      );
       if (!team.rows[0]) throw new UserError("That team no longer exists.");
       // One booking request per team at a time, so counts can't race.
       await q.query("select pg_advisory_xact_lock(hashtext('team-book:' || $1))", [teamId]);
@@ -101,6 +104,14 @@ export async function bookSlot(
 
       const first = await lockSlot(q, slotId);
       if (!first) throw new UserError("That practice slot no longer exists.");
+      // The team's practice facilities (Facilities → Team Practice Facilities; never set = every gym; set with none = own gym only). The Director's
+      // own grid may book a team anywhere.
+      const gyms = team.rows[0].locations.map((l) => l.toLowerCase());
+      const atTeamGym = async (courtId: string) => {
+        if (exempt || !team.rows[0].set) return true;
+        const g = await q.query<{ name: string }>("select g.name from courts c join gyms g on g.id = c.gym_id where c.id = $1", [courtId]);
+        return !!g.rows[0] && gyms.includes(g.rows[0].name.toLowerCase());
+      };
       const targets = [first.id, ...(input.everyWeek === true ? await sameSlotLaterWeeks(q, first) : [])];
 
       const booked: WeekOutcome[] = [];
@@ -119,6 +130,10 @@ export async function bookSlot(
         }
         if (s.blackout) {
           skip("That time is blacked out.");
+          continue;
+        }
+        if (!(await atTeamGym(s.court_id))) {
+          skip("That gym isn't one of this team's practice facilities.");
           continue;
         }
         if (s.team_id === teamId) {

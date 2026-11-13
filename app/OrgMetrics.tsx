@@ -218,7 +218,7 @@ export default function OrgMetrics({
                 {m.waiting.requests > 0 && (
                   <li>
                     {thunder ? (
-                      <Link href={`${base}/members?open=requests`} className="text-thunder-blue hover:underline">
+                      <Link href={`${base}?open=members&sub=requests#members`} className="text-thunder-blue hover:underline">
                         {m.waiting.requests} join request{m.waiting.requests === 1 ? "" : "s"}
                       </Link>
                     ) : (

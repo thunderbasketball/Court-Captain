@@ -55,7 +55,8 @@ describe("booking", () => {
          ('9913694','Earl','X','4239913694'), ('5550001','Hal','X','4235550001'), ('5550002','Pam','X','4235550002'), ('5550003','Olga','X','4235550003')`,
     );
     const t = await db.pool.query<{ id: string }>(
-      `insert into teams (name, gender, grades, grade_sort, level, created_by) values ('4G A', 'Girls', '{4}', 4, 'REC', 'x'), ('5G B', 'Girls', '{5}', 5, 'REC', 'x') returning id::text`,
+      // Teams from before Team Practice Facilities: every gym.
+      `insert into teams (name, gender, grades, grade_sort, level, created_by, practice_gyms_set) values ('4G A', 'Girls', '{4}', 4, 'REC', 'x', false), ('5G B', 'Girls', '{5}', 5, 'REC', 'x', false) returning id::text`,
     );
     [team, team2] = t.rows.map((r) => r.id);
     await db.pool.query(

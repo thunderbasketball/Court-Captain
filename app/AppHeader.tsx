@@ -142,12 +142,12 @@ export default async function AppHeader({
   // shown only when its features and the person's role allow), then the gear for Admins.
   const directorTabs: TabLink[] = [
     { key: "thunder-home", href: "/org/thunder", label: "Home", icon: ICONS.home },
-    { key: "teams", href: "/org/thunder/teams", label: "Teams", icon: ICONS.teams, feature: "team-building", areas: ["teams"] },
+    { key: "teams", href: "/org/thunder?open=teams#teams", label: "Teams", icon: ICONS.teams, feature: "team-building", areas: ["teams"] },
     // Schedule: Practice and Season (Facilities, Practice Management), Events (Programs, Event Management); opens the first.
     ...(scheduleHref ? [{ key: "schedule", href: scheduleHref, label: "Practice", icon: ICONS.practice }] : []),
     {
       key: "uniforms",
-      href: "/org/thunder/uniforms",
+      href: "/org/thunder?open=uniforms#uniforms",
       label: "Uniforms",
       icon: ICONS.uniforms,
       feature: "uniforms",
@@ -155,14 +155,14 @@ export default async function AppHeader({
     },
     {
       key: "facilities",
-      href: "/org/thunder/facilities",
+      href: "/org/thunder?open=facilities#facilities",
       label: "Facilities",
       icon: ICONS.facilities,
       areas: ["facilities", "practices"],
     },
     // Members: Staff (Admins), Coaches (Teams area), Players (Players or Teams areas); opens the first one they can see.
     ...(isThunderAdmin(user) || hasArea(user, "teams", "players")
-      ? [{ key: "members", href: "/org/thunder/members", label: "Members", icon: ICONS.users }]
+      ? [{ key: "members", href: "/org/thunder?open=members#members", label: "Members", icon: ICONS.users }]
       : []),
   ];
   // Scenic City: Home and Game days for everyone there, Partners for Partners and Directors of Facilities, Teams for
@@ -195,11 +195,11 @@ export default async function AppHeader({
   const orgTabs: TabLink[] | null = registered
     ? [
         { key: "org-home", href: `/org/${org}`, label: "Home", icon: ICONS.home },
-        ...(regTeams ? [{ key: "org-teams", href: `/org/${org}/teams`, label: "Teams", icon: ICONS.teams }] : []),
+        ...(regTeams ? [{ key: "org-teams", href: `/org/${org}?open=teams#teams`, label: "Teams", icon: ICONS.teams }] : []),
         ...(regFacilities
-          ? [{ key: "org-facilities", href: `/org/${org}/facilities`, label: "Facilities", icon: ICONS.facilities }]
+          ? [{ key: "org-facilities", href: `/org/${org}?open=facilities#facilities`, label: "Facilities", icon: ICONS.facilities }]
           : []),
-        ...(regMembers ? [{ key: "org-members", href: `/org/${org}/members`, label: "Members", icon: ICONS.users }] : []),
+        ...(regMembers ? [{ key: "org-members", href: `/org/${org}?open=members#members`, label: "Members", icon: ICONS.users }] : []),
       ]
     : null;
   const scenicTabs: TabLink[] | null =

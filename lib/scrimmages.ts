@@ -318,6 +318,14 @@ async function saveScrimmage(
 
     const col = thunder(org) ? "thunder_team_id" : "org_team_id";
     const values = [home || null, away || null, awayName, startsAt, minutes, gymId || null, place, officials];
+    if (editing)
+      // A new time or place: its officials answer ✓ / ✗ again.
+      await q.query(
+        `update game_officials o set response = null, responded_at = null from scrimmages s
+          where o.scrimmage_id = $1 and s.id = $1
+            and (s.starts_at <> $2 or s.minutes <> $3 or s.gym_id is distinct from $4::bigint or s.place is distinct from $5)`,
+        [editing, startsAt, minutes, gymId || null, place],
+      );
     const id = editing
       ? (await q.query(
           `update scrimmages set home_${col} = $2, away_${col} = $3, away_name = $4, starts_at = $5, minutes = $6, gym_id = $7, place = $8,

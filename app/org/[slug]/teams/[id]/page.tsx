@@ -85,7 +85,7 @@ async function OrgTeam({
     <>
       <AppHeader user={user} context={`org:${slug}`} tab="org-teams" />
       <main className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 py-6">
-        <Link href={`/org/${slug}/teams`} className="text-sm text-zinc-500 hover:underline">
+        <Link href={`/org/${slug}?open=teams#teams`} className="text-sm text-zinc-500 hover:underline">
           ← Teams
         </Link>
         <section className={`${card} p-5`}>

@@ -15,7 +15,8 @@ type Result = { ok: true } | { ok: false; message: string };
 export const SPOTS = [1, 2] as const;
 
 export type BoardOfficial = { id: string; first: string; last: string; level: OfficialLevel | null };
-export type BoardSpot = { position: number; official: { id: string; name: string } | null; assignedBy: string | null };
+export type Answer = "yes" | "no" | null; // the official's ✓ / ✗ (null: not answered yet)
+export type BoardSpot = { position: number; official: { id: string; name: string } | null; assignedBy: string | null; answer: Answer };
 export type BoardGame = {
   id: string;
   kind: "Scrimmage" | "Exhibition" | "League"; // Scrimmages and Exhibitions are tagged on the board (only scrimmages so far)
@@ -57,14 +58,15 @@ export async function officialsBoard(deps: Deps, viewer: SessionUser, officialsO
       away: string;
       starts_at: Date;
       minutes: number;
-      spots: { position: number; id: string; name: string; by: string }[];
+      spots: { position: number; id: string; name: string; by: string; answer: Answer }[];
     }>(
       `select s.id::text, to_char(s.starts_at at time zone $3, 'YYYY-MM-DD') as day,
               s.org || ':' || coalesce('g' || s.gym_id, 'p' || lower(s.place)) as gym, s.place, nullif(g.address, '') as address,
               o.name as org_name, coalesce(${name("home")}, 'TBD') as home, coalesce(s.away_name, ${name("away")}, 'TBD') as away,
               s.starts_at, s.minutes,
               coalesce((select json_agg(json_build_object('position', x.position, 'id', x.coach_id,
-                                                          'name', u.first_name || ' ' || u.last_name, 'by', x.assigned_by))
+                                                          'name', u.first_name || ' ' || u.last_name, 'by', x.assigned_by,
+                                                          'answer', x.response))
                           from game_officials x join users u on u.coach_id = x.coach_id where x.scrimmage_id = s.id), '[]') as spots
          from scrimmages s join organizations o on o.slug = s.org left join gyms g on g.id = s.gym_id
         where s.officials_org = $1 and s.starts_at + make_interval(mins => s.minutes) > $2
@@ -96,7 +98,7 @@ export async function officialsBoard(deps: Deps, viewer: SessionUser, officialsO
       gyms.set(r.gym, { key: r.gym, place: r.place, address: r.address, orgName: r.org_name, games: [], open: 0 }).get(r.gym)!;
     const spots = SPOTS.map((position) => {
       const x = r.spots.find((y) => y.position === position);
-      return { position, official: x ? { id: x.id, name: x.name } : null, assignedBy: x?.by ?? null };
+      return { position, official: x ? { id: x.id, name: x.name } : null, assignedBy: x?.by ?? null, answer: x?.answer ?? null };
     });
     gym.games.push({
       id: r.id,
@@ -185,11 +187,21 @@ export async function assignOfficial(
         ok: false as const,
         message: clash.same ? `${o.name} is already on this game.` : `${o.name} is already on a game then (${clash.label}).`,
       };
-    if (from) await q.query("delete from game_officials where scrimmage_id = $1 and position = $2 and coach_id = $3", [from.gameId, from.position, officialId]);
+    // Moving within the same game keeps their answer (same game, same time); anywhere else asks again.
+    const kept = from
+      ? (
+          await q.query<{ response: string | null; responded_at: Date | null }>(
+            "delete from game_officials where scrimmage_id = $1 and position = $2 and coach_id = $3 returning response, responded_at",
+            [from.gameId, from.position, officialId],
+          )
+        ).rows[0]
+      : undefined;
+    const keep = kept && String(from!.gameId) === String(gameId) ? kept : null;
     await q.query("delete from game_officials where scrimmage_id = $1 and position = $2", [gameId, position]);
     await q.query(
-      `insert into game_officials (scrimmage_id, position, officials_org, coach_id, assigned_by, assigned_at) values ($1, $2, $3, $4, $5, $6)`,
-      [gameId, position, officialsOrg, officialId, by, deps.now()],
+      `insert into game_officials (scrimmage_id, position, officials_org, coach_id, assigned_by, assigned_at, response, responded_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [gameId, position, officialsOrg, officialId, by, deps.now(), keep?.response ?? null, keep?.responded_at ?? null],
     );
     return { ok: true as const };
   });
@@ -215,5 +227,96 @@ export async function removeOfficialFrom(
       [officialId, gameIds, officialsOrg, deps.now()],
     );
     return { ok: true as const, removed: r.rowCount ?? 0 };
+  });
+}
+
+// An official's own coming games (their dashboard): every game they're on, in any group, soonest first, until it ends.
+// Read only; who may see the dashboard is checked by its page.
+export type MyOfficiatingGame = {
+  id: string;
+  kind: BoardGame["kind"];
+  group: string; // the officials group that put them on it
+  orgName: string; // the organization playing it
+  home: string;
+  away: string;
+  start: Date;
+  end: Date;
+  place: string;
+  address: string | null;
+  position: number;
+  partner: string | null; // the other referee, if one is set
+  answer: Answer;
+  started: boolean;
+};
+export async function myOfficiating(deps: Pick<Deps, "pool" | "now">, coachId: string): Promise<MyOfficiatingGame[]> {
+  const name = (side: "home" | "away") =>
+    `coalesce((select name from teams where id = s.${side}_thunder_team_id), (select name from org_teams where id = s.${side}_org_team_id))`;
+  const r = await deps.pool.query<{
+    id: string;
+    grp: string;
+    org_name: string;
+    home: string;
+    away: string;
+    starts_at: Date;
+    minutes: number;
+    place: string;
+    address: string | null;
+    position: number;
+    partner: string | null;
+    response: Answer;
+  }>(
+    `select s.id::text, coalesce(go.short_name, go.name) as grp, o.name as org_name,
+            coalesce(${name("home")}, 'TBD') as home, coalesce(s.away_name, ${name("away")}, 'TBD') as away,
+            s.starts_at, s.minutes, s.place, nullif(g.address, '') as address, x.position, x.response,
+            (select u.first_name || ' ' || u.last_name from game_officials y join users u on u.coach_id = y.coach_id
+              where y.scrimmage_id = s.id and y.coach_id <> x.coach_id limit 1) as partner
+       from game_officials x join scrimmages s on s.id = x.scrimmage_id
+       join organizations o on o.slug = s.org join organizations go on go.slug = x.officials_org
+       left join gyms g on g.id = s.gym_id
+      where x.coach_id = $1 and s.starts_at + make_interval(mins => s.minutes) > $2
+      order by s.starts_at, s.id`,
+    [coachId, deps.now()],
+  );
+  return r.rows.map((g) => ({
+    id: g.id,
+    kind: "Scrimmage",
+    group: g.grp,
+    orgName: g.org_name,
+    home: g.home,
+    away: g.away,
+    start: g.starts_at,
+    end: new Date(g.starts_at.getTime() + g.minutes * 60_000),
+    place: g.place,
+    address: g.address,
+    position: g.position,
+    partner: g.partner,
+    answer: g.response,
+    started: g.starts_at.getTime() <= deps.now().getTime(),
+  }));
+}
+
+// The official answers a game they're on: ✓ "yes" (good for it) or ✗ "no" (can't make it). Only their own spot, only
+// before the game starts. Tapping the same answer again clears it.
+export async function answerGame(deps: Deps, viewer: SessionUser, input: { gameId: unknown; answer: unknown }): Promise<Result> {
+  const gameId = String(input.gameId ?? "");
+  if (!ID.test(gameId)) return { ok: false, message: "That game wasn't found." };
+  if (input.answer !== "yes" && input.answer !== "no" && input.answer !== null) return { ok: false, message: "Tap ✓ or ✗." };
+  return withTx(deps.pool, async (q) => {
+    const row = (
+      await q.query<{ starts_at: Date }>(
+        `select s.starts_at from game_officials x join scrimmages s on s.id = x.scrimmage_id
+          where x.scrimmage_id = $1 and x.coach_id = $2 for update of x`,
+        [gameId, viewer.coachId],
+      )
+    ).rows[0];
+    if (!row) return { ok: false as const, message: "You're not on that game any more." };
+    if (row.starts_at.getTime() <= deps.now().getTime()) return { ok: false as const, message: "That game has started." };
+    await q.query("update game_officials set response = $3, responded_at = $4 where scrimmage_id = $1 and coach_id = $2", [
+      gameId,
+      viewer.coachId,
+      input.answer,
+      input.answer === null ? null : deps.now(),
+    ]);
+    return { ok: true as const };
   });
 }

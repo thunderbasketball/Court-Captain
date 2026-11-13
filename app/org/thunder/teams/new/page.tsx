@@ -29,7 +29,7 @@ async function NewTeam() {
     <>
       <AppHeader user={user} tab="teams" context="director" />
       <main className="mx-auto w-full max-w-xl flex-1 px-4 py-6">
-        <Link href="/org/thunder/teams" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
+        <Link href="/org/thunder?open=teams#teams" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
           ← Teams
         </Link>
         <div className="mt-2">

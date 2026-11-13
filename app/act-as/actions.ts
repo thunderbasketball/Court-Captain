@@ -42,9 +42,9 @@ export async function stopActing() {
     back === "platform"
       ? "/platform"
       : back?.startsWith("org:") && isOrgSlug(back.slice(4))
-        ? `/org/${back.slice(4)}/members?open=staff`
+        ? `/org/${back.slice(4)}?open=members&sub=staff#members`
         : back?.startsWith("scenic:")
           ? "/org/scenic-city/users"
-          : "/org/thunder/members/staff",
+          : "/org/thunder?open=members&sub=staff#members",
   );
 }

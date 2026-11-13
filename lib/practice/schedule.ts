@@ -91,12 +91,12 @@ export async function weekGrid(
 ): Promise<WeekGrid> {
   const now = deps.now();
   const end = weekOf(weekStart).end;
-  let team: (TeamWeek & { locations: string[] }) | null = null;
+  let team: (TeamWeek & { locations: string[]; gymsSet: boolean }) | null = null;
   if (viewAs === "director") {
     if (!hasArea(viewer, "practices")) throw new Error("Director only");
   } else {
-    const t = await deps.pool.query<{ id: string; name: string; locations: string[]; role: string | null }>(
-      `select t.id::text, t.name, t.practice_locations as locations,
+    const t = await deps.pool.query<{ id: string; name: string; locations: string[]; gymsSet: boolean; role: string | null }>(
+      `select t.id::text, t.name, t.practice_locations as locations, t.practice_gyms_set as "gymsSet",
               (select s.role from team_staff s where s.team_id = t.id and s.coach_id = $2
                order by array_position(array['HeadCoach','AsstCoach','Manager','TeamParent'], s.role) limit 1) as role
        from teams t where t.id = $1`,
@@ -109,6 +109,7 @@ export async function weekGrid(
       id: row.id,
       name: row.name,
       locations: row.locations.map((l) => l.toLowerCase()),
+      gymsSet: row.gymsSet || row.locations.length > 0,
       booked,
       status: teamStatus(booked),
       canBookRole: hasArea(viewer, "practices") || BOOKING_ROLES.includes(row.role ?? ""),
@@ -143,7 +144,7 @@ export async function weekGrid(
     if (team) {
       // Coaches see their practice gyms: open slots, which teams practice when, and blocked times.
       // Past slots only for their own team.
-      const atTeamGym = !team.locations.length || team.locations.includes(row.gym.toLowerCase());
+      const atTeamGym = !team.gymsSet || team.locations.includes(row.gym.toLowerCase());
       if (!mine && (past || !atTeamGym)) continue;
     }
     let canBook = false;

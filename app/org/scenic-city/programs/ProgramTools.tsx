@@ -20,6 +20,7 @@ import {
   setSchedulePublished,
   setPaid,
   setProgramLogo,
+  setProgramRules,
   setTeamOff,
   withdrawTeam,
 } from "../actions";
@@ -385,6 +386,63 @@ export function ProgramLogoEditor({ id, logo }: { id: string; logo: string | nul
         </form>
       </dialog>
     </>
+  );
+}
+
+// A League's rules PDF (Directors of Programs): upload or replace it, or remove it. Hosting organizations open it from
+// their Home's Documents card.
+export function ProgramRulesEditor({ id, rules }: { id: string; rules: { name: string } | null }) {
+  const router = useRouter();
+  const [busy, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const save = (form: FormData) =>
+    start(async () => {
+      setError(null);
+      setDone(null);
+      const r = await setProgramRules(id, form);
+      if (!r.ok) return setError(r.message);
+      setDone(form.get("remove") === "1" ? "Removed." : "Saved.");
+      router.refresh();
+    });
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        save(new FormData(e.currentTarget));
+      }}
+    >
+      {rules && (
+        <p className="text-sm">
+          Now:{" "}
+          <a href={`/program-rules/${id}`} target="_blank" rel="noopener" className="font-medium text-thunder-blue hover:underline dark:text-blue-400">
+            {rules.name}
+          </a>
+        </p>
+      )}
+      <span className={fieldLabel}>PDF, up to 4 MB</span>
+      <input name="rules" type="file" accept="application/pdf,.pdf" required className="block w-full min-w-0 text-sm" />
+      {error && <Alert tone="red">{error}</Alert>}
+      {done && <Alert tone="green">{done}</Alert>}
+      <button type="submit" disabled={busy} className={`${navyBtn} w-full`}>
+        {busy ? "Saving…" : rules ? "Replace rules" : "Save rules"}
+      </button>
+      {rules && (
+        <button
+          type="button"
+          disabled={busy}
+          className="w-full text-sm text-red-600 hover:underline"
+          onClick={() => {
+            const f = new FormData();
+            f.set("remove", "1");
+            save(f);
+          }}
+        >
+          Remove rules
+        </button>
+      )}
+    </form>
   );
 }
 
@@ -1138,7 +1196,9 @@ export function ProgramSettings({
   rec,
   gradeRules,
   today,
+  rules = null,
 }: {
+  rules?: { name: string } | null; // a League's rules PDF
   gradeRules: GradeRules; // its age control date, oldest age and age exception
   today: string;
   program: ProgramFields;
@@ -1164,6 +1224,17 @@ export function ProgramSettings({
             <span className="text-sm text-zinc-600 dark:text-zinc-300">The program&apos;s logo</span>
             <ProgramLogoEditor id={program.id} logo={logo} />
           </li>
+          {program.kind === "League" && (
+            <li className="flex items-center justify-between gap-3 py-2.5">
+              <span className="text-sm text-zinc-600 dark:text-zinc-300">
+                Rules
+                <span className="block text-xs text-zinc-500">{rules ? rules.name : "Not added yet"} · on hosts&apos; Documents</span>
+              </span>
+              <PopUp label={rules ? "Rules" : "+ Rules"} title="League rules (PDF)" className={editBtn}>
+                {() => <ProgramRulesEditor id={program.id} rules={rules} />}
+              </PopUp>
+            </li>
+          )}
           <li className="flex items-center justify-between gap-3 py-2.5">
             <span className="text-sm text-zinc-600 dark:text-zinc-300">
               Grades accepted

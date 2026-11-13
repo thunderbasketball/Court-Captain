@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, grant } from "./testing/db";
-import { assignOfficial, officialsBoard, removeOfficialFrom } from "./officiating-schedule";
+import { answerGame, assignOfficial, myOfficiating, officialsBoard, removeOfficialFrom } from "./officiating-schedule";
 import { addScrimmage, updateScrimmage, upcomingScrimmages } from "./scrimmages";
 
 const ORG = "sc-officials";
@@ -128,6 +128,21 @@ describe("scheduling officials on games", () => {
     ]);
   });
 
+  it("an official's own games (their dashboard): soonest first, with their partner; gone once a game ends", async () => {
+    await assignOfficial(deps(), otto, ORG, { gameId: g3, position: 1, officialId: "5550101" });
+    await assignOfficial(deps(), otto, ORG, { gameId: g1, position: 2, officialId: "5550101" });
+    await assignOfficial(deps(), otto, ORG, { gameId: g1, position: 1, officialId: "5550102" });
+    const mine = await myOfficiating(deps(), "5550101");
+    expect(mine.map((g) => [g.id, g.position, g.partner, g.group, g.away, g.place])).toEqual([
+      [g1, 2, "Sam Ump", "SCO", "Signal 4G", "Signal Mountain MS"],
+      [g3, 1, null, "SCO", "Signal 4G", "Signal Mountain MS"],
+    ]);
+    expect(mine[0].end.getTime() - mine[0].start.getTime()).toBe(90 * 60_000);
+    const later = { pool: db.pool, now: () => new Date("2026-11-14T17:00:00Z") }; // the 10 AM game is over
+    expect((await myOfficiating(later, "5550101")).map((g) => g.id)).toEqual([g3]);
+    expect(await myOfficiating(deps(), "5550104")).toEqual([]);
+  });
+
   it("a scrimmage changed to another group, or to a time that double-books, drops those officials", async () => {
     await assignOfficial(deps(), otto, ORG, { gameId: g1, position: 1, officialId: "5550101" });
     await assignOfficial(deps(), otto, ORG, { gameId: g3, position: 1, officialId: "5550101" });
@@ -143,5 +158,30 @@ describe("scheduling officials on games", () => {
     const f1 = (await upcomingScrimmages(deps(), "thunder", program)).find((s) => s.id === g1)!.form;
     expect(await updateScrimmage(deps(), director, "thunder", g1, { ...f1, away: "", gymId: "", officials: "" })).toMatchObject({ ok: true });
     expect((await db.pool.query("select count(*)::int as n from game_officials where scrimmage_id = $1", [g1])).rows[0].n).toBe(0);
+  });
+
+  it("officials answer ✓ / ✗ on their own games before the start; the board shows it; a new time asks again", async () => {
+    await assignOfficial(deps(), otto, ORG, { gameId: g1, position: 1, officialId: "5550101" });
+    await assignOfficial(deps(), otto, ORG, { gameId: g3, position: 1, officialId: "5550101" });
+    const rita = person("5550101");
+    const sam = person("5550102");
+    expect(await answerGame(deps(), sam, { gameId: g1, answer: "yes" })).toMatchObject({ ok: false }); // not on it
+    expect(await answerGame(deps(), rita, { gameId: g1, answer: "maybe" })).toMatchObject({ ok: false });
+    expect(await answerGame(deps(), rita, { gameId: g1, answer: "yes" })).toEqual({ ok: true });
+    expect(await answerGame(deps(), rita, { gameId: g3, answer: "no" })).toEqual({ ok: true });
+    expect((await myOfficiating(deps(), "5550101")).map((g) => g.answer)).toEqual(["yes", "no"]);
+    const board = (await officialsBoard(deps(), otto, ORG))!;
+    const spot = (id: string) => board.days[0].gyms.flatMap((g) => g.games).find((x) => x.id === id)!.spots[0];
+    expect([spot(g1).answer, spot(g3).answer]).toEqual(["yes", "no"]);
+    // Moved to the other spot of the same game: the answer stays. A different official in that spot: asks again.
+    expect(await assignOfficial(deps(), otto, ORG, { gameId: g1, position: 2, officialId: "5550101", from: { gameId: g1, position: 1 } })).toEqual({ ok: true });
+    expect((await myOfficiating(deps(), "5550101"))[0]).toMatchObject({ position: 2, answer: "yes" });
+    // Game 1 moved half an hour: Rita answers again. Game 3 (not changed) keeps hers.
+    const f1 = (await upcomingScrimmages(deps(), "thunder", program)).find((s) => s.id === g1)!.form;
+    expect(await updateScrimmage(deps(), director, "thunder", g1, { ...f1, away: "", gymId: "", time: "09:30" })).toMatchObject({ ok: true });
+    expect((await myOfficiating(deps(), "5550101")).map((g) => g.answer)).toEqual([null, "no"]);
+    // Once a game has started, no more answers.
+    const later = { pool: db.pool, now: () => new Date("2026-11-14T15:00:00Z") };
+    expect(await answerGame(later, rita, { gameId: g1, answer: "yes" })).toMatchObject({ ok: false, message: expect.stringContaining("started") });
   });
 });

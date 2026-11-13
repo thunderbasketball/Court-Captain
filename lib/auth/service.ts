@@ -300,14 +300,15 @@ export async function getSessionUser(deps: Deps, token: string | undefined): Pro
   return toSessionUser(real);
 }
 
-// An Admin may view the app as anyone in their organization: anyone with a role (or Request) there, or, for Thunder,
-// anyone on a team's staff. CourtCaptain staff (support for every organization) may view as anyone. SQL condition on the
+// An Admin may view the app as anyone in their organization: anyone with a role (or Request) there, its officials, or,
+// for Thunder, anyone on a team's staff. CourtCaptain staff (support for every organization) may view as anyone. SQL condition on the
 // two coach ids.
 // (Wrapped in parentheses: it's combined with `and` in queries.)
 const CAN_VIEW_AS = (admin: string, target: string) => `(exists (select 1 from platform_admins p where p.coach_id = ${admin})
   or exists (
   select 1 from org_roles a where a.coach_id = ${admin} and a.role = 'Admin'
     and (exists (select 1 from org_roles t where t.coach_id = ${target} and t.org = a.org)
+         or exists (select 1 from org_officials f where f.coach_id = ${target} and f.org = a.org)
          or (a.org = 'thunder' and exists (select 1 from team_staff ts where ts.coach_id = ${target})))))`;
 
 // Can this Admin see this person (View as, their dashboard)? Anyone in an organization they're an Admin of.

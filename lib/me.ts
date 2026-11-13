@@ -2,6 +2,7 @@ import "server-only";
 import { db } from "./db";
 import { familyOf, type Family } from "./families";
 import { AREAS } from "./org-admin";
+import { myOfficiating, type MyOfficiatingGame } from "./officiating-schedule";
 
 // My dashboard (SPEC.md section 15): one person's own information, players and team ties, across organizations.
 export type MyDashboard = {
@@ -14,6 +15,7 @@ export type MyDashboard = {
   teams: { id: string; name: string; role: string; next: Date | null; gym: string | null }[]; // Thunder team spots
   scenicTeams: { name: string; how: string }[]; // Scenic City teams they coach or run
   partners: string[]; // Scenic City partners they're a contact for
+  officiating: MyOfficiatingGame[]; // coming games they're on as a referee
 };
 
 const ROLE: Record<string, string> = {
@@ -62,6 +64,12 @@ export async function myDashboard(coachId: string): Promise<MyDashboard | null> 
     ),
     familyOf(id),
   ]);
+  // Officials groups they referee for, with their level.
+  const officials = await db.query<{ org: string; name: string; level: string | null }>(
+    `select f.org, coalesce(o.short_name, o.name) as name, f.level from org_officials f join organizations o on o.slug = f.org
+     where f.coach_id = $1 order by lower(o.name)`,
+    [id],
+  );
 
   // One row per organization, its roles highest first: Owner, Admin, Director (with areas), Solo, Coach, Family.
   const order = ["Owner", "Admin", "Director", "Solo", "Coach", "Family"];
@@ -83,6 +91,13 @@ export async function myDashboard(coachId: string): Promise<MyDashboard | null> 
     }
     if (labels.length) list.push({ org: ORG[org] ?? roles.rows.find((r) => r.org === org)!.name, labels });
   }
+  for (const f of officials.rows) {
+    const label = `Official · ${f.level ?? "level not set"}`;
+    const name = ORG[f.org] ?? f.name;
+    const row = list.find((r) => r.org === name);
+    if (row) row.labels.push(label);
+    else list.push({ org: name, labels: [label] });
+  }
 
   const me = u.rows[0];
   if (!me) return null;
@@ -96,5 +111,6 @@ export async function myDashboard(coachId: string): Promise<MyDashboard | null> 
     teams: teams.rows.map((t) => ({ ...t, role: ROLE[t.role] ?? t.role })),
     scenicTeams: scenicTeams.rows,
     partners: partners.rows.map((p) => p.name),
+    officiating: await myOfficiating({ pool: db, now: () => new Date() }, id),
   };
 }

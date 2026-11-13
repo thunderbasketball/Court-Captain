@@ -12,6 +12,7 @@ import { Suspense } from "react";
 import SubCard from "../../../SubCard";
 import { GymToolIcons, GymToolPanels } from "../../../GymTools";
 import { GymsContent } from "./gyms/content";
+import { TeamGymsContent } from "./team-gyms-content";
 import { BLACKOUT_ADD, BlackoutsContent } from "./blackouts/content";
 import { AddIcon, ChatIcon, iconBtn } from "../../../CardIcons";
 import { ChatToggle } from "../../../InlineToggle";
@@ -79,6 +80,11 @@ export async function FacilitiesContent({
                 ]),
               )}
             />
+          </Suspense>
+        </SubCard>
+        <SubCard title="Team Practice Facilities">
+          <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>
+            <TeamGymsContent />
           </Suspense>
         </SubCard>
         <SubCard title="Blackout Dates" action={<AddIcon id={BLACKOUT_ADD} label="Add blackout dates" />}>

@@ -290,6 +290,16 @@ export function GamesToOfficiate({ org, board: fromServer }: { org: string; boar
                                       null,
                                       "min-w-0 flex-1 truncate",
                                     )}
+                                    {s.answer === "yes" && (
+                                      <span title="Good for this game" aria-label="Good for this game" className="shrink-0 text-sm font-bold text-emerald-600">
+                                        ✓
+                                      </span>
+                                    )}
+                                    {s.answer === "no" && (
+                                      <span title="Can't make this game" className="shrink-0 rounded bg-red-100 px-1 text-[10px] font-bold text-red-700 dark:bg-red-500/15 dark:text-red-300">
+                                        ✕ Can&apos;t
+                                      </span>
+                                    )}
                                     {!x.started && (
                                       <button
                                         type="button"
@@ -449,7 +459,7 @@ function withSpots(b: OfficialsBoard, change: (g: BoardGame) => BoardGame): Offi
 // An official taken off one game.
 function takenOff(b: OfficialsBoard, officialId: string, gameId: string): OfficialsBoard {
   return withSpots(b, (x) =>
-    x.id !== gameId ? x : { ...x, spots: x.spots.map((s) => (s.official?.id === officialId ? { ...s, official: null, assignedBy: null } : s)) },
+    x.id !== gameId ? x : { ...x, spots: x.spots.map((s) => (s.official?.id === officialId ? { ...s, official: null, assignedBy: null, answer: null } : s)) },
   );
 }
 
@@ -460,8 +470,8 @@ function moved(b: OfficialsBoard, m: Moving, gameId: string | null, position: nu
   return withSpots(b, (x) => ({
     ...x,
     spots: x.spots.map((s) => {
-      if (x.id === gameId && s.position === position) return { ...s, official: { id: m.officialId, name }, assignedBy: null };
-      if (m.from && x.id === m.from.gameId && s.position === m.from.position) return { ...s, official: null, assignedBy: null };
+      if (x.id === gameId && s.position === position) return { ...s, official: { id: m.officialId, name }, assignedBy: null, answer: m.from?.gameId === x.id ? (x.spots.find((y) => y.position === m.from!.position)?.answer ?? null) : null };
+      if (m.from && x.id === m.from.gameId && s.position === m.from.position) return { ...s, official: null, assignedBy: null, answer: null };
       return s;
     }),
   }));

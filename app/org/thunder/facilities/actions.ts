@@ -4,6 +4,7 @@ import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import * as facilities from "@/lib/facilities";
 import * as gymImport from "@/lib/gym-import";
+import { setTeamGym } from "@/lib/practice/team-gyms";
 import { managesGyms, setGymPin, setGymPlace, setSchedulerPin, suggestPlaces } from "@/lib/places";
 
 // Session checked here; the Facilities area and Thunder's features are checked in lib/facilities.
@@ -132,6 +133,20 @@ export async function setSchedulerGymPin(org: string, gymKey: string, pin: strin
     return await setSchedulerPin({ pool: db, now: () => new Date() }, user, String(org), gymKey, pin === null ? null : { pin, label });
   } catch (e) {
     console.error("Scheduler pin failed:", e);
+    return { ok: false as const, message: "Something went wrong. Please try again." };
+  }
+}
+
+// Team Practice Facilities: check or uncheck a gym for a team (Directors of Facilities or Practices; checked again in
+// lib/practice/team-gyms).
+export async function setTeamGymAction(input: { teamId: unknown; gym: unknown; on: unknown }) {
+  const user = await currentUser();
+  if (!user) return { ok: false as const, message: "Please log in again." };
+  if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  try {
+    return await setTeamGym({ pool: db, now: () => new Date() }, user, input);
+  } catch (e) {
+    console.error("Team practice facility change failed:", e);
     return { ok: false as const, message: "Something went wrong. Please try again." };
   }
 }

@@ -32,7 +32,7 @@ export function DeleteTeamButton({ org, id, name }: { org: string; id: string; n
           start(async () => {
             const r = await removeTeam(org, id);
             if (!r.ok) return setMsg(r.message);
-            router.push(`/org/${org}/teams`);
+            router.push(`/org/${org}?open=teams#teams`);
           });
         }}
       >

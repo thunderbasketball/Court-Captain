@@ -254,11 +254,11 @@ describe("Register a team (outside coaches, no login yet)", () => {
     expect(await teamSignupGo(deps, "4235550101", "1111", { to: "register", slug })).toMatchObject({ step: "error" });
     expect(await teamSignupGo(deps, "4235550101", "2468", { to: "register", slug })).toMatchObject({
       step: "loggedIn",
-      next: "/org/magic/teams?view=register",
+      next: "/org/magic?open=teams&view=register#teams",
     });
     expect(await teamSignupGo(deps, "4235550101", "2468", { to: "org", slug })).toMatchObject({ step: "error" }); // not an organization
     expect(
       await teamSignupGo(deps, "4235550101", "2468", { to: "switch", slug, name: "Hixson Hoops", short: "Hixson" }),
-    ).toMatchObject({ step: "loggedIn", slug: "hixson-hoops", next: "/org/hixson-hoops/teams" });
+    ).toMatchObject({ step: "loggedIn", slug: "hixson-hoops", next: "/org/hixson-hoops?open=teams#teams" });
   }, 60_000);
 });

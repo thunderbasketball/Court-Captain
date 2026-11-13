@@ -6,8 +6,10 @@ import { myDashboard } from "@/lib/me";
 import { formatCell } from "@/lib/phone";
 import { TZ } from "@/lib/time";
 import AppHeader from "../AppHeader";
+import OfficiatingGames from "./OfficiatingGames";
 import { Chip, EmailLink, PageTitle, PhoneLink, card } from "../ui";
 
+const clock = (d: Date) => d.toLocaleTimeString("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" });
 const when = (d: Date) =>
   d.toLocaleString("en-US", {
     timeZone: TZ,
@@ -91,6 +93,32 @@ export default async function Dashboard({ user, coachId }: { user: SessionUser; 
             </p>
           )}
         </section>
+
+        {d.officiating.length > 0 && (
+          <section>
+            <h2 className={h2}>Games to officiate</h2>
+            <OfficiatingGames
+              canAnswer={own}
+              games={d.officiating.map((g) => ({
+                id: g.id,
+                kind: g.kind,
+                group: g.group,
+                orgName: g.orgName,
+                home: g.home,
+                away: g.away,
+                day: g.start.toLocaleDateString("en-US", { timeZone: TZ, weekday: "short", month: "short", day: "numeric" }),
+                time: `${clock(g.start)} – ${clock(g.end)}`,
+                place: g.place,
+                address: g.address,
+                directions: `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(g.address ?? g.place)}`,
+                position: g.position,
+                partner: g.partner,
+                answer: g.answer,
+                started: g.started,
+              }))}
+            />
+          </section>
+        )}
 
         <section>
           <h2 className={h2}>{own ? "Your" : "Their"} teams</h2>

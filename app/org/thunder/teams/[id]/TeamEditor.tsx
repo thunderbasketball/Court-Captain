@@ -415,7 +415,7 @@ export function DeleteTeamButton({
           start(async () => {
             const r = await deleteTeam(teamId);
             if (!r.ok) return setError(r.message);
-            router.replace("/org/thunder/teams");
+            router.replace("/org/thunder?open=teams#teams");
           });
         }}
         className="w-full rounded-full px-4 py-2.5 text-sm font-semibold text-red-600 ring-1 ring-red-600/30 hover:bg-red-50 disabled:opacity-50 dark:ring-red-400/30 dark:hover:bg-red-500/10"

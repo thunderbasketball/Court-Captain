@@ -41,8 +41,8 @@ describe("week grid", () => {
       `insert into users (coach_id, first_name, last_name, cell) values ('5550001','H','X','4235550001'), ('5550002','P','X','4235550002')`,
     );
     const t = await db.pool.query<{ id: string }>(
-      `insert into teams (name, gender, grades, grade_sort, level, practice_locations, created_by)
-       values ('4G A', 'Girls', '{4}', 4, 'REC', '{Action Church}', 'x'), ('5G B', 'Girls', '{5}', 5, 'REC', '{}', 'x') returning id::text`,
+      `insert into teams (name, gender, grades, grade_sort, level, practice_locations, created_by, practice_gyms_set)
+       values ('4G A', 'Girls', '{4}', 4, 'REC', '{Action Church}', 'x', true), ('5G B', 'Girls', '{5}', 5, 'REC', '{}', 'x', false) returning id::text`,
     );
     [team, other] = t.rows.map((r) => r.id);
     await db.pool.query(`insert into team_staff (team_id, coach_id, role, added_by) values ($1, '5550001', 'HeadCoach', 'x'), ($1, '5550002', 'TeamParent', 'x')`, [team]);

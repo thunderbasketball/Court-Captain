@@ -3,7 +3,7 @@
 import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import { decideOfficiating, requestOfficiating, setGymOfficials } from "@/lib/officiating";
-import { assignOfficial, removeOfficialFrom } from "@/lib/officiating-schedule";
+import { answerGame, assignOfficial, removeOfficialFrom } from "@/lib/officiating-schedule";
 
 // Session checked here; who may (each side) in lib/officiating.
 async function guarded<T>(fn: (u: NonNullable<Awaited<ReturnType<typeof currentUser>>>) => Promise<T>) {
@@ -37,4 +37,8 @@ export async function assignOfficialAction(
 
 export async function removeOfficialFromAction(officialsOrg: string, officialId: string, gameIds: string[]) {
   return guarded((u) => removeOfficialFrom({ pool: db, now: () => new Date() }, u, officialsOrg, officialId, gameIds));
+}
+// An official's ✓ / ✗ on a game they're on (their own spot only; checked in lib/officiating-schedule).
+export async function answerGameAction(gameId: string, answer: "yes" | "no" | null) {
+  return guarded((u) => answerGame({ pool: db, now: () => new Date() }, u, { gameId, answer }));
 }

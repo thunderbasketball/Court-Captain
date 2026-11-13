@@ -66,11 +66,13 @@ const label = (t: string) => {
 // the games with no home gym) into an open slot, between slots, or back to a selection area to take it off the grid.
 // Each move is saved at once, and checked on the server (open, free, neither team already playing then).
 export function GridBoard({
+  day,
   gyms,
   games: initial,
   minutes,
   divisions,
 }: {
+  day: string; // YYYY-MM-DD: the Game Day (for its gyms' printable scoresheets)
   gyms: GridGymView[];
   games: GridGame[];
   minutes: number;
@@ -383,6 +385,19 @@ export function GridBoard({
                 </span>
               </span>
             </summary>
+            {placed > 0 && (
+              <div className="flex justify-end px-3 pt-2">
+                {/* A Letter page per game placed here, filled in with the teams and their rosters, to print or save as a PDF. */}
+                <a
+                  href={`/print/scoresheets?day=${day}&gym=${encodeURIComponent(g.key)}`}
+                  target="_blank"
+                  rel="noopener"
+                  className="rounded-full px-3 py-1 text-xs font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
+                >
+                  🖨 Scoresheets ({placed})
+                </a>
+              </div>
+            )}
             {g.blocks.length ? (
               <div className="overflow-x-auto">
                 {/* Every court's column the same width (the time column narrow); scrolls sideways when they don't fit. */}

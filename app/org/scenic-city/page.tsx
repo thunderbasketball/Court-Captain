@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { innerParams } from "@/lib/home-card-href";
 import { gymsWithoutOfficials, officiatingRequests } from "@/lib/officiating";
 import { OfficiatingRequestsCard } from "../../officiating/OfficiatingCards";
 import OfficialsCard, { officialsCount } from "../../officials/OfficialsCard";
@@ -26,10 +27,10 @@ import { ScenicUsersContent } from "./users/content";
 import { ScenicCoachesContent } from "./members/coaches/content";
 import { HostingSitesMembersContent } from "./members/hosting-sites/content";
 
-export default function ScenicPage() {
+export default function ScenicPage({ searchParams }: PageProps<"/org/scenic-city">) {
   return (
     <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
-      <Scenic />
+      <Scenic searchParams={searchParams} />
     </Suspense>
   );
 }
@@ -86,9 +87,13 @@ const PARTS: { title: string; about: string; who: string[]; href?: string; featu
 ];
 
 // Scenic City home: only for people who hold a Scenic City role (checked on the server).
-async function Scenic() {
+// `?open=teams`: a link (old section page links too) opens that card.
+async function Scenic({ searchParams }: { searchParams: PageProps<"/org/scenic-city">["searchParams"] }) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
+  const sp = await searchParams;
+  const openCard = typeof sp.open === "string" ? sp.open : null;
+  const inner = Promise.resolve(innerParams(sp));
   const scenic = await currentScenic(user);
   if (!scenic) redirect("/");
   const features = await orgFeatures(db, "scenic-city");
@@ -122,7 +127,7 @@ async function Scenic() {
     ...(director && features.has("programs")
       ? [{ key: "home", title: "Home", body: <Analysis user={user} /> }]
       : []),
-    ...(shown.has("Teams") ? [{ key: "teams", title: "Teams", body: <ScenicTeamsContent embedded /> }] : []),
+    ...(shown.has("Teams") ? [{ key: "teams", title: "Teams", body: <ScenicTeamsContent searchParams={inner} embedded /> }] : []),
     // Programs: the same card as every organization's (its programs open right there).
     ...(shown.has("Programs")
       ? [{ key: "programs", title: "Programs", count: await programCount("scenic-city"), body: <ProgramsCard org="scenic-city" user={user} /> }]
@@ -202,7 +207,7 @@ async function Scenic() {
     <>
       <AppHeader user={user} context={scenic.key} tab="scenic-home" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <MembersCards cards={cards} open={null} heading={null} />
+        <MembersCards cards={cards} open={openCard} heading={null} />
       </main>
     </>
   );

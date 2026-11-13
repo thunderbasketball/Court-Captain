@@ -138,7 +138,7 @@ async function Team({
       <AppHeader user={user} tab="teams" context={asDirector ? "director" : `team:${team.id}`} />
       <main className="mx-auto w-full max-w-xl flex-1 space-y-4 px-4 py-6">
         {asDirector && (
-          <Link href="/org/thunder/teams" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
+          <Link href="/org/thunder?open=teams#teams" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
             ← Teams
           </Link>
         )}

@@ -1,4 +1,8 @@
 import { Suspense } from "react";
+import DocumentsCard from "../../documents/DocumentsCard";
+import { seesHostDocuments } from "@/lib/host-documents";
+import { innerParams } from "@/lib/home-card-href";
+import { TeamGymsContent } from "./facilities/team-gyms-content";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
@@ -28,10 +32,10 @@ import { UniformsContent } from "./uniforms/content";
 import { FacilitiesContent } from "./facilities/content";
 import { MembersContent } from "./members/content";
 
-export default function ThunderHomePage() {
+export default function ThunderHomePage({ searchParams }: PageProps<"/org/thunder">) {
   return (
     <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
-      <ThunderHome />
+      <ThunderHome searchParams={searchParams} />
     </Suspense>
   );
 }
@@ -40,10 +44,14 @@ export default function ThunderHomePage() {
 // cards, one per part this Director can open (the same parts as the tabs, in the same order): Home (uniform requests and,
 // for Owners and Admins, the metrics) open first, then Teams, Schedule, Uniforms, Facilities, Members and Support, each
 // loading in the background and opening on its own. Name and logo are in the header.
-async function ThunderHome() {
+// `?open=members&sub=coaches`: a link (old Members page links too) opens that card, and the part inside it.
+async function ThunderHome({ searchParams }: { searchParams: PageProps<"/org/thunder">["searchParams"] }) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   if (!user.isDirector) redirect("/");
+  const sp = await searchParams;
+  const openCard = typeof sp.open === "string" ? sp.open : null;
+  const inner = Promise.resolve(innerParams(sp));
   const features = await orgFeatures(db, "thunder");
   const admin = isThunderAdmin(user);
   // Owners and Admins: the organization's metrics above the cards.
@@ -86,7 +94,7 @@ async function ThunderHome() {
         ]
       : []),
     ...(features.has("team-building") && hasArea(user, "teams")
-      ? [{ key: "teams", title: "Teams", count: metrics?.teams?.total, alert: flags.teams, body: <TeamsContent embedded /> }]
+      ? [{ key: "teams", title: "Teams", count: metrics?.teams?.total, alert: flags.teams, body: <TeamsContent searchParams={inner} embedded /> }]
       : []),
     // Programs (CourtPlayers): Winter 26/27 and the like, with their Sessions (Directors of Events, Owners and Admins).
     ...(features.has("player-registration") && (admin || hasArea(user, "events"))
@@ -135,6 +143,9 @@ async function ThunderHome() {
                     <GymToolPanels org="thunder" />
                     <GymsContent embedded />
                   </SubCard>
+                  <SubCard title="Team Practice Facilities">
+                    <TeamGymsContent />
+                  </SubCard>
                   <SubCard title="Blackout Dates" action={<AddIcon id={BLACKOUT_ADD} label="Add blackout dates" />}>
                     <BlackoutsContent embedded />
                   </SubCard>
@@ -143,8 +154,12 @@ async function ThunderHome() {
             },
           ]
         : []),
+    // Documents: League rules and scoresheets for games Thunder hosts (Owners, Admins and Directors of Facilities).
+    ...((await seesHostDocuments(db, user, "thunder"))
+      ? [{ key: "documents", title: "Documents", body: <DocumentsCard org="thunder" user={user} /> }]
+      : []),
     ...(admin || hasArea(user, "teams", "players")
-      ? [{ key: "members", title: "Members", alert: (metrics?.waiting.requests ?? 0) > 0, body: <MembersContent embedded /> }]
+      ? [{ key: "members", title: "Members", alert: (metrics?.waiting.requests ?? 0) > 0, body: <MembersContent searchParams={inner} embedded /> }]
       : []),
     { key: "support", title: "Support", alert: (metrics?.waiting.newChats ?? 0) > 0, body: <SupportCard user={user} org="thunder" /> },
   ];
@@ -153,7 +168,7 @@ async function ThunderHome() {
     <>
       <AppHeader user={user} context="director" tab="thunder-home" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <MembersCards cards={cards} open={null} heading={null} />
+        <MembersCards cards={cards} open={openCard} heading={null} />
       </main>
     </>
   );

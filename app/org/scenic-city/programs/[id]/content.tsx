@@ -141,6 +141,10 @@ export async function ProgramContent({
                   rec={{ ...rec!, by: who ? rec!.by : null }}
                   gradeRules={await programGradeRules(db, p.id)}
                   today={p.today}
+                  rules={
+                    (await db.query<{ name: string }>("select rules_name as name from scenic_programs where id = $1 and rules is not null", [p.id]))
+                      .rows[0] ?? null
+                  }
                 />
               )}
             </div>

@@ -12,6 +12,6 @@ export default function Page(props: PageProps<"/org/thunder/members/requests">) 
 
 async function Go({ searchParams }: { searchParams: PageProps<"/org/thunder/members/requests">["searchParams"] }) {
   const view = (await searchParams).view;
-  redirect(`/org/thunder/members?open=requests${typeof view === "string" ? `&coaches=${encodeURIComponent(view)}` : ""}`);
+  redirect(`/org/thunder?open=members&sub=requests${typeof view === "string" ? `&coaches=${encodeURIComponent(view)}` : ""}#members`);
   return null;
 }

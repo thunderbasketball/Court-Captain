@@ -37,7 +37,7 @@ export default function NewTeamForm({ users, volunteers }: { users: PersonOption
         setError(null);
         start(async () => {
           const r = await createTeam({ gender, grades, level, headCoach });
-          if (r.ok) router.push("/org/thunder/teams");
+          if (r.ok) router.push("/org/thunder?open=teams#teams");
           else setError(r.message);
         });
       }}

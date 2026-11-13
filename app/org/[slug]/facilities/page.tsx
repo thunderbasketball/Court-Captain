@@ -1,10 +1,18 @@
+import { redirect } from "next/navigation";
 import { Suspense } from "react";
-import { OrgFacilitiesContent } from "./content";
+import { homeCardHref } from "@/lib/home-card-href";
 
-export default function Page({ params }: PageProps<"/org/[slug]/facilities">) {
+// Facilities is a card on the organization's Home, not its own page: this address opens that card.
+export default function Page(props: PageProps<"/org/[slug]/facilities">) {
   return (
-    <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
-      <OrgFacilitiesContent params={params} />
+    <Suspense fallback={null}>
+      <Go {...props} />
     </Suspense>
   );
+}
+
+async function Go({ params, searchParams }: PageProps<"/org/[slug]/facilities">) {
+  const { slug } = await params;
+  redirect(homeCardHref(`/org/${encodeURIComponent(slug)}`, "facilities", await searchParams));
+  return null;
 }

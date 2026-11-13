@@ -647,6 +647,29 @@ export async function setProgramLogo(deps: Deps, viewer: SessionUser, id: unknow
   return r.rowCount ? { ok: true } : { ok: false, message: "That program no longer exists." };
 }
 
+// A League's rules (Directors of Programs): a PDF up to 4 MB, checked by its first bytes. null removes it. Hosting
+// organizations open it from their Home's Documents card.
+export const RULES_MAX = 4 * 1024 * 1024;
+export async function setProgramRules(
+  deps: Deps,
+  viewer: SessionUser,
+  id: unknown,
+  file: { bytes: Uint8Array; name: string } | null,
+): Promise<Result> {
+  if (!isId(id)) return { ok: false, message: "That program no longer exists." };
+  if (file) {
+    if (file.bytes.length > RULES_MAX) return { ok: false, message: "The rules must be a PDF of 4 MB or smaller." };
+    if (Buffer.from(file.bytes.subarray(0, 5)).toString("latin1") !== "%PDF-") return { ok: false, message: "The rules must be a PDF." };
+  }
+  if (!(await isProgramsDirector(deps.pool, viewer))) return { ok: false, message: programsOnly };
+  const name = file ? file.name.replace(/[^\p{L}\d .,'()&_-]/gu, "").trim().slice(0, 120) || "Rules.pdf" : null;
+  const r = await deps.pool.query(
+    "update scenic_programs set rules = $2, rules_name = $3, rules_by = $4, rules_at = $5 where id = $1",
+    [id, file ? Buffer.from(file.bytes) : null, name, `${viewer.firstName} ${viewer.lastName}`, deps.now()],
+  );
+  return r.rowCount ? { ok: true } : { ok: false, message: "That program no longer exists." };
+}
+
 // ---- Game dates (Directors of Programs) ----
 
 // The calendar's changes in one go: `add` Game Days, `addBrackets` Bracket Days (an existing date in either list changes

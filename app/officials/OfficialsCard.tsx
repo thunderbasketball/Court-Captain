@@ -9,6 +9,7 @@ import { AddIcon, CardPanel } from "../CardIcons";
 import CardSlot from "../CardSlot";
 import { EmailLink, GroupCard, PersonRow, PhoneLink } from "../ui";
 import { OFFICIAL_LEVELS } from "@/lib/official-levels";
+import { ViewAsButton } from "../ViewAsButton";
 import { AddOfficialForm, ImportOfficialsForm, OfficialLevel, RemoveOfficial } from "./OfficialForms";
 
 export const OFFICIALS_ADD = "officials-add";
@@ -92,7 +93,10 @@ export default async function OfficialsCard({ org, user, inCard = false }: { org
                       <OfficialLevel org={org} coachId={o.id} level={o.level} />
                       <div className="flex items-center justify-between gap-2 text-xs text-zinc-500">
                         <span>{who ? `Added by ${o.addedBy}` : "Official"}</span>
-                        <RemoveOfficial org={org} coachId={o.id} name={o.name} />
+                        <span className="flex items-center gap-2">
+                          {who && !user.actingBy && o.id !== user.coachId && <ViewAsButton coachId={o.id} name={o.name} />}
+                          <RemoveOfficial org={org} coachId={o.id} name={o.name} />
+                        </span>
                       </div>
                     </PersonRow>
                   );
