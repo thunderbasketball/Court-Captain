@@ -1,7 +1,7 @@
-import Link from "next/link";
 import type { TeamPractice } from "@/lib/practice/schedule";
 import type { OwnPractice } from "@/lib/team-practices";
 import { TZ } from "@/lib/time";
+import BookedPracticeRow from "./BookedPracticeRow";
 import { OwnPracticeAdd, OwnPracticeRow } from "./OwnPractices";
 
 const dayLabel = (d: Date) => d.toLocaleDateString("en-US", { timeZone: TZ, weekday: "short", month: "numeric", day: "numeric" });
@@ -16,6 +16,7 @@ export default function TeamPractices({
   booked,
   own,
   canChange,
+  canCancel = false,
   locations,
   today,
   who,
@@ -27,6 +28,7 @@ export default function TeamPractices({
   booked: TeamPractice[];
   own: OwnPractice[];
   canChange: boolean;
+  canCancel?: boolean; // the team's coaches and manager (and Directors) may cancel booked practices
   locations: string[];
   today: string;
   who: boolean; // Owners and Admins see who booked or added it
@@ -43,19 +45,14 @@ export default function TeamPractices({
       <ul className="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-white/5 dark:border-white/5">
         {rows.map((r) =>
           r.kind === "booked" ? (
-            <li key={`b${r.p.id}`} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
-              <Link
-                href={`/events/practice/${r.p.id}`}
-                className="font-semibold text-thunder-blue underline-offset-2 hover:underline dark:text-blue-400"
-              >
-                {dayLabel(r.p.startsAt)} · {timeLabel(r.p.startsAt)}
-                <span className="block text-xs font-normal">✓ Attendance</span>
-              </Link>
-              <span className="text-right text-zinc-500">
-                {r.p.gym} {r.p.court}
-                {who && r.p.bookedBy && <span className="block text-xs text-zinc-400">by {r.p.bookedBy}</span>}
-              </span>
-            </li>
+            <BookedPracticeRow
+              key={`b${r.p.id}`}
+              id={r.p.id}
+              when={`${dayLabel(r.p.startsAt)} · ${timeLabel(r.p.startsAt)}`}
+              gym={`${r.p.gym} ${r.p.court}`}
+              bookedBy={who ? r.p.bookedBy : null}
+              canCancel={canCancel}
+            />
           ) : (
             <OwnPracticeRow
               key={`o${r.p.id}`}

@@ -76,7 +76,7 @@ async function OrgTeam({
   // Practices: its own-gym practices (a place the team found itself: any time and length, no limits).
   const ref = { org: slug, teamId: t.id };
   const own = await upcomingOwnPractices({ pool: db, now: () => new Date() }, ref, 12); // also for Next 7 days
-  const canOwn = practicesOn && !user.actingBy && (await canChangeOwnPractices(db, user, ref));
+  const canOwn = practicesOn && (await canChangeOwnPractices(db, user, ref));
   const published = games.filter((g) => g.published);
   // Its scrimmages (another of the organization's teams, an outside team, or TBD), on Next 7 days and Games.
   const scrims = (await teamScrimmages({ pool: db, now: () => new Date() }, slug, [t.id]))[t.id] ?? [];

@@ -115,7 +115,7 @@ async function Team({
   const own = await upcomingOwnPractices(deps, { org: "thunder", teamId: team.id }, 12);
   // Its scrimmages (another Thunder team, an outside team, or TBD), on Next 7 days and Games.
   const scrims = (await teamScrimmages({ pool: db, now: () => new Date() }, "thunder", [team.id]))[team.id] ?? [];
-  const canOwn = !user.actingBy && (await canChangeOwnPractices(db, user, { org: "thunder", teamId: team.id }));
+  const canOwn = await canChangeOwnPractices(db, user, { org: "thunder", teamId: team.id });
   // Staff whose own children are on the team answer ✓ / ✗ for them in Next 7 days (as their parent).
   const myKids = await myPlayers(db, user, { org: "thunder", teamId: team.id }); // shown while viewing as them too (view only)
   // One page: the team's card on top, then Staff, Players, Available players, Uniforms and Practices as cards that open
@@ -477,6 +477,7 @@ async function Team({
             booked={practices}
             own={own}
             canChange={canOwn}
+            canCancel={canBook}
             locations={canOwn ? await ownPracticeLocations(deps, { org: "thunder", teamId: team.id }) : []}
             today={easternDate(new Date())}
             who={who}
