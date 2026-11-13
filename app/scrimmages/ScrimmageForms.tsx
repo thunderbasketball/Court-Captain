@@ -12,13 +12,14 @@ const OUTSIDE = "outside";
 const ELSEWHERE = "elsewhere";
 
 type Choices = {
-  teams: { id: string; name: string }[];
+  teams: { id: string; name: string; gender: string; grade: number }[];
   gyms: { id: string; name: string }[];
   officials: { org: string; name: string }[];
 };
 
 type Fields = {
   home: string;
+  homeName: string;
   away: string;
   awayName: string;
   date: string;
@@ -29,8 +30,9 @@ type Fields = {
   officials: string;
 };
 
-// + Scrimmage's form, right in the program's card: your team; the other team (one of yours, or an outside team typed
-// in); date, start and length; where (one of your gyms, the whole gym, which blocks its time, or any place typed in);
+// + Scrimmage's form, right in the program's card: Home and Away, each one of your teams, TBD, or an outside team typed in.
+// Picking a team on one side narrows the other side to teams of the same gender a grade up or down (the same team is
+// listed too, with a warning: an intrasquad scrimmage); with neither picked, either side lists every team; date, start and length; where (one of your gyms, the whole gym, which blocks its time, or any place typed in);
 // Schedule officials (ticked: pick the Officials Group, and it shows on that group's page to be scheduled).
 // With `edit`: the same form filled in, saving changes to that scrimmage.
 export function NewScrimmageForm({
@@ -47,16 +49,19 @@ export function NewScrimmageForm({
   onDone?: () => void;
 }) {
   const router = useRouter();
-  const blank: Fields = { home: "", away: "", awayName: "", date: "", time: "", minutes: "60", gymId: "", location: "", officials: "" };
+  const blank: Fields = { home: "", homeName: "", away: "", awayName: "", date: "", time: "", minutes: "60", gymId: "", location: "", officials: "" };
   const [f, setF] = useState<Fields>(edit?.form ?? blank);
   const [refs, setRefs] = useState(!!edit?.form.officials); // Schedule officials ticked
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, start] = useTransition();
   const set = (k: keyof typeof blank) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const outside = f.away === OUTSIDE;
+  const homeOutside = f.home === OUTSIDE;
   const elsewhere = f.gymId === ELSEWHERE;
+  const team = (id: string) => choices.teams.find((t) => t.id === id);
+  const same = !!f.home && f.home === f.away && !!team(f.home);
   const ready =
-    f.home && f.away && (!outside || f.awayName.trim()) && f.date && f.time && f.gymId && (!elsewhere || f.location.trim()) && (!refs || f.officials);
+    f.home && f.away && (!outside || f.awayName.trim()) && (!homeOutside || f.homeName.trim()) && f.date && f.time && f.gymId && (!elsewhere || f.location.trim()) && (!refs || f.officials);
   return (
     <form
       className="space-y-3"
@@ -64,7 +69,8 @@ export function NewScrimmageForm({
         e.preventDefault();
         start(async () => {
           const input = {
-            home: f.home,
+            home: homeOutside ? "" : f.home,
+            homeName: homeOutside ? f.homeName : "",
             away: outside ? "" : f.away,
             awayName: outside ? f.awayName : "",
             date: f.date,
@@ -93,38 +99,28 @@ export function NewScrimmageForm({
     >
       {!edit && <p className="text-sm font-semibold">Add a scrimmage</p>}
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="block">
-          <span className={label}>Your team</span>
-          <select className={input} value={f.home} onChange={set("home")}>
-            <option value="">Pick a team…</option>
-            <option value="tbd">TBD</option>
-            {choices.teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          <span className={label}>Against</span>
-          <select className={input} value={f.away} onChange={set("away")}>
-            <option value="">Pick a team…</option>
-            <option value="tbd">TBD</option>
-            <option value={OUTSIDE}>An outside team (type its name)</option>
-            {choices.teams
-              .filter((t) => t.id !== f.home)
-              .map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-          </select>
-        </label>
-        {outside && (
-          <label className="block sm:col-span-2">
-            <span className={label}>Outside team</span>
-            <input className={input} maxLength={60} placeholder="Signal Mountain 5G" value={f.awayName} onChange={set("awayName")} />
-          </label>
+        <TeamSide
+          title="Home"
+          value={f.home}
+          name={f.homeName}
+          other={team(f.away)}
+          teams={choices.teams}
+          onPick={(v) => setF({ ...f, home: v })}
+          onName={(v) => setF({ ...f, homeName: v })}
+        />
+        <TeamSide
+          title="Away"
+          value={f.away}
+          name={f.awayName}
+          other={team(f.home)}
+          teams={choices.teams}
+          onPick={(v) => setF({ ...f, away: v })}
+          onName={(v) => setF({ ...f, awayName: v })}
+        />
+        {same && (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 sm:col-span-2 dark:bg-amber-500/10 dark:text-amber-300">
+            ⚠ {team(f.home)!.name} is on both sides: an intrasquad scrimmage. Pick another team if that&apos;s not what you meant.
+          </p>
         )}
         <label className="block">
           <span className={label}>Date</span>
@@ -258,6 +254,7 @@ export function ScrimmageItem({
     home: string;
     away: string;
     outside: boolean;
+    homeOutside?: boolean;
     place: string;
     minutes: number;
     addedBy: string;
@@ -274,7 +271,8 @@ export function ScrimmageItem({
       <div className="flex items-start justify-between gap-2">
         <span className="min-w-0">
           <span className="block font-medium">
-            {s.home} vs {s.away}
+            {s.home}
+            {s.homeOutside && <span className="font-normal text-zinc-500"> (outside)</span>} vs {s.away}
             {s.outside && <span className="font-normal text-zinc-500"> (outside)</span>}
           </span>
           <span className="block text-xs text-zinc-500">
@@ -282,6 +280,16 @@ export function ScrimmageItem({
           </span>
           {s.officials && <span className="block text-xs text-zinc-500">Officials: {s.officials}</span>}
           <span className="block text-xs text-zinc-400">Added by {s.addedBy}</span>
+          {choices && (
+            <a
+              href={`/print/scoresheets?scrimmage=${s.id}`}
+              target="_blank"
+              rel="noopener"
+              className="mt-1 inline-block text-xs font-semibold text-thunder-blue hover:underline dark:text-blue-400"
+            >
+              🖨 Scoresheet
+            </a>
+          )}
         </span>
         {choices && (
           <button
@@ -304,5 +312,53 @@ export function ScrimmageItem({
         </div>
       )}
     </li>
+  );
+}
+
+// One side of a scrimmage: Pick a team…, TBD, An outside team (its name typed in), then the organization's teams. With a
+// team picked on the other side, only teams of its gender a grade up or down (that team too, marked "same team").
+function TeamSide({
+  title,
+  value,
+  name,
+  other,
+  teams,
+  onPick,
+  onName,
+}: {
+  title: string;
+  value: string;
+  name: string;
+  other: { id: string; gender: string; grade: number } | undefined;
+  teams: Choices["teams"];
+  onPick: (v: string) => void;
+  onName: (v: string) => void;
+}) {
+  const list = other
+    ? teams.filter((t) => t.id === value || (t.gender === other.gender && Math.abs(t.grade - other.grade) <= 1))
+    : teams;
+  return (
+    <div className="space-y-3">
+      <label className="block">
+        <span className={label}>{title}</span>
+        <select className={input} value={value} onChange={(e) => onPick(e.target.value)}>
+          <option value="">Pick a team…</option>
+          <option value="tbd">TBD</option>
+          <option value={OUTSIDE}>An outside team (type its name)</option>
+          {list.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+              {other && t.id === other.id ? " (same team)" : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      {value === OUTSIDE && (
+        <label className="block">
+          <span className={label}>{title}: outside team</span>
+          <input className={input} maxLength={60} placeholder="Signal Mountain 5G" value={name} onChange={(e) => onName(e.target.value)} />
+        </label>
+      )}
+    </div>
   );
 }

@@ -4,7 +4,10 @@
 // Scheduling, and for an organization's own gyms its Admins and Directors of Facilities (Documents card). Read only.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
-import { orgHasArea } from "./org-admin";
+import { hasArea, orgHasArea } from "./org-admin";
+import { managesOfficials } from "./officials";
+import { orgInfo } from "./org-registry";
+import { TZ } from "./time";
 import { isScheduler } from "./scenic-programs";
 import { gradeRange } from "./scenic-teams";
 
@@ -24,6 +27,7 @@ export type Scoresheet = {
   address: string | null;
   home: SheetTeam | null; // null: TBD
   away: SheetTeam | null;
+  brand?: { name: string; logo: string | null }; // an organization's own game (a scrimmage): its name and logo on top
   officials: string[]; // the game's assigned referees, by spot (League games get them once officials can be assigned to them)
 };
 export type GymScoresheets = { gym: string; host: string; date: string; sheets: Scoresheet[] };
@@ -119,5 +123,94 @@ export async function gymScoresheets(deps: Deps, viewer: SessionUser, day: unkno
       away: g.away ? (teams.get(g.away) ?? null) : null,
       officials: [],
     })),
+  };
+}
+
+// A scrimmage's scoresheet (the 🖨 on a program's scrimmage), branded with the organization's name and logo: its
+// teams' rosters (its own teams; an outside team or TBD has lines to write in), the place, and the game's assigned
+// referees. For the organization's Admins and Directors of Teams or Events, a playing team's Head Coach, and the
+// officials group scheduling it.
+export async function scrimmageScoresheet(deps: Deps, viewer: SessionUser, id: unknown): Promise<Scoresheet | null> {
+  if (typeof id !== "string" || !/^\d{1,18}$/.test(id)) return null;
+  const s = (
+    await deps.pool.query<{
+      org: string;
+      officials_org: string | null;
+      program: string;
+      date: string;
+      starts: string;
+      minutes: number;
+      place: string;
+      address: string | null;
+      home_t: string | null;
+      home_o: string | null;
+      home_name: string | null;
+      away_t: string | null;
+      away_o: string | null;
+      away_name: string | null;
+    }>(
+      `select s.org, s.officials_org, p.name as program, to_char(s.starts_at at time zone $2, 'YYYY-MM-DD') as date,
+              to_char(s.starts_at at time zone $2, 'HH24:MI') as starts, s.minutes, s.place,
+              nullif(coalesce(g.address, g.pin_address), '') as address,
+              s.home_thunder_team_id::text as home_t, s.home_org_team_id::text as home_o, s.home_name,
+              s.away_thunder_team_id::text as away_t, s.away_org_team_id::text as away_o, s.away_name
+         from scrimmages s join player_programs p on p.id = s.program_id left join gyms g on g.id = s.gym_id
+        where s.id = $1`,
+      [id, TZ],
+    )
+  ).rows[0];
+  if (!s) return null;
+  const teamIds = [s.home_t, s.home_o, s.away_t, s.away_o].filter((x): x is string => !!x);
+  const may =
+    (s.org === "thunder" ? hasArea(viewer, "teams", "events") : await orgHasArea(deps.pool, viewer.coachId, s.org, "teams", "events")) ||
+    (teamIds.length > 0 &&
+      !!(
+        await deps.pool.query(
+          s.org === "thunder"
+            ? "select 1 from team_staff where team_id = any($1::bigint[]) and coach_id = $2 and role = 'HeadCoach'"
+            : "select 1 from org_team_coaches where team_id = any($1::bigint[]) and coach_id = $2 and role = 'HeadCoach'",
+          [teamIds, viewer.coachId],
+        )
+      ).rowCount) ||
+    (!!s.officials_org && (await managesOfficials(deps.pool, viewer, s.officials_org)));
+  if (!may) return null;
+  const side = async (thunderId: string | null, orgId: string | null, outside: string | null): Promise<SheetTeam | null> => {
+    if (outside) return { name: outside, coach: null, players: [] };
+    if (!thunderId && !orgId) return null;
+    const r = await deps.pool.query<{ name: string; players: SheetPlayer[] }>(
+      thunderId
+        ? `select t.name, coalesce((select json_agg(json_build_object('jersey', nullif(un.number, ''), 'name', x.first_name || ' ' || x.last_name)
+                                      order by nullif(un.number, '')::int nulls last, lower(x.last_name), lower(x.first_name))
+                     from team_players x left join team_uniforms un on un.team_id = x.team_id and un.registrant_id = x.registrant_id
+                    where x.team_id = t.id), '[]') as players
+             from teams t where t.id = $1`
+        : `select t.name, coalesce((select json_agg(json_build_object('jersey', x.jersey, 'name', x.first_name || ' ' || x.last_name)
+                                      order by nullif(x.jersey, '')::int nulls last, lower(x.last_name), lower(x.first_name))
+                     from org_team_players x where x.team_id = t.id), '[]') as players
+             from org_teams t where t.id = $1`,
+      [thunderId ?? orgId],
+    );
+    return r.rows[0] ? { name: r.rows[0].name, coach: null, players: r.rows[0].players } : null;
+  };
+  const refs = await deps.pool.query<{ name: string }>(
+    `select u.first_name || ' ' || u.last_name as name from game_officials x join users u on u.coach_id = x.coach_id
+      where x.scrimmage_id = $1 order by x.position`,
+    [id],
+  );
+  const org = await orgInfo(deps.pool, s.org);
+  return {
+    id,
+    league: s.program,
+    division: "Scrimmage",
+    date: s.date,
+    starts: s.starts,
+    minutes: s.minutes,
+    gym: s.place,
+    court: "",
+    address: s.address,
+    home: await side(s.home_t, s.home_o, s.home_name),
+    away: await side(s.away_t, s.away_o, s.away_name),
+    officials: refs.rows.map((r) => r.name),
+    brand: org ? { name: org.name, logo: org.bigLogo ?? org.logo } : undefined,
   };
 }

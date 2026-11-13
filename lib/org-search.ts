@@ -175,13 +175,14 @@ async function searchThings(deps: Deps, org: string, words: string[]): Promise<T
          from events e where e.org = $2 and ${matches(["e.name", "e.location", "e.notes"])}
        union all
        select 'scrimmage', s.id::text,
-              coalesce((select name from teams where id = s.home_thunder_team_id), (select name from org_teams where id = s.home_org_team_id), 'TBD')
+              coalesce(s.home_name, (select name from teams where id = s.home_thunder_team_id), (select name from org_teams where id = s.home_org_team_id), 'TBD')
               || ' vs ' ||
               coalesce(s.away_name, (select name from teams where id = s.away_thunder_team_id), (select name from org_teams where id = s.away_org_team_id), 'TBD'),
               to_char(s.starts_at at time zone 'America/New_York', 'Mon FMDD, FMHH12:MI AM') || ' · ' || s.place, '${base}'
          from scrimmages s where s.org = $2 and ${matches([
            "s.place",
            "s.away_name",
+           "s.home_name",
            "(select string_agg(name, ' ') from teams where id in (s.home_thunder_team_id, s.away_thunder_team_id))",
            "(select string_agg(name, ' ') from org_teams where id in (s.home_org_team_id, s.away_org_team_id))",
          ])}

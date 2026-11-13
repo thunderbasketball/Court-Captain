@@ -62,7 +62,7 @@ export async function officialsBoard(deps: Deps, viewer: SessionUser, officialsO
     }>(
       `select s.id::text, to_char(s.starts_at at time zone $3, 'YYYY-MM-DD') as day,
               s.org || ':' || coalesce('g' || s.gym_id, 'p' || lower(s.place)) as gym, s.place, nullif(g.address, '') as address,
-              o.name as org_name, coalesce(${name("home")}, 'TBD') as home, coalesce(s.away_name, ${name("away")}, 'TBD') as away,
+              o.name as org_name, coalesce(s.home_name, ${name("home")}, 'TBD') as home, coalesce(s.away_name, ${name("away")}, 'TBD') as away,
               s.starts_at, s.minutes,
               coalesce((select json_agg(json_build_object('position', x.position, 'id', x.coach_id,
                                                           'name', u.first_name || ' ' || u.last_name, 'by', x.assigned_by,
@@ -266,7 +266,7 @@ export async function myOfficiating(deps: Pick<Deps, "pool" | "now">, coachId: s
     response: Answer;
   }>(
     `select s.id::text, coalesce(go.short_name, go.name) as grp, o.name as org_name,
-            coalesce(${name("home")}, 'TBD') as home, coalesce(s.away_name, ${name("away")}, 'TBD') as away,
+            coalesce(s.home_name, ${name("home")}, 'TBD') as home, coalesce(s.away_name, ${name("away")}, 'TBD') as away,
             s.starts_at, s.minutes, s.place, nullif(g.address, '') as address, x.position, x.response,
             (select u.first_name || ' ' || u.last_name from game_officials y join users u on u.coach_id = y.coach_id
               where y.scrimmage_id = s.id and y.coach_id <> x.coach_id limit 1) as partner

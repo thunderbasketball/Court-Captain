@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
-import { gymScoresheets, type Scoresheet, type SheetTeam } from "@/lib/scoresheets";
+import { gymScoresheets, scrimmageScoresheet, type Scoresheet, type SheetTeam } from "@/lib/scoresheets";
 import PrintButton from "./PrintButton";
 
 export default function Page({ searchParams }: PageProps<"/print/scoresheets">) {
@@ -51,6 +51,52 @@ async function Sheets({ searchParams }: { searchParams: PageProps<"/print/scores
         <Sheet s={BLANK} n={null} />
       </div>
     );
+  // Every scrimmage at a place on a day (🖨 Scoresheets on that place in a program's Scrimmages): a page each, by time.
+  if (typeof sp.scrimmages === "string") {
+    const ids = [...new Set(sp.scrimmages.split(",").filter((x) => /^\d{1,18}$/.test(x)))].slice(0, 40);
+    const sheets = (await Promise.all(ids.map((id) => scrimmageScoresheet({ pool: db }, user, id))))
+      .filter((x): x is Scoresheet => !!x)
+      .sort((a, b) => `${a.date} ${a.starts}`.localeCompare(`${b.date} ${b.starts}`));
+    if (!sheets.length)
+      return <p className="p-6 text-sm">These scoresheets are for the organization&apos;s Directors, the teams&apos; Head Coaches and its officials group.</p>;
+    return (
+      <div className="scoresheets bg-zinc-100 text-black print:bg-white">
+        <style>{PRINT_CSS}</style>
+        <div className="mx-auto flex max-w-[8.5in] flex-wrap items-center justify-between gap-3 px-4 py-4 print:hidden">
+          <div>
+            <p className="font-semibold">
+              {sheets[0].gym} · {longDate(sheets[0].date)}
+            </p>
+            <p className="text-sm text-zinc-600">
+              {sheets.length} scrimmage{sheets.length === 1 ? "" : "s"}, one page each
+            </p>
+          </div>
+          <PrintButton count={sheets.length} />
+        </div>
+        {sheets.map((x, i) => (
+          <Sheet key={x.id} s={x} n={i + 1} />
+        ))}
+      </div>
+    );
+  }
+  // One scrimmage's sheet (🖨 on a program's scrimmage), branded with its organization.
+  if (typeof sp.scrimmage === "string") {
+    const sheet = await scrimmageScoresheet({ pool: db }, user, sp.scrimmage);
+    if (!sheet)
+      return <p className="p-6 text-sm">This scoresheet is for the organization&apos;s Directors, the teams&apos; Head Coaches and its officials group.</p>;
+    return (
+      <div className="scoresheets bg-zinc-100 text-black print:bg-white">
+        <style>{PRINT_CSS}</style>
+        <div className="mx-auto flex max-w-[8.5in] items-center justify-between gap-3 px-4 py-4 print:hidden">
+          <p className="font-semibold">
+            {sheet.home?.name ?? "TBD"} vs {sheet.away?.name ?? "TBD"} · {longDate(sheet.date)}
+          </p>
+          <PrintButton count={1} />
+        </div>
+        <Sheet s={sheet} n={0} />
+      </div>
+    );
+  }
   const data = await gymScoresheets({ pool: db }, user, sp.day, sp.gym);
   if (!data)
     return <p className="p-6 text-sm">Scoresheets are for the Scheduler, and for the gym&apos;s own Admins and Directors of Facilities.</p>;
@@ -81,8 +127,14 @@ function Sheet({ s, n }: { s: Scoresheet; n: number | null }) {
   return (
     <section className="sheet mx-auto mb-6 w-full max-w-[8.5in] bg-white p-5 text-[11px] leading-tight shadow print:mb-0 print:max-w-none print:p-0 print:shadow-none">
       <header className="mb-2 flex items-start justify-between gap-4 border-b-2 border-black pb-1.5">
-        <div>
-          <p className="text-lg font-bold">Official Scoresheet</p>
+        <div className="flex items-center gap-3">
+          {s.brand?.logo && (
+            // eslint-disable-next-line @next/next/no-img-element -- the organization's logo, printed
+            <img src={s.brand.logo} alt="" className="size-12 object-contain" />
+          )}
+          <div>
+          {s.brand && <p className="text-[13px] font-bold">{s.brand.name}</p>}
+          <p className="text-lg font-bold">{s.brand ? "Scrimmage Scoresheet" : "Official Scoresheet"}</p>
           <p className="text-[12px]">
             {blank ? (
               <>
@@ -92,6 +144,7 @@ function Sheet({ s, n }: { s: Scoresheet; n: number | null }) {
               `${s.league} · ${s.division}`
             )}
           </p>
+          </div>
         </div>
         <div className="text-right text-[12px]">
           <p className="font-semibold">
@@ -109,7 +162,7 @@ function Sheet({ s, n }: { s: Scoresheet; n: number | null }) {
                 Gym <Line w="w-32" /> Court <Line w="w-14" />
               </>
             ) : (
-              `${s.gym} · ${s.court} · Game ${n}`
+              [s.gym, s.court, n ? `Game ${n}` : ""].filter(Boolean).join(" · ")
             )}
           </p>
           {s.address && <p className="text-[10px]">{s.address}</p>}

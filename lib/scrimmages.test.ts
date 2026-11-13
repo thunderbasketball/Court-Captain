@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, grant } from "./testing/db";
 import { addScrimmage, addsScrimmages, gamesToOfficiate, removeScrimmage, scrimmageChoices, teamScrimmages, updateScrimmage, upcomingScrimmages } from "./scrimmages";
 import { eventWhen } from "./event-attendance";
+import { scrimmageScoresheet } from "./scoresheets";
 
 describe("scrimmages", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -90,7 +91,6 @@ describe("scrimmages", () => {
       { home: "4G A", away: "Signal Mountain 4G", outside: true, place: "Signal Mountain Middle School", atOurGym: false },
     ]);
     expect(await addScrimmage(deps(), director, "thunder", program, { ...outside, awayName: "=HYPERLINK()" })).toMatchObject({ ok: false });
-    expect(await addScrimmage(deps(), director, "thunder", program, { ...outside, away: a, awayName: "" })).toMatchObject({ ok: false }); // same team
     expect(await addScrimmage(deps(), director, "thunder", program, { ...outside, date: "2026-11-01" })).toMatchObject({ ok: false }); // past
     expect(await addScrimmage(deps(), director, "thunder", program, { ...outside, minutes: 45 })).toMatchObject({ ok: false });
     // TBD: either team picked later (a Head Coach still needs their own team in it).
@@ -159,7 +159,7 @@ describe("scrimmages", () => {
     const r = await addScrimmage(deps(), director, "thunder", program, { home: a, away: b, ...when, gymId: gym });
     if (!r.ok) throw new Error(r.message);
     const [s] = await upcomingScrimmages(deps(), "thunder", program);
-    expect(s.form).toEqual({ home: a, away: b, awayName: "", date: "2026-11-14", time: "10:00", minutes: "90", gymId: gym, location: "", officials: "" });
+    expect(s.form).toEqual({ home: a, homeName: "", away: b, awayName: "", date: "2026-11-14", time: "10:00", minutes: "90", gymId: gym, location: "", officials: "" });
     // Move it an hour later, as TBD vs an outside team: 10 AM opens, noon is blocked.
     expect(await updateScrimmage(deps(), director, "thunder", r.id, { ...s.form, home: "tbd", away: "", awayName: "Signal 4G", time: "11:00" })).toMatchObject({
       ok: true,
@@ -184,5 +184,50 @@ describe("scrimmages", () => {
       ok: false,
       message: "That scrimmage has started; it stays as it was.",
     });
+  });
+
+  it("either side can be one of the teams, TBD or an outside team; same gender a grade apart; the same team is intrasquad", async () => {
+    const t = await db.pool.query<{ id: string }>(
+      `insert into teams (name, gender, grades, grade_sort, level, created_by) values ('5G C', 'Girls', '{5}', 5, 'REC', 'x'),
+         ('6G D', 'Girls', '{6}', 6, 'REC', 'x'), ('4B E', 'Boys', '{4}', 4, 'REC', 'x') returning id::text`,
+    );
+    const [c, d, e] = t.rows.map((r) => r.id);
+    expect((await scrimmageChoices(deps(), "thunder")).teams.find((x) => x.id === c)).toMatchObject({ gender: "Girls", grade: 5 });
+    const add = (home: string, away: string, extra: object = {}, time = "13:00") =>
+      addScrimmage(deps(), director, "thunder", program, { home, away, ...when, time, gymId: "", location: "Red Bank MS", ...extra });
+    expect(await add(a, c)).toMatchObject({ ok: true }); // a grade apart
+    expect(await add(a, d, {}, "15:00")).toMatchObject({ ok: false, message: expect.stringContaining("a grade apart") });
+    expect(await add(a, e, {}, "15:00")).toMatchObject({ ok: false, message: expect.stringContaining("same gender") });
+    expect(await add(b, b, {}, "15:00")).toMatchObject({ ok: true }); // intrasquad
+    expect(await add("", a, { homeName: "Signal 4G" }, "17:00")).toMatchObject({ ok: true }); // an outside team at home
+    expect(await add("", a, { homeName: "=cmd" }, "18:30")).toMatchObject({ ok: false });
+    const list = await upcomingScrimmages(deps(), "thunder", program);
+    expect(list.map((x) => [x.home, x.away, x.homeOutside])).toEqual([
+      ["4G A", "5G C", false],
+      ["4G B", "4G B", false],
+      ["Signal 4G", "4G A", true],
+    ]);
+    expect(list[2].form).toMatchObject({ home: "outside", homeName: "Signal 4G", away: a });
+    expect((await teamScrimmages(deps(), "thunder", [a]))[a].map((x) => [x.opponent, x.outside])).toEqual([
+      ["5G C", false],
+      ["Signal 4G", true],
+    ]);
+  });
+
+  it("a scrimmage's scoresheet: branded with the organization, its rosters and referees; Directors and its Head Coaches", async () => {
+    await db.pool.query(
+      `insert into team_players (team_id, registrant_id, first_name, last_name, gender, grade, grade_sort, rostered_by, rostered_at)
+       values ($1, 'r1', 'Ann', 'Zee', 'Girls', '4', 4, 'x', now()), ($1, 'r2', 'Bea', 'Young', 'Girls', '4', 4, 'x', now());
+       insert into team_uniforms (team_id, registrant_id, number, updated_by, updated_at) values ($1, 'r2', '7', 'x', now())`.replace(/\$1/g, a),
+    );
+    const r = await addScrimmage(deps(), director, "thunder", program, { home: a, away: "", awayName: "Signal 4G", ...when, gymId: gym });
+    if (!r.ok) throw new Error(r.message);
+    expect(await scrimmageScoresheet(deps(), parent, r.id)).toBeNull();
+    const sheet = (await scrimmageScoresheet(deps(), head, r.id))!;
+    expect(sheet).toMatchObject({ league: "Winter", division: "Scrimmage", date: "2026-11-14", starts: "10:00", gym: "Action Church", officials: [] });
+    expect(sheet.brand?.name).toBeTruthy();
+    expect(sheet.home).toEqual({ name: "4G A", coach: null, players: [{ jersey: "7", name: "Bea Young" }, { jersey: null, name: "Ann Zee" }] });
+    expect(sheet.away).toEqual({ name: "Signal 4G", coach: null, players: [] });
+    expect(await scrimmageScoresheet(deps(), director, r.id)).not.toBeNull();
   });
 });

@@ -9,6 +9,7 @@ import { isProgramsDirector } from "@/lib/scenic-programs";
 import { CardPanel, PanelIcon, iconBtn } from "./CardIcons";
 import CardSlot from "./CardSlot";
 import { eventWhen } from "./events/format";
+import { TZ } from "@/lib/time";
 import { GearIcon } from "./OrgSettings";
 import { PLUS_BTN, PlusIcon } from "./PageMenus";
 import { ProgramContent } from "./org/scenic-city/programs/[id]/content";
@@ -144,11 +145,44 @@ function PlayerProgram({
             </CardPanel>
           )}
           {scrimmages.length ? (
-            <ul className="divide-y divide-zinc-100 rounded-lg ring-1 ring-zinc-950/10 dark:divide-white/5 dark:ring-white/10">
-              {scrimmages.map((g) => (
-                <ScrimmageItem key={g.id} org={org} s={g} when={eventWhen(new Date(g.startsAt))} choices={scrimChoices} />
+            // A card per date (the first open), and inside it each place with its games by time and 🖨 Scoresheets for
+            // all of them.
+            <div className="space-y-2">
+              {byDateAndPlace(scrimmages).map((d, i) => (
+                <details key={d.date} open={i === 0} className="group overflow-hidden rounded-lg ring-1 ring-zinc-950/10 dark:ring-white/10">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-2 bg-zinc-50 px-3 py-2 font-semibold dark:bg-white/5 [&::-webkit-details-marker]:hidden">
+                    <span>
+                      {d.label} <span className="font-normal text-zinc-500">({d.count})</span>
+                    </span>
+                    <span className="text-zinc-400 transition group-open:rotate-180">⌄</span>
+                  </summary>
+                  {d.places.map((p) => (
+                    <div key={p.place} className="border-t border-zinc-100 dark:border-white/5">
+                      <div className="flex items-center justify-between gap-2 px-3 pt-2 text-sm">
+                        <span className="font-medium">
+                          📍 {p.place} <span className="font-normal text-zinc-500">({p.games.length})</span>
+                        </span>
+                        {scrimChoices && (
+                          <a
+                            href={`/print/scoresheets?scrimmages=${p.games.map((g) => g.id).join(",")}`}
+                            target="_blank"
+                            rel="noopener"
+                            className="shrink-0 rounded-full px-3 py-1 text-xs font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
+                          >
+                            🖨 Scoresheets ({p.games.length})
+                          </a>
+                        )}
+                      </div>
+                      <ul className="divide-y divide-zinc-100 dark:divide-white/5">
+                        {p.games.map((g) => (
+                          <ScrimmageItem key={g.id} org={org} s={g} when={timeOf(new Date(g.startsAt))} choices={scrimChoices} />
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </details>
               ))}
-            </ul>
+            </div>
           ) : (
             <p className="text-zinc-500">No scrimmages coming up.</p>
           )}
@@ -156,6 +190,28 @@ function PlayerProgram({
       )}
     </div>
   );
+}
+
+const timeOf = (d: Date) => d.toLocaleTimeString("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" });
+
+// Scrimmages by date (soonest first), then by place (by name), each place's games by start time.
+function byDateAndPlace(list: Scrimmage[]) {
+  const days = new Map<string, { date: string; label: string; count: number; places: Map<string, Scrimmage[]> }>();
+  for (const g of [...list].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())) {
+    const at = new Date(g.startsAt);
+    const date = at.toLocaleDateString("en-CA", { timeZone: TZ });
+    const d =
+      days.get(date) ??
+      days
+        .set(date, { date, label: at.toLocaleDateString("en-US", { timeZone: TZ, weekday: "short", month: "short", day: "numeric" }), count: 0, places: new Map() })
+        .get(date)!;
+    d.count++;
+    d.places.set(g.place, [...(d.places.get(g.place) ?? []), g]);
+  }
+  return [...days.values()].map((d) => ({
+    ...d,
+    places: [...d.places.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([place, games]) => ({ place, games })),
+  }));
 }
 
 // The Programs card on Home, the same for every organization with CourtPlayers or CourtTeams: + on its title line (the

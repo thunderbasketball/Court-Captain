@@ -1,5 +1,6 @@
 // Scrimmages (SPEC.md section 14): an organization with CourtPlayers schedules scrimmage games for the teams in its
-// player programs. Two of its own teams, or one of its teams against an outside team typed in; at one of its gyms
+// player programs. Each side one of its teams (same gender, a grade apart; the same team on both sides is an intrasquad
+// scrimmage), TBD, or an outside team typed in; at one of its gyms
 // (the whole gym: every goal's open practice slots in that time are blocked, noted "Scrimmage", freed when it's removed),
 // or at any place typed in. Who adds and removes them: the organization's Admins and Directors of Teams or Events, and
 // the Head Coach of one of its teams playing. Checked here, on the server.
@@ -26,6 +27,7 @@ export type Scrimmage = {
   home: string;
   away: string;
   outside: boolean; // the away team is an outside team
+  homeOutside: boolean; // the home team is an outside team
   place: string;
   atOurGym: boolean; // its gym time is blocked
   addedBy: string;
@@ -33,6 +35,7 @@ export type Scrimmage = {
   // For Edit: what the form starts with.
   form: {
     home: string;
+    homeName: string;
     away: string;
     awayName: string;
     date: string;
@@ -44,7 +47,8 @@ export type Scrimmage = {
   };
 };
 export type ScrimmageChoices = {
-  teams: { id: string; name: string }[];
+  // gender and grade (its highest): picking one side's team narrows the other side to the same gender, a grade apart.
+  teams: { id: string; name: string; gender: string; grade: number }[];
   gyms: { id: string; name: string }[];
   officials: { org: string; name: string }[]; // Officials Groups to schedule officials from
 };
@@ -91,9 +95,11 @@ export async function addsScrimmages(q: Q, viewer: SessionUser, org: string): Pr
 export async function scrimmageChoices(deps: Pick<Deps, "pool">, org: string): Promise<ScrimmageChoices> {
   const [teams, gyms] = await Promise.all([
     thunder(org)
-      ? deps.pool.query<{ id: string; name: string }>("select id::text, name from teams order by grade_sort, gender, lower(name)")
-      : deps.pool.query<{ id: string; name: string }>(
-          "select id::text, name from org_teams where org = $1 and archived_at is null order by grade, gender, lower(name)",
+      ? deps.pool.query<ScrimmageChoices["teams"][number]>(
+          "select id::text, name, gender, grade_sort as grade from teams order by grade_sort, gender, lower(name)",
+        )
+      : deps.pool.query<ScrimmageChoices["teams"][number]>(
+          "select id::text, name, gender, grade from org_teams where org = $1 and archived_at is null order by grade, gender, lower(name)",
           [org],
         ),
     deps.pool.query<ScrimmageChoices["gyms"][number]>(
@@ -120,12 +126,15 @@ const TEAM_NAME = (org: string, side: "home" | "away") =>
 export async function upcomingScrimmages(deps: Deps, org: string, programId: string): Promise<Scrimmage[]> {
   if (!ID.test(programId) || !(await scrimmagesOn(deps.pool, org))) return [];
   const r = await deps.pool.query<Scrimmage>(
-    `select s.id::text, s.starts_at as "startsAt", s.minutes, coalesce(${TEAM_NAME(org, "home")}, 'TBD') as home,
+    `select s.id::text, s.starts_at as "startsAt", s.minutes, coalesce(s.home_name, ${TEAM_NAME(org, "home")}, 'TBD') as home,
             coalesce(s.away_name, ${TEAM_NAME(org, "away")}, 'TBD') as away, s.away_name is not null as outside,
+            s.home_name is not null as "homeOutside",
             s.place, s.gym_id is not null as "atOurGym", s.added_by as "addedBy",
             (select name from organizations where slug = s.officials_org) as officials,
             json_build_object(
-              'home', coalesce(coalesce(s.home_thunder_team_id, s.home_org_team_id)::text, 'tbd'),
+              'home', case when s.home_name is not null then 'outside'
+                           else coalesce(coalesce(s.home_thunder_team_id, s.home_org_team_id)::text, 'tbd') end,
+              'homeName', coalesce(s.home_name, ''),
               'away', case when s.away_name is not null then 'outside'
                            else coalesce(coalesce(s.away_thunder_team_id, s.away_org_team_id)::text, 'tbd') end,
               'awayName', coalesce(s.away_name, ''),
@@ -152,8 +161,9 @@ export async function teamScrimmages(deps: Deps, org: string, teamIds: string[])
   if (!ids.length || !(await scrimmagesOn(deps.pool, org))) return {};
   const col = thunder(org) ? "thunder_team_id" : "org_team_id";
   const r = await deps.pool.query<TeamScrimmage & { team: string }>(
-    `select x.team, s.id::text, s.starts_at as "startsAt", s.minutes, s.place, s.away_name is not null and x.home as outside,
-            case when x.home then coalesce(s.away_name, ${TEAM_NAME(org, "away")}, 'TBD') else coalesce(${TEAM_NAME(org, "home")}, 'TBD') end
+    `select x.team, s.id::text, s.starts_at as "startsAt", s.minutes, s.place,
+            case when x.home then s.away_name is not null else s.home_name is not null end as outside,
+            case when x.home then coalesce(s.away_name, ${TEAM_NAME(org, "away")}, 'TBD') else coalesce(s.home_name, ${TEAM_NAME(org, "home")}, 'TBD') end
               as opponent
        from scrimmages s
        cross join lateral (values (s.home_${col}::text, true), (s.away_${col}::text, false)) x(team, home)
@@ -167,8 +177,9 @@ export async function teamScrimmages(deps: Deps, org: string, teamIds: string[])
 }
 
 export type ScrimmageInput = {
-  home: unknown; // one of the organization's teams, or "tbd"
-  away: unknown; // another of its teams, "tbd", or "" with awayName
+  home: unknown; // one of the organization's teams, "tbd", or "" with homeName
+  homeName?: unknown; // an outside team
+  away: unknown; // one of its teams (the same as home is allowed: an intrasquad scrimmage), "tbd", or "" with awayName
   awayName?: unknown; // an outside team
   date: unknown; // "2026-12-12"
   time: unknown; // "10:00"
@@ -228,15 +239,17 @@ async function saveScrimmage(
   target: { programId: string } | { id: string },
   input: ScrimmageInput,
 ): Promise<Result<{ id: string; blocked: number }>> {
+  // Each side: one of the organization's teams, TBD, or ("") an outside team typed in.
   const homeIn = String(input.home ?? "");
   const awayIn = String(input.away ?? "");
-  if (homeIn !== TBD && !ID.test(homeIn)) return { ok: false, message: "Pick your team, or TBD." };
   const home = homeIn === TBD ? "" : homeIn;
   const away = awayIn === TBD ? "" : awayIn;
+  const homeName = homeIn ? null : cleanTeamName(input.homeName);
   const awayName = awayIn ? null : cleanTeamName(input.awayName);
+  if (homeIn && homeIn !== TBD && !ID.test(homeIn)) return { ok: false, message: "Pick the home team." };
   if (awayIn && awayIn !== TBD && !ID.test(awayIn)) return { ok: false, message: "Pick the other team." };
+  if (!homeIn && !homeName) return { ok: false, message: "Pick the home team, or type the outside team's name (letters and numbers)." };
   if (!awayIn && !awayName) return { ok: false, message: "Pick the other team, or type the outside team's name (letters and numbers)." };
-  if (home && away === home) return { ok: false, message: "Pick two different teams." };
   const startsAt = parseWhen(input.date, input.time);
   if (!startsAt) return { ok: false, message: "Pick the date and start time." };
   const minutes = Number(input.minutes);
@@ -285,7 +298,20 @@ async function saveScrimmage(
     const teams = thunder(org)
       ? await q.query("select id from teams where id = any($1::bigint[])", [ours])
       : await q.query("select id from org_teams where id = any($1::bigint[]) and org = $2 and archived_at is null", [ours, org]);
-    if (teams.rowCount !== ours.length) return { ok: false as const, message: "Pick teams from your list." };
+    if (teams.rowCount !== new Set(ours).size) return { ok: false as const, message: "Pick teams from your list." };
+    // Two of its teams: the same gender, a grade apart at most (the same team on both sides is allowed: intrasquad).
+    if (home && away && home !== away) {
+      const t = (
+        await q.query<{ gender: string; grade: number }>(
+          thunder(org)
+            ? "select gender, grade_sort as grade from teams where id = any($1::bigint[])"
+            : "select gender, grade from org_teams where id = any($1::bigint[])",
+          [[home, away]],
+        )
+      ).rows;
+      if (t[0].gender !== t[1].gender || Math.abs(t[0].grade - t[1].grade) > 1)
+        return { ok: false as const, message: "Pick teams of the same gender, a grade apart at most." };
+    }
 
     let place = location ?? "";
     if (gymId) {
@@ -317,7 +343,7 @@ async function saveScrimmage(
     }
 
     const col = thunder(org) ? "thunder_team_id" : "org_team_id";
-    const values = [home || null, away || null, awayName, startsAt, minutes, gymId || null, place, officials];
+    const values = [home || null, away || null, awayName, startsAt, minutes, gymId || null, place, officials, homeName];
     if (editing)
       // A new time or place: its officials answer ✓ / ✗ again.
       await q.query(
@@ -329,7 +355,7 @@ async function saveScrimmage(
     const id = editing
       ? (await q.query(
           `update scrimmages set home_${col} = $2, away_${col} = $3, away_name = $4, starts_at = $5, minutes = $6, gym_id = $7, place = $8,
-                  officials_org = $9
+                  officials_org = $9, home_name = $10
             where id = $1`,
           [editing, ...values],
         ),
@@ -337,8 +363,8 @@ async function saveScrimmage(
       : (
           await q.query<{ id: string }>(
             `insert into scrimmages (org, program_id, home_${col}, away_${col}, away_name, starts_at, minutes, gym_id, place, officials_org,
-                                     added_by, added_at)
-             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id::text`,
+                                     home_name, added_by, added_at)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) returning id::text`,
             [org, (target as { programId: string }).programId, ...values, by(viewer), deps.now()],
           )
         ).rows[0].id;
@@ -418,7 +444,7 @@ export async function gamesToOfficiate(deps: Deps, viewer: SessionUser, official
   const name = (side: "home" | "away") =>
     `coalesce((select name from teams where id = s.${side}_thunder_team_id), (select name from org_teams where id = s.${side}_org_team_id))`;
   const r = await deps.pool.query<GameToOfficiate>(
-    `select s.id::text, s.org, o.name as "orgName", coalesce(${name("home")}, 'TBD') as home,
+    `select s.id::text, s.org, o.name as "orgName", coalesce(s.home_name, ${name("home")}, 'TBD') as home,
             coalesce(s.away_name, ${name("away")}, 'TBD') as away, s.starts_at as "startsAt", s.minutes, s.place,
             nullif(g.address, '') as address
        from scrimmages s join organizations o on o.slug = s.org left join gyms g on g.id = s.gym_id
