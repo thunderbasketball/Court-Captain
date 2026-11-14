@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { addScrimmageAction, removeScrimmageAction, updateScrimmageAction } from "./actions";
-import { iconBtn } from "../CardIcons";
+import { closeCardPanel, iconBtn } from "../CardIcons";
 import { GearIcon } from "../OrgSettings";
 
 const input = "w-full min-w-0 rounded-lg bg-white px-3 py-2 text-base ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/15";
@@ -41,12 +41,14 @@ export function NewScrimmageForm({
   choices,
   edit,
   onDone,
+  panel,
 }: {
   org: string;
   programId?: string;
   choices: Choices;
   edit?: { id: string; form: Fields };
   onDone?: () => void;
+  panel?: string; // the card panel holding Add a scrimmage: Cancel closes it, and so does adding one
 }) {
   const router = useRouter();
   const blank: Fields = { home: "", homeName: "", away: "", awayName: "", date: "", time: "", minutes: "60", gymId: "", location: "", officials: "" };
@@ -75,7 +77,6 @@ export function NewScrimmageForm({
             awayName: outside ? f.awayName : "",
             date: f.date,
             time: f.time,
-            minutes: Number(f.minutes),
             gymId: elsewhere ? "" : f.gymId,
             location: elsewhere ? f.location : "",
             officials: refs ? f.officials : "",
@@ -90,6 +91,11 @@ export function NewScrimmageForm({
             if (!edit) {
               setF(blank);
               setRefs(false);
+              if (panel)
+                setTimeout(() => {
+                  closeCardPanel(panel);
+                  setMsg(null);
+                }, 1200); // the new one shows in the list
             }
             router.refresh();
             onDone?.();
@@ -126,21 +132,11 @@ export function NewScrimmageForm({
           <span className={label}>Date</span>
           <input type="date" className={input} value={f.date} onChange={set("date")} />
         </label>
-        <div className="grid grid-cols-2 gap-2">
-          <label className="block">
-            <span className={label}>Starts</span>
-            <input type="time" step={900} className={input} value={f.time} onChange={set("time")} />
-          </label>
-          <label className="block">
-            <span className={label}>Length</span>
-            <select className={input} value={f.minutes} onChange={set("minutes")}>
-              <option value="30">30 minutes</option>
-              <option value="60">1 hour</option>
-              <option value="90">1½ hours</option>
-              <option value="120">2 hours</option>
-            </select>
-          </label>
-        </div>
+        {/* Just the start time: no length (the app counts 10 minutes for the gym and the officials). */}
+        <label className="block">
+          <span className={label}>Starts</span>
+          <input type="time" step={300} className={input} value={f.time} onChange={set("time")} />
+        </label>
         <label className="block sm:col-span-2">
           <span className={label}>Where</span>
           <select className={input} value={f.gymId} onChange={set("gymId")}>
@@ -193,8 +189,18 @@ export function NewScrimmageForm({
       >
         {busy ? (edit ? "Saving…" : "Adding…") : edit ? "Save changes" : "Add scrimmage"}
       </button>
-      {edit && (
-        <button type="button" onClick={onDone} className="ml-3 text-sm text-zinc-500">
+      {(edit || panel) && (
+        <button
+          type="button"
+          onClick={() => {
+            if (edit) return onDone?.();
+            setF(blank);
+            setRefs(false);
+            setMsg(null);
+            closeCardPanel(panel!);
+          }}
+          className="ml-3 text-sm text-zinc-500"
+        >
           Cancel
         </button>
       )}
@@ -265,7 +271,6 @@ export function ScrimmageItem({
   choices: Choices | null; // null: view only
 }) {
   const [open, setOpen] = useState(false);
-  const length = s.minutes < 60 ? `${s.minutes} minutes` : s.minutes === 60 ? "1 hour" : `${s.minutes / 60} hours`;
   return (
     <li className="px-3 py-2">
       <div className="flex items-start justify-between gap-2">
@@ -276,7 +281,7 @@ export function ScrimmageItem({
             {s.outside && <span className="font-normal text-zinc-500"> (outside)</span>}
           </span>
           <span className="block text-xs text-zinc-500">
-            {when} · {length} · {s.place}
+            {when} · {s.place}
           </span>
           {s.officials && <span className="block text-xs text-zinc-500">Officials: {s.officials}</span>}
           <span className="block text-xs text-zinc-400">Added by {s.addedBy}</span>

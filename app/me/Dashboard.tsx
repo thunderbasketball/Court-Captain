@@ -107,7 +107,7 @@ export default async function Dashboard({ user, coachId }: { user: SessionUser; 
                 home: g.home,
                 away: g.away,
                 day: g.start.toLocaleDateString("en-US", { timeZone: TZ, weekday: "short", month: "short", day: "numeric" }),
-                time: `${clock(g.start)} – ${clock(g.end)}`,
+                time: clock(g.start), // scrimmages have a start time only
                 place: g.place,
                 address: g.address,
                 directions: `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(g.address ?? g.place)}`,

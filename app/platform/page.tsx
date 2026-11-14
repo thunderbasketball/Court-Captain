@@ -11,7 +11,7 @@ import AppHeader from "../AppHeader";
 import { card, EmailLink, PageTitle, PhoneLink } from "../ui";
 import { ResetLoginButton } from "../ResetLoginButton";
 import { ViewAsButton } from "../ViewAsButton";
-import Link from "next/link";
+import MembersCards from "../MembersCards";
 import { formatCell } from "@/lib/phone";
 import { AddOwner, AddStaff, DeleteOrganization, FeatureSwitch, FeaturesGear, RemoveOwner, RemoveStaff } from "./PlatformTools";
 import SupportAdmin from "./SupportAdmin";
@@ -27,61 +27,56 @@ export default function PlatformPage({ searchParams }: PageProps<"/platform">) {
   );
 }
 
-// CourtCaptain's own page (SPEC.md section 14): CourtCaptain staff only. Tabs: Staff (CourtCaptain Owners and Admins;
-// Owners add and remove Admins) and Organizations (each collapsed: open it for its Owners, Admins, Directors, features).
+// CourtCaptain's own page (SPEC.md section 14): CourtCaptain staff only. The same stack of cards as every Home (no tabs;
+// only open cards are built): Organizations (grouped by features; each opens for its Owners, Admins, Directors and
+// features), Staff (CourtCaptain Owners and Admins; Owners add and remove Admins) and Support.
 async function Platform({ searchParams }: { searchParams: PageProps<"/platform">["searchParams"] }) {
-  const asked = (await searchParams).tab;
-  const tab = asked === "staff" || asked === "support" ? asked : "orgs";
+  const sp = await searchParams;
+  // `?open=orgs,staff`; an old `?tab=staff` link opens that card.
+  const open = typeof sp.open === "string" ? sp.open : typeof sp.tab === "string" ? sp.tab : null;
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
   const data = await platformOverview({ pool: db, now: () => new Date() }, user);
   if (!data) redirect("/");
+  // The checked values, for the cards below.
+  const ov = data;
+  const me = user;
   const date = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: TZ });
   const how: Record<string, string> = { setup: "set up", comp: "free", purchase: "bought" };
 
+  const staffBody = <StaffSection />;
+  const orgsBody = <OrgsSection />;
   return (
     <>
       <AppHeader user={user} context="platform" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
         <PageTitle title="CourtCaptain" subtitle={`${data.orgs.length} organizations · ${data.platformAdmins.length} staff`} />
-        <nav aria-label="CourtCaptain" className="mb-5 flex gap-1 border-b border-zinc-200 dark:border-white/10">
-          {(
-            [
-              ["staff", "Staff"],
-              ["orgs", "Organizations"],
-              ["support", "Support"],
-            ] as const
-          ).map(([key, label]) => (
-            <Link
-              key={key}
-              href={key === "orgs" ? "/platform" : `/platform?tab=${key}`}
-              aria-current={tab === key ? "page" : undefined}
-              className={`-mb-px border-b-2 px-3 py-2 text-sm font-semibold ${
-                tab === key
-                  ? "border-thunder-orange text-zinc-900 dark:text-white"
-                  : "border-transparent text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
-              }`}
-            >
-              {label}
-            </Link>
-          ))}
-        </nav>
+        <MembersCards
+          heading={null}
+          open={open}
+          cards={[
+            { key: "orgs", title: "Organizations", count: data.orgs.length, body: orgsBody },
+            { key: "staff", title: "Staff", count: data.platformAdmins.length, body: staffBody },
+            { key: "support", title: "Support", body: <SupportBody /> },
+          ]}
+        />
+      </main>
+    </>
+  );
 
-        {tab === "support" && <SupportAdmin articles={await listArticles(db)} />}
-
-        {tab === "staff" && (
-          <section className={`${card} p-4`}>
+  function StaffSection() {
+    return (
+          <section>
             <div className="mb-2 flex items-center justify-between gap-3">
               <div>
-                <h2 className="font-semibold">CourtCaptain staff</h2>
                 <p className="text-sm text-zinc-500">
                   Owner-level access to every organization, in the background (not shown on organization pages).
                 </p>
               </div>
-              {data.isOwner && <AddStaff options={data.staffOptions} />}
+              {ov.isOwner && <AddStaff options={ov.staffOptions} />}
             </div>
             <ul className="divide-y divide-zinc-100 dark:divide-white/5">
-              {data.platformAdmins.map((a) => (
+              {ov.platformAdmins.map((a) => (
                 <li key={a.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
                   <span>
                     <span className="font-medium">{a.name}</span> <PhoneLink cell={a.cell} label={formatCell(a.cell)} />
@@ -90,20 +85,22 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
                       {a.role === "Admin" && <span className="text-zinc-500"> · added by {a.grantedBy}</span>}
                     </span>
                   </span>
-                  {data.isOwner && a.role === "Admin" && <RemoveStaff coachId={a.id} name={a.name} />}
+                  {ov.isOwner && a.role === "Admin" && <RemoveStaff coachId={a.id} name={a.name} />}
                 </li>
               ))}
             </ul>
             <p className="mt-2 text-xs text-zinc-500">Owners add and remove Admins. Owners can&apos;t be removed here.</p>
           </section>
-        )}
+    );
+  }
 
-        {tab === "orgs" && (
+  function OrgsSection() {
+    return (
           <div className="grid gap-4">
             {/* More than 4: grouped by their features ("CourtOrg + CourtSync"), each group tapped open. */}
-            {(data.orgs.length > GROUP_OVER
-              ? groupByFeatures(data.orgs.map((o) => ({ ...o, group: featureGroup(o.features.filter((f) => f.on).map((f) => f.key)) })))
-              : [{ label: "", orgs: data.orgs }]
+            {(ov.orgs.length > GROUP_OVER
+              ? groupByFeatures(ov.orgs.map((o) => ({ ...o, group: featureGroup(o.features.filter((f) => f.on).map((f) => f.key)) })))
+              : [{ label: "", orgs: ov.orgs }]
             ).map((g) => {
               const cards = (
                 <div className="grid gap-3">
@@ -203,8 +200,8 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
                                 </span>
                               </span>
                               <span className="flex shrink-0 items-center gap-2">
-                                {d.id !== user.coachId && <ViewAsButton coachId={d.id} name={d.name} />}
-                                {d.id !== user.coachId && <ResetLoginButton org={o.slug} coachId={d.id} name={d.name} />}
+                                {d.id !== me.coachId && <ViewAsButton coachId={d.id} name={d.name} />}
+                                {d.id !== me.coachId && <ResetLoginButton org={o.slug} coachId={d.id} name={d.name} />}
                                 <RemoveOwner org={o.slug} orgName={o.name} coachId={d.id} name={d.name} />
                               </span>
                             </li>
@@ -270,8 +267,11 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
               );
             })}
           </div>
-        )}
-      </main>
-    </>
-  );
+    );
+  }
+}
+
+// Support: its questions and guides (built only when the card is open).
+async function SupportBody() {
+  return <SupportAdmin articles={await listArticles(db)} />;
 }

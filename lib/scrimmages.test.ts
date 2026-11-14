@@ -230,4 +230,25 @@ describe("scrimmages", () => {
     expect(sheet.away).toEqual({ name: "Signal 4G", coach: null, players: [] });
     expect(await scrimmageScoresheet(deps(), director, r.id)).not.toBeNull();
   });
+
+  it("a start time only: no length needed, counted as 10 minutes", async () => {
+    const r = await addScrimmage(deps(), director, "thunder", program, { home: a, away: b, date: "2026-11-14", time: "10:00", gymId: gym });
+    expect(r).toMatchObject({ ok: true, blocked: 2 }); // Goal #1 and Goal #2 at 10 AM only
+    expect((await upcomingScrimmages(deps(), "thunder", program))[0]).toMatchObject({ minutes: 10 });
+    // Within 10 minutes of it in the same gym: refused; 10:10 on is fine (sharing the 10 AM practice hour).
+    expect(await addScrimmage(deps(), director, "thunder", program, { home: b, away: a, date: "2026-11-14", time: "10:05", gymId: gym })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("within 10 minutes"),
+    });
+    const between = await addScrimmage(deps(), director, "thunder", program, { home: b, away: a, date: "2026-11-14", time: "10:10", gymId: gym });
+    expect(between).toMatchObject({ ok: true });
+    await removeScrimmage(deps(), director, "thunder", (between as { id: string }).id);
+    const second = await addScrimmage(deps(), director, "thunder", program, { home: b, away: a, date: "2026-11-14", time: "10:30", gymId: gym });
+    expect(second).toMatchObject({ ok: true });
+    // Removing the first keeps the 10 AM hour blocked for the second.
+    const first = (await upcomingScrimmages(deps(), "thunder", program))[0].id;
+    expect(await removeScrimmage(deps(), director, "thunder", first)).toEqual({ ok: true });
+    const held = await db.pool.query("select count(*)::int as n from slots where blackout and scrimmage_id = $1", [(second as { id: string }).id]);
+    expect(held.rows[0].n).toBe(2);
+  });
 });

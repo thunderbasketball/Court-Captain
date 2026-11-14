@@ -140,7 +140,7 @@ export function scheduleItems(
             </span>
             {x.outside && <span className="text-xs text-zinc-500"> (outside)</span>}
             <span className="block text-zinc-600 dark:text-zinc-300">
-              {timeLabel(time)}–{timeLabel(hm(new Date(x.startsAt.getTime() + x.minutes * 60_000)))} · {x.place}
+              {timeLabel(time)} · {x.place}
             </span>
           </>
         ),

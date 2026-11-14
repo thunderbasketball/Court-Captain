@@ -56,7 +56,8 @@ export type ScrimmageChoices = {
 const ID = /^\d{1,18}$/;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const TIME = /^(\d{2}):(\d{2})$/;
-export const SCRIMMAGE_MINUTES = [30, 60, 90, 120];
+export const SCRIMMAGE_MINUTES = [10, 30, 60, 90, 120];
+export const DEFAULT_MINUTES = 10; // what a scrimmage counts as (the form asks only its start time)
 export const TBD = "tbd"; // a team picked later
 const thunder = (org: string) => org === "thunder";
 const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
@@ -183,7 +184,7 @@ export type ScrimmageInput = {
   awayName?: unknown; // an outside team
   date: unknown; // "2026-12-12"
   time: unknown; // "10:00"
-  minutes: unknown;
+  minutes?: unknown; // left out: 10 (the form asks only the start time)
   gymId?: unknown; // one of its gyms (the whole gym: every goal), or "" with location
   location?: unknown; // any other place
   officials?: unknown; // an Officials Group to schedule officials, or "" for none
@@ -252,7 +253,8 @@ async function saveScrimmage(
   if (!awayIn && !awayName) return { ok: false, message: "Pick the other team, or type the outside team's name (letters and numbers)." };
   const startsAt = parseWhen(input.date, input.time);
   if (!startsAt) return { ok: false, message: "Pick the date and start time." };
-  const minutes = Number(input.minutes);
+  // A start time only (Nov 14): 10 minutes is counted for the gym's practice slots, the officials and attendance.
+  const minutes = input.minutes === undefined || input.minutes === null || input.minutes === "" ? DEFAULT_MINUTES : Number(input.minutes);
   if (!SCRIMMAGE_MINUTES.includes(minutes)) return { ok: false, message: "Pick how long it runs." };
   if (startsAt.getTime() <= deps.now().getTime()) return { ok: false, message: "That time has already passed." };
   const gymId = String(input.gymId ?? "");
@@ -285,10 +287,7 @@ async function saveScrimmage(
         return { ok: false as const, message: "Only the Directors and a playing team's Head Coach can change a scrimmage." };
       if (old.starts_at.getTime() <= deps.now().getTime())
         return { ok: false as const, message: "That scrimmage has started; it stays as it was." };
-      await q.query(
-        "update slots set blackout = false, note = null, booked_by = null, booked_at = null, scrimmage_id = null where scrimmage_id = $1",
-        [editing],
-      );
+      await freeSlots(q, editing);
     } else {
       if (!director && !(await headCoachOf(q, viewer, org, ours)))
         return { ok: false as const, message: "Only the Directors and a playing team's Head Coach can add a scrimmage." };
@@ -321,15 +320,18 @@ async function saveScrimmage(
       if (!g) return { ok: false as const, message: "Pick one of your gyms." };
       place = g.name;
       const clash = await q.query(
+        // One scrimmage in a gym at a time (each counts as 10 minutes from its start).
         `select 1 from scrimmages where gym_id = $1 and starts_at < $2 and starts_at + make_interval(mins => minutes) > $3
             and id is distinct from $4::bigint limit 1`,
         [gymId, ends, startsAt, editing],
       );
-      if (clash.rowCount) return { ok: false as const, message: "Another scrimmage is in that gym then." };
+      if (clash.rowCount) return { ok: false as const, message: "Another scrimmage starts in that gym within 10 minutes of that time." };
       // The whole gym: every goal's practice slots (an hour long) overlapping its time must be open.
       const busy = await q.query<{ team: string | null; blackout: boolean }>(
         `select (select name from teams where id = s.team_id) as team, s.blackout from slots s join courts c on c.id = s.court_id
-          where c.gym_id = $1 and s.starts_at < $2 and s.starts_at + interval '1 hour' > $3 and (s.team_id is not null or s.blackout)
+          where c.gym_id = $1 and s.starts_at < $2 and s.starts_at + interval '1 hour' > $3
+            -- an hour another scrimmage blocked is fine (back-to-back scrimmages share it)
+            and (s.team_id is not null or (s.blackout and s.scrimmage_id is null))
           order by s.starts_at limit 1 for update of s`,
         [gymId, ends, startsAt],
       );
@@ -396,6 +398,25 @@ async function saveScrimmage(
   });
 }
 
+// Frees the gym hours a scrimmage blocked, then has any other scrimmage still in those hours block them again (back-to-
+// back scrimmages share an hour slot).
+async function freeSlots(q: Q, scrimmageId: string) {
+  const freed = await q.query<{ gym: string }>(
+    `update slots s set blackout = false, note = null, booked_by = null, booked_at = null, scrimmage_id = null
+       from courts c where c.id = s.court_id and s.scrimmage_id = $1 returning c.gym_id::text as gym`,
+    [scrimmageId],
+  );
+  for (const gym of new Set(freed.rows.map((r) => r.gym)))
+    await q.query(
+      `update slots s set blackout = true, note = 'Scrimmage', booked_by = x.added_by, booked_at = x.added_at, scrimmage_id = x.id
+         from courts c, scrimmages x
+        where c.id = s.court_id and c.gym_id = $1 and x.gym_id = $1 and x.id <> $2
+          and s.starts_at < x.starts_at + make_interval(mins => x.minutes) and s.starts_at + interval '1 hour' > x.starts_at
+          and s.team_id is null and not s.blackout`,
+      [gym, scrimmageId],
+    );
+}
+
 // Remove a scrimmage that hasn't started; the gym time it blocked opens again.
 export async function removeScrimmage(deps: Deps, viewer: SessionUser, org: string, id: unknown): Promise<Result> {
   if (!ID.test(String(id ?? ""))) return { ok: false, message: "That scrimmage wasn't found." };
@@ -415,10 +436,7 @@ export async function removeScrimmage(deps: Deps, viewer: SessionUser, org: stri
       return { ok: false as const, message: "Only the Directors and a playing team's Head Coach can remove a scrimmage." };
     if (s.starts_at.getTime() <= deps.now().getTime())
       return { ok: false as const, message: "That scrimmage has started; it stays on the schedule." };
-    await q.query(
-      "update slots set blackout = false, note = null, booked_by = null, booked_at = null, scrimmage_id = null where scrimmage_id = $1",
-      [id],
-    );
+    await freeSlots(q, String(id));
     await q.query("delete from scrimmages where id = $1", [id]);
     return { ok: true as const };
   });

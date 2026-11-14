@@ -6,12 +6,12 @@ import { hasFeature } from "@/lib/features";
 import { managesPlayerPrograms, playerProgramFields, seasonSources } from "@/lib/player-programs";
 import { orgPrograms, type Program } from "@/lib/programs";
 import { isProgramsDirector } from "@/lib/scenic-programs";
-import { CardPanel, PanelIcon, iconBtn } from "./CardIcons";
+import { AddIcon, CardPanel, PanelIcon, iconBtn } from "./CardIcons";
 import CardSlot from "./CardSlot";
 import { eventWhen } from "./events/format";
 import { TZ } from "@/lib/time";
 import { GearIcon } from "./OrgSettings";
-import { PLUS_BTN, PlusIcon } from "./PageMenus";
+import { PLUS_BTN } from "./PageMenus";
 import { ProgramContent } from "./org/scenic-city/programs/[id]/content";
 import NewProgramPanel from "./programs/NewProgramPanel";
 import NewSession from "./programs/NewSession";
@@ -130,13 +130,7 @@ function PlayerProgram({
           <div className="relative mb-1 flex items-center justify-between gap-2">
             <p className="font-semibold">Scrimmages ({scrimmages.length})</p>
             {addScrimmage && (
-              <PanelIcon
-                id={scrimId}
-                label="Add a scrimmage"
-                className="rounded-full px-3 py-1 text-xs font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 dark:text-blue-400"
-              >
-                + Scrimmage
-              </PanelIcon>
+              <AddIcon id={scrimId} label="Add a scrimmage" />
             )}
           </div>
           {addScrimmage && (
@@ -260,9 +254,7 @@ export default async function ProgramsCard({ org, user }: { org: string; user: S
       {(players || teams) && (
         <>
           <CardSlot slot="card-slot-programs">
-            <PanelIcon id={addId} label="New program" className={PLUS_BTN}>
-              <PlusIcon />
-            </PanelIcon>
+            <AddIcon id={addId} label="New program" className={PLUS_BTN} />
           </CardSlot>
           <CardPanel id={addId} className="rounded-xl bg-zinc-50 p-3 dark:bg-white/5">
             <NewProgramPanel org={org} players={players} teams={teams} sources={sources} />
@@ -334,7 +326,7 @@ export default async function ProgramsCard({ org, user }: { org: string; user: S
                       }
                       org={org}
                       scrimmages={scrims.get(p.id) ?? null}
-                      addScrimmage={choices && <NewScrimmageForm org={org} programId={p.id} choices={choices} />}
+                      addScrimmage={choices && <NewScrimmageForm org={org} programId={p.id} choices={choices} panel={`new-scrimmage-${p.id}`} />}
                       scrimChoices={choices}
                     />
                   </>

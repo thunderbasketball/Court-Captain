@@ -75,14 +75,31 @@ export function PanelIcon({ id, label, children, className = iconBtn }: { id: st
 // opens the card and expands its form (a CardPanel with the same id) at the top of the card. Tap again to close.
 export const ADD_BTN =
   "flex size-8 shrink-0 items-center justify-center rounded-full bg-thunder-blue text-white shadow-sm hover:bg-thunder-blue-dark";
-export function AddIcon({ id, label }: { id: string; label: string }) {
+// It turns into − while its form is open (tap to close).
+export function AddIcon({ id, label, className = ADD_BTN }: { id: string; label: string; className?: string }) {
+  const open = usePanelOpen(id);
   return (
-    <PanelIcon id={id} label={label} className={ADD_BTN}>
-      <span aria-hidden className="text-xl leading-none font-light">
-        +
+    <PanelIcon id={id} label={open ? `Close: ${label}` : label} className={className}>
+      <span aria-hidden className={`${className === ADD_BTN ? "text-xl" : "text-2xl"} leading-none font-light`}>
+        {open ? "−" : "+"}
       </span>
     </PanelIcon>
   );
+}
+
+// Whether the panel with this id is open (each CardPanel says so when it opens or closes).
+const STATE = "card-panel-state";
+export function usePanelOpen(id: string): boolean {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ id: string; open: boolean }>).detail;
+      if (d.id === id) setOpen(d.open);
+    };
+    window.addEventListener(STATE, on);
+    return () => window.removeEventListener(STATE, on);
+  }, [id]);
+  return open;
 }
 
 // Close the panel with this id (e.g. once its form is saved).
@@ -106,8 +123,13 @@ export function CardPanel({ id, children, className = "border-b border-zinc-100 
     return () => {
       window.removeEventListener(EVENT, on);
       window.removeEventListener(CLOSE, off);
+      window.dispatchEvent(new CustomEvent(STATE, { detail: { id, open: false } }));
     };
   }, [id]);
+  // Tell its + (AddIcon) whether to show − .
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent(STATE, { detail: { id, open } }));
+  }, [id, open]);
   return open ? <div className={className}>{children}</div> : null;
 }
 

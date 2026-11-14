@@ -262,7 +262,7 @@ export function GamesToOfficiate({ org, board: fromServer }: { org: string; boar
                       <li key={x.id} className={`rounded-lg bg-zinc-50 p-2 dark:bg-white/5 ${x.started ? "opacity-60" : ""}`}>
                         <p className="text-sm">
                           <span className="font-semibold">
-                            {time(x.start)}–{time(x.end)}
+                            {time(x.start)}
                           </span>{" "}
                           {x.kind !== "League" && (
                             <span className="mr-1 rounded bg-orange-100 px-1 text-[10px] font-bold text-orange-800 uppercase dark:bg-orange-500/15 dark:text-orange-300">

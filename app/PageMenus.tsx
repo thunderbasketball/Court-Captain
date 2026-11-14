@@ -57,7 +57,8 @@ export default function PageMenus({
               }}
               className={`${m.className} ${menu === m.key ? "ring-2" : ""}`}
             >
-              {m.icon}
+              {/* A round + turns into − while its choices are open (tap to close). */}
+              {menu === m.key && m.className === PLUS_BTN ? <span className="text-2xl leading-none font-light">−</span> : m.icon}
             </button>
           ))}
         </div>
