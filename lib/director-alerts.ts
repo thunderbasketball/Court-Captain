@@ -2,11 +2,16 @@
 // grade requirements, no Head Coach, a coach's cell or email missing, or no players), Uniforms while any rostered
 // player still needs a number or size (as lib/uniforms.ts uniformsMissing, across every team).
 import type { Queryable } from "./sql";
+import { memo } from "./request-memo";
 import { rosterIssue, schoolYearOf } from "./eligibility";
 import { orgGradeRules } from "./grade-rules";
 import { easternDate } from "./time";
 
-export async function directorAlerts(q: Pick<Queryable, "query">, now: Date): Promise<{ teams: boolean; uniforms: boolean }> {
+// Read once per page (the header and Home both ask; lib/request-memo.ts).
+export function directorAlerts(q: Pick<Queryable, "query">, now: Date): Promise<{ teams: boolean; uniforms: boolean }> {
+  return memo(q, "director-alerts", () => readDirectorAlerts(q, now));
+}
+async function readDirectorAlerts(q: Pick<Queryable, "query">, now: Date): Promise<{ teams: boolean; uniforms: boolean }> {
   const [teams, uniforms, { rules }] = await Promise.all([
     q.query<{ grades: string[]; missing: boolean; players: { grade: string; birthdate: string | null }[] }>(
       `select t.grades,

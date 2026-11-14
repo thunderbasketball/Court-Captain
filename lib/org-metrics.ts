@@ -2,6 +2,7 @@
 // trend), teams, players not on a team, teams missing a Head Coach or players, uniform prep, practice slots, coaches'
 // use of the app (last login, longest ago first) and what's waiting on them. Only what the organization's features
 // have. Thunder's come from its registrations and teams; another organization's from its own teams.
+import { memo } from "./request-memo";
 import type { SessionUser } from "./auth/service";
 import { orgFeatures } from "./features";
 import { ordinal } from "./grades";
@@ -183,7 +184,11 @@ async function uniformMetrics(q: Pick<Queryable, "query">): Promise<OrgMetrics["
 }
 
 // Practice slots booked and open this week and next (blacked-out slots aren't open), and blackout days in the next 30.
-export async function practiceMetrics(q: Pick<Queryable, "query">, now: Date): Promise<OrgMetrics["practices"]> {
+// Read once per page (Home's metrics and the Practice card's title both ask; lib/request-memo.ts).
+export function practiceMetrics(q: Pick<Queryable, "query">, now: Date): Promise<OrgMetrics["practices"]> {
+  return memo(q, "practice-metrics", () => readPracticeMetrics(q, now));
+}
+async function readPracticeMetrics(q: Pick<Queryable, "query">, now: Date): Promise<OrgMetrics["practices"]> {
   const week = (start: Date, end: Date) =>
     q
       .query<{ booked: number; open: number }>(

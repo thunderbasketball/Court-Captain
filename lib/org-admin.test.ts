@@ -7,12 +7,15 @@ import { addGym } from "./practice/admin";
 import { addPlayers } from "./rosters";
 import {
   directorAreas,
+  directorRoles,
   directorsPanel,
   hasArea,
   hasDirectors,
   isOrgAdmin,
   orgAreas,
+  orgHasArea,
   setAdmin,
+  setDirectorRoleActive,
   setDirectorAreas,
   setOwner,
   addPersonFor,
@@ -274,5 +277,31 @@ describe("Admins and Director areas", () => {
       newLogin: false,
     });
     expect(await setDirectorAreas(deps(), ada, "thunder", "5550055", ["teams"])).toEqual({ ok: true });
+  });
+
+  it("Director roles come with features; an Admin switches one off: not offered, no access, kept on record for when it's back", async () => {
+    const groups = (await directorRoles(db.pool, ada, "thunder"))!;
+    expect(groups.map((g) => [g.feature, g.roles.map((r) => r.key)])).toContainEqual(["Every organization", ["support"]]);
+    expect(groups.flatMap((g) => g.roles.map((r) => r.key)).sort()).toEqual(
+      ["events", "facilities", "players", "practices", "support", "teams", "uniforms"].sort(),
+    );
+    expect(await directorRoles(db.pool, bo, "thunder")).toBeNull(); // Admins only
+    await setDirectorAreas(deps(), ada, "thunder", bo.coachId, ["players", "uniforms"]);
+    expect(await setDirectorRoleActive(deps(), bo, "thunder", "uniforms", false)).toMatchObject({ ok: false });
+    expect(await setDirectorRoleActive(deps(), ada, "thunder", "scheduling", false)).toMatchObject({ ok: false }); // not its feature
+    expect(await setDirectorRoleActive(deps(), ada, "thunder", "uniforms", false)).toEqual({ ok: true });
+    expect((await orgAreas(db.pool, "thunder")).map((a) => a.key)).not.toContain("uniforms");
+    expect(await orgHasArea(db.pool, bo.coachId, "thunder", "uniforms")).toBe(false);
+    expect(await orgHasArea(db.pool, ada.coachId, "thunder", "uniforms")).toBe(true); // Admins cover every role
+    expect(await directorAreas(db.pool, bo.coachId, "thunder")).toEqual(["players"]);
+    expect(await setDirectorAreas(deps(), ada, "thunder", bo.coachId, ["uniforms"])).toMatchObject({ ok: false }); // not offered
+    // Editing Bo's roles keeps the switched-off one on record.
+    expect(await setDirectorAreas(deps(), ada, "thunder", bo.coachId, ["players", "events"])).toEqual({ ok: true });
+    expect((await directorRoles(db.pool, ada, "thunder"))!.flatMap((g) => g.roles).find((r) => r.key === "uniforms")).toMatchObject({
+      active: false,
+      holders: 1,
+    });
+    expect(await setDirectorRoleActive(deps(), ada, "thunder", "uniforms", true)).toEqual({ ok: true });
+    expect(await directorAreas(db.pool, bo.coachId, "thunder")).toEqual(["players", "uniforms", "events"]);
   });
 });

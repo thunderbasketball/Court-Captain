@@ -32,6 +32,7 @@ import ChatPanel from "../../../ChatPanel";
 import PageMenus, { MEGAPHONE_BTN, MegaphoneIcon, PLUS_BTN, PlusIcon } from "../../../PageMenus";
 import { NotifyPanel } from "../../../NotifyButton";
 import TeamRosterList from "./TeamRosterList";
+import RosterBoardButton from "../players/RosterBoardButton";
 import { hasArea, isThunderAdmin, seesWho } from "@/lib/org-admin";
 import { ViewAsButton } from "../../../ViewAsButton";
 
@@ -65,6 +66,8 @@ export async function TeamsContent({
   const progs = await thunderPrograms({ pool: db, now: () => new Date() }, user);
   const register = !!progs && progs.programs.length > 0;
   const view = (await searchParams).view;
+  // Roster players needs player registrations (CourtPlayers); Directors of Teams (checked again on the server).
+  const rosterBoard = (await hasFeature(db, "thunder", "player-registration")) && hasArea(user, "teams");
   // Each team's published Scenic City League games (matchups are made for its copy there), for the 📅 on its card.
   const copies = (
     await db.query<{ id: string; team: string }>(
@@ -164,6 +167,16 @@ export async function TeamsContent({
             register={register && progs ? { count: progs.programs.length, body: <RegisterPrograms org="thunder" progs={progs} bare /> } : null}
             grade={(t) => (t.grades.length ? gradeLabel(t.grades[t.grades.length - 1]) : "No grade")}
             warn={(t) => !!rosterIssue(t.grades, t.players, schoolYear, gradeRules)}
+            // Roster players (with player registration): the grade's roster board, on its card's title line.
+            gradeAction={
+              rosterBoard
+                ? (list) => {
+                    const t = list[0];
+                    const g = t.grades[t.grades.length - 1];
+                    return g && (t.gender === "Boys" || t.gender === "Girls") ? <RosterBoardButton gender={t.gender} grade={g} /> : null;
+                  }
+                : undefined
+            }
             row={(t) => (
             <TeamRow
               key={t.id}

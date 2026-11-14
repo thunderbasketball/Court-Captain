@@ -28,7 +28,7 @@ import { BookIcon, CardPanel, ChatIcon, EmailIcon, PanelIcon, TextIcon } from ".
 import ChatPanel from "../../../../ChatPanel";
 import { MAX_GROUP_TEXT } from "@/lib/group-text";
 import AppHeader from "../../../../AppHeader";
-import { Chip, CollapseCard, EmailLink, PersonRow, PhoneLink, card } from "../../../../ui";
+import { Chip, CollapseCard, EmailLink, PersonRow, PhoneLink, card, JerseyNumber } from "../../../../ui";
 import AvailablePlayers from "./AvailablePlayers";
 import UniformsBoard from "./UniformsBoard";
 import { AddPlayersButton, RemovePlayerButton } from "./RosterTools";
@@ -132,6 +132,8 @@ async function Team({
     uniformsOn ? listUniforms(deps, user, team.id) : null,
     uniformsMissing(deps, team.id),
   ]);
+  // Each player's uniform number (with Uniforms), shown before their name on the Roster.
+  const number = new Map((uniforms ?? []).flatMap((u) => (u.number ? [[u.registrantId, u.number] as const] : [])));
 
   return (
     <>
@@ -316,7 +318,7 @@ async function Team({
           </ul>
         </CollapseCard>
         <CollapseCard
-          title="Players"
+          title="Roster"
           count={players.length}
           open={opened === "roster"}
           alert={!players.length || !!issue}
@@ -366,6 +368,7 @@ async function Team({
                   <>
                     <span className="flex min-w-0 flex-wrap items-center gap-1">
                       <span className="truncate font-medium">
+                        <JerseyNumber n={number.get(p.registrantId)} />
                         {p.firstName} <span className="font-semibold">{p.lastName}</span>
                       </span>
                       <EligibleChip teamGrades={team.grades} grade={p.grade} birthdate={p.birthdate} year={schoolYear} rules={gradeRules} />

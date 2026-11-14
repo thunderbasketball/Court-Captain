@@ -4,7 +4,7 @@
 // A Director has one or more areas; each area covers some features. Admins also hold the Director role.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
-import { orgFeatureKeys, orgFeatures, type Feature } from "./features";
+import { FEATURES, abilitiesFrom, orgFeatureKeys, orgFeatures, syncPart, type Feature } from "./features";
 import { isOrgSlug, type OrgSlug } from "./orgs";
 import { orgShort } from "./org-registry";
 import { withTx, type Queryable } from "./sql";
@@ -77,10 +77,88 @@ export async function seesWho(
   return isOrgAdmin(pool, viewer.coachId, org);
 }
 
-// The areas this organization offers: those whose features it has.
+// The areas this organization offers: those whose features it has, and that it hasn't switched off.
 export async function orgAreas(pool: Pick<Queryable, "query">, org: OrgSlug) {
+  const [all, off] = await Promise.all([featureAreas(pool, org), offAreas(pool, org)]);
+  return all.filter((a) => !off.has(a.key));
+}
+
+// Every area its features bring, switched off or not (Admins always cover them all).
+async function featureAreas(pool: Pick<Queryable, "query">, org: OrgSlug) {
   const has = await orgFeatures(pool, org);
   return AREAS.filter((a) => !a.features.length || a.features.some((f) => has.has(f)));
+}
+
+// The Director roles an organization has switched off (its gear).
+async function offAreas(q: Pick<Queryable, "query">, org: OrgSlug): Promise<Set<string>> {
+  const r = await q.query<{ area: string }>("select area from org_area_settings where org = $1 and not active", [org]);
+  return new Set(r.rows.map((x) => x.area));
+}
+
+// Director roles, built into features: each feature the organization has, with the Director roles it brings (a role
+// that more than one feature brings is listed under the first), then the roles every organization has. Each with
+// whether it's Active, who switched it, and how many Directors hold it. For its Admins (the gear).
+export type DirectorRole = { key: Area; name: string; covers: string; active: boolean; setBy: string | null; holders: number };
+export async function directorRoles(
+  pool: Pick<Queryable, "query">,
+  viewer: SessionUser,
+  org: OrgSlug,
+): Promise<{ feature: string; roles: DirectorRole[] }[] | null> {
+  if (!(await isOrgAdmin(pool, viewer.coachId, org))) return null;
+  const [keys, settings, holders] = await Promise.all([
+    orgFeatureKeys(pool, org),
+    pool.query<{ area: string; active: boolean; set_by: string }>("select area, active, set_by from org_area_settings where org = $1", [org]),
+    pool.query<{ area: string; n: number }>(
+      `select a.area, count(*)::int as n from director_areas a join users u on u.coach_id = a.coach_id and u.active
+        where a.org = $1 and has_role(a.coach_id, a.org, 'Director') group by a.area`,
+      [org],
+    ),
+  ]);
+  const set = new Map(settings.rows.map((r) => [r.area, r]));
+  const held = new Map(holders.rows.map((r) => [r.area, r.n]));
+  const role = (a: (typeof AREAS)[number]): DirectorRole => ({
+    key: a.key,
+    name: a.name,
+    covers: a.covers,
+    active: set.get(a.key)?.active ?? true,
+    setBy: set.get(a.key)?.set_by ?? null,
+    holders: held.get(a.key) ?? 0,
+  });
+  const listed = new Set<string>();
+  const out: { feature: string; roles: DirectorRole[] }[] = [];
+  for (const f of FEATURES) {
+    if (!keys.has(f.key)) continue;
+    const gives = abilitiesFrom([f.key], false);
+    // CourtSync's part decides what it brings: hosting (Host) or a League's hosting organizations (Schedule).
+    if (f.key === "court-sync") {
+      const part = syncPart(keys);
+      if (part === "Host") gives.add("hosting-available");
+      if (part === "Schedule") gives.add("hosting-partners");
+    }
+    const roles = AREAS.filter((a) => !listed.has(a.key) && a.features.some((x) => gives.has(x)));
+    roles.forEach((a) => listed.add(a.key));
+    if (roles.length) out.push({ feature: f.name, roles: roles.map(role) });
+  }
+  const everyone = AREAS.filter((a) => !a.features.length);
+  if (everyone.length) out.push({ feature: "Every organization", roles: everyone.map(role) });
+  return out;
+}
+
+// Switch one of the organization's Director roles Active or off (its Admins). Off: not offered for new Directors and
+// no access for the Directors who hold it (kept on record for when it's back on).
+export async function setDirectorRoleActive(deps: Deps, viewer: SessionUser, org: unknown, area: unknown, active: unknown): Promise<Result> {
+  if (!isOrgSlug(org) || !isArea(area) || typeof active !== "boolean") return { ok: false, message: "Pick a Director role." };
+  if (!(await isOrgAdmin(deps.pool, viewer.coachId, org))) return { ok: false, message: "Only an Admin can change the organization's Director roles." };
+  const roles = await directorRoles(deps.pool, viewer, org);
+  if (!roles?.some((g) => g.roles.some((r) => r.key === area))) return { ok: false, message: "Your organization's features don't include that role." };
+  await withTx(deps.pool, async (q) => {
+    await q.query(
+      `insert into org_area_settings (org, area, active, set_by, set_at) values ($1, $2, $3, $4, $5)
+       on conflict (org, area) do update set active = excluded.active, set_by = excluded.set_by, set_at = excluded.set_at`,
+      [org, area, active, by(viewer), deps.now()],
+    );
+  });
+  return { ok: true };
 }
 
 // Only CourtPlayers, CourtTeams and CourtOfficials (Directors of Officials assign) organizations have Directors (SPEC.md
@@ -93,9 +171,9 @@ export async function hasDirectors(pool: Pick<Queryable, "query">, org: OrgSlug)
 // CourtOfficials needs at least one Assigner (the officials area, given to a Director or an Admin by name). How many the
 // organization has; null when it doesn't have CourtOfficials. No Assigner: Members and Staff warn.
 export async function assignerCount(q: Pick<Queryable, "query">, org: OrgSlug): Promise<number | null> {
-  if (!(await orgFeatureKeys(q, org)).has("court-officials")) return null;
+  if (!(await orgFeatureKeys(q, org)).has("court-officials") || (await offAreas(q, org)).has("officials")) return null;
   const r = await q.query<{ n: number }>(
-    `select count(*)::int as n from director_areas a join users u on u.coach_id = a.coach_id and u.active
+    `select count(*)::int as n from active_director_areas a join users u on u.coach_id = a.coach_id and u.active
       where a.org = $1 and a.area = 'officials'
         and (has_role(a.coach_id, a.org, 'Director') or has_role(a.coach_id, a.org, 'Admin'))`,
     [org],
@@ -137,21 +215,28 @@ export async function setAssigner(deps: Deps, viewer: SessionUser, org: unknown,
 // Does this person manage any of these areas in an organization (read from the database; used for Scenic City)?
 // Admins have every area; a Director needs one of them.
 export async function orgHasArea(q: Pick<Queryable, "query">, coachId: string, org: OrgSlug, ...areas: Area[]): Promise<boolean> {
-  return memo(q, `area:${coachId}:${org}:${[...areas].sort().join(",")}`, async () => {
-    const r = await q.query(
-      `select 1 where acts_as($1, $2, 'Admin')
-          or (has_role($1, $2, 'Director') and exists (select 1 from director_areas where coach_id = $1 and org = $2 and area = any($3::text[])))`,
-      [coachId, org, areas],
+  const mine = await areasIn(q, coachId, org);
+  return mine.admin || (mine.director && areas.some((a) => mine.areas.includes(a)));
+}
+
+// Whether a person is an Admin there (CourtCaptain staff too), a Director, and their active areas: one question,
+// read once per page however many areas the page asks about (lib/request-memo.ts).
+function areasIn(q: Pick<Queryable, "query">, coachId: string, org: OrgSlug) {
+  return memo(q, `areas:${coachId}:${org}`, async () => {
+    const r = await q.query<{ admin: boolean; director: boolean; areas: string[] }>(
+      `select acts_as($1, $2, 'Admin') as admin, has_role($1, $2, 'Director') as director,
+              array(select area from active_director_areas where coach_id = $1 and org = $2) as areas`,
+      [coachId, org],
     );
-    return r.rowCount === 1;
+    return r.rows[0];
   });
 }
 
 // A person's areas in an organization. Admins have every area the organization offers.
 export async function directorAreas(pool: Pick<Queryable, "query">, coachId: string, org: OrgSlug): Promise<Area[]> {
-  if (await isOrgAdmin(pool, coachId, org)) return (await orgAreas(pool, org)).map((a) => a.key);
+  if (await isOrgAdmin(pool, coachId, org)) return (await featureAreas(pool, org)).map((a) => a.key);
   const r = await pool.query<{ area: Area }>(
-    `select a.area from director_areas a where a.coach_id = $1 and a.org = $2 and has_role(a.coach_id, a.org, 'Director')`,
+    `select a.area from active_director_areas a where a.coach_id = $1 and a.org = $2 and has_role(a.coach_id, a.org, 'Director')`,
     [coachId, org],
   );
   return AREAS.map((a) => a.key).filter((k) => r.rows.some((x) => x.area === k));
@@ -271,7 +356,8 @@ export async function setDirectorAreas(
     const offered = new Set<string>((await orgAreas(q, org)).map((a) => a.key));
     if (!want.every((a) => offered.has(a)))
       return { ok: false as const, message: `${await orgShort(q, org)} doesn't have that area.` };
-    await q.query("delete from director_areas where coach_id = $1 and org = $2", [coachId, org]);
+    // Only the roles on offer change; a switched-off role they hold stays on record for when it's back on.
+    await q.query("delete from director_areas where coach_id = $1 and org = $2 and area = any($3::text[])", [coachId, org, [...offered]]);
     for (const area of want)
       await q.query("insert into director_areas (coach_id, org, area, granted_by, granted_at) values ($1, $2, $3, $4, $5)", [
         coachId,

@@ -1,6 +1,8 @@
 import { db } from "@/lib/db";
 import { FEATURES, hasFeature, isAlways, isFree, orgFeatureKeys, syncPart } from "@/lib/features";
-import { isOrgAdmin, isOrgOwner } from "@/lib/org-admin";
+import { directorRoles, isOrgAdmin, isOrgOwner } from "@/lib/org-admin";
+import type { SessionUser } from "@/lib/auth/service";
+import DirectorRoles from "./DirectorRoles";
 import { orgInfo } from "@/lib/org-registry";
 import { ORG_COLORS } from "@/lib/org-signup";
 import { TZ } from "@/lib/time";
@@ -20,7 +22,7 @@ import WarningsForm from "./warnings/WarningsForm";
 
 // The gear after an organization's last tab, for its Admins only (checked here on the server): its name (Owners), login link, every
 // feature (what it has, since when, and what it can add: buying upgrades in the app is coming soon), its color and logo.
-export default async function OrgGear({ org, coachId }: { org: string; coachId: string }) {
+export default async function OrgGear({ org, coachId, user }: { org: string; coachId: string; user?: SessionUser }) {
   const [admin, owner, o, on, asked] = await Promise.all([
     isOrgAdmin(db, coachId, org),
     isOrgOwner(db, coachId, org),
@@ -42,6 +44,8 @@ export default async function OrgGear({ org, coachId }: { org: string; coachId: 
     hasFeature(db, org, "chat"),
   ]);
   const chatSetting = chatOn ? await chatEmailSetting(db, org) : null;
+  // Director roles, by the features that bring them (Admins switch each Active or off).
+  const roles = user ? await directorRoles(db, user, org) : null;
   const requested = new Set(asked.rows.map((f) => f.feature));
   const date = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: TZ });
   const always = isAlways;
@@ -68,6 +72,11 @@ export default async function OrgGear({ org, coachId }: { org: string; coachId: 
             {has.has("court-club") && (
               <SubCard title="CourtClub">
                 <ClubSettingsForm org={org} days={clubDays} />
+              </SubCard>
+            )}
+            {roles && roles.length > 0 && (
+              <SubCard title="Director roles" count={`${roles.flatMap((g) => g.roles).filter((r) => r.active).length} active`}>
+                <DirectorRoles org={org} groups={roles} who={owner || admin} />
               </SubCard>
             )}
             {chatSetting && (

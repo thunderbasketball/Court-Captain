@@ -13,7 +13,6 @@ import { AddPlayerButton, RemoveAddedPlayer } from "../../players/AddPlayerButto
 import PlayerEvalButton from "../../players/PlayerEvalButton";
 import BirthdateFix from "../../players/BirthdateFix";
 import { birthdateFixes } from "@/lib/birthdate-fix";
-import RosterBoardButton from "../../players/RosterBoardButton";
 import { Chip, EmailLink, GroupCard, Notice, PageTitle, PersonRow, PhoneLink, genderTint } from "../../../../ui";
 import { PlayerTeamButton } from "../../../../ViewAsButton";
 
@@ -184,7 +183,6 @@ export default async function PlayersPart({ user }: { user: SessionUser }) {
                 }
                 count={n}
                 defaultOpen={false}
-                action={<RosterBoardButton gender={g.gender} grade={g.grade} />}
               >
                 {g.unrostered.length > 0 && (
                   <>

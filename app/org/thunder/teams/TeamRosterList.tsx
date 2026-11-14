@@ -21,7 +21,7 @@ export default function TeamRosterList({
 }) {
   const year = schoolYearOf(easternDate(new Date()));
   if (!team.players.length)
-    return <p className="text-sm text-zinc-500">No players yet. Roster them from Players → Roster players.</p>;
+    return <p className="text-sm text-zinc-500">No players yet. Roster them with Roster players on this grade's card.</p>;
   return (
     <ul className="divide-y divide-zinc-100 rounded-xl bg-zinc-50 px-3 dark:divide-white/5 dark:bg-white/5">
       {team.players.map((p) => (

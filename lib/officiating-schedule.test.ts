@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, grant } from "./testing/db";
-import { answerGame, assignOfficial, myOfficiating, officialsBoard, removeOfficialFrom } from "./officiating-schedule";
+import { answerGame, assignOfficial, myOfficiating, officialsBoard, officiatingSummary, removeOfficialFrom } from "./officiating-schedule";
 import { addScrimmage, updateScrimmage, upcomingScrimmages } from "./scrimmages";
 
 const ORG = "sc-officials";
@@ -183,5 +183,14 @@ describe("scheduling officials on games", () => {
     // Once a game has started, no more answers.
     const later = { pool: db.pool, now: () => new Date("2026-11-14T15:00:00Z") };
     expect(await answerGame(later, rita, { gameId: g1, answer: "yes" })).toMatchObject({ ok: false, message: expect.stringContaining("started") });
+  });
+
+  it("the card's title count (without building the board) matches the board: games and open spots; Assigners only", async () => {
+    await assignOfficial(deps(), otto, ORG, { gameId: g1, position: 1, officialId: "5550101" });
+    await assignOfficial(deps(), otto, ORG, { gameId: g3, position: 2, officialId: "5550102" });
+    const board = (await officialsBoard(deps(), otto, ORG))!;
+    expect(await officiatingSummary(deps(), otto, ORG)).toEqual({ games: board.days.reduce((n, d) => n + d.games, 0), open: board.open });
+    expect(await officiatingSummary(deps(), otto, ORG)).toEqual({ games: 3, open: 4 });
+    expect(await officiatingSummary(deps(), director, ORG)).toBeNull();
   });
 });

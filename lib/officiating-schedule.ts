@@ -320,3 +320,17 @@ export async function answerGame(deps: Deps, viewer: SessionUser, input: { gameI
     return { ok: true as const };
   });
 }
+
+// For the Games to officiate card's title (without building the board): how many coming games picked the group, and
+// how many referee spots are still open on those that haven't started. Null for anyone but its Admins and Assigners.
+export async function officiatingSummary(deps: Deps, viewer: SessionUser, officialsOrg: string): Promise<{ games: number; open: number } | null> {
+  if (!(await managesOfficials(deps.pool, viewer, officialsOrg))) return null;
+  const r = await deps.pool.query<{ games: number; open: number }>(
+    `select count(*)::int as games,
+            coalesce(sum(case when s.starts_at > $2 then ${SPOTS.length} - (select count(*) from game_officials x where x.scrimmage_id = s.id) else 0 end), 0)::int as open
+       from scrimmages s
+      where s.officials_org = $1 and s.starts_at + make_interval(mins => s.minutes) > $2`,
+    [officialsOrg, deps.now()],
+  );
+  return r.rows[0];
+}

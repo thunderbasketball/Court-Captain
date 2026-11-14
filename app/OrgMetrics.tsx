@@ -1,4 +1,7 @@
 import Link from "next/link";
+import type { SessionUser } from "@/lib/auth/service";
+import { db } from "@/lib/db";
+import { visitStats } from "@/lib/site-visits";
 import type { OrgMetrics as Metrics } from "@/lib/org-metrics";
 import { TZ, easternDate } from "@/lib/time";
 import type { VisitRange, VisitStats } from "@/lib/site-visits";
@@ -316,4 +319,15 @@ function lastLogin(at: Date | null, now: Date) {
           ? `${days} days ago`
           : new Date(at).toLocaleDateString("en-US", { timeZone: TZ, month: "short", day: "numeric" });
   return <span className={days >= 7 ? "text-amber-700 dark:text-amber-300" : "text-zinc-500"}>{text}</span>;
+}
+
+// The Home card's metrics with its Site visits, read only when the Home card is open (the visits aren't needed for the
+// card's title).
+export async function OrgMetricsWithVisits({
+  user,
+  org,
+  ...props
+}: Omit<Parameters<typeof OrgMetrics>[0], "visits"> & { user: SessionUser; org: string }) {
+  const visits = await visitStats({ pool: db, now: () => props.now }, user, org);
+  return <OrgMetrics {...props} visits={visits} />;
 }

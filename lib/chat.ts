@@ -69,7 +69,7 @@ type Ctx = {
 // An Admin, or a Director with one of these areas, in an organization (roles only; CourtCaptain staff aren't counted).
 const areaSql = (who: string, org: string, areas: string) =>
   `(has_role(${who}, ${org}, 'Admin') or (has_role(${who}, ${org}, 'Director') and exists (
-     select 1 from director_areas a where a.coach_id = ${who} and a.org = ${org} and a.area = any(${areas}))))`;
+     select 1 from active_director_areas a where a.coach_id = ${who} and a.org = ${org} and a.area = any(${areas}))))`;
 const SCHEDULER_AREAS = "array['scheduling', 'facilities']";
 // A coach of a team registered in one of the organization's running team programs (until the program ends; removed
 // registrations don't count): the team's listed coach, or a Head or Assistant Coach of the club team it comes from.

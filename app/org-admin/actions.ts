@@ -68,3 +68,16 @@ export async function setAssigner(org: string, coachId: string, on: boolean) {
     return { ok: false as const, message: "Something went wrong. Please try again." };
   }
 }
+
+// Admins: switch one of the organization's Director roles Active or off (re-checked inside lib/org-admin).
+export async function setDirectorRoleActive(org: string, area: string, active: boolean) {
+  const user = await currentUser();
+  if (!user) return { ok: false as const, message: "Please log in again." };
+  if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  try {
+    return await orgAdmin.setDirectorRoleActive({ pool: db, now: () => new Date() }, user, org, area, active === true);
+  } catch (e) {
+    console.error("Director role change failed:", e);
+    return { ok: false as const, message: "Something went wrong. Please try again." };
+  }
+}

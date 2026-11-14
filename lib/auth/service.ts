@@ -121,7 +121,7 @@ const ON_TEAM = `exists (select 1 from team_staff ts where ts.coach_id = u.coach
   acts_as(u.coach_id, 'thunder', 'Director') as thunder_director,
   acts_as(u.coach_id, 'thunder', 'Admin') as thunder_admin,
   has_role(u.coach_id, 'thunder', 'Family') as thunder_family,
-  array(select a.area from director_areas a where a.coach_id = u.coach_id and a.org = 'thunder') as thunder_areas,
+  array(select a.area from active_director_areas a where a.coach_id = u.coach_id and a.org = 'thunder') as thunder_areas,
   exists (select 1 from org_roles r where r.coach_id = u.coach_id and r.role <> 'Request') as any_role,
   exists (select 1 from org_roles r where r.coach_id = u.coach_id and r.role = 'Request') as any_request`;
 

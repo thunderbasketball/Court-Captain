@@ -69,7 +69,7 @@ async function loadChats(
                         'staff', exists (select 1 from platform_admins p where p.coach_id = m.coach_id),
                         'admin', q.org is not null and has_role(m.coach_id, q.org, 'Admin'),
                         'support', q.org is not null and has_role(m.coach_id, q.org, 'Director') and exists (
-                          select 1 from director_areas a where a.coach_id = m.coach_id and a.org = q.org and a.area = 'support'))
+                          select 1 from active_director_areas a where a.coach_id = m.coach_id and a.org = q.org and a.area = 'support'))
                       order by m.sent_at, m.id)
                       from support_messages m join users mu on mu.coach_id = m.coach_id where m.question_id = q.id), '[]') as messages
      from support_questions q join users u on u.coach_id = q.coach_id left join organizations o on o.slug = q.org

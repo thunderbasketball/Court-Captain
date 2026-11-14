@@ -11,7 +11,7 @@ import { scheduledGames } from "@/lib/scenic-games";
 import { LeagueGames, ScheduleList } from "../../../../LeagueGames";
 import { COACH_ROLES, getOrgTeam } from "@/lib/org-teams";
 import AppHeader from "../../../../AppHeader";
-import { Chip, CollapseCard, card } from "../../../../ui";
+import { Chip, CollapseCard, card, JerseyNumber } from "../../../../ui";
 import { DateChips, ProgramButton, RegisterLeagueButton } from "../../../../leagues/LeagueButtons";
 import { easternDate } from "@/lib/time";
 import { MustBeEntered } from "../../../../TeamRow";
@@ -203,7 +203,7 @@ async function OrgTeam({
         </CollapseCard>
 
         <CollapseCard
-          title="Players"
+          title="Roster"
           count={roster?.players.length ?? t.players}
           open={opened === "roster"}
           alert={!t.players}
@@ -228,7 +228,7 @@ async function OrgTeam({
                   <li key={p.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-medium">
-                        {p.jersey && <span className="mr-1 text-zinc-500">#{p.jersey}</span>}
+                        <JerseyNumber n={p.jersey} />
                         {p.first} <span className="font-semibold">{p.last}</span>
                       </span>
                       <span className="block text-xs text-zinc-400">

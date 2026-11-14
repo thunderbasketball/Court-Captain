@@ -191,11 +191,13 @@ export function GradeGroups<T>({
   grade,
   row,
   warn,
+  gradeAction,
 }: {
   teams: T[];
   grade: (t: T) => string; // e.g. "1st Grade"
   row: (t: T) => ReactNode;
   warn?: (t: T) => boolean; // a team with a problem (a player not eligible): its grade's title turns red with ⚠ N teams
+  gradeAction?: (teams: T[]) => ReactNode; // a button on the grade card's title line (e.g. Roster players)
 }) {
   const groups: { label: string; teams: T[] }[] = [];
   for (const t of teams) {
@@ -207,7 +209,13 @@ export function GradeGroups<T>({
   return (
     <div className="space-y-3">
       {groups.map((g) => (
-        <GroupCard key={g.label} title={gradeTitle(g.label, warn ? g.teams.filter(warn).length : 0)} count={g.teams.length} defaultOpen={false}>
+        <GroupCard
+          key={g.label}
+          title={gradeTitle(g.label, warn ? g.teams.filter(warn).length : 0)}
+          count={g.teams.length}
+          defaultOpen={false}
+          action={gradeAction?.(g.teams)}
+        >
           {g.teams.map(row)}
         </GroupCard>
       ))}
@@ -278,12 +286,14 @@ export function TeamsByLevel<T extends { level: string; gender: string }>({
   row,
   warn,
   register,
+  gradeAction,
 }: {
   teams: T[];
   view: unknown; // ?view=: a group key ("comp-girls") or "register" opens that card
   grade: (t: T) => string; // e.g. "1st Grade"
   row: (t: T) => ReactNode;
   warn?: (t: T) => boolean;
+  gradeAction?: (teams: T[]) => ReactNode; // a button on each grade card's title line (Roster players)
   register?: { count: number; body: ReactNode } | null; // the Register card, when it registers teams into a League
 }) {
   const v = typeof view === "string" ? view : "";
@@ -316,7 +326,7 @@ export function TeamsByLevel<T extends { level: string; gender: string }>({
         </span>
       </summary>
       <div className={top ? "border-t border-zinc-950/5 p-3 dark:border-white/5" : "px-2 pb-2"}>
-        <GradeGroups teams={g.teams} grade={grade} row={row} warn={warn} />
+        <GradeGroups teams={g.teams} grade={grade} row={row} warn={warn} gradeAction={gradeAction} />
       </div>
     </details>
   );

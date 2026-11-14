@@ -42,7 +42,7 @@ export async function myDashboard(coachId: string): Promise<MyDashboard | null> 
        order by array_position(array['thunder', 'scenic-city'], r.org) nulls last, lower(o.short_name)`,
       [id],
     ),
-    db.query<{ org: string; area: string }>("select org, area from director_areas where coach_id = $1", [id]),
+    db.query<{ org: string; area: string }>("select org, area from active_director_areas where coach_id = $1", [id]),
     db.query<{ role: string }>("select role from platform_admins where coach_id = $1", [id]),
     db.query<{ id: string; name: string; role: string; next: Date | null; gym: string | null }>(
       `select t.id::text, t.name, s.role,

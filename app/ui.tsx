@@ -368,3 +368,13 @@ export function CoachBadge({ tag }: { tag: CoachTag | undefined }) {
     </span>
   );
 }
+
+// A player's uniform number on a roster: white bold digits in a black box, so it stands out.
+export function JerseyNumber({ n }: { n: string | number | null | undefined }) {
+  if (n === null || n === undefined || n === "") return null;
+  return (
+    <span className="mr-1.5 inline-flex h-5 min-w-6 items-center justify-center rounded bg-black px-1 align-middle text-xs font-bold text-white tabular-nums ring-1 ring-white/20">
+      {n}
+    </span>
+  );
+}

@@ -83,7 +83,7 @@ export async function MembersContent({
     <>
       {!embedded && <AppHeader user={user} tab="members" context="director" />}
       <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <MembersCards cards={cards} open={open} heading={embedded ? null : "Members"} />
+        <MembersCards cards={cards} open={open} heading={embedded ? null : "Members"} param="sub" />
       </PageFrame>
     </>
   );

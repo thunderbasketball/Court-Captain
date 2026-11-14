@@ -77,7 +77,24 @@ export default async function AppHeader({
   const platform = context === "platform";
   // The organization this page belongs to: Scenic City's chips, a registered organization's chip ("org:<slug>"), or Thunder.
   const org = context?.startsWith("scenic:") ? "scenic-city" : context?.startsWith("org:") ? context.slice(4) : "thunder";
-  const [orgs, here] = await Promise.all([listOrgs(db), platform ? null : orgInfo(db, org)]);
+  const thunder = !platform && org === "thunder" && user.hasThunderRole;
+  const [orgs, here, { contexts }, features, unread, myEvents, popups, chatUnread, articles, chats, featureRows] = await Promise.all([
+    listOrgs(db),
+    platform ? null : orgInfo(db, org),
+    currentContexts(user),
+    orgFeatures(db, org),
+    platform ? 0 : unreadCount(deps, user), // alerts from every organization
+    thunder && !user.isDirector ? checkInsFor(user) : 0,
+    // Not while a Director is viewing as this person.
+    user.actingBy || platform ? [] : popupAnnouncements(deps, user),
+    platform ? 0 : chatUnreadCount(deps, user), // chats in every organization
+    // Support (the same everywhere): its questions and guides, this person's chats, and the chats they answer
+    // (CourtCaptain staff: all; an organization's Owners and Admins: the ones started there).
+    listArticles(db),
+    supportChats(db, user, platform ? null : org),
+    // Each organization's features, for grouping the logo menu (more than 4 organizations).
+    db.query<{ org: string; features: string[] }>("select org, array_agg(feature) as features from org_features group by org"),
+  ]);
   // Someone in no organization yet (a CourtCaptain account): CourtCaptain's own brand, no organization's.
   const neutral = !platform && !context && !user.hasThunderRole && !user.isFamily && !user.requestPending;
   const brand =
@@ -94,20 +111,6 @@ export default async function AppHeader({
           color: here?.color ?? "#1d4ed8",
           login: here?.login ?? "/login",
         };
-  const thunder = !platform && org === "thunder" && user.hasThunderRole;
-  const [{ contexts }, features, unread, myEvents, popups, chatUnread, articles, chats] = await Promise.all([
-    currentContexts(user),
-    orgFeatures(db, org),
-    platform ? 0 : unreadCount(deps, user), // alerts from every organization
-    thunder && !user.isDirector ? checkInsFor(user) : 0,
-    // Not while a Director is viewing as this person.
-    user.actingBy || platform ? [] : popupAnnouncements(deps, user),
-    platform ? 0 : chatUnreadCount(deps, user), // chats in every organization
-    // Support (the same everywhere): its questions and guides, this person's chats, and the chats they answer
-    // (CourtCaptain staff: all; an organization's Owners and Admins: the ones started there).
-    listArticles(db),
-    supportChats(db, user, platform ? null : org),
-  ]);
   // Only the features this organization has (SPEC section 14); tabs with no feature are always there.
   const has = (t: { feature?: Feature }) => !t.feature || features.has(t.feature);
   const chatOn = features.has("chat") || features.has("hosting-available"); // a host-only organization: its CourtSync chats
@@ -115,11 +118,7 @@ export default async function AppHeader({
   // Chips for this organization only; the logo next to Log out switches organizations (SPEC section 14).
   const orgChips = platform ? [] : contexts.filter((c) => c.org === org);
   // Each organization's features, for grouping the logo menu (more than 4 organizations).
-  const featuresOf = new Map(
-    (
-      await db.query<{ org: string; features: string[] }>("select org, array_agg(feature) as features from org_features group by org")
-    ).rows.map((r) => [r.org, r.features]),
-  );
+  const featuresOf = new Map(featureRows.rows.map((r) => [r.org, r.features]));
   const switchTo = [
     ...(contexts.some((c) => c.key === "platform")
       ? [{ slug: PLATFORM, name: "CourtCaptain", logo: PLATFORM_BRAND.logo.src, group: "Platform" }]
@@ -169,21 +168,26 @@ export default async function AppHeader({
   // everyone but Directors without the Teams area, Users for Admins.
   const scenicContext = contexts.find((c) => c.key === context);
   const scenicRole = scenicContext?.key.startsWith("scenic:") && "role" in scenicContext ? scenicContext.role : undefined;
+  // The tab rows only show on a team's pages (`teamTab`); everywhere else Home is a stack of cards, so the reads below
+  // that only decide tabs are skipped.
+  const withTabs = !!teamTab;
   const [scenicAreas, scenicAdmin] =
-    org === "scenic-city" && scenicRole === "Director"
+    withTabs && org === "scenic-city" && scenicRole === "Director"
       ? await Promise.all([directorAreas(db, user.coachId, "scenic-city"), isOrgAdmin(db, user.coachId, "scenic-city")])
       : [[] as Area[], false];
   // A registered organization: Home, Teams (Team Management: Admins and Directors of Teams, or its coaches) and
   // Facilities. Its Admins manage features from the gear on Home.
   const registered = !platform && context?.startsWith("org:");
-  const regFacilities = registered && (await canHost(db, org)) && (await orgHasArea(db, user.coachId, org, "facilities"));
+  const regFacilities = registered && withTabs && (await canHost(db, org)) && (await orgHasArea(db, user.coachId, org, "facilities"));
   // Members: Staff for its Admins, Coaches for Admins and Directors of Coaches or Teams (with Team Management).
   const regMembers =
     registered &&
+    withTabs &&
     ((await isOrgAdmin(db, user.coachId, org)) ||
       (features.has("team-building") && (await orgHasArea(db, user.coachId, org, "teams"))));
   const regTeams =
     registered &&
+    withTabs &&
     features.has("team-building") &&
     ((await orgHasArea(db, user.coachId, org, "teams")) ||
       !!(
@@ -301,7 +305,7 @@ export default async function AppHeader({
   const activeTab: string | undefined = teamTab ? teamTab.tab : tab;
   // The Director's Teams and Uniforms tabs flash red while a team has an alert or a uniform is missing a number or size.
   const flags =
-    !teamTab && thunder && user.isDirector && tabs.some((t) => t.key === "teams" || t.key === "uniforms")
+    withTabs && !teamTab && thunder && user.isDirector && tabs.some((t) => t.key === "teams" || t.key === "uniforms")
       ? await directorAlerts(db, new Date())
       : null;
   const alerting = (key: string) =>
@@ -315,16 +319,18 @@ export default async function AppHeader({
   // A registered organization's own color (set in its gear) marks the tab in use; Thunder and Scenic City keep theirs.
   const tabColor = registered ? brand.color : null;
   // The gear (features, logo, color, login link) after the last tab, for the organization's Admins.
-  const gear = !teamTab && !platform && !neutral && (await isOrgAdmin(db, user.coachId, org));
   // 🔍 search (people, teams, players): the organization's Owners, Admins and Directors.
-  const search =
-    !platform &&
-    !neutral &&
-    (await db.query<{ ok: boolean }>("select acts_as($1, $2, 'Director') as ok", [user.coachId, org])).rows[0].ok;
   // Alerts in every organization: its Directors' bell sends to everyone there (opens under the header); everyone
   // else's bell opens their inbox. Thunder keeps its own (all team staff) and its chat.
   const member = !platform && (thunder || orgChips.length > 0);
-  const alertSender = member && !thunder && (await sendsAlerts(deps, user, org));
+  // Asked together (they don't depend on each other), not one after another.
+  const [gear, search, alertSender] = await Promise.all([
+    !teamTab && !platform && !neutral && isOrgAdmin(db, user.coachId, org),
+    !platform &&
+      !neutral &&
+      db.query<{ ok: boolean }>("select acts_as($1, $2, 'Director') as ok", [user.coachId, org]).then((r) => r.rows[0].ok),
+    member && !thunder && sendsAlerts(deps, user, org),
+  ]);
   const orgIcons = (
     <>
       {/* Directors: the bubble (the Chat box) and the bell (notify all team staff) open under the header; everyone else's bubble too. */}
@@ -451,7 +457,7 @@ export default async function AppHeader({
               </Link>
             )}
             {orgIcons}
-            {gear && <OrgGear org={org} coachId={user.coachId} />}
+            {gear && <OrgGear org={org} coachId={user.coachId} user={user} />}
             {search && <OrgSearchButton org={org} orgName={here?.short ?? brand.name} />}
           </div>
         </div>

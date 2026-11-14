@@ -1,6 +1,7 @@
 // Grade requirements (SPEC.md section 5): the age control date, the oldest age and the age exception, set in a League
 // program's gear and in an organization's gear. An organization can adopt its League's requirements (the current
 // Scenic City League: not ended yet, the earliest first), which greys its own settings out.
+import { memo } from "./request-memo";
 import type { SessionUser } from "./auth/service";
 import type { Pool } from "pg";
 import type { Queryable } from "./sql";
@@ -45,7 +46,11 @@ export type OrgGradeRules = {
 };
 
 // What an organization's rosters are checked against.
-export async function orgGradeRules(q: Pick<Queryable, "query">, org: string, now: Date): Promise<OrgGradeRules> {
+// Read once per page (the header's gear, Home's alerts, Teams and Players all ask; lib/request-memo.ts).
+export function orgGradeRules(q: Pick<Queryable, "query">, org: string, now: Date): Promise<OrgGradeRules> {
+  return memo(q, `grade-rules:${org}:${easternDate(now)}`, () => readOrgGradeRules(q, org, now));
+}
+async function readOrgGradeRules(q: Pick<Queryable, "query">, org: string, now: Date): Promise<OrgGradeRules> {
   const [o, league] = await Promise.all([
     q.query<{ grade_rules: unknown; adopt_league_grades: boolean }>(
       "select grade_rules, adopt_league_grades from organizations where slug = $1",
