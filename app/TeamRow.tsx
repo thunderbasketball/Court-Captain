@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Chip, GroupCard, card, genderTint } from "./ui";
+import { Chip, GroupCard, JerseyNumber, card, genderTint } from "./ui";
 import TeamRowMore, { type CardToggle } from "./TeamRowMore";
 import ChatPanel from "./ChatPanel";
 import { BellIcon, NotifyPanel } from "./NotifyButton";
@@ -36,7 +36,10 @@ export default function TeamRow({
   notify,
   actions,
   issue,
+  page,
 }: {
+  // ↗ the team's page opened right under the row (built on the server only while open); left out: ↗ goes to its page
+  page?: { id: string; content: ReactNode | null };
   issue?: string | null; // a roster problem ("1 Too old"): the name turns red with a badge saying it
   href: string;
   name: string;
@@ -109,6 +112,23 @@ export default function TeamRow({
   return (
     <li className="px-4 py-2.5">
       <TeamRowMore
+        page={
+          page && {
+            id: page.id,
+            label: `${name}: team page`,
+            className: "inline-flex size-7 shrink-0 items-center justify-center rounded-full text-zinc-600 ring-1 ring-zinc-950/15 hover:bg-zinc-100 dark:text-zinc-300 dark:ring-white/20 dark:hover:bg-white/10",
+            icon: (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden className="size-4">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
+                />
+              </svg>
+            ),
+            content: page.content,
+          }
+        }
         head={
           <>
             <span
@@ -118,7 +138,13 @@ export default function TeamRow({
             >
               {name.split(" ")[0]}
             </span>
-            <span className={`truncate font-semibold ${issue ? "text-red-600 dark:text-red-400" : ""}`}>
+            <span
+              className={`truncate font-semibold ${
+                issue || teamNeeds({ hasCoach, waitingCoach, needsEmail: !!needsEmail, players: players ?? 0 })
+                  ? "animate-pulse text-red-600 dark:text-red-400"
+                  : ""
+              }`}
+            >
               {name}
               {altName && <span className="font-normal text-zinc-500"> · {altName}</span>}
             </span>
@@ -130,7 +156,8 @@ export default function TeamRow({
         actions={
           <>
             {actions}
-            {/* The team page, last before the chevron. */}
+            {/* The team page, last before the chevron (opened right here when `page` is given). */}
+            {!page && (
             <Link
               href={href}
               aria-label={`${name}: team page`}
@@ -145,6 +172,7 @@ export default function TeamRow({
                 />
               </svg>
             </Link>
+            )}
           </>
         }
         more={
@@ -174,11 +202,17 @@ export default function TeamRow({
 // A Teams page tab's teams grouped by grade (each team under its top grade, the one on its badge), youngest first as
 // listed, one card per grade with how many, each collapsed (tap to open).
 // A grade card's title: red, with a ⚠ badge of how many of its teams have a problem.
+// Something a team must still enter (its MUST BE ENTERED lines): its grade, gender and level cards (and Home's Teams
+// card) flash red so you can drill down to it.
+export function teamNeeds(t: { hasCoach: boolean; waitingCoach: unknown; needsEmail: boolean; players: number }): boolean {
+  return (!t.hasCoach && !t.waitingCoach) || !!t.waitingCoach || t.needsEmail || !t.players;
+}
+
 function gradeTitle(label: string, bad: number) {
   if (!bad) return label;
   return (
     <span className="flex flex-wrap items-center gap-2">
-      <span className="text-red-600 dark:text-red-400">{label}</span>
+      <span>{label}</span>
       <Chip tone="red">
         ⚠ {bad} {bad === 1 ? "team" : "teams"}
       </Chip>
@@ -214,6 +248,7 @@ export function GradeGroups<T>({
           title={gradeTitle(g.label, warn ? g.teams.filter(warn).length : 0)}
           count={g.teams.length}
           defaultOpen={false}
+          alert={!!warn && g.teams.some(warn)}
           action={gradeAction?.(g.teams)}
         >
           {g.teams.map(row)}
@@ -310,14 +345,14 @@ export function TeamsByLevel<T extends { level: string; gender: string }>({
   const genderCard = (g: Group, top: boolean, alone: boolean) => (
     <details
       key={g.key}
-      className={`group overflow-hidden ring-1 ${top ? "rounded-2xl shadow-sm" : "rounded-xl"} ${genderTint(g.gender)}`}
+      className={`group overflow-hidden ring-1 ${top ? "rounded-2xl shadow-sm" : "rounded-xl"} ${genderTint(g.gender)} ${bad(g.teams) ? "ring-2 ring-red-300 dark:ring-red-500/40" : ""}`}
       open={g.key === v || alone}
     >
       <summary
         className={`flex cursor-pointer list-none items-center justify-between gap-3 px-4 select-none [&::-webkit-details-marker]:hidden ${top ? "py-3" : "py-2.5"}`}
       >
         <span className={`flex flex-wrap items-center gap-2 font-semibold ${top ? "text-lg" : ""}`}>
-          {g.gender}
+          <span className={bad(g.teams) ? "animate-pulse text-red-600 dark:text-red-400" : ""}>{g.gender}</span>
           {warnChip(bad(g.teams))}
         </span>
         <span className="flex items-center gap-2">
@@ -337,10 +372,14 @@ export function TeamsByLevel<T extends { level: string; gender: string }>({
         levels.map((l) => {
           const all = l.groups.flatMap((g) => g.teams);
           return (
-            <details key={l.key} className={`${card} group overflow-hidden`} open={l.groups.some((g) => g.key === v)}>
+            <details
+              key={l.key}
+              className={`${card} group overflow-hidden ${bad(all) ? "ring-2 ring-red-300 dark:ring-red-500/40" : ""}`}
+              open={l.groups.some((g) => g.key === v)}
+            >
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 select-none [&::-webkit-details-marker]:hidden">
                 <span className="flex flex-wrap items-center gap-2 text-lg font-semibold">
-                  {l.title}
+                  <span className={bad(all) ? "animate-pulse text-red-600 dark:text-red-400" : ""}>{l.title}</span>
                   {warnChip(bad(all))}
                 </span>
                 <span className="flex items-center gap-2">
@@ -391,5 +430,20 @@ export function ChatIcon() {
         d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z"
       />
     </svg>
+  );
+}
+
+// A typed-in roster on a team's row (👥): each player's uniform number and name, by last name.
+export function OrgRosterList({ players }: { players: { first: string; last: string; jersey: string | null }[] }) {
+  if (!players.length) return <p className="text-sm text-zinc-500">No players on the roster yet.</p>;
+  return (
+    <ul className="divide-y divide-zinc-100 rounded-xl bg-zinc-50 px-3 text-sm dark:divide-white/5 dark:bg-white/5">
+      {players.map((p, i) => (
+        <li key={i} className="py-1.5">
+          <JerseyNumber n={p.jersey} />
+          {p.first} <span className="font-semibold">{p.last}</span>
+        </li>
+      ))}
+    </ul>
   );
 }

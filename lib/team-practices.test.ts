@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { NO_FEATURE } from "./features";
 import { createTestDb } from "./testing/db";
-import { addOwnPractice, canChangeOwnPractices, cleanLocation, ownPracticeLocations, removeOwnPractice, upcomingOwnPractices } from "./team-practices";
+import { addOwnPractice, canChangeOwnPractices, cleanLocation, ownPracticeLocations, removeOwnPractice, upcomingOwnForTeams, upcomingOwnPractices } from "./team-practices";
 
 describe("a team's own practices", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -119,5 +119,14 @@ describe("a team's own practices", () => {
     now = new Date("2026-11-17T12:00:00Z");
     expect(await upcomingOwnPractices(deps(), T)).toHaveLength(0);
     expect(await removeOwnPractice(deps(), coach, T, p.id, false)).toMatchObject({ ok: false });
+  });
+
+  it("several teams at once (the Teams list's 📅): each team's coming ones, soonest first", async () => {
+    const E = { org: "east-ridge", teamId: er };
+    await addOwnPractice(deps(), person("5550004"), E, { ...mon, date: "2026-11-18" });
+    await addOwnPractice(deps(), person("5550004"), E, mon);
+    const all = await upcomingOwnForTeams(deps(), "east-ridge", [er, "x"]);
+    expect(all[er].map((p) => p.startsAt.toISOString())).toEqual(["2026-11-16T23:00:00.000Z", "2026-11-18T23:00:00.000Z"]);
+    expect(await upcomingOwnForTeams(deps(), "east-ridge", [])).toEqual({});
   });
 });

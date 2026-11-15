@@ -90,7 +90,7 @@ export async function SeasonContent({
                   return total ? (
                     <Link
                       key={d.iso}
-                      href={`/org/thunder/practice?week=${d.iso}`}
+                      href={`/org/thunder?open=schedule&week=${d.iso}#schedule`}
                       title={`${d.open} open · ${d.booked} booked · ${d.blocked} blocked`}
                       className={`flex aspect-square flex-col items-center justify-center rounded-md ${cls}`}
                     >

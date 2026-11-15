@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, grant } from "./testing/db";
 import { answerGame, assignOfficial, myOfficiating, officialsBoard, officiatingSummary, removeOfficialFrom } from "./officiating-schedule";
 import { addScrimmage, updateScrimmage, upcomingScrimmages } from "./scrimmages";
+import { gymScoresheets } from "./scoresheets";
 
 const ORG = "sc-officials";
 
@@ -22,6 +23,9 @@ describe("scheduling officials on games", () => {
   let g1 = ""; // 10 AM Nov 14, 90 minutes
   let g2 = ""; // 11 AM Nov 14 (overlaps g1)
   let g3 = ""; // 1 PM Nov 14
+  // The scrimmages' own ids (g1… are their game keys, "s" + id, as the board names them).
+  let n1 = "";
+  let n3 = "";
 
   beforeEach(async () => {
     await db.reset();
@@ -59,9 +63,11 @@ describe("scheduling officials on games", () => {
       if (!r.ok) throw new Error(r.message);
       return r.id;
     };
-    g1 = await add("10:00", "Signal Mountain MS");
-    g2 = await add("11:00", "Red Bank MS");
-    g3 = await add("13:00", "Signal Mountain MS");
+    n1 = await add("10:00", "Signal Mountain MS");
+    g2 = `s${await add("11:00", "Red Bank MS")}`;
+    n3 = await add("13:00", "Signal Mountain MS");
+    g1 = `s${n1}`;
+    g3 = `s${n3}`;
   });
 
   it("the board: a card per day, a gym per place, 2 open spots a game; Recruits aren't offered; only the group's Assigners", async () => {
@@ -123,8 +129,8 @@ describe("scheduling officials on games", () => {
     expect(await removeOfficialFrom(later, otto, ORG, "5550101", [g1, g3])).toEqual({ ok: true, removed: 1 });
     const left = await db.pool.query("select scrimmage_id::text as g, coach_id from game_officials order by scrimmage_id, position");
     expect(left.rows).toEqual([
-      { g: g1, coach_id: "5550101" },
-      { g: g3, coach_id: "5550102" },
+      { g: n1, coach_id: "5550101" },
+      { g: n3, coach_id: "5550102" },
     ]);
   });
 
@@ -147,17 +153,17 @@ describe("scheduling officials on games", () => {
     await assignOfficial(deps(), otto, ORG, { gameId: g1, position: 1, officialId: "5550101" });
     await assignOfficial(deps(), otto, ORG, { gameId: g3, position: 1, officialId: "5550101" });
     await assignOfficial(deps(), otto, ORG, { gameId: g3, position: 2, officialId: "5550102" });
-    const form = (await upcomingScrimmages(deps(), "thunder", program)).find((s) => s.id === g3)!.form;
+    const form = (await upcomingScrimmages(deps(), "thunder", program)).find((s) => s.id === n3)!.form;
     // Game 3 moved to 10:30: Rita is on game 1 then, so she comes off it; Sam stays.
-    expect(await updateScrimmage(deps(), director, "thunder", g3, { ...form, away: "", gymId: "", time: "10:30" })).toMatchObject({ ok: true });
+    expect(await updateScrimmage(deps(), director, "thunder", n3, { ...form, away: "", gymId: "", time: "10:30" })).toMatchObject({ ok: true });
     const spots = async (id: string) =>
       (await officialsBoard(deps(), otto, ORG))!.days[0].gyms.flatMap((g) => g.games).find((x) => x.id === id)!.spots.map((s) => s.official?.id ?? null);
     expect(await spots(g3)).toEqual([null, "5550102"]);
     expect(await spots(g1)).toEqual(["5550101", null]);
     // No officials: all of game 1's come off.
-    const f1 = (await upcomingScrimmages(deps(), "thunder", program)).find((s) => s.id === g1)!.form;
-    expect(await updateScrimmage(deps(), director, "thunder", g1, { ...f1, away: "", gymId: "", officials: "" })).toMatchObject({ ok: true });
-    expect((await db.pool.query("select count(*)::int as n from game_officials where scrimmage_id = $1", [g1])).rows[0].n).toBe(0);
+    const f1 = (await upcomingScrimmages(deps(), "thunder", program)).find((s) => s.id === n1)!.form;
+    expect(await updateScrimmage(deps(), director, "thunder", n1, { ...f1, away: "", gymId: "", officials: "" })).toMatchObject({ ok: true });
+    expect((await db.pool.query("select count(*)::int as n from game_officials where scrimmage_id = $1", [n1])).rows[0].n).toBe(0);
   });
 
   it("officials answer ✓ / ✗ on their own games before the start; the board shows it; a new time asks again", async () => {
@@ -177,8 +183,8 @@ describe("scheduling officials on games", () => {
     expect(await assignOfficial(deps(), otto, ORG, { gameId: g1, position: 2, officialId: "5550101", from: { gameId: g1, position: 1 } })).toEqual({ ok: true });
     expect((await myOfficiating(deps(), "5550101"))[0]).toMatchObject({ position: 2, answer: "yes" });
     // Game 1 moved half an hour: Rita answers again. Game 3 (not changed) keeps hers.
-    const f1 = (await upcomingScrimmages(deps(), "thunder", program)).find((s) => s.id === g1)!.form;
-    expect(await updateScrimmage(deps(), director, "thunder", g1, { ...f1, away: "", gymId: "", time: "09:30" })).toMatchObject({ ok: true });
+    const f1 = (await upcomingScrimmages(deps(), "thunder", program)).find((s) => s.id === n1)!.form;
+    expect(await updateScrimmage(deps(), director, "thunder", n1, { ...f1, away: "", gymId: "", time: "09:30" })).toMatchObject({ ok: true });
     expect((await myOfficiating(deps(), "5550101")).map((g) => g.answer)).toEqual([null, "no"]);
     // Once a game has started, no more answers.
     const later = { pool: db.pool, now: () => new Date("2026-11-14T15:00:00Z") };
@@ -192,5 +198,60 @@ describe("scheduling officials on games", () => {
     expect(await officiatingSummary(deps(), otto, ORG)).toEqual({ games: board.days.reduce((n, d) => n + d.games, 0), open: board.open });
     expect(await officiatingSummary(deps(), otto, ORG)).toEqual({ games: 3, open: 4 });
     expect(await officiatingSummary(deps(), director, ORG)).toBeNull();
+  });
+
+  it("League games at a gym the group officiates: on its board, assigned like scrimmages, on the ref's dashboard and scoresheet", async () => {
+    const prog = (
+      await db.pool.query<{ id: string }>(
+        `insert into scenic_programs (kind, name, starts_on, ends_on, reg_opens, reg_closes, created_by, updated_by)
+         values ('League', 'Winter League', '2026-11-01', '2027-02-28', '2026-10-01', '2027-02-14', 't', 't') returning id::text`,
+      )
+    ).rows[0].id;
+    await db.pool.query(
+      `insert into partners (name, kind, hosts_games, registers_teams, approved, created_by) values ('Baylor School', 'School', true, false, true, 't');
+       insert into partner_gyms (partner_id, name, address, created_by) select id, 'Main Gym', '171 Baylor School Rd', 't' from partners;
+       insert into partner_courts (gym_id, name, created_by) select id, 'Court 1', 't' from partner_gyms;
+       insert into scenic_divisions (program_id, gender, grade_low, grade_high) values (${prog}, 'Boys', 5, 5);
+       insert into scenic_grade_groups (division_id, grade, level) select id, 5, 'COMP' from scenic_divisions;
+       insert into scenic_pools (group_id, name) select id, 'A' from scenic_grade_groups;
+       insert into scenic_teams (name, gender, grade_low, grade, level, owner_coach_id, coach_id, created_by, updated_by)
+         values ('Hawks', 'Boys', 5, 5, 'COMP', '5550001', '5550001', 't', 't'), ('Magic', 'Boys', 5, 5, 'COMP', '5550001', '5550001', 't', 't');
+       insert into scenic_registrations (program_id, team_id, pool_id, registered_by) select ${prog}, id, (select id from scenic_pools), 't' from scenic_teams;`,
+    );
+    const gym = (await db.pool.query<{ id: string }>("select id::text from partner_gyms")).rows[0].id;
+    const court = (await db.pool.query<{ id: string }>("select id::text from partner_courts")).rows[0].id;
+    const [a, b] = (await db.pool.query<{ id: string }>("select id::text from scenic_teams order by id")).rows.map((r) => r.id);
+    // Nov 14, 11:30 AM: overlaps Rita's 10 AM scrimmage (90 minutes).
+    const m = (
+      await db.pool.query<{ id: string }>(
+        `insert into scenic_matchups (program_id, division_id, day, team_a, team_b, created_by, home_side, court_key, starts)
+         select $1, id, '2026-11-14', $2, $3, 't', 'a', $4, '11:00' from scenic_divisions returning id::text`,
+        [prog, a, b, court],
+      )
+    ).rows[0].id;
+    const key = `m${m}`;
+    // Not on the board until the gym has this officials group.
+    let board = (await officialsBoard(deps(), otto, ORG))!;
+    expect(board.days.flatMap((d) => d.gyms.flatMap((g) => g.games)).some((x) => x.id === key)).toBe(false);
+    await db.pool.query("insert into gym_officials (org, gym_key, officials_org, set_by) values ('scenic-city', $1, $2, 't')", [`p${gym}`, ORG]);
+    board = (await officialsBoard(deps(), otto, ORG))!;
+    const game = board.days.flatMap((d) => d.gyms.flatMap((g) => g.games)).find((x) => x.id === key)!;
+    expect(game).toMatchObject({ kind: "League", home: "Hawks", away: "Magic", orgName: "Scenic City Basketball" });
+    expect((await officiatingSummary(deps(), otto, ORG))!.games).toBe(4); // 3 scrimmages and the League game
+    await assignOfficial(deps(), otto, ORG, { gameId: g1, position: 1, officialId: "5550101" });
+    expect(await assignOfficial(deps(), otto, ORG, { gameId: key, position: 1, officialId: "5550101" })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("already on a game then"),
+    });
+    expect(await assignOfficial(deps(), otto, ORG, { gameId: key, position: 1, officialId: "5550102" })).toEqual({ ok: true });
+    expect((await myOfficiating(deps(), "5550102")).map((x) => [x.id, x.kind, x.place])).toEqual([[key, "League", "Main Gym · Court 1"]]);
+    expect(await answerGame(deps(), person("5550102"), { gameId: key, answer: "yes" })).toEqual({ ok: true });
+    // The League's scoresheet for that gym prints the ref.
+    await db.pool.query("insert into director_areas (coach_id, org, area, granted_by) values ('5550008', 'scenic-city', 'scheduling', 't')");
+    await grant(db.pool, "5550008 scenic-city Director");
+    expect((await gymScoresheets({ pool: db.pool }, otto, "2026-11-14", `p${gym}`))!.sheets[0].officials).toEqual(["Sam Ump"]);
+    // Moved to another time on the Grid: its officials come off.
+    await db.pool.query("update scenic_matchups set starts = '12:00' where id = $1", [m]);
+    expect(await myOfficiating(deps(), "5550102")).toEqual([]);
   });
 });

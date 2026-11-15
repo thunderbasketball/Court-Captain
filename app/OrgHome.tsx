@@ -8,7 +8,7 @@ import { orgFeatures } from "@/lib/features";
 import { innerParams } from "@/lib/home-card-href";
 import { seesHostDocuments } from "@/lib/host-documents";
 import { assignerCount, isOrgAdmin, orgHasArea, type Area } from "@/lib/org-admin";
-import { orgMetrics, practiceMetrics } from "@/lib/org-metrics";
+import { orgMetrics, practiceMetrics, teamsMissing } from "@/lib/org-metrics";
 import { orgInfo } from "@/lib/org-registry";
 import { followRename } from "@/lib/org-rename";
 import { isOrgSlug, type OrgSlug } from "@/lib/orgs";
@@ -134,7 +134,11 @@ export default async function OrgHome({
     admin ? db.query<{ n: number }>("select count(*)::int as n from access_requests where org = $1", [org]).then((r) => r.rows[0].n) : 0,
   ]);
   const officiatingWait = officiating?.filter((r) => r.status === "pending").length ?? 0;
-  const teamAlert = org === "thunder" ? !!alerts?.teams : (metrics?.missing.length ?? 0) > 0;
+  const teamAlert =
+    org === "thunder"
+      ? !!alerts?.teams
+      : (metrics ? metrics.missing.length : clubTeams ? (await teamsMissing(db, org)).length : 0) > 0 ||
+        (leagueTeams && (await leagueTeamsMissing(now)));
 
   // Each part's contents, by where its data is kept (see the imports).
   const teamsBody = (
@@ -241,7 +245,12 @@ export default async function OrgHome({
                     {practice.nextWeek.open} open · {practice.blackoutDays} blackout day{practice.blackoutDays === 1 ? "" : "s"} in 30 days
                   </p>
                 )}
-                <PracticeContent embedded />
+                <PracticeContent
+                  embedded
+                  // only the week: `team` in the address is the Teams card's open team pages
+                  searchParams={Promise.resolve(typeof sp.week === "string" ? { week: sp.week } : {})}
+                  weekHref={(w) => `/org/${org}?open=schedule&week=${w}#schedule`}
+                />
               </div>
             ),
           },
@@ -288,6 +297,22 @@ export default async function OrgHome({
       </main>
     </>
   );
+}
+
+// A League's teams in its current programs still missing something: a Head Coach's cell or email, or (a team from an
+// organization on CourtCaptain) its roster. Home's Teams card flashes.
+async function leagueTeamsMissing(now: Date): Promise<boolean> {
+  const r = await db.query(
+    `select 1 from scenic_teams t left join users c on c.coach_id = t.coach_id
+      where exists (select 1 from scenic_registrations r join scenic_programs p on p.id = r.program_id
+                     where r.team_id = t.id and r.removed_by is null and p.ends_on >= ($1::timestamptz at time zone 'America/New_York')::date)
+        and ((t.coach_id is null and t.coach_first is not null) or (t.coach_id is not null and c.email is null)
+             or (t.org_team_id is not null and not exists (select 1 from org_team_players x where x.team_id = t.org_team_id))
+             or (t.thunder_team_id is not null and not exists (select 1 from team_players x where x.team_id = t.thunder_team_id)))
+      limit 1`,
+    [now],
+  );
+  return !!r.rowCount;
 }
 
 // The schedule analysis (Admins and Directors of Scheduling; checked in the lib).

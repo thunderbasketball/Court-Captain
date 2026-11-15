@@ -101,6 +101,9 @@ export type ScenicTeam = {
   coachCell: string | null;
   coachEmail: string | null;
   waitingCoach: boolean; // named without a cell yet: COACH CELL MUST BE ENTERED
+  // Players on its roster, for a team from an organization on CourtCaptain (a registered team must enter its roster);
+  // null for an outside club's team (its roster isn't kept here).
+  players: number | null;
   createdBy: string;
   updatedBy: string;
   canEdit: boolean;
@@ -145,7 +148,10 @@ export async function listScenicTeams(
             t.coach_id as "coachId", coalesce(c.first_name, t.coach_first) as "coachFirst", coalesce(c.last_name, t.coach_last) as "coachLast",
             c.cell as "coachCell", c.email as "coachEmail", (t.coach_id is null and t.coach_first is not null) as "waitingCoach",
             t.created_by as "createdBy", t.updated_by as "updatedBy", (t.org_team_id is not null or t.thunder_team_id is not null) as org_team,
-            coalesce(t.alt_name, ot.alt_name, th.alt_name) as "altName", dv.grade_low as "divisionLow", dv.grade_high as "divisionHigh"
+            coalesce(t.alt_name, ot.alt_name, th.alt_name) as "altName",
+            case when t.org_team_id is not null then (select count(*)::int from org_team_players x where x.team_id = t.org_team_id)
+                 when t.thunder_team_id is not null then (select count(*)::int from team_players x where x.team_id = t.thunder_team_id)
+            end as players, dv.grade_low as "divisionLow", dv.grade_high as "divisionHigh"
      from scenic_teams t
      left join org_teams ot on ot.id = t.org_team_id
      left join teams th on th.id = t.thunder_team_id

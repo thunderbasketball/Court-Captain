@@ -17,9 +17,11 @@ import { PageFrame } from "../../../ui";
 export async function PracticeContent({
   searchParams = Promise.resolve({}),
   embedded = false,
+  weekHref,
 }: {
   searchParams?: PageProps<"/org/thunder/practice">["searchParams"];
-  embedded?: boolean; // inside a Home card: no header or page frame, and never sends you away
+  embedded?: boolean; // inside a card (Home's Practice, a team's Practices): no header or page frame, never sends you away
+  weekHref?: (week: string) => string; // where Previous / Next week go (they stay in that card)
 } = {}) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
@@ -48,13 +50,13 @@ export async function PracticeContent({
     notFound();
   }
   const teams = mode === "director" ? await teamChoices(deps) : [];
-  const link = (week: string) => `/org/thunder/practice?week=${week}${asked ? `&team=${asked}` : ""}`;
+  const link = weekHref ?? ((week: string) => `/org/thunder/practice?week=${week}${asked ? `&team=${asked}` : ""}`);
 
   return (
     <>
       {!embedded && <AppHeader user={user} tab="schedule" context={mode === "director" ? "director" : `team:${teamId}`} />}
       <PageFrame embedded={embedded} className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
-        {mode === "director" ? (
+        {embedded ? null : mode === "director" ? (
           <>
             {/* Gyms, blackout dates and practice slots are set up under Facilities. */}
             <PageTitle

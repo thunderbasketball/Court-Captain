@@ -5,13 +5,14 @@ import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { cleanName } from "./auth/validate";
 import { canManageTeams, teamsManagerOf } from "./org-teams";
+import { hasFeature } from "./features";
 import { withTx, type Queryable } from "./sql";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
 const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
 const isId = (v: unknown): v is string => typeof v === "string" && /^\d{1,18}$/.test(v);
-const managersOnly = { ok: false as const, message: "Only an Admin or Director of Teams can change rosters." };
+const managersOnly = { ok: false as const, message: "Only an Admin or Director of Teams, or the team's Head or Assistant Coach, can change its roster." };
 
 export type OrgPlayer = { id: string; first: string; last: string; grade: number; jersey: string | null; addedBy: string };
 
@@ -38,12 +39,17 @@ const jerseyOf = (v: unknown) => {
 };
 
 // The team, if this person may see its roster: its organization's Admins and Directors of Teams, or its coaches.
+// Who enters it (SPEC.md section 14): with CourtPlayers the roster comes from player registrations, set by its
+// Directors; without it (CourtTeams, CourtClub) the organization's Admins and Directors of Teams or the team's Head and
+// Assistant Coaches type or import it.
 async function teamFor(q: Pick<Queryable, "query">, viewer: SessionUser, org: string, teamId: string) {
   const t = await q.query("select 1 from org_teams where id = $1 and org = $2", [teamId, org]);
   if (!t.rowCount) return null;
   if (await canManageTeams(q, viewer, org)) return { manage: true };
-  const c = await q.query("select 1 from org_team_coaches where team_id = $1 and coach_id = $2", [teamId, viewer.coachId]);
-  return c.rowCount ? { manage: false } : null;
+  const c = await q.query<{ role: string }>("select role from org_team_coaches where team_id = $1 and coach_id = $2", [teamId, viewer.coachId]);
+  if (!c.rowCount) return null;
+  const coach = c.rows.some((r) => r.role === "HeadCoach" || r.role === "AsstCoach");
+  return { manage: coach && !(await hasFeature(q, org, "player-registration")) };
 }
 
 export async function listOrgRoster(
@@ -63,6 +69,14 @@ export async function listOrgRoster(
   return { players: r.rows, canManage: t.manage };
 }
 
+// The organization, when this person may change this team's roster (see teamFor).
+async function rosterOrg(q: Pick<Queryable, "query">, viewer: SessionUser, org: unknown, teamId: unknown): Promise<string | null> {
+  const o = await teamsManagerOf(q, viewer, org);
+  if (o) return o;
+  if (typeof org !== "string" || !isId(teamId)) return null;
+  return (await teamFor(q, viewer, org, teamId))?.manage ? org : null;
+}
+
 export type PlayerInput = { first: unknown; last: unknown; grade: unknown; jersey?: unknown };
 
 function cleanPlayer(p: PlayerInput): { first: string; last: string; grade: number; jersey: string | null } | string {
@@ -78,7 +92,7 @@ function cleanPlayer(p: PlayerInput): { first: string; last: string; grade: numb
 
 // Adds players to a team, skipping (and naming) any already on it or whose jersey number is taken. In one transaction.
 async function addPlayers(deps: Deps, viewer: SessionUser, org: unknown, teamId: unknown, list: PlayerInput[]) {
-  const o = await teamsManagerOf(deps.pool, viewer, org);
+  const o = await rosterOrg(deps.pool, viewer, org, teamId);
   if (!o) return managersOnly;
   if (!isId(teamId)) return { ok: false as const, message: "That team no longer exists." };
   return withTx(deps.pool, async (q) => {
@@ -130,7 +144,7 @@ export async function removeOrgPlayer(
   teamId: unknown,
   playerId: unknown,
 ): Promise<Result> {
-  const o = await teamsManagerOf(deps.pool, viewer, org);
+  const o = await rosterOrg(deps.pool, viewer, org, teamId);
   if (!o) return managersOnly;
   if (!isId(teamId) || !isId(playerId)) return { ok: false, message: "That player isn't on this team." };
   const r = await deps.pool.query(
@@ -171,7 +185,7 @@ export async function previewPlayerImport(
   teamId: unknown,
   text: unknown,
 ): Promise<Result<{ rows: (PlayerImportRow & { status: "new" | "exists" | "error" })[] }>> {
-  const o = await teamsManagerOf(deps.pool, viewer, org);
+  const o = await rosterOrg(deps.pool, viewer, org, teamId);
   if (!o) return managersOnly;
   if (!isId(teamId) || typeof text !== "string" || !text.trim() || text.length > 50_000)
     return { ok: false, message: "Paste your players or choose a CSV file." };

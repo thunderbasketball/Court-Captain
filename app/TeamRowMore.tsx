@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 
 // A button on a team card that opens its panel right on the card instead of a pop-up (roster, schedule, chat, notify).
 export type CardToggle = {
@@ -22,14 +23,51 @@ export default function TeamRowMore({
   toggles = [],
   actions,
   more,
+  page,
 }: {
   head: ReactNode;
   lead?: ReactNode;
   toggles?: CardToggle[];
   actions?: ReactNode;
   more: ReactNode;
+  // ↗ the team's whole page, opened right under its row (built on the server only while open: `?team=<id>,…`).
+  page?: { id: string; label: string; icon: ReactNode; className: string; content: ReactNode | null };
 }) {
   const [open, setOpen] = useState(false);
+  const router = useRouter();
+  const [pageOpen, setPageOpen] = useState(!!page?.content);
+  const [loading, start] = useTransition();
+  const tries = useRef(0);
+  const built = !!page?.content;
+  const [seen, setSeen] = useState(built);
+  if (built !== seen) {
+    setSeen(built);
+    if (built) setPageOpen(true);
+  }
+  const listed = () => (new URLSearchParams(window.location.search).get("team") ?? "").split(",").filter(Boolean);
+  const reload = () => start(() => router.replace(`${window.location.pathname}${window.location.search}${window.location.hash}`, { scroll: false }));
+  const flipPage = () => {
+    if (!page) return;
+    const next = !pageOpen;
+    setPageOpen(next);
+    const keys = listed().filter((k) => k !== page.id);
+    if (next) keys.push(page.id);
+    const q = new URLSearchParams(window.location.search);
+    if (keys.length) q.set("team", keys.join(","));
+    else q.delete("team");
+    const s = q.toString().replace(/%2C/g, ",");
+    window.history.replaceState(null, "", `${window.location.pathname}${s ? `?${s}` : ""}${window.location.hash}`);
+    if (next && !built) {
+      tries.current = 0;
+      reload();
+    }
+  };
+  // Open but not built yet once the server has answered: ask again (up to 3 times).
+  useEffect(() => {
+    if (!page || !pageOpen || built || loading || tries.current >= 3) return;
+    tries.current++;
+    reload();
+  });
   const [shown, setShown] = useState<string[]>([]);
   const flip = (t: CardToggle) => {
     const opening = !shown.includes(t.key);
@@ -63,6 +101,18 @@ export default function TeamRowMore({
             </button>
           ))}
           {actions}
+          {page && (
+            <button
+              type="button"
+              onClick={flipPage}
+              aria-expanded={pageOpen}
+              aria-label={pageOpen ? `Close ${page.label}` : page.label}
+              title={page.label}
+              className={`${page.className} ${pageOpen ? "bg-zinc-100 dark:bg-white/10" : ""}`}
+            >
+              {page.icon}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setOpen((o) => !o)}
@@ -84,6 +134,7 @@ export default function TeamRowMore({
             {t.panel}
           </div>
         ))}
+      {page && pageOpen && <div className="mt-3">{page.content ?? <p className="text-sm text-zinc-500">Loading…</p>}</div>}
     </>
   );
 }

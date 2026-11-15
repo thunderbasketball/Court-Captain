@@ -321,4 +321,25 @@ Coed,3,REC,,,,`;
     expect(await removeOrgPlayer(deps(), jo, org, t.id, r.players[0].id)).toEqual({ ok: true });
     expect((await listOrgTeams(deps(), jo, org))!.teams[0].players).toBe(1);
   });
+
+  it("without CourtPlayers the team's Head and Assistant Coaches enter its roster; with CourtPlayers only its Directors", async () => {
+    const t = (await createOrgTeam(deps(), jo, org, { gender: "Girls", grades: ["4"], level: "REC" })) as { id: string };
+    await db.pool.query(
+      "insert into users (coach_id, first_name, last_name, cell) values ('5550008', 'Cam', 'Coach', '4235550008'), ('5550009', 'Nat', 'Nobody', '4235550009')",
+    );
+    await db.pool.query("insert into org_team_coaches (team_id, coach_id, role, added_by) values ($1, '5550008', 'AsstCoach', 't')", [t.id]);
+    const cam = { ...jo, coachId: "5550008", firstName: "Cam", lastName: "Coach" };
+    const nat = { ...jo, coachId: "5550009" };
+    expect((await listOrgRoster(deps(), cam, org, t.id))!.canManage).toBe(true);
+    expect(await addOrgPlayer(deps(), cam, org, t.id, { first: "Ava", last: "Smith", grade: "4", jersey: "3" })).toMatchObject({ ok: true });
+    expect(await importOrgPlayers(deps(), cam, org, t.id, "Mia,Lee,4,5")).toMatchObject({ ok: true, added: ["Mia Lee"] });
+    expect(await addOrgPlayer(deps(), nat, org, t.id, { first: "Zoe", last: "Kim", grade: "4" })).toMatchObject({ ok: false }); // not its coach
+    const r = (await listOrgRoster(deps(), cam, org, t.id))!;
+    expect(r.players.map((p) => p.first)).toEqual(["Mia", "Ava"]);
+    // With CourtPlayers the roster comes from registrations, set by its Directors: the coach can't change it.
+    await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ($1, 'court-players', 'setup', 't')", [org]);
+    expect((await listOrgRoster(deps(), cam, org, t.id))!.canManage).toBe(false);
+    expect(await removeOrgPlayer(deps(), cam, org, t.id, r.players[0].id)).toMatchObject({ ok: false });
+    expect(await removeOrgPlayer(deps(), jo, org, t.id, r.players[0].id)).toEqual({ ok: true });
+  });
 });

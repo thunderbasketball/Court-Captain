@@ -112,6 +112,7 @@ export function GroupCard({
   defaultOpen = true,
   action,
   gender,
+  alert = false,
 }: {
   title: ReactNode;
   count: number;
@@ -119,12 +120,16 @@ export function GroupCard({
   defaultOpen?: boolean;
   action?: ReactNode; // a button on the title line, left of the count (outside the summary, so tapping it doesn't toggle)
   gender?: string | null;
+  alert?: boolean; // something inside needs attention: a red ring and a flashing title, to drill down to it
 }) {
   const tint = genderTint(gender);
   const box = (
-    <details className={`${tint ? `rounded-2xl shadow-sm ring-1 ${tint}` : card} group overflow-hidden`} open={defaultOpen}>
+    <details
+      className={`${tint ? `rounded-2xl shadow-sm ring-1 ${tint}` : card} group overflow-hidden ${alert ? "ring-2 ring-red-300 dark:ring-red-500/40" : ""}`}
+      open={defaultOpen}
+    >
       <summary className="flex cursor-pointer select-none items-center justify-between gap-3 px-4 py-3">
-        <span className={`font-semibold ${action ? "min-w-0 pr-32" : ""}`}>{title}</span>
+        <span className={`font-semibold ${action ? "min-w-0 pr-32" : ""} ${alert ? "animate-pulse text-red-600 dark:text-red-400" : ""}`}>{title}</span>
         <span className="flex items-center gap-2">
           <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium tabular-nums text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
             {count}

@@ -81,6 +81,23 @@ export async function upcomingOwnPractices(deps: Deps, ref: TeamRef, limit = 60)
   return r.rows;
 }
 
+// Several teams' own practices that haven't ended (the Teams list's 📅), by team id, soonest first, in one query.
+export async function upcomingOwnForTeams(deps: Deps, org: string, teamIds: string[], limit = 12): Promise<Record<string, OwnPractice[]>> {
+  const ids = teamIds.filter((t) => /^\d{1,18}$/.test(t));
+  if (!ids.length || !(await ownPracticesOn(deps.pool, org))) return {};
+  const col = org === "thunder" ? "thunder_team_id" : "org_team_id";
+  const r = await deps.pool.query<OwnPractice & { team: string }>(
+    `select ${col}::text as team, id::text, starts_at as "startsAt", minutes, location, series::text, added_by as "addedBy"
+       from team_practices
+      where org = $1 and ${col} = any($2::bigint[]) and starts_at + make_interval(mins => minutes) > $3
+      order by starts_at`,
+    [org, ids, deps.now()],
+  );
+  const out: Record<string, OwnPractice[]> = {};
+  for (const { team, ...p } of r.rows) if ((out[team] ??= []).length < limit) out[team].push(p);
+  return out;
+}
+
 // Places the team has used before, most used first (the Location field suggests them).
 export async function ownPracticeLocations(deps: Pick<Deps, "pool">, ref: TeamRef): Promise<string[]> {
   if (!validRef(ref)) return [];

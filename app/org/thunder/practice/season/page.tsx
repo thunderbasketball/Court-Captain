@@ -1,10 +1,6 @@
-import { Suspense } from "react";
-import { SeasonContent } from "./content";
+import { redirect } from "next/navigation";
 
-export default function Page({  }: PageProps<"/org/thunder/practice/season">) {
-  return (
-    <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
-      <SeasonContent  />
-    </Suspense>
-  );
+// Practice Court Availability lives in Home → Practice now; old links open that card.
+export default function Page() {
+  redirect("/org/thunder?open=schedule#schedule");
 }

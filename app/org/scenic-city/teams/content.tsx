@@ -133,7 +133,10 @@ export async function ScenicTeamsContent({
     <li key={t.id} className="flex items-start justify-between gap-3 px-4 py-3">
       <div className="min-w-0 text-sm">
         <p className="font-semibold">
-          <TeamName name={t.name} />
+          {/* Still missing something: its name flashes red, like its group card. */}
+          <span className={t.waitingCoach || (!!t.coachId && !t.coachEmail) || t.players === 0 ? "animate-pulse text-red-600 dark:text-red-400" : ""}>
+            <TeamName name={t.name} />
+          </span>
           {t.altName && <span className="font-normal text-zinc-500"> · {t.altName}</span>}{" "}
           <span className="font-normal text-zinc-500">
             · {t.gradeLabel} · {t.level}
@@ -159,6 +162,8 @@ export async function ScenicTeamsContent({
           </p>
         ))}
         {t.waitingCoach && <MustBeEntered what="COACH CELL" />}
+        {/* A registered team must enter its roster (its organization's Directors or coaches, on its team page). */}
+        {t.players === 0 && <MustBeEntered what="ROSTER" />}
         {(t.waitingCoach || (t.coachId && !t.coachEmail)) && (
           <span className="flex items-center gap-2">
             <MustBeEntered what="COACH EMAIL" />
@@ -299,7 +304,14 @@ export async function ScenicTeamsContent({
         )}
         <div className="grid gap-4">
           {groups.map((g) => (
-            <GroupCard key={g.title} title={g.title} count={g.teams.length} gender={g.gender}>
+            <GroupCard
+              key={g.title}
+              title={g.title}
+              count={g.teams.length}
+              gender={g.gender}
+              // A team still missing something (coach cell or email, or a registered team's roster): flash it to drill down.
+              alert={g.teams.some((t) => t.waitingCoach || (!!t.coachId && !t.coachEmail) || t.players === 0)}
+            >
               {view === "division"
                 ? g.teams.map(row)
                 : [...new Set(g.teams.map((t) => `${t.gender} · ${divisionOf(t)}`))].flatMap((sub) => [

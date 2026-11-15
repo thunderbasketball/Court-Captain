@@ -138,6 +138,9 @@ async function notOnTeamMetrics(q: Pick<Queryable, "query">): Promise<OrgMetrics
   return { total: groups.reduce((a, g) => a + g.n, 0), groups, players: players.rows };
 }
 
+// Teams still missing something (Home's Teams card flashes for anyone who sees it, not only Owners and Admins).
+export const teamsMissing = (q: Pick<Queryable, "query">, org: string) => missingTeams(q, org);
+
 async function missingTeams(q: Pick<Queryable, "query">, org: string): Promise<OrgMetrics["missing"]> {
   const [teams, staff, players] =
     org === "thunder"

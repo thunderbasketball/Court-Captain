@@ -1,5 +1,3 @@
-import { Suspense } from "react";
-import TeamsIncluded from "../../../TeamsIncluded";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
@@ -7,23 +5,24 @@ import { isOrgAdmin, seesWho } from "@/lib/org-admin";
 import { ViewAsButton } from "../../../ViewAsButton";
 import { orgPrograms } from "@/lib/org-leagues";
 import { listOrgCoaches, listOrgTeams, listTeamImports } from "@/lib/org-teams";
-import { TZ } from "@/lib/time";
 import { orgInfo } from "@/lib/org-registry";
 import AppHeader from "../../../AppHeader";
-import { CollapseCard, PageTitle } from "../../../ui";
-import TeamWarningsCard from "../../../warnings/TeamWarningsCard";
-import TeamRow, { TeamsByLevel, teamMix } from "../../../TeamRow";
-import { ContactChip, GroupTextButton, TextTeamsPanel } from "../../../Contacts";
-import { NotifyPanel } from "../../../NotifyButton";
+import TeamsList, { IMPORT_EXAMPLE, IMPORT_HELP } from "../../../TeamsList";
+import { ScheduleList } from "../../../LeagueGames";
+import { scheduledGames, type ScheduledGame } from "@/lib/scenic-games";
+import { teamScrimmages } from "@/lib/scrimmages";
+import { upcomingOwnForTeams } from "@/lib/team-practices";
+import { easternDate } from "@/lib/time";
+import TeamRow, { OrgRosterList, teamMix, teamNeeds } from "../../../TeamRow";
+import { ContactChip, GroupTextButton } from "../../../Contacts";
 import { sendsAlerts } from "@/lib/announcements";
 import { dmKey, orgKey } from "@/lib/chat";
 import { hasFeature } from "@/lib/features";
-import ChatPanel from "../../../ChatPanel";
-import PageMenus, { MEGAPHONE_BTN, MegaphoneIcon, PLUS_BTN, PlusIcon } from "../../../PageMenus";
 import RegisterPrograms from "../../../RegisterPrograms";
 import { AddTeamPanel } from "../../../AddTeam";
-import { ImportTeamsPanel, UndoImportButton } from "../../../TeamImport";
+import { ImportTeamsPanel } from "../../../TeamImport";
 import { addTeam, importTeams, previewImport, undoImport } from "./actions";
+import { OrgTeamView } from "./[id]/view";
 import { followRename } from "@/lib/org-rename";
 import { recAllowed } from "@/lib/rec-orgs";
 
@@ -53,12 +52,13 @@ export async function OrgTeamsContent({
   // Who can be a Head Coach here: the organization's coaches (or a new person typed in).
   const coaches = list.canManage ? await listOrgCoaches({ pool: db, now: () => new Date() }, user, slug) : null;
   const imports = list.canManage ? ((await listTeamImports({ pool: db, now: () => new Date() }, user, slug)) ?? []) : [];
-  const when = (d: Date) =>
-    d.toLocaleString("en-US", { timeZone: TZ, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   const progs = await orgPrograms({ pool: db, now: () => new Date() }, user, slug);
   // Cards: REC and COMP (Boys and Girls in each, by grade; youngest first), then Register (league programs).
   const register = !!progs && progs.programs.length > 0 && list.canManage;
-  const view = (await searchParams).view;
+  const sp = await searchParams;
+  const view = sp.view;
+  // Teams whose page is open right in their row (↗; `?team=<id>,…`): only those are built.
+  const openTeams = new Set(typeof sp.team === "string" ? sp.team.split(",") : []);
   const solo = o.kind === "Team";
   // Its Directors alert its coaches (📣 → Alert coaches) and each team's coaches (the bell on its card).
   const alerter = await sendsAlerts({ pool: db, now: () => new Date() }, user, slug);
@@ -66,130 +66,92 @@ export async function OrgTeamsContent({
   // one coach (their chip).
   const chatter = alerter && (await hasFeature(db, slug, "team-chat"));
   const recOk = list.canManage && (await recAllowed(db, slug, new Date())); // REC only when invited to a League's REC
-  const admin = await isOrgAdmin(db, user.coachId, slug); // Owners and Admins: 👁 View as on each coach // a CourtSolo account: its one team, no Add or Import
+  const admin = await isOrgAdmin(db, user.coachId, slug);
+  // Each team's 📅 (published League games, own-gym practices, scrimmages) and 👥 roster, on its row.
+  const ids = list.teams.map((t) => t.id);
+  const today = easternDate(new Date());
+  const copies = (
+    await db.query<{ id: string; team: string }>("select id::text, org_team_id::text as team from scenic_teams where org_team_id = any($1::bigint[])", [ids])
+  ).rows;
+  const games = await scheduledGames(db, copies.map((c) => c.id));
+  const schedules: Record<string, ScheduledGame[]> = Object.fromEntries(copies.map((c) => [c.team, (games[c.id] ?? []).filter((g) => g.published)]));
+  const [own, scrims, rosterRows] = await Promise.all([
+    upcomingOwnForTeams({ pool: db, now: () => new Date() }, slug, ids),
+    teamScrimmages({ pool: db, now: () => new Date() }, slug, ids),
+    db.query<{ team: string; first: string; last: string; jersey: string | null }>(
+      `select team_id::text as team, first_name as first, last_name as last, jersey from org_team_players
+        where team_id = any($1::bigint[]) order by lower(last_name), lower(first_name)`,
+      [ids],
+    ),
+  ]);
+  const rosters: Record<string, { first: string; last: string; jersey: string | null }[]> = {};
+  for (const { team, ...p } of rosterRows.rows) (rosters[team] ??= []).push(p); // Owners and Admins: 👁 View as on each coach // a CourtSolo account: its one team, no Add or Import
 
   return (
     <>
       {!embedded && <AppHeader user={user} context={`org:${slug}`} tab="org-teams" />}
       <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        {/* The same as every Teams page: 📣 (Text coaches; Chat and Alert come when those work for organizations) and + (Add, Import). */}
-        <PageMenus
+        <TeamsList
           slot={embedded ? "card-slot-teams" : undefined}
-          title={
-            <PageTitle
-              title={`Teams (${list.teams.length})`}
-              subtitle={teamMix(list.teams) || (list.canManage ? `${o.name}'s teams and coaches` : "Your teams")}
-            />
-          }
-          menus={
+          count={list.teams.length}
+          subtitle={teamMix(list.teams) || (list.canManage ? `${o.name}'s teams and coaches` : "Your teams")}
+          coaches={
             list.canManage
-              ? [
-                  {
-                    key: "coaches",
-                    icon: <MegaphoneIcon />,
-                    label: chatter ? "Coaches: text, chat or alert" : alerter ? "Coaches: text or alert" : "Coaches: text",
-                    className: MEGAPHONE_BTN,
-                    items: [
-                      {
-                        key: "text",
-                        label: "💬 Text coaches",
-                        panel: (
-                          <TextTeamsPanel
-                            teams={list.teams.map((t, i) => ({
-                              id: t.id,
-                              name: t.name,
-                              gender: t.gender,
-                              level: t.level,
-                              grade: i, // already youngest grade first
-                              headCells: t.coaches.filter((c) => c.role === "HeadCoach").map((c) => c.cell),
-                            }))}
-                          />
-                        ),
-                      },
-                      ...(chatter
-                        ? [{ key: "chat", label: "🗨️ Chat with coaches", panel: <ChatPanel chatKey={orgKey(slug, "coaches")} /> }]
-                        : []),
-                      ...(alerter
-                        ? [
-                            {
-                              key: "alert",
-                              label: "🔔 Alert coaches",
-                              panel: <NotifyPanel audience={{ org: slug, roles: ["coach"] }} to="all coaches" />,
-                            },
-                          ]
-                        : []),
-                    ],
-                  },
-                  ...(solo
-                    ? []
-                    : [
-                        {
-                          key: "add",
-                          icon: <PlusIcon />,
-                          label: "Add or import teams",
-                          className: PLUS_BTN,
-                          items: [
-                            {
-                              key: "add",
-                              label: "＋ Add a team",
-                              panel: (
-                                <AddTeamPanel
-                                  people={(coaches ?? []).map((c) => {
-                                    const [firstName, ...rest] = c.name.split(" ");
-                                    return { value: `user:${c.id}`, firstName, lastName: rest.join(" "), detail: "Coach" };
-                                  })}
-                                  create={addTeam.bind(null, slug)}
-                                  preK
-                                  noRec={!recOk}
-                                  href={`/org/${slug}/teams/`}
-                                />
-                              ),
-                            },
-                            {
-                              key: "import",
-                              label: "⇪ Import teams",
-                              panel: (
-                                <ImportTeamsPanel
-                                  preview={previewImport.bind(null, slug)}
-                                  add={importTeams.bind(null, slug)}
-                                  example={
-                                    "Gender,Grade,Level,Coach First,Coach Last,Coach Cell,Alternate Name\nBoys,3rd/4th,REC,Sam,Lee,423-555-0101,Bolts\nGirls,5th,COMP,,,,"
-                                  }
-                                  help="One team per row with its Gender, Grade and Level (REC or COMP), and if you have them the Head Coach's name, cell and email and an Alternate name, in any order. Each team is named from its Head Coach (like 4G Epps; 4G TBD until a coach is added; the same name twice gets numbers: 4G Epps 1 and 2). A coach without a cell is fine: add it later on the team. Paste from a spreadsheet or choose a CSV file. Next you'll check which column is which, then see exactly what will be added (we clean up things like 3 & 4 or R)."
-                                />
-                              ),
-                            },
-                          ],
-                        },
-                      ])
-                ]
-              : []
+              ? {
+                  text: list.teams.map((t, i) => ({
+                    id: t.id,
+                    name: t.name,
+                    gender: t.gender,
+                    level: t.level,
+                    grade: i, // already youngest grade first
+                    headCells: t.coaches.filter((c) => c.role === "HeadCoach").map((c) => c.cell),
+                  })),
+                  chatKey: chatter ? orgKey(slug, "coaches") : null,
+                  alert: alerter ? { org: slug, roles: ["coach"] } : null,
+                }
+              : null
           }
-        />
-        {/* Warnings: the ones this organization turned on (its gear), streamed so the teams show first. */}
-        {list.canManage && !solo && list.teams.length > 0 && (
-          <div className="mb-3">
-            <Suspense fallback={null}>
-              <TeamWarningsCard org={slug} base={`/org/${slug}`} />
-            </Suspense>
-          </div>
-        )}
-        {!list.teams.length && !solo && (
-          <p className="text-sm text-zinc-500">No teams yet. Tap “+” to add or import some.</p>
-        )}
-        {(list.teams.length > 0 || register) && (
-          <TeamsByLevel
-            teams={list.teams}
-            view={view}
-            register={register && progs ? { count: progs.programs.length, body: <RegisterPrograms org={slug} progs={progs} bare /> } : null}
-            grade={(t) => {
-              const top = t.grade.split("/").at(-1);
-              return t.grade === "Pre-K" ? "Pre-K" : top === "K" || top === "0th" ? "Kindergarten" : `${top} Grade`;
-            }}
+          add={
+            list.canManage && !solo
+              ? {
+                  add: (
+                    <AddTeamPanel
+                      people={(coaches ?? []).map((c) => {
+                        const [firstName, ...rest] = c.name.split(" ");
+                        return { value: `user:${c.id}`, firstName, lastName: rest.join(" "), detail: "Coach" };
+                      })}
+                      create={addTeam.bind(null, slug)}
+                      preK
+                      noRec={!recOk}
+                      href={`/org/${slug}/teams/`}
+                    />
+                  ),
+                  import: <ImportTeamsPanel preview={previewImport.bind(null, slug)} add={importTeams.bind(null, slug)} example={IMPORT_EXAMPLE} help={IMPORT_HELP} />,
+                }
+              : null
+          }
+          warnings={list.canManage && !solo ? { org: slug, base: `/org/${slug}` } : null}
+          empty={solo ? null : "No teams yet. Tap “+” to add or import some."}
+          teams={list.teams}
+          view={view}
+          register={register && progs ? { count: progs.programs.length, body: <RegisterPrograms org={slug} progs={progs} bare /> } : null}
+          grade={(t) => {
+            const top = t.grade.split("/").at(-1);
+            return t.grade === "Pre-K" ? "Pre-K" : top === "K" || top === "0th" ? "Kindergarten" : `${top} Grade`;
+          }}
+          warn={(t) =>
+            teamNeeds({
+              hasCoach: t.coaches.some((c) => c.role === "HeadCoach"),
+              waitingCoach: t.waitingCoach,
+              needsEmail: t.coaches.some((c) => c.role === "HeadCoach" && !c.email),
+              players: t.players,
+            })
+          }
             row={(t) => (
             <TeamRow
               key={t.id}
               href={`/org/${slug}/teams/${t.id}`}
+              page={{ id: t.id, content: openTeams.has(t.id) ? <OrgTeamView slug={slug} id={t.id} embedded /> : null }}
               name={t.name}
               altName={t.altName}
               gender={t.gender}
@@ -199,6 +161,11 @@ export async function OrgTeamsContent({
               waitingCoach={t.waitingCoach && `${t.waitingCoach.first} ${t.waitingCoach.last}`}
               needsEmail={t.coaches.some((c) => c.role === "HeadCoach" && !c.email)}
               players={t.players}
+              roster={{ count: t.players, list: <OrgRosterList players={rosters[t.id] ?? []} /> }}
+              schedule={{
+                items: (schedules[t.id] ?? []).length + (own[t.id] ?? []).length + (scrims[t.id] ?? []).length,
+                list: <ScheduleList games={schedules[t.id] ?? []} practices={[]} own={own[t.id] ?? []} scrims={scrims[t.id] ?? []} today={today} />,
+              }}
               lead={t.coaches.length > 0 && <GroupTextButton small cells={t.coaches.map((c) => c.cell)} label="Text coaches" />}
               notify={alerter && t.coaches.length > 0 ? { org: slug, teams: [t.id] } : undefined}
               chat={
@@ -220,38 +187,13 @@ export async function OrgTeamsContent({
               })}
             />
             )}
-          />
-        )}
-        {imports.length > 0 && (
-          <div className="mt-4">
-            <CollapseCard title="Recent imports" count={imports.length}>
-              <ul className="divide-y divide-zinc-100 px-4 pb-2 dark:divide-white/5">
-                {imports.map((i) => (
-                  <li key={i.id} className="flex items-start justify-between gap-3 py-2 text-sm">
-                    <TeamsIncluded
-                      names={i.names}
-                      summary={
-                        <>
-                          {when(i.importedAt)} · {i.teams} team{i.teams === 1 ? "" : "s"}
-                          {who && ` · by ${i.importedBy}`}
-                          {i.left < i.teams && ` · ${i.left} still here`}
-                        </>
-                      }
-                    />
-                    {i.left > 0 && (
-                      <UndoImportButton
-                        undo={undoImport.bind(null, slug, i.id)}
-                        teams={i.left}
-                        when={when(i.importedAt)}
-                        note="Teams registered in a program are kept (withdraw them first)."
-                      />
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </CollapseCard>
-          </div>
-        )}
+          imports={{
+            list: imports,
+            who,
+            undo: (id) => undoImport.bind(null, slug, id),
+            note: "Teams registered in a program are kept (withdraw them first).",
+          }}
+        />
       </PageFrame>
     </>
   );

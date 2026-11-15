@@ -28,7 +28,7 @@ export type Scoresheet = {
   home: SheetTeam | null; // null: TBD
   away: SheetTeam | null;
   brand?: { name: string; logo: string | null }; // an organization's own game (a scrimmage): its name and logo on top
-  officials: string[]; // the game's assigned referees, by spot (League games get them once officials can be assigned to them)
+  officials: string[]; // the game's assigned referees, by spot
 };
 export type GymScoresheets = { gym: string; host: string; date: string; sheets: Scoresheet[] };
 
@@ -105,6 +105,18 @@ export async function gymScoresheets(deps: Deps, viewer: SessionUser, day: unkno
     );
     for (const t of r.rows) teams.set(t.id, { name: t.name, coach: t.coach, players: t.players });
   }
+  // The games' assigned referees (the officials group scheduling that gym), by spot.
+  const refs = new Map<string, string[]>();
+  if (games.rows.length) {
+    const r = await deps.pool.query<{ game: string; name: string }>(
+      `select x.matchup_id::text as game, u.first_name || ' ' || u.last_name as name
+         from game_officials x join officiated_games g on g.key = x.game_key and g.officials_org = x.officials_org
+         join users u on u.coach_id = x.coach_id
+        where x.matchup_id = any($1::bigint[]) order by x.position`,
+      [games.rows.map((g) => g.id)],
+    );
+    for (const x of r.rows) refs.set(x.game, [...(refs.get(x.game) ?? []), x.name]);
+  }
   return {
     gym: gym.name,
     host: gym.host,
@@ -121,7 +133,7 @@ export async function gymScoresheets(deps: Deps, viewer: SessionUser, day: unkno
       address: gym.address,
       home: g.home ? (teams.get(g.home) ?? null) : null,
       away: g.away ? (teams.get(g.away) ?? null) : null,
-      officials: [],
+      officials: refs.get(g.id) ?? [],
     })),
   };
 }

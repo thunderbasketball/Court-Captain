@@ -1,8 +1,10 @@
 // Scheduling officials (SPEC.md section 14, step 4c-4): an Officials Group's Admins and Officials Assigners put its
-// officials on the games organizations scheduled with it, by dragging them into each game's 2 referee spots. Shown as a
-// card per day with games, a card per gym inside. Never a Recruit; never one official on two games at once (any group's);
-// a game that has started stays as it is. Checked here, on the server, in a transaction.
-import type { Pool } from "pg";
+// officials on the games organizations scheduled with it, by dragging them into each game's 2 referee spots: scrimmages
+// that picked the group, and League games placed on the Scheduler's Grid at gyms the group officiates (gym_officials).
+// Both come from the `officiated_games` view, each named by a key ('s12' a scrimmage, 'm34' a League game). Shown as a
+// card per day with games, a card per gym inside. Never a Recruit; never one official on two games at once (any
+// group's); a game that has started stays as it is. Checked here, on the server, in a transaction.
+import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { canOfficiate, type OfficialLevel } from "./official-levels";
 import { managesOfficials } from "./officials";
@@ -18,8 +20,8 @@ export type BoardOfficial = { id: string; first: string; last: string; level: Of
 export type Answer = "yes" | "no" | null; // the official's ✓ / ✗ (null: not answered yet)
 export type BoardSpot = { position: number; official: { id: string; name: string } | null; assignedBy: string | null; answer: Answer };
 export type BoardGame = {
-  id: string;
-  kind: "Scrimmage" | "Exhibition" | "League"; // Scrimmages and Exhibitions are tagged on the board (only scrimmages so far)
+  id: string; // the game's key: 's12' (a scrimmage) or 'm34' (a League game)
+  kind: "Scrimmage" | "Exhibition" | "League"; // Scrimmages and Exhibitions are tagged on the board
   orgName: string;
   home: string;
   away: string;
@@ -34,12 +36,14 @@ export type BoardDay = { date: string; gyms: BoardGym[]; games: number; open: nu
 export type BusyTime = { gameId: string; start: string; end: string };
 export type OfficialsBoard = { officials: BoardOfficial[]; days: BoardDay[]; busy: Record<string, BusyTime[]>; open: number };
 
+// An official's spots that count: on a game still in the view, for the group that put them there (a game that changed
+// group, or a League game moved off the gym's group, no longer counts).
+const LIVE = `game_officials x join officiated_games g on g.key = x.game_key and g.officials_org = x.officials_org`;
+
 // The board: the group's officials who can be scheduled (not Recruits), by last name; its coming games by day and gym.
 // Null for anyone who doesn't schedule its officials.
 export async function officialsBoard(deps: Deps, viewer: SessionUser, officialsOrg: string): Promise<OfficialsBoard | null> {
   if (!(await managesOfficials(deps.pool, viewer, officialsOrg))) return null;
-  const name = (side: "home" | "away") =>
-    `coalesce((select name from teams where id = s.${side}_thunder_team_id), (select name from org_teams where id = s.${side}_org_team_id))`;
   const [officials, games] = await Promise.all([
     deps.pool.query<BoardOfficial>(
       `select u.coach_id as id, u.first_name as first, u.last_name as last, o.level
@@ -48,7 +52,8 @@ export async function officialsBoard(deps: Deps, viewer: SessionUser, officialsO
       [officialsOrg],
     ),
     deps.pool.query<{
-      id: string;
+      key: string;
+      kind: BoardGame["kind"];
       day: string;
       gym: string;
       place: string;
@@ -60,31 +65,30 @@ export async function officialsBoard(deps: Deps, viewer: SessionUser, officialsO
       minutes: number;
       spots: { position: number; id: string; name: string; by: string; answer: Answer }[];
     }>(
-      `select s.id::text, to_char(s.starts_at at time zone $3, 'YYYY-MM-DD') as day,
-              s.org || ':' || coalesce('g' || s.gym_id, 'p' || lower(s.place)) as gym, s.place, nullif(g.address, '') as address,
-              o.name as org_name, coalesce(s.home_name, ${name("home")}, 'TBD') as home, coalesce(s.away_name, ${name("away")}, 'TBD') as away,
-              s.starts_at, s.minutes,
+      `select g.key, g.kind, to_char(g.starts_at at time zone $3, 'YYYY-MM-DD') as day, g.gym, g.place, g.address,
+              o.name as org_name, g.home, g.away, g.starts_at, g.minutes,
               coalesce((select json_agg(json_build_object('position', x.position, 'id', x.coach_id,
                                                           'name', u.first_name || ' ' || u.last_name, 'by', x.assigned_by,
                                                           'answer', x.response))
-                          from game_officials x join users u on u.coach_id = x.coach_id where x.scrimmage_id = s.id), '[]') as spots
-         from scrimmages s join organizations o on o.slug = s.org left join gyms g on g.id = s.gym_id
-        where s.officials_org = $1 and s.starts_at + make_interval(mins => s.minutes) > $2
-        order by s.starts_at, s.place, s.id`,
+                          from game_officials x join users u on u.coach_id = x.coach_id
+                         where x.game_key = g.key and x.officials_org = g.officials_org), '[]') as spots
+         from officiated_games g join organizations o on o.slug = g.org
+        where g.officials_org = $1 and g.starts_at + make_interval(mins => g.minutes) > $2
+        order by g.starts_at, g.place, g.key`,
       [officialsOrg, deps.now(), TZ],
     ),
   ]);
   const ids = officials.rows.map((o) => o.id);
   const busy: Record<string, BusyTime[]> = {};
   if (ids.length) {
-    const b = await deps.pool.query<{ coach_id: string; id: string; starts_at: Date; minutes: number }>(
-      `select x.coach_id, s.id::text, s.starts_at, s.minutes from game_officials x join scrimmages s on s.id = x.scrimmage_id
-        where x.coach_id = any($1) and s.starts_at + make_interval(mins => s.minutes) > $2`,
+    const b = await deps.pool.query<{ coach_id: string; key: string; starts_at: Date; minutes: number }>(
+      `select x.coach_id, g.key, g.starts_at, g.minutes from ${LIVE}
+        where x.coach_id = any($1) and g.starts_at + make_interval(mins => g.minutes) > $2`,
       [ids, deps.now()],
     );
     for (const r of b.rows)
       (busy[r.coach_id] ??= []).push({
-        gameId: r.id,
+        gameId: r.key,
         start: r.starts_at.toISOString(),
         end: new Date(r.starts_at.getTime() + r.minutes * 60_000).toISOString(),
       });
@@ -101,8 +105,8 @@ export async function officialsBoard(deps: Deps, viewer: SessionUser, officialsO
       return { position, official: x ? { id: x.id, name: x.name } : null, assignedBy: x?.by ?? null, answer: x?.answer ?? null };
     });
     gym.games.push({
-      id: r.id,
-      kind: "Scrimmage",
+      id: r.key,
+      kind: r.kind,
       orgName: r.org_name,
       home: r.home,
       away: r.away,
@@ -125,9 +129,22 @@ export async function officialsBoard(deps: Deps, viewer: SessionUser, officialsO
   };
 }
 
-const ID = /^\d{1,18}$/;
+const GAME = /^[sm]\d{1,18}$/;
 const COACH = /^\d{7}$/;
 const isSpot = (v: unknown) => v === 1 || v === 2;
+// A game key's own column and id.
+const column = (key: string) => (key[0] === "s" ? "scrimmage_id" : "matchup_id");
+
+// One game, read with a lock on its key (two Assigners at once wait for each other).
+async function lockGame(q: PoolClient, key: string, officialsOrg: string) {
+  await q.query("select pg_advisory_xact_lock(hashtext('game:' || $1))", [key]);
+  return (
+    await q.query<{ key: string; starts_at: Date; minutes: number }>(
+      "select key, starts_at, minutes from officiated_games where key = $1 and officials_org = $2",
+      [key, officialsOrg],
+    )
+  ).rows[0];
+}
 
 // Put an official in a game's spot (taking the place of whoever was there), move them there from another spot (`from`),
 // or clear the spot (`officialId` null).
@@ -139,26 +156,24 @@ export async function assignOfficial(
 ): Promise<Result> {
   if (typeof officialsOrg !== "string" || !(await managesOfficials(deps.pool, viewer, officialsOrg)))
     return { ok: false, message: "Only an Admin or Officials Assigner can schedule officials." };
-  const { gameId, position, officialId, from } = input;
-  if (!ID.test(String(gameId ?? "")) || !isSpot(position)) return { ok: false, message: "That game wasn't found." };
+  const { position, officialId, from } = input;
+  const gameId = String(input.gameId ?? "");
+  if (!GAME.test(gameId) || !isSpot(position)) return { ok: false, message: "That game wasn't found." };
   if (officialId !== null && !COACH.test(String(officialId ?? ""))) return { ok: false, message: "Pick one of your officials." };
-  if (from && (!ID.test(String(from.gameId ?? "")) || !isSpot(from.position))) return { ok: false, message: "That game wasn't found." };
+  const fromId = from ? String(from.gameId ?? "") : null;
+  if (from && (!GAME.test(fromId!) || !isSpot(from.position))) return { ok: false, message: "That game wasn't found." };
   const by = `${viewer.firstName} ${viewer.lastName}`;
   return withTx(deps.pool, async (q) => {
-    // The games involved, locked; each must be this group's and not started.
-    const games = (
-      await q.query<{ id: string; starts_at: Date; minutes: number; label: string }>(
-        `select s.id::text, s.starts_at, s.minutes, to_char(s.starts_at at time zone $3, 'FMHH12:MI AM') || ' at ' || s.place as label
-           from scrimmages s where s.id = any($1::bigint[]) and s.officials_org = $2 order by s.id for update`,
-        [[gameId, ...(from ? [from.gameId] : [])], officialsOrg, TZ],
-      )
-    ).rows;
-    const game = games.find((g) => g.id === String(gameId));
-    if (!game || (from && !games.some((g) => g.id === String(from.gameId)))) return { ok: false as const, message: "That game wasn't found." };
+    // The games involved, locked (in key order); each must be this group's and not started.
+    const keys = [...new Set([gameId, ...(fromId ? [fromId] : [])])].sort();
+    const games = [];
+    for (const k of keys) games.push(await lockGame(q, k, officialsOrg));
+    const game = games[keys.indexOf(gameId)];
+    if (games.some((g) => !g)) return { ok: false as const, message: "That game wasn't found." };
     if (games.some((g) => g.starts_at.getTime() <= deps.now().getTime()))
       return { ok: false as const, message: "That game has started; its officials stay as they are." };
     if (officialId === null) {
-      await q.query("delete from game_officials where scrimmage_id = $1 and position = $2", [gameId, position]);
+      await q.query("delete from game_officials where game_key = $1 and position = $2", [gameId, position]);
       return { ok: true as const };
     }
     await q.query("select pg_advisory_xact_lock(hashtext('official:' || $1))", [officialId]);
@@ -173,13 +188,13 @@ export async function assignOfficial(
     if (!canOfficiate(o.level)) return { ok: false as const, message: `${o.name} is a Recruit; Recruits can't be scheduled to officiate games.` };
     const clash = (
       await q.query<{ label: string; same: boolean }>(
-        `select to_char(s.starts_at at time zone $4, 'FMHH12:MI AM') || ' at ' || s.place as label, s.id = $2 as same
-           from game_officials x join scrimmages s on s.id = x.scrimmage_id
-          where x.coach_id = $1 and not coalesce(x.scrimmage_id = $6::bigint and x.position = $7::smallint, false) -- the spot they move from
-            and (s.id = $2 or (s.starts_at < $3::timestamptz + make_interval(mins => $5)
-                               and $3::timestamptz < s.starts_at + make_interval(mins => s.minutes)))
+        `select to_char(g.starts_at at time zone $4, 'FMHH12:MI AM') || ' at ' || g.place as label, g.key = $2 as same
+           from ${LIVE}
+          where x.coach_id = $1 and not coalesce(x.game_key = $6 and x.position = $7::smallint, false) -- the spot they move from
+            and (g.key = $2 or (g.starts_at < $3::timestamptz + make_interval(mins => $5)
+                                and $3::timestamptz < g.starts_at + make_interval(mins => g.minutes)))
           limit 1`,
-        [officialId, gameId, game.starts_at, TZ, game.minutes, from ? from.gameId : null, from ? from.position : null],
+        [officialId, gameId, game.starts_at, TZ, game.minutes, fromId, from ? from.position : null],
       )
     ).rows[0];
     if (clash)
@@ -188,20 +203,20 @@ export async function assignOfficial(
         message: clash.same ? `${o.name} is already on this game.` : `${o.name} is already on a game then (${clash.label}).`,
       };
     // Moving within the same game keeps their answer (same game, same time); anywhere else asks again.
-    const kept = from
+    const kept = fromId
       ? (
           await q.query<{ response: string | null; responded_at: Date | null }>(
-            "delete from game_officials where scrimmage_id = $1 and position = $2 and coach_id = $3 returning response, responded_at",
-            [from.gameId, from.position, officialId],
+            "delete from game_officials where game_key = $1 and position = $2 and coach_id = $3 returning response, responded_at",
+            [fromId, from!.position, officialId],
           )
         ).rows[0]
       : undefined;
-    const keep = kept && String(from!.gameId) === String(gameId) ? kept : null;
-    await q.query("delete from game_officials where scrimmage_id = $1 and position = $2", [gameId, position]);
+    const keep = kept && fromId === gameId ? kept : null;
+    await q.query("delete from game_officials where game_key = $1 and position = $2", [gameId, position]);
     await q.query(
-      `insert into game_officials (scrimmage_id, position, officials_org, coach_id, assigned_by, assigned_at, response, responded_at)
+      `insert into game_officials (${column(gameId)}, position, officials_org, coach_id, assigned_by, assigned_at, response, responded_at)
        values ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [gameId, position, officialsOrg, officialId, by, deps.now(), keep?.response ?? null, keep?.responded_at ?? null],
+      [gameId.slice(1), position, officialsOrg, officialId, by, deps.now(), keep?.response ?? null, keep?.responded_at ?? null],
     );
     return { ok: true as const };
   });
@@ -217,14 +232,14 @@ export async function removeOfficialFrom(
 ): Promise<{ ok: true; removed: number } | { ok: false; message: string }> {
   if (typeof officialsOrg !== "string" || !(await managesOfficials(deps.pool, viewer, officialsOrg)))
     return { ok: false, message: "Only an Admin or Officials Assigner can schedule officials." };
-  if (!COACH.test(String(officialId ?? "")) || !Array.isArray(gameIds) || !gameIds.length || gameIds.length > 50 || !gameIds.every((g) => ID.test(String(g))))
+  if (!COACH.test(String(officialId ?? "")) || !Array.isArray(gameIds) || !gameIds.length || gameIds.length > 50 || !gameIds.every((g) => GAME.test(String(g))))
     return { ok: false, message: "That game wasn't found." };
   return withTx(deps.pool, async (q) => {
     const r = await q.query(
-      `delete from game_officials x using scrimmages s
-        where s.id = x.scrimmage_id and x.coach_id = $1 and x.scrimmage_id = any($2::bigint[]) and x.officials_org = $3
-          and s.officials_org = $3 and s.starts_at > $4`,
-      [officialId, gameIds, officialsOrg, deps.now()],
+      `delete from game_officials x using officiated_games g
+        where g.key = x.game_key and x.coach_id = $1 and x.game_key = any($2::text[]) and x.officials_org = $3
+          and g.officials_org = $3 and g.starts_at > $4`,
+      [officialId, gameIds.map(String), officialsOrg, deps.now()],
     );
     return { ok: true as const, removed: r.rowCount ?? 0 };
   });
@@ -249,10 +264,9 @@ export type MyOfficiatingGame = {
   started: boolean;
 };
 export async function myOfficiating(deps: Pick<Deps, "pool" | "now">, coachId: string): Promise<MyOfficiatingGame[]> {
-  const name = (side: "home" | "away") =>
-    `coalesce((select name from teams where id = s.${side}_thunder_team_id), (select name from org_teams where id = s.${side}_org_team_id))`;
   const r = await deps.pool.query<{
-    id: string;
+    key: string;
+    kind: BoardGame["kind"];
     grp: string;
     org_name: string;
     home: string;
@@ -265,21 +279,19 @@ export async function myOfficiating(deps: Pick<Deps, "pool" | "now">, coachId: s
     partner: string | null;
     response: Answer;
   }>(
-    `select s.id::text, coalesce(go.short_name, go.name) as grp, o.name as org_name,
-            coalesce(s.home_name, ${name("home")}, 'TBD') as home, coalesce(s.away_name, ${name("away")}, 'TBD') as away,
-            s.starts_at, s.minutes, s.place, nullif(g.address, '') as address, x.position, x.response,
+    `select g.key, g.kind, coalesce(go.short_name, go.name) as grp, o.name as org_name, g.home, g.away,
+            g.starts_at, g.minutes, g.place, g.address, x.position, x.response,
             (select u.first_name || ' ' || u.last_name from game_officials y join users u on u.coach_id = y.coach_id
-              where y.scrimmage_id = s.id and y.coach_id <> x.coach_id limit 1) as partner
-       from game_officials x join scrimmages s on s.id = x.scrimmage_id
-       join organizations o on o.slug = s.org join organizations go on go.slug = x.officials_org
-       left join gyms g on g.id = s.gym_id
-      where x.coach_id = $1 and s.starts_at + make_interval(mins => s.minutes) > $2
-      order by s.starts_at, s.id`,
+              where y.game_key = g.key and y.officials_org = g.officials_org and y.coach_id <> x.coach_id limit 1) as partner
+       from ${LIVE}
+       join organizations o on o.slug = g.org join organizations go on go.slug = x.officials_org
+      where x.coach_id = $1 and g.starts_at + make_interval(mins => g.minutes) > $2
+      order by g.starts_at, g.key`,
     [coachId, deps.now()],
   );
   return r.rows.map((g) => ({
-    id: g.id,
-    kind: "Scrimmage",
+    id: g.key,
+    kind: g.kind,
     group: g.grp,
     orgName: g.org_name,
     home: g.home,
@@ -299,19 +311,18 @@ export async function myOfficiating(deps: Pick<Deps, "pool" | "now">, coachId: s
 // before the game starts. Tapping the same answer again clears it.
 export async function answerGame(deps: Deps, viewer: SessionUser, input: { gameId: unknown; answer: unknown }): Promise<Result> {
   const gameId = String(input.gameId ?? "");
-  if (!ID.test(gameId)) return { ok: false, message: "That game wasn't found." };
+  if (!GAME.test(gameId)) return { ok: false, message: "That game wasn't found." };
   if (input.answer !== "yes" && input.answer !== "no" && input.answer !== null) return { ok: false, message: "Tap ✓ or ✗." };
   return withTx(deps.pool, async (q) => {
     const row = (
       await q.query<{ starts_at: Date }>(
-        `select s.starts_at from game_officials x join scrimmages s on s.id = x.scrimmage_id
-          where x.scrimmage_id = $1 and x.coach_id = $2 for update of x`,
+        `select g.starts_at from ${LIVE} where x.game_key = $1 and x.coach_id = $2 for update of x`,
         [gameId, viewer.coachId],
       )
     ).rows[0];
     if (!row) return { ok: false as const, message: "You're not on that game any more." };
     if (row.starts_at.getTime() <= deps.now().getTime()) return { ok: false as const, message: "That game has started." };
-    await q.query("update game_officials set response = $3, responded_at = $4 where scrimmage_id = $1 and coach_id = $2", [
+    await q.query("update game_officials set response = $3, responded_at = $4 where game_key = $1 and coach_id = $2", [
       gameId,
       viewer.coachId,
       input.answer,
@@ -321,15 +332,17 @@ export async function answerGame(deps: Deps, viewer: SessionUser, input: { gameI
   });
 }
 
-// For the Games to officiate card's title (without building the board): how many coming games picked the group, and
-// how many referee spots are still open on those that haven't started. Null for anyone but its Admins and Assigners.
+// For the Games to officiate card's title (without building the board): how many coming games the group has, and how
+// many referee spots are still open on those that haven't started. Null for anyone but its Admins and Assigners.
 export async function officiatingSummary(deps: Deps, viewer: SessionUser, officialsOrg: string): Promise<{ games: number; open: number } | null> {
   if (!(await managesOfficials(deps.pool, viewer, officialsOrg))) return null;
   const r = await deps.pool.query<{ games: number; open: number }>(
     `select count(*)::int as games,
-            coalesce(sum(case when s.starts_at > $2 then ${SPOTS.length} - (select count(*) from game_officials x where x.scrimmage_id = s.id) else 0 end), 0)::int as open
-       from scrimmages s
-      where s.officials_org = $1 and s.starts_at + make_interval(mins => s.minutes) > $2`,
+            coalesce(sum(case when g.starts_at > $2 then ${SPOTS.length} - (select count(*) from game_officials x
+                                                                          where x.game_key = g.key and x.officials_org = g.officials_org)
+                          else 0 end), 0)::int as open
+       from officiated_games g
+      where g.officials_org = $1 and g.starts_at + make_interval(mins => g.minutes) > $2`,
     [officialsOrg, deps.now()],
   );
   return r.rows[0];
