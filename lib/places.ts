@@ -251,3 +251,50 @@ export async function setSchedulerPin(
   );
   return { ok: true, label };
 }
+
+// Add a facility found by its location (a tryout's Place: "+ Add a facility…"): the place's name becomes the gym's name,
+// with one court (Main), its address and pin set. One already named that is picked instead. The organization's Admins
+// and Directors of Facilities.
+export async function addGymAtPlace(
+  deps: { pool: Pool; now: () => Date; fetch?: Fetch },
+  viewer: SessionUser,
+  org: unknown,
+  placeId: unknown,
+  session: unknown = null,
+): Promise<Result<{ name: string }>> {
+  if (typeof org !== "string" || !(await managesGyms(deps.pool, viewer, org)))
+    return { ok: false, message: "Only an Admin or Director of Facilities can add facilities." };
+  if (typeof placeId !== "string" || !PLACE_ID.test(placeId)) return { ok: false, message: "Pick a place from the list." };
+  if (!placesOn()) return { ok: false, message: NOT_SET_UP };
+  const p = await placeDetails(placeId, typeof session === "string" ? session : null, deps.fetch ?? fetch);
+  if (!p) return { ok: false, message: "That place couldn't be found. Search again." };
+  const name = p.name.replace(/\s+/g, " ").trim().slice(0, 60);
+  if (!name || /^[=+\-@]/.test(name)) return { ok: false, message: "That place's name can't be used. Add it under Facilities." };
+  const by = `${viewer.firstName} ${viewer.lastName}`;
+  const client = await deps.pool.connect();
+  try {
+    await client.query("begin");
+    const have = await client.query<{ name: string; active: boolean; id: string }>(
+      "select id::text, name, active from gyms where org = $1 and lower(name) = lower($2) for update",
+      [org, name],
+    );
+    if (have.rows[0]) {
+      if (!have.rows[0].active) await client.query("update gyms set active = true where id = $1", [have.rows[0].id]);
+      await client.query("commit");
+      return { ok: true, name: have.rows[0].name };
+    }
+    const g = await client.query<{ id: string }>(
+      `insert into gyms (org, name, address, lat, lng, place_id, place_set_by, place_set_at) values ($1, $2, $3, $4, $5, $6, $7, $8)
+       returning id::text`,
+      [org, name, p.address, p.lat, p.lng, p.placeId, by, deps.now()],
+    );
+    await client.query("insert into courts (gym_id, name) values ($1, 'Main')", [g.rows[0].id]);
+    await client.query("commit");
+    return { ok: true, name };
+  } catch (e) {
+    await client.query("rollback");
+    throw e;
+  } finally {
+    client.release();
+  }
+}

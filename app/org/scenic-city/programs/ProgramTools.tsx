@@ -84,7 +84,19 @@ const CLOSE_MODES: { key: CloseMode; label: string }[] = [
 // `round`: a round + (on the Home Programs card's title line); a new program then stays on Home instead of opening its page.
 // `inline`: the form right where it's put (the Home Programs card's +), no button or pop-up; `inline` runs when it's
 // saved or closed.
-export function ProgramEditor({ program, round = false, inline }: { program?: ProgramFields; round?: boolean; inline?: () => void }) {
+// `embed`: inside a team program's own card under the General card (app/programs/ProgramForm.tsx): its name, type and
+// options come from there, so this shows only its dates, registration and fees.
+export function ProgramEditor({
+  program,
+  round = false,
+  inline,
+  embed,
+}: {
+  program?: ProgramFields;
+  round?: boolean;
+  inline?: () => void;
+  embed?: { kind: string; name: string; poolGames: string; elimination: string; onSaved?: () => void };
+}) {
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const close = () => (inline ? inline() : dialog.current?.close());
@@ -111,8 +123,18 @@ export function ProgramEditor({ program, round = false, inline }: { program?: Pr
           closesDaysBefore: x.closes === "days" ? x.days : null,
         };
       });
-      const r = await saveProgram(program?.id ?? null, { ...f, options });
+      const r = await saveProgram(
+        program?.id ?? null,
+        embed
+          ? { ...f, kind: embed.kind, name: embed.name, options, poolGames: embed.poolGames, elimination: embed.elimination }
+          : { ...f, options },
+      );
       if (!r.ok) return setError(r.message);
+      if (embed) {
+        setF(start0());
+        embed.onSaved?.();
+        return router.refresh();
+      }
       close();
       if (program) router.refresh();
       else if (round || inline) router.refresh();
@@ -121,12 +143,14 @@ export function ProgramEditor({ program, round = false, inline }: { program?: Pr
 
   const form = (
         <form
-          className="space-y-4 p-5"
+          className={embed ? "space-y-3" : "space-y-4 p-5"}
           onSubmit={(e) => {
             e.preventDefault();
             save();
           }}
         >
+          {!embed && (
+          <>
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold">{program ? `Edit ${program.name}` : "New program"}</h2>
             <CloseButton onClick={close} />
@@ -152,6 +176,8 @@ export function ProgramEditor({ program, round = false, inline }: { program?: Pr
               placeholder="Winter League 2027"
             />
           </label>
+          </>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
               <span className={fieldLabel}>Starts</span>
@@ -170,7 +196,7 @@ export function ProgramEditor({ program, round = false, inline }: { program?: Pr
               <input type="date" className={inputCls} value={f.regCloses} onChange={set("regCloses")} required />
             </label>
           </div>
-          {f.kind === "League" ? (
+          {(embed?.kind ?? f.kind) === "League" ? (
             <fieldset>
               <legend className={fieldLabel}>Registration Options</legend>
               <p className="-mt-1 mb-2 text-xs text-zinc-500">
@@ -264,7 +290,7 @@ export function ProgramEditor({ program, round = false, inline }: { program?: Pr
           )}
           {error && <Alert tone="red">{error}</Alert>}
           <button type="submit" disabled={busy} className={`${navyBtn} w-full py-2.5`}>
-            {program ? "Save" : "Create program"}
+            {program ? "Save" : embed ? "Add program" : "Create program"}
           </button>
         </form>
   );

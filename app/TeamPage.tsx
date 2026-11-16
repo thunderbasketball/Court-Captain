@@ -23,7 +23,7 @@ export type TeamRosterRow = {
 };
 
 // Every organization's team page (SPEC.md section 14), one layout for all: the team's card, Next 7 days, then cards
-// that open when tapped, in one order: Staff · Roster · Games · its League programs · Uniforms · Practices. Each card
+// that open when tapped, in one order: Staff · Roster · Games · its League programs · Uniforms · Practices · Playbook. Each card
 // shows only when the organization has that feature and the person has the role for it; the buttons on their title
 // lines are the same everywhere (💬 Text, 🗨️ Chat, ✉️ Email, add). Each address reads its team's data and passes it in.
 export default function TeamPage(p: {
@@ -70,6 +70,7 @@ export default function TeamPage(p: {
   programs?: { title: string; count: number; body: ReactNode } | null; // its League programs
   uniforms?: { count: number; alert: boolean; body: ReactNode } | null;
   practices?: { count: number; action?: ReactNode; body: ReactNode } | null;
+  playbook?: { count: number; action?: ReactNode; body: ReactNode } | null; // CourtPlaybook: its coaches' plays
   footer?: ReactNode; // Delete team
 }) {
   const t = p.team;
@@ -261,6 +262,12 @@ export default function TeamPage(p: {
       {p.practices && (
         <CollapseCard title="Practices" count={p.practices.count} open={p.opened === "practices"} action={p.practices.action}>
           {p.practices.body}
+        </CollapseCard>
+      )}
+
+      {p.playbook && (
+        <CollapseCard title="Playbook" count={p.playbook.count} open={p.opened === "playbook"} action={p.playbook.action}>
+          {p.playbook.body}
         </CollapseCard>
       )}
       {p.footer}

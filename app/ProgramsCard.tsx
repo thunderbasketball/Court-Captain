@@ -3,13 +3,14 @@ import Link from "next/link";
 import type { SessionUser } from "@/lib/auth/service";
 import { db } from "@/lib/db";
 import { hasFeature } from "@/lib/features";
-import { managesPlayerPrograms, playerProgramFields, seasonSources } from "@/lib/player-programs";
+import { managesPlayerPrograms, playerProgramFields, seasonSources, sessionTypesFor } from "@/lib/player-programs";
 import { orgPrograms, type Program } from "@/lib/programs";
 import { isProgramsDirector } from "@/lib/scenic-programs";
 import { AddIcon, CardPanel, PanelIcon, iconBtn } from "./CardIcons";
 import CardSlot from "./CardSlot";
 import { eventWhen } from "./events/format";
 import { TZ } from "@/lib/time";
+import { gradesFor, kindLabel, whoLine } from "@/lib/program-kinds";
 import { GearIcon } from "./OrgSettings";
 import { PLUS_BTN } from "./PageMenus";
 import { ProgramContent } from "./org/scenic-city/programs/[id]/content";
@@ -18,7 +19,7 @@ import NewSession from "./programs/NewSession";
 import { listEventTypes, staffChoices } from "@/lib/events";
 import { listGyms } from "@/lib/practice/schedule";
 import { hasArea } from "@/lib/org-admin";
-import PlayerProgramForm from "./programs/PlayerProgramForm";
+import ProgramForm from "./programs/ProgramForm";
 import { addsScrimmages, scrimmageChoices, scrimmagesOn, upcomingScrimmages, type Scrimmage, type ScrimmageChoices } from "@/lib/scrimmages";
 import { NewScrimmageForm, ScrimmageItem } from "./scrimmages/ScrimmageForms";
 
@@ -208,6 +209,23 @@ function byDateAndPlace(list: Scrimmage[]) {
   }));
 }
 
+// A player program's settings in one line: "Tryouts · Open Gyms · Scrimmages · Boys · Grades K–5 · REC, COMP" (a
+// Training Session or Course: its genders, grades and, for a Course, its number of sessions).
+function settingsLine(st: NonNullable<Program["settings"]>): string {
+  const who = whoLine(st);
+  if (st.kind !== "Season") return [st.kind === "Course" && st.sessions && `${st.sessions} sessions`, who].filter(Boolean).join(" · ");
+  return [st.tryouts && "Tryouts", st.openGyms && "Open Gyms", st.scrimmages && "Scrimmages", who].filter(Boolean).join(" · ");
+}
+
+// A Season's scrimmage teams: each team in its gender's grades (K = 0).
+function forSeason(choices: ScrimmageChoices, settings: Program["settings"]): ScrimmageChoices {
+  if (!settings) return choices;
+  return {
+    ...choices,
+    teams: choices.teams.filter((t) => gradesFor(settings, t.gender).map((g) => (g === "K" ? 0 : Number(g))).includes(t.grade)),
+  };
+}
+
 // The Programs card on Home, the same for every organization with CourtPlayers or CourtTeams: + on its title line (the
 // kinds its features allow, for those who manage them) opens the new program's form right in the card; each program
 // is a card (logo, kind, name, where it stands, dates, how many registered) that opens right there. A player program
@@ -238,6 +256,10 @@ export default async function ProgramsCard({ org, user }: { org: string; user: S
   const [people, gyms, types] = sessions
     ? await Promise.all([staffChoices(deps, user), listGyms(deps), listEventTypes(deps)])
     : [[], [], []];
+  // The organization's gyms: a tryout's Place on the program form.
+  const facilities = players
+    ? (await db.query<{ name: string }>("select name from gyms where org = $1 and active order by lower(name)", [org])).rows.map((g) => g.name)
+    : [];
   // Scrimmages (CourtPlayers): each player program's coming ones; + Scrimmage for Directors of Teams or Events.
   const [scrimOn, scrimAdds] = await Promise.all([scrimmagesOn(db, org), addsScrimmages(db, user, org)]);
   const choices = scrimAdds ? await scrimmageChoices(deps, org) : null;
@@ -257,7 +279,7 @@ export default async function ProgramsCard({ org, user }: { org: string; user: S
             <AddIcon id={addId} label="New program" className={PLUS_BTN} />
           </CardSlot>
           <CardPanel id={addId} className="rounded-xl bg-zinc-50 p-3 dark:bg-white/5">
-            <NewProgramPanel org={org} players={players} teams={teams} sources={sources} />
+            <NewProgramPanel org={org} players={players} teams={teams} sources={sources} facilities={facilities} />
           </CardPanel>
         </>
       )}
@@ -279,9 +301,10 @@ export default async function ProgramsCard({ org, user }: { org: string; user: S
                     )}
                     <div className="min-w-0">
                       <p className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">
-                        {p.kind} · {p.takes === "players" ? "players register" : "teams register"}
+                        {kindLabel(p.kind)} · {p.takes === "players" ? "players register" : "teams register"}
                       </p>
                       <h3 className="font-semibold">{p.name}</h3>
+                      {p.settings && <p className="text-xs text-zinc-500">{settingsLine(p.settings)}</p>}
                     </div>
                   </div>
                   <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
@@ -304,11 +327,14 @@ export default async function ProgramsCard({ org, user }: { org: string; user: S
                   <>
                     {f && (
                       <CardPanel id={gearId} className="mb-3 rounded-xl bg-zinc-50 p-3 dark:bg-white/5">
-                        <PlayerProgramForm
+                        <ProgramForm
                           org={org}
+                          players
+                          teams={false}
                           program={f}
                           sources={sources}
                           canDelete={p.registered === 0 && p.sessions.length === 0}
+                          facilities={facilities}
                         />
                       </CardPanel>
                     )}
@@ -320,14 +346,22 @@ export default async function ProgramsCard({ org, user }: { org: string; user: S
                             programId={p.id}
                             people={people}
                             gyms={gyms.filter((g) => g.active).map((g) => g.name)}
-                            types={types}
+                            // only the Session types and grades the program's type and settings allow
+                            types={p.settings ? sessionTypesFor(p.settings, types) : types}
+                            allowedGrades={p.settings?.grades}
+                            allowedGenders={p.settings?.genders}
                           />
                         )
                       }
                       org={org}
-                      scrimmages={scrims.get(p.id) ?? null}
-                      addScrimmage={choices && <NewScrimmageForm org={org} programId={p.id} choices={choices} panel={`new-scrimmage-${p.id}`} />}
-                      scrimChoices={choices}
+                      // Only a Season with Scrimmages has them; its teams are only its genders, grades and levels.
+                      scrimmages={p.settings && (p.settings.kind !== "Season" || !p.settings.scrimmages) ? null : (scrims.get(p.id) ?? null)}
+                      addScrimmage={
+                        choices && (!p.settings || (p.settings.kind === "Season" && p.settings.scrimmages)) && (
+                          <NewScrimmageForm org={org} programId={p.id} choices={forSeason(choices, p.settings)} panel={`new-scrimmage-${p.id}`} />
+                        )
+                      }
+                      scrimChoices={choices && forSeason(choices, p.settings)}
                     />
                   </>
                 ) : org === "scenic-city" ? (

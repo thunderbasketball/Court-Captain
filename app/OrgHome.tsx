@@ -54,6 +54,7 @@ import { ScenicUsersContent } from "./org/scenic-city/users/content";
 import { ScenicCoachesContent } from "./org/scenic-city/members/coaches/content";
 import { HostingSitesMembersContent } from "./org/scenic-city/members/hosting-sites/content";
 import { ScheduleAnalysis } from "./org/scenic-city/ScheduleAnalysis";
+import OrgPlaybookCard from "./OrgPlaybookCard";
 
 // Every organization's Home (SPEC.md section 14), one page for all: a stack of cards in one order, each shown only when
 // the organization has that feature and the person has the role for it, never because of which organization it is:
@@ -259,6 +260,8 @@ export default async function OrgHome({
     ...(uniformsOn ? [{ key: "uniforms", title: "Uniforms", alert: !!alerts?.uniforms, body: <UniformsContent embedded /> }] : []),
     ...(ownGyms || leagueFacilities ? [{ key: "facilities", title: "Facilities", alert: noOfficials > 0, body: facilitiesBody }] : []),
     ...(documents ? [{ key: "documents", title: "Documents", body: <DocumentsCard org={org} user={user} /> }] : []),
+    // CourtPlaybook: the organization's own playbook and the plays its teams shared (Owners and Admins).
+    ...(has("playbook") && admin ? [{ key: "playbook", title: "Playbook", body: <OrgPlaybookCard org={org} user={user} /> }] : []),
     ...(showMembers
       ? [
           {

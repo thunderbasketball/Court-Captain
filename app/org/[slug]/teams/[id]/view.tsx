@@ -21,6 +21,10 @@ import { canChangeOwnPractices, ownPracticeLocations, ownPracticesOn, upcomingOw
 import TeamPractices from "../../../../TeamPractices";
 import NextSevenDays from "../../../../NextSevenDays";
 import { takesAttendance } from "@/lib/event-attendance";
+import { listPlays, orgLibrary } from "@/lib/playbook";
+import PlaybookCard from "../../../../PlaybookCard";
+import { playbookPanel } from "@/lib/play-kinds";
+import { AddIcon } from "../../../../CardIcons";
 import { teamScrimmages } from "@/lib/scrimmages";
 import { BookPracticesButton, BookPracticesPanel } from "../../../../BookPractices";
 
@@ -71,6 +75,9 @@ export async function OrgTeamView({
   const published = games.filter((g) => g.published);
   // Its scrimmages (another of the organization's teams, an outside team, or TBD), on Next 7 days and Games.
   const scrims = (await teamScrimmages({ pool: db, now: () => new Date() }, slug, [t.id]))[t.id] ?? [];
+  // Its playbook (CourtPlaybook): its coaches and the Directors of Teams; null for anyone else.
+  const plays = await listPlays({ pool: db, now: () => new Date() }, user, ref);
+  const library = plays ? await orgLibrary({ pool: db, now: () => new Date() }, user, slug, t.id) : null; // to copy from
 
   const split = (name: string) => {
     const at = name.indexOf(" ");
@@ -304,6 +311,13 @@ export async function OrgTeamView({
                 ),
               }
             : null
+        }
+        playbook={
+          plays && {
+            count: plays.length,
+            action: <AddIcon id={playbookPanel(t.id)} label="Add a play" />,
+            body: <PlaybookCard org={slug} teamId={t.id} plays={plays} library={library ?? []} />,
+          }
         }
         footer={canManage && <DeleteTeamButton org={slug} id={t.id} name={t.name} />}
       />

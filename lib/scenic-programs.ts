@@ -25,7 +25,7 @@ type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
 class ProgramError extends Error {}
 
 const ORG = "scenic-city";
-export const PROGRAM_KINDS = ["League", "Circuit", "Tournament"] as const;
+export const PROGRAM_KINDS = ["League", "Circuit", "Tournament", "Shootout"] as const;
 export type ProgramKind = (typeof PROGRAM_KINDS)[number];
 
 const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
@@ -511,6 +511,8 @@ export type ProgramInput = {
   regCloses: unknown;
   fee: unknown; // dollars, e.g. "150" or "150.00"; blank for none (Circuits and Tournaments)
   options?: unknown; // a League's Registration Options: [{ kind, fee, closesOn?, closesDaysBefore? }] (fee in dollars)
+  poolGames?: unknown; // League, Tournament, Shootout: pool games each team plays
+  elimination?: unknown; // League, Tournament: "single" or "double"
 };
 
 const cents = (v: unknown): number | null => {
@@ -557,7 +559,12 @@ function cleanProgram(input: ProgramInput) {
     if (options.some((o) => o.kind === "single_2nd") && !options.some((o) => o.kind === "all_season" || o.kind === "single_1"))
       throw new ProgramError("Add a 2nd Game needs ALL Season or 1 Game – Single Day too.");
   } else feeCents = cents(input.fee);
-  return { kind, name, startsOn, endsOn, regOpens, regCloses, feeCents, options };
+  // Pool games (League, Tournament, Shootout) and the bracket (League, Tournament: Single or Double elimination).
+  const pool = input.poolGames === undefined || input.poolGames === null || input.poolGames === "" ? null : Number(input.poolGames);
+  if (pool !== null && !(Number.isInteger(pool) && pool >= 1 && pool <= 20)) throw new ProgramError("Pool games: a number from 1 to 20.");
+  const poolGames = kind === "League" || kind === "Tournament" || kind === "Shootout" ? pool : null;
+  const elimination = (kind === "League" || kind === "Tournament") && (input.elimination === "single" || input.elimination === "double") ? input.elimination : null;
+  return { kind, name, startsOn, endsOn, regOpens, regCloses, feeCents, options, poolGames, elimination };
 }
 
 // New (id null) or edit: the program's details. Divisions are added and removed on their own (below).
@@ -575,16 +582,21 @@ export async function saveProgram(
       let pid: string;
       if (id === null) {
         const r = await q.query<{ id: string }>(
-          `insert into scenic_programs (kind, name, starts_on, ends_on, reg_opens, reg_closes, fee_cents, created_by, created_at, updated_by, updated_at)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $8, $9) returning id::text`,
-          [f.kind, f.name, f.startsOn, f.endsOn, f.regOpens, f.regCloses, f.feeCents, by(viewer), deps.now()],
+          `insert into scenic_programs (kind, name, starts_on, ends_on, reg_opens, reg_closes, fee_cents, created_by, created_at, updated_by, updated_at,
+                                       pool_games, elimination)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $8, $9, $10, $11) returning id::text`,
+          [f.kind, f.name, f.startsOn, f.endsOn, f.regOpens, f.regCloses, f.feeCents, by(viewer), deps.now(), f.poolGames, f.elimination],
         );
         pid = r.rows[0].id;
       } else {
         const r = await q.query(
           `update scenic_programs set kind = $2, name = $3, starts_on = $4, ends_on = $5, reg_opens = $6, reg_closes = $7, fee_cents = $8,
-                  updated_by = $9, updated_at = $10 where id = $1`,
-          [id, f.kind, f.name, f.startsOn, f.endsOn, f.regOpens, f.regCloses, f.feeCents, by(viewer), deps.now()],
+                  updated_by = $9, updated_at = $10,
+                  -- left out (an older form): kept, unless the type no longer has them
+                  pool_games = case when $2 = 'Circuit' then null else coalesce($11, pool_games) end,
+                  elimination = case when $2 in ('League', 'Tournament') then coalesce($12, elimination) end
+            where id = $1`,
+          [id, f.kind, f.name, f.startsOn, f.endsOn, f.regOpens, f.regCloses, f.feeCents, by(viewer), deps.now(), f.poolGames, f.elimination],
         );
         if (!r.rowCount) throw new ProgramError("That program no longer exists.");
         pid = id;

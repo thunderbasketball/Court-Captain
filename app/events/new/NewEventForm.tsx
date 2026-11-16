@@ -18,12 +18,16 @@ export default function NewEventForm({
   types,
   programId,
   onDone,
+  allowedGrades,
+  allowedGenders,
 }: {
   people: { id: string; name: string }[];
   gyms: string[];
   types: string[];
   programId?: string;
   onDone?: () => void;
+  allowedGrades?: readonly string[]; // the program's grades (its Sessions can't have others)
+  allowedGenders?: readonly string[]; // the program's genders: Coed only when it has both
 }) {
   const router = useRouter();
   const [kinds, setKinds] = useState(types);
@@ -161,7 +165,9 @@ export default function NewEventForm({
         <div>
           <p className={label}>Gender</p>
           <div className="flex gap-2">
-            {GENDER_CHOICES.map((g) => (
+            {GENDER_CHOICES.filter(
+              (g) => (!allowedGenders || gendersOf(g).every((x) => allowedGenders.includes(x))) && !(g === "Coed" && /^tryouts?$/i.test(kind)),
+            ).map((g) => (
               <button key={g} type="button" className={pill(gender === g)} onClick={() => setGender(g)}>
                 {g}
               </button>
@@ -171,7 +177,7 @@ export default function NewEventForm({
         <div>
           <p className={label}>Grades</p>
           <div className="grid grid-cols-7 gap-2 sm:grid-cols-13">
-            {GRADES.map((g) => (
+            {(allowedGrades ?? GRADES).map((g) => (
               <label
                 key={g}
                 className={`flex cursor-pointer flex-col items-center gap-1 rounded-xl py-2 text-sm font-medium ring-1 ${

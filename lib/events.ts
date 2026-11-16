@@ -1,5 +1,7 @@
 // Events with player check-in (SPEC.md section 12). The Director creates an event, picks the players expected
 // (by gender and grade) and who runs check-in. Those people, and the Director, mark each player ? / ✓ / ✗.
+import { programSettings, sessionTypesFor } from "./player-programs";
+import { gradesFor } from "./program-kinds";
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { withTx } from "./sql";
@@ -91,6 +93,7 @@ function cleanInput(input: EventInput) {
     return v;
   };
   const tryout = /^tryouts?$/i.test(kind);
+  if (tryout && gender === "Coed") throw new UserError("Tryouts are for Boys or Girls (no Coed tryouts).");
   const signupOpens = tryout ? day(input.signupOpens, "sign-up opens") : null;
   const signupCloses = tryout ? day(input.signupCloses, "sign-up closes") : null;
   if (signupOpens && signupCloses && signupCloses < signupOpens) throw new UserError("Sign-up can't close before it opens.");
@@ -134,6 +137,32 @@ export async function createEvent(deps: Deps, viewer: SessionUser, input: EventI
       );
       if (e.programId && !prog.rows[0]) throw new UserError("That program no longer exists.");
       const programId = prog.rows[0]?.id ?? null;
+      // The program's type and settings decide its Sessions: which types (no Tryouts or Open Gym when it hasn't got them;
+      // a Clinic / Training only trainings) and which grades.
+      const settings = programId ? await programSettings(q, programId) : null;
+      if (settings) {
+        if (!sessionTypesFor(settings, [e.kind]).length)
+          throw new UserError(
+            settings.kind !== "Season" ? `A training program doesn't have ${e.kind} sessions.` : `This season doesn't have ${e.kind}.`,
+          );
+        if (e.genders.some((g) => !settings.genders.includes(g)))
+          throw new UserError(`This program is for ${settings.genders.join(" and ")} only.`);
+        // Each of the session's genders has its own grades in the program (Boys K–8, Girls 3–8).
+        for (const g of e.genders) {
+          const allowed = gradesFor(settings, g);
+          if (e.grades.some((x) => !allowed.includes(x))) throw new UserError(`This program's ${g} grades are ${allowed.join(", ")} only.`);
+        }
+        // Tryouts: sign-up opens when the season's tryout registration opens and closes on the tryout's own day (walk-ins
+        // register there), unless the tryout sets its own dates.
+        if (/^tryouts?$/i.test(e.kind) && !e.signupOpens && !e.signupCloses) {
+          const d = (
+            await q.query<{ o: string | null }>("select to_char(tryout_reg_opens, 'YYYY-MM-DD') as o from player_programs where id = $1", [programId])
+          ).rows[0];
+          e.signupOpens = d?.o ?? null;
+          e.signupCloses = e.startsAt.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+          if (e.signupOpens && e.signupOpens > e.signupCloses) e.signupOpens = e.signupCloses;
+        }
+      }
       const ins = await q.query<{ id: string }>(
         `insert into events (name, kind, starts_at, location, notes, genders, grades, created_by, created_at, program_id,
                              signup_opens, signup_closes)

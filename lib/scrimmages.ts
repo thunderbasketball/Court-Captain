@@ -4,6 +4,8 @@
 // (the whole gym: every goal's open practice slots in that time are blocked, noted "Scrimmage", freed when it's removed),
 // or at any place typed in. Who adds and removes them: the organization's Admins and Directors of Teams or Events, and
 // the Head Coach of one of its teams playing. Checked here, on the server.
+import { programSettings } from "./player-programs";
+import { gradesFor } from "./program-kinds";
 import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { NO_FEATURE, hasFeature } from "./features";
@@ -48,7 +50,7 @@ export type Scrimmage = {
 };
 export type ScrimmageChoices = {
   // gender and grade (its highest): picking one side's team narrows the other side to the same gender, a grade apart.
-  teams: { id: string; name: string; gender: string; grade: number }[];
+  teams: { id: string; name: string; gender: string; grade: number; level: string }[];
   gyms: { id: string; name: string }[];
   officials: { org: string; name: string }[]; // Officials Groups to schedule officials from
 };
@@ -97,10 +99,10 @@ export async function scrimmageChoices(deps: Pick<Deps, "pool">, org: string): P
   const [teams, gyms] = await Promise.all([
     thunder(org)
       ? deps.pool.query<ScrimmageChoices["teams"][number]>(
-          "select id::text, name, gender, grade_sort as grade from teams order by grade_sort, gender, lower(name)",
+          "select id::text, name, gender, grade_sort as grade, level from teams order by grade_sort, gender, lower(name)",
         )
       : deps.pool.query<ScrimmageChoices["teams"][number]>(
-          "select id::text, name, gender, grade from org_teams where org = $1 and archived_at is null order by grade, gender, lower(name)",
+          "select id::text, name, gender, grade, level from org_teams where org = $1 and archived_at is null order by grade, gender, lower(name)",
           [org],
         ),
     deps.pool.query<ScrimmageChoices["gyms"][number]>(
@@ -298,6 +300,27 @@ async function saveScrimmage(
       ? await q.query("select id from teams where id = any($1::bigint[])", [ours])
       : await q.query("select id from org_teams where id = any($1::bigint[]) and org = $2 and archived_at is null", [ours, org]);
     if (teams.rowCount !== new Set(ours).size) return { ok: false as const, message: "Pick teams from your list." };
+    // The program's type and settings: a Clinic / Training has no scrimmages; a Season's are for its grades and levels.
+    const programId = editing
+      ? (await q.query<{ p: string }>("select program_id::text as p from scrimmages where id = $1", [editing])).rows[0]?.p
+      : (target as { programId: string }).programId;
+    const settings = programId ? await programSettings(q, programId, org) : null;
+    if (settings && (settings.kind !== "Season" || !settings.scrimmages))
+      return { ok: false as const, message: "This program doesn't have scrimmages." };
+    if (settings && ours.length) {
+      const t = (
+        await q.query<{ grade: number; level: string; gender: string }>(
+          thunder(org)
+            ? "select grade_sort as grade, level, gender from teams where id = any($1::bigint[])"
+            : "select grade, level, gender from org_teams where id = any($1::bigint[])",
+          [ours],
+        )
+      ).rows;
+      // Each team in its gender's grades (levels of play are the teams' own).
+      const fits = (x: { grade: number; gender: string }) =>
+        gradesFor(settings, x.gender).map((g) => (g === "K" ? 0 : Number(g))).includes(x.grade);
+      if (t.some((x) => !fits(x))) return { ok: false as const, message: "Pick teams in this season's genders and their grades." };
+    }
     // Two of its teams: the same gender, a grade apart at most (the same team on both sides is allowed: intrasquad).
     if (home && away && home !== away) {
       const t = (

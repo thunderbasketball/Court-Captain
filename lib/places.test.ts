@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { pinFrom, readPin, setGymPin, setGymPlace, setSchedulerPin, suggestPlaces } from "./places";
+import { addGymAtPlace, pinFrom, readPin, setGymPin, setGymPlace, setSchedulerPin, suggestPlaces } from "./places";
 import { PLACE_SQL } from "./scenic-games";
 import { createTestDb } from "./testing/db";
 
@@ -141,5 +141,17 @@ describe("gym locations", () => {
     expect(await where()).toMatchObject({ map_lat: 35.05, map_lng: -85.25, map_place: null });
     expect(await setSchedulerPin(deps(), scenicDirector, "scenic-city", `o${gym}`, null)).toEqual({ ok: true, label: null });
     expect(await where()).toMatchObject({ map_lat: 35.0399 });
+  });
+
+  it("adds a facility from its location (a tryout's Place): named for the place, one court, its address; the same name is reused", async () => {
+    await db.pool.query("delete from gyms");
+    expect(await addGymAtPlace(deps(), coach, "thunder", PLACE)).toMatchObject({ ok: false });
+    expect(await addGymAtPlace(deps(), director, "thunder", "nope")).toMatchObject({ ok: false });
+    expect(await addGymAtPlace(deps(), director, "thunder", PLACE, "session-1234")).toEqual({ ok: true, name: "Action Church" });
+    const g = (await db.pool.query("select id, name, address, lat, place_id from gyms where org = 'thunder'")).rows;
+    expect(g).toMatchObject([{ name: "Action Church", address: "123 Main St, Chattanooga, TN 37404", lat: 35.03, place_id: PLACE }]);
+    expect((await db.pool.query("select name from courts where gym_id = $1", [g[0].id])).rows).toEqual([{ name: "Main" }]);
+    expect(await addGymAtPlace(deps(), director, "thunder", PLACE)).toEqual({ ok: true, name: "Action Church" });
+    expect((await db.pool.query("select count(*)::int as n from gyms where org = 'thunder'")).rows[0].n).toBe(1);
   });
 });

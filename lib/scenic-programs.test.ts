@@ -181,6 +181,21 @@ describe("Scenic City programs", () => {
     expect((await listPrograms(deps(), dee))!.canManage).toBe(true);
   });
 
+  it("League and Tournament: pool games and Single or Double elimination; a Shootout: pool games only; a Circuit: neither", async () => {
+    const pool = async (id: string) =>
+      (await db.pool.query("select kind, pool_games, elimination from scenic_programs where id = $1", [id])).rows[0];
+    const t = (await saveProgram(deps(), dee, null, league({ kind: "Tournament", name: "Spring Classic", poolGames: "3", elimination: "double" }))) as { id: string };
+    expect(await pool(t.id)).toEqual({ kind: "Tournament", pool_games: 3, elimination: "double" });
+    const sh = (await saveProgram(deps(), dee, null, league({ kind: "Shootout", name: "Fall Shootout", poolGames: "4", elimination: "single" }))) as { id: string };
+    expect(await pool(sh.id)).toEqual({ kind: "Shootout", pool_games: 4, elimination: null });
+    expect(await saveProgram(deps(), dee, null, league({ kind: "Tournament", name: "Bad", poolGames: "30" }))).toMatchObject({ ok: false });
+    // Edited by the older form (no options sent): kept. Made a Circuit: cleared.
+    await saveProgram(deps(), dee, t.id, league({ kind: "Tournament", name: "Spring Classic" }));
+    expect(await pool(t.id)).toEqual({ kind: "Tournament", pool_games: 3, elimination: "double" });
+    await saveProgram(deps(), dee, t.id, league({ kind: "Circuit", name: "Spring Classic" }));
+    expect(await pool(t.id)).toEqual({ kind: "Circuit", pool_games: null, elimination: null });
+  });
+
   it("checks program dates and fee on the server", async () => {
     expect(await saveProgram(deps(), dee, null, league({ kind: "Camp" }))).toEqual({
       ok: false,

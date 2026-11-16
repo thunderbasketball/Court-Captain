@@ -9,6 +9,8 @@ export default function NewSession(props: {
   people: { id: string; name: string }[];
   gyms: string[];
   types: string[];
+  allowedGrades?: readonly string[];
+  allowedGenders?: readonly string[];
 }) {
   const [n, setN] = useState(0);
   const [made, setMade] = useState(false);

@@ -15,6 +15,10 @@ import TeamPractices from "../../../../TeamPractices";
 import { canEvaluate, listEvaluations } from "@/lib/evaluations";
 import { listRoster, rosterCandidates } from "@/lib/rosters";
 import { listUniforms, uniformsMissing } from "@/lib/uniforms";
+import { listPlays, orgLibrary } from "@/lib/playbook";
+import PlaybookCard from "../../../../PlaybookCard";
+import { playbookPanel } from "@/lib/play-kinds";
+import { AddIcon } from "../../../../CardIcons";
 import { getTeam, personOptions, rosterParentOptions } from "@/lib/teams";
 import EligibleChip, { bornLabel } from "../../../../EligibleChip";
 import { rosterIssue, schoolYearOf } from "@/lib/eligibility";
@@ -128,6 +132,9 @@ export async function ThunderTeamView({
     uniformsOn ? listUniforms(deps, user, team.id) : null,
     uniformsMissing(deps, team.id),
   ]);
+  // Its playbook (CourtPlaybook): its coaches and the Directors of Teams; null for anyone else.
+  const plays = await listPlays(deps, user, { org: "thunder", teamId: team.id });
+  const library = plays ? await orgLibrary(deps, user, "thunder", team.id) : null; // to copy from
   // Each player's uniform number (with Uniforms), shown before their name on the Roster.
   const number = new Map((uniforms ?? []).flatMap((u) => (u.number ? [[u.registrantId, u.number] as const] : [])));
 
@@ -354,6 +361,13 @@ export async function ThunderTeamView({
             </>
           ),
         }}
+        playbook={
+          plays && {
+            count: plays.length,
+            action: <AddIcon id={playbookPanel(team.id)} label="Add a play" />,
+            body: <PlaybookCard org={"thunder"} teamId={team.id} plays={plays} library={library ?? []} />,
+          }
+        }
         footer={canEditTeam && <DeleteTeamButton teamId={team.id} name={team.name} players={roster?.length ?? 0} practices={practices.length} />}
       />
     </>
