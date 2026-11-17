@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition, type ReactNode } from "react";
+import { Fragment, useRef, useState, useTransition, type ReactNode } from "react";
 import * as act from "./actions";
 import type { ClientStep } from "./actions";
 import { pillCls } from "../ui";
@@ -426,7 +426,9 @@ export default function LoginFlow({ join, next = "/" }: { join?: string; next?: 
           {notice}
         </p>
       )}
-      {body}
+      {/* Keyed by step: each step gets fresh boxes, so the phone shows the right keyboard (an email box never keeps the
+          cell number's keypad after the number goes on by itself). */}
+      <Fragment key={screen.step}>{body}</Fragment>
       {screen.step !== "phone" && (
         <button type="button" className={`${link} block`} onClick={restart}>
           ← Use a different number

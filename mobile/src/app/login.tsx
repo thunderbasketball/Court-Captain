@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { useRef, useState, type ReactNode } from 'react';
+import { Fragment, useRef, useState, type ReactNode } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -347,7 +347,10 @@ export default function Login() {
           </View>
           {error && <Banner kind="error" text={error} />}
           {notice && !error && <Banner kind="notice" text={notice} />}
-          <Card>{body}</Card>
+          <Card>
+            {/* Keyed by step: fresh boxes, so the email box never keeps the cell number's keypad. */}
+            <Fragment key={screen.step}>{body}</Fragment>
+          </Card>
           {screen.step !== 'phone' && <LinkButton title="← Use a different number" onPress={restart} />}
         </ScrollView>
       </KeyboardAvoidingView>
