@@ -15,6 +15,7 @@ import {
   isDefenseLine,
   lineDistance,
   linePoint,
+  movingLine,
   isOffense,
   nextFrame,
   startFrame,
@@ -146,6 +147,7 @@ function LinePath({ line, from, ids, faint = false }: { line: PlayLine; from: Sp
 }
 
 function Player({ spot, ball, moving }: { spot: Spot; ball: boolean; moving: boolean }) {
+  // `moving`: glide (a plain CSS slide) to a new spot; while a play runs the Court moves them itself, along their lines.
   const offense = isOffense(spot.id);
   return (
     <g style={{ transform: `translate(${spot.x}px, ${spot.y}px)`, transition: moving ? "transform 0.9s ease-in-out" : undefined }}>
@@ -192,6 +194,7 @@ function Player({ spot, ball, moving }: { spot: Spot; ball: boolean; moving: boo
 function Court({
   frame,
   moving = false,
+  prev = null,
   svgRef,
   onPointerDown,
   onPointerMove,
@@ -203,6 +206,7 @@ function Court({
 }: {
   frame: Frame;
   moving?: boolean;
+  prev?: Frame | null; // the frame just before (stepping forward): players travel from it along their lines
   svgRef?: Ref<SVGSVGElement>;
   onPointerDown?: (e: ReactPointerEvent<SVGSVGElement>) => void;
   onPointerMove?: (e: ReactPointerEvent<SVGSVGElement>) => void;
@@ -215,6 +219,31 @@ function Court({
   const id = useId().replace(/:/g, "");
   const ids = { arrow: `arrow-${id}`, red: `arrow-red-${id}` };
   const at = (pid: string) => frame.spots.find((s) => s.id === pid);
+  // Stepping forward: each player travels from where they stood along the line that moved them (curved or straight)
+  // over 0.9 s; anyone moved by hand slides straight. `t` runs 0 → 1 for this frame.
+  const [anim, setAnim] = useState<{ frame: Frame; t: number }>({ frame, t: 1 });
+  const t = anim.frame === frame ? anim.t : prev ? 0 : 1;
+  useEffect(() => {
+    if (!prev) return;
+    let raf = 0;
+    let start: number | null = null;
+    const step = (now: number) => {
+      start ??= now;
+      const k = Math.min(1, (now - start) / 900);
+      setAnim({ frame, t: k });
+      if (k < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [frame, prev]);
+  const ease = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
+  const shown = (s: Spot): Spot => {
+    const was = prev?.spots.find((p) => p.id === s.id);
+    if (!prev || !was || t >= 1) return s;
+    const l = movingLine(prev, s.id);
+    if (l && Math.hypot(l.x - s.x, l.y - s.y) < 1) return { ...s, ...linePoint(was, l, ease) };
+    return { ...s, x: was.x + (s.x - was.x) * ease, y: was.y + (s.y - was.y) * ease };
+  };
   return (
     <svg
       ref={svgRef}
@@ -252,7 +281,7 @@ function Court({
       {/* Kept in one order so each player glides from frame to frame. */}
       {[...OFFENSE, ...DEFENSE].map((pid) => {
         const s = at(pid);
-        return s ? <Player key={pid} spot={s} ball={frame.ball === pid} moving={moving} /> : null;
+        return s ? <Player key={pid} spot={shown(s)} ball={frame.ball === pid} moving={moving && !prev} /> : null;
       })}
     </svg>
   );
@@ -275,11 +304,18 @@ export function PlayViewer({ frames, name }: { frames: Frame[]; name: string }) 
     }, 1500);
     return () => clearInterval(t);
   }, [playing, frames.length]);
+  // Stepped forward one frame (› or ▶): the players travel there along their lines; back (‹): they jump.
+  const [seen, setSeen] = useState(i);
+  const [forward, setForward] = useState(false);
+  if (i !== seen) {
+    setSeen(i);
+    setForward(i === seen + 1);
+  }
   if (!frames.length) return null;
   const at = Math.min(i, frames.length - 1);
   return (
     <div className="space-y-2">
-      <Court frame={frames[at]} moving label={`${name}, frame ${at + 1} of ${frames.length}`} />
+      <Court frame={frames[at]} prev={forward && at > 0 ? frames[at - 1] : null} moving label={`${name}, frame ${at + 1} of ${frames.length}`} />
       <div className="flex items-center justify-between gap-2 text-sm">
         <div className="flex items-center gap-1">
           <button type="button" aria-label="Back a frame" disabled={at === 0} onClick={() => setI(at - 1)} className={`${chip(false)} disabled:opacity-40`}>
@@ -550,6 +586,7 @@ export function PlayEditor({ frames, onChange }: { frames: Frame[]; onChange: (f
         frame={frame}
         svgRef={svg}
         moving={playing}
+        prev={playing && i > 0 ? frames[i - 1] : null}
         touchNone
         onPointerDown={down}
         onPointerMove={move}

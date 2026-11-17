@@ -21,6 +21,11 @@ export const isDefenseLine = (k: LineKind) => (DEFENSE_LINES as readonly string[
 export const canCurve = (k: LineKind) => k !== "pass";
 // The lines that move their player to its end (all but a pass).
 const MOVES = (k: LineKind) => k !== "pass";
+// The line that carries a player from this frame to the next (their last moving line), if any: ▶ Play glides them
+// along it (curves too).
+export function movingLine(f: Frame, id: string): PlayLine | null {
+  return f.lines.filter((l) => l.from === id && MOVES(l.kind)).at(-1) ?? null;
+}
 
 export type Spot = { id: string; x: number; y: number };
 // bx, by (optional): a point the line bends through (a curve); without it the line is straight.

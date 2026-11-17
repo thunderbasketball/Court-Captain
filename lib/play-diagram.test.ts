@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanFrames, defenderSpot, lineDistance, linePoint, nextFrame, startFrame, type Frame } from "./play-diagram";
+import { cleanFrames, defenderSpot, lineDistance, linePoint, movingLine, nextFrame, startFrame, type Frame } from "./play-diagram";
 
 describe("CourtPlaybook diagrams", () => {
   it("starts with 1–5 in their spots and the ball with 1", () => {
@@ -80,5 +80,10 @@ describe("CourtPlaybook diagrams", () => {
     expect(lineDistance(from, l, 200, 205)).toBeLessThan(6);
     expect(lineDistance(from, { ...l, bx: undefined, by: undefined }, 200, 205)).toBeGreaterThan(90); // straight: far
     expect(nextFrame({ ...f, lines: [{ ...l, from: "1" }] }).spots.find((s) => s.id === "1")).toMatchObject({ x: 300, y: 300 });
+    // ▶ Play carries each player along the line that moved them (their last one); a pass moves no one.
+    const g = { ...f, lines: [{ kind: "pass" as const, from: "1", x: 430, y: 230 }, { ...l, from: "2" }, { kind: "dribble" as const, from: "1", x: 250, y: 200 }] };
+    expect(movingLine(g, "1")).toMatchObject({ kind: "dribble" });
+    expect(movingLine(g, "2")).toMatchObject({ bx: 200, by: 200 });
+    expect(movingLine(g, "3")).toBeNull();
   });
 });
