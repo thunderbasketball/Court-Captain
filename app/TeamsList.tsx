@@ -3,7 +3,7 @@ import type { AudienceInput } from "@/lib/announcements";
 import PageMenus, { MEGAPHONE_BTN, MegaphoneIcon, PLUS_BTN, PlusIcon } from "./PageMenus";
 import ChatPanel from "./ChatPanel";
 import { NotifyPanel } from "./NotifyButton";
-import { TextTeamsPanel } from "./Contacts";
+import { EmailTeamsPanel, TextTeamsPanel } from "./Contacts";
 import TeamWarningsCard from "./warnings/TeamWarningsCard";
 import TeamsIncluded from "./TeamsIncluded";
 import { UndoImportButton } from "./TeamImport";
@@ -28,7 +28,8 @@ export default function TeamsList<T extends { level: string; gender: string }>(p
   count: number;
   subtitle: string;
   coaches?: {
-    text: { id: string; name: string; gender: string; level: string; grade: number; headCells: string[] }[];
+    text: { id: string; name: string; gender: string; level: string; grade: number; headCells: string[]; headEmails?: (string | null)[] }[];
+    email?: boolean; // Owners and Admins: Email coaches too
     chatKey?: string | null; // Chat with coaches
     alert?: AudienceInput | null; // Alert coaches
   } | null;
@@ -61,6 +62,7 @@ export default function TeamsList<T extends { level: string; gender: string }>(p
                   className: MEGAPHONE_BTN,
                   items: [
                     { key: "text", label: "💬 Text coaches", panel: <TextTeamsPanel teams={p.coaches.text} /> },
+                    ...(p.coaches.email ? [{ key: "email", label: "✉️ Email coaches", panel: <EmailTeamsPanel teams={p.coaches.text} /> }] : []),
                     ...(p.coaches.chatKey ? [{ key: "chat", label: "🗨️ Chat with coaches", panel: <ChatPanel chatKey={p.coaches.chatKey} /> }] : []),
                     ...(p.coaches.alert
                       ? [{ key: "alert", label: "🔔 Alert coaches", panel: <NotifyPanel audience={p.coaches.alert} to="all coaches" /> }]

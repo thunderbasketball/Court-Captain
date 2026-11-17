@@ -9,6 +9,9 @@ import { MAX_GROUP_TEXT, openGroupText } from "./Contacts";
 export const iconBtn =
   "flex size-8 shrink-0 items-center justify-center rounded-full text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 disabled:opacity-40 dark:text-blue-400 dark:hover:bg-blue-500/10";
 const EVENT = "card-panel";
+// A panel asked for before it's on the page: a Home card's inside is loaded only once the card opens, so a tap on its
+// title-line icon (📣, +) while it's closed waits here, and the panel opens as soon as it arrives.
+const pending = new Set<string>();
 
 export function TextIcon({ cells, label }: { cells: (string | null)[]; label: string }) {
   const numbers = [...new Set(cells.filter((c): c is string => !!c && /^\d{10}$/.test(c)))].map((c) => `+1${c}`);
@@ -62,6 +65,7 @@ export function PanelIcon({ id, label, children, className = iconBtn }: { id: st
       onClick={(e) => {
         const d = e.currentTarget.closest(".relative")?.querySelector("details");
         if (d) d.open = true;
+        pending.add(id); // taken by the panel if it's already here (below), or when it arrives
         window.dispatchEvent(new CustomEvent(EVENT, { detail: id }));
       }}
       className={className}
@@ -110,11 +114,14 @@ const CLOSE = "card-panel-close";
 
 // The panel a PanelIcon opens, at the top of the card's inside.
 export function CardPanel({ id, children, className = "border-b border-zinc-100 px-4 pb-3 dark:border-white/5" }: { id: string; children: ReactNode; className?: string }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(() => pending.has(id)); // asked for before it arrived: open
   useEffect(() => {
     const on = (e: Event) => {
-      if ((e as CustomEvent).detail === id) setOpen((o) => !o);
+      if ((e as CustomEvent).detail !== id) return;
+      pending.delete(id);
+      setOpen((o) => !o);
     };
+    pending.delete(id);
     const off = (e: Event) => {
       if ((e as CustomEvent).detail === id) setOpen(false);
     };

@@ -177,10 +177,17 @@ export function TextTeamsPanel({
   return <TeamPicker teams={teams} />;
 }
 
+// Owners and Admins: the same picker, emailing the picked teams' Head Coaches (one email, Bcc; nothing sent by the app).
+export function EmailTeamsPanel({ teams }: { teams: { id: string; name: string; gender: string; level: string; grade: number; headCells: (string | null)[]; headEmails?: (string | null)[] }[] }) {
+  return <TeamPicker teams={teams} email />;
+}
+
 function TeamPicker({
   teams,
+  email = false,
 }: {
-  teams: { id: string; name: string; gender: string; level: string; grade: number; headCells: (string | null)[] }[];
+  teams: { id: string; name: string; gender: string; level: string; grade: number; headCells: (string | null)[]; headEmails?: (string | null)[] }[];
+  email?: boolean;
 }) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const genders = ["Boys", "Girls"]
@@ -198,6 +205,15 @@ function TeamPicker({
       return n;
     });
   const cells = teams.filter((t) => picked.has(t.id)).flatMap((t) => t.headCells);
+  const emails = [
+    ...new Set(
+      teams
+        .filter((t) => picked.has(t.id))
+        .flatMap((t) => t.headEmails ?? [])
+        .filter((e): e is string => !!e)
+        .map((e) => e.toLowerCase()),
+    ),
+  ];
   if (!teams.length) return <p className="text-sm text-zinc-500">No teams yet.</p>;
   return (
     <div className="space-y-3">
@@ -237,9 +253,9 @@ function TeamPicker({
                       />
                       <span className="min-w-0 flex-1 truncate">{t.name}</span>
                       <span className="text-xs text-zinc-500">{t.level}</span>
-                      {!t.headCells.some(Boolean) && (
-                        <span className="text-xs text-red-600 dark:text-red-400">no Head Coach cell</span>
-                      )}
+                      {email
+                        ? !(t.headEmails ?? []).some(Boolean) && <span className="text-xs text-red-600 dark:text-red-400">no Head Coach email</span>
+                        : !t.headCells.some(Boolean) && <span className="text-xs text-red-600 dark:text-red-400">no Head Coach cell</span>}
                     </label>
                   </li>
                 ))}
@@ -248,7 +264,22 @@ function TeamPicker({
           );
         })}
       </div>
-      <GroupTextButton cells={cells} label="Text Head Coaches" />
+      {email ? (
+        emails.length ? (
+          <a
+            href={`mailto:?bcc=${emails.map(encodeURIComponent).join(",")}`}
+            className="inline-flex shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
+          >
+            ✉️ Email Head Coaches ({emails.length})
+          </a>
+        ) : (
+          <span className="inline-flex shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue opacity-50 ring-1 ring-thunder-blue/30 dark:text-blue-400">
+            ✉️ Email Head Coaches (0)
+          </span>
+        )
+      ) : (
+        <GroupTextButton cells={cells} label="Text Head Coaches" />
+      )}
     </div>
   );
 }

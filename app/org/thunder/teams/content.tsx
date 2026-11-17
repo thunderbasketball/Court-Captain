@@ -29,7 +29,7 @@ import { ContactChip, GroupTextButton } from "../../../Contacts";
 import TeamRosterList from "./TeamRosterList";
 import { ThunderTeamView } from "./[id]/view";
 import RosterBoardButton from "../players/RosterBoardButton";
-import { hasArea, isThunderAdmin, seesWho } from "@/lib/org-admin";
+import { hasArea, isOrgAdmin, isThunderAdmin, seesWho } from "@/lib/org-admin";
 import { ViewAsButton } from "../../../ViewAsButton";
 
 import { PageFrame } from "../../../ui";
@@ -99,7 +99,9 @@ export async function TeamsContent({
               level: t.level,
               grade: Math.min(...t.grades.map(gradeSort)),
               headCells: t.staff.filter((s) => s.role === "HeadCoach").map((s) => s.cell),
+              headEmails: t.staff.filter((s) => s.role === "HeadCoach").map((s) => s.email),
             })),
+            email: isThunderAdmin(user) || (await isOrgAdmin(db, user.coachId, "thunder")),
             chatKey: "coaches",
             alert: { roles: ["coach"] },
           }}

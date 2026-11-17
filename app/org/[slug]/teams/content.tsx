@@ -105,7 +105,9 @@ export async function OrgTeamsContent({
                     level: t.level,
                     grade: i, // already youngest grade first
                     headCells: t.coaches.filter((c) => c.role === "HeadCoach").map((c) => c.cell),
+                    headEmails: t.coaches.filter((c) => c.role === "HeadCoach").map((c) => c.email),
                   })),
+                  email: await isOrgAdmin(db, user.coachId, slug),
                   chatKey: chatter ? orgKey(slug, "coaches") : null,
                   alert: alerter ? { org: slug, roles: ["coach"] } : null,
                 }
