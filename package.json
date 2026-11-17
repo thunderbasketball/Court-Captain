@@ -19,7 +19,7 @@
     "email:test": "tsx --conditions=react-server --env-file=.env.local scripts/test-email.ts"
   },
   "dependencies": {
-    "next": "16.4.3",
+    "next": "16.4.6",
     "nodemailer": "^10.2.1",
     "pg": "^8.23.1",
     "react": "19.3.0",
@@ -34,7 +34,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.4.3",
+    "eslint-config-next": "16.4.6",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
     "typescript": "^5",
