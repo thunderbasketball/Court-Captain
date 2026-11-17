@@ -11,6 +11,7 @@ import {
   OFFENSE,
   defenderSpot,
   bendControl,
+  canCurve,
   isDefenseLine,
   lineDistance,
   linePoint,
@@ -197,6 +198,7 @@ function Court({
   onPointerUp,
   touchNone = false,
   preview,
+  handles = false,
   label,
 }: {
   frame: Frame;
@@ -207,6 +209,7 @@ function Court({
   onPointerUp?: (e: ReactPointerEvent<SVGSVGElement>) => void;
   touchNone?: boolean;
   preview?: PlayLine | null;
+  handles?: boolean; // editing: a small dot at each line's middle, to drag it into a curve
   label: string;
 }) {
   const id = useId().replace(/:/g, "");
@@ -239,6 +242,13 @@ function Court({
         return from ? <LinePath key={i} line={l} from={from} ids={ids} /> : null;
       })}
       {preview && at(preview.from) && <LinePath line={preview} from={at(preview.from)!} ids={ids} faint />}
+      {handles &&
+        frame.lines.map((l, i) => {
+          const from = at(l.from);
+          if (!from || !canCurve(l.kind)) return null;
+          const m = linePoint(from, l, 0.5);
+          return <circle key={`h${i}`} cx={m.x} cy={m.y} r={6} fill="white" stroke={isDefenseLine(l.kind) ? RED : "currentColor"} strokeWidth={2} opacity={0.85} />;
+        })}
       {/* Kept in one order so each player glides from frame to frame. */}
       {[...OFFENSE, ...DEFENSE].map((pid) => {
         const s = at(pid);
@@ -306,7 +316,7 @@ export function PlayViewer({ frames, name }: { frames: Frame[]; name: string }) 
   );
 }
 
-type Tool = "move" | LineKind | "ball" | "curve" | "erase";
+type Tool = "move" | LineKind | "ball" | "erase";
 // Offense's tools (blue), then defense's (red; X1–X5 only).
 const TOOLS: { key: Tool; label: string }[] = [
   { key: "move", label: "Move" },
@@ -315,7 +325,6 @@ const TOOLS: { key: Tool; label: string }[] = [
   { key: "pass", label: "Pass" },
   { key: "screen", label: "Screen" },
   { key: "ball", label: "Ball" },
-  { key: "curve", label: "Curve" },
   { key: "erase", label: "Erase" },
 ];
 const D_TOOLS: { key: Tool; label: string }[] = [
@@ -334,7 +343,6 @@ const HINT: Record<Tool, string> = {
   pass: "Drag from the player with the ball to where the pass goes.",
   screen: "Drag from a player to where they set the screen.",
   ball: "Tap the player who has the ball.",
-  curve: "Draw the line first (player to its end), then drag the line to bend it. Drag it back straight to undo the bend.",
   erase: "Tap a line to erase it.",
   slide: "Drag from a defender to where they slide, help or rotate.",
   closeout: "Drag from a defender to the shooter they close out on.",
@@ -395,20 +403,29 @@ export function PlayEditor({ frames, onChange }: { frames: Frame[]; onChange: (f
     if (playing) return;
     setMsg(null);
     const p = point(e);
-    if (tool === "erase" || tool === "curve") {
+    // The line nearest the tap (straight or curved), within reach.
+    const lineHit = () => {
       const hit = frame.lines
         .map((l, n) => {
           const f = frame.spots.find((s) => s.id === l.from);
           return { n, d: f ? lineDistance(f, l, p.x, p.y) : Infinity };
         })
         .sort((a, b) => a.d - b.d)[0];
-      if (!hit || hit.d >= 22) return tool === "curve" && setMsg(frame.lines.length ? "Drag a line to bend it." : "Draw a line first, then bend it.");
-      if (tool === "erase") return setFrame({ ...frame, lines: frame.lines.filter((_, n) => n !== hit.n) });
-      e.currentTarget.setPointerCapture(e.pointerId);
-      return setBending(hit.n);
+      return hit && hit.d < 22 ? hit.n : null;
+    };
+    if (tool === "erase") {
+      const n = lineHit();
+      if (n !== null) setFrame({ ...frame, lines: frame.lines.filter((_, k) => k !== n) });
+      return;
     }
     const who = playerAt(p.x, p.y);
-    if (!who) return;
+    if (!who) {
+      // Not on a player: dragging a line (any tool) bends it into a curve; a pass stays straight.
+      const n = lineHit();
+      if (n === null || !canCurve(frame.lines[n].kind)) return;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return setBending(n);
+    }
     if (tool === "ball") {
       if (!isOffense(who.id)) return setMsg("The ball goes to an offensive player (1–5).");
       return setFrame({ ...frame, ball: who.id });
@@ -525,7 +542,10 @@ export function PlayEditor({ frames, onChange }: { frames: Frame[]; onChange: (f
           </button>
         ))}
       </div>
-      <p className="text-xs text-zinc-500">{HINT[tool]}</p>
+      <p className="text-xs text-zinc-500">
+        {HINT[tool]}
+        {tool !== "erase" && tool !== "ball" && " Drag a line's dot to curve it (back to straight to undo)."}
+      </p>
       <Court
         frame={frame}
         svgRef={svg}
@@ -536,6 +556,7 @@ export function PlayEditor({ frames, onChange }: { frames: Frame[]; onChange: (f
         onPointerUp={up}
         label={`Drawing frame ${i + 1} of ${frames.length}`}
         preview={dragFrom && drag ? { kind: tool as LineKind, from: drag.from, x: drag.x, y: drag.y } : null}
+        handles={!playing}
       />
       {msg && <p className="text-xs font-medium text-red-600 dark:text-red-400">{msg}</p>}
       <div className="flex flex-wrap items-center gap-1">

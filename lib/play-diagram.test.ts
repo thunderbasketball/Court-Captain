@@ -71,6 +71,8 @@ describe("CourtPlaybook diagrams", () => {
     const kept = cleanFrames([{ ...f, lines: [{ kind: "cut", from: "1", x: 400, y: 100, bx: 900, by: 250.6 }] }]) as Frame[];
     expect(kept[0].lines[0]).toEqual({ kind: "cut", from: "1", x: 400, y: 100, bx: 500, by: 251 });
     expect(cleanFrames([{ ...f, lines: [{ kind: "cut", from: "1", x: 4, y: 1, bx: "a", by: 2 }] }])).toMatch(/curved/);
+    const pass = cleanFrames([{ ...f, lines: [{ kind: "pass", from: "1", x: 400, y: 100, bx: 300, by: 250 }] }]) as Frame[];
+    expect(pass[0].lines[0]).toEqual({ kind: "pass", from: "1", x: 400, y: 100 }); // a pass stays straight
     const from = { x: 100, y: 300 };
     const l = { kind: "cut" as const, from: "1", x: 300, y: 300, bx: 200, by: 200 };
     expect(linePoint(from, l, 0.5)).toEqual({ x: 200, y: 200 }); // passes through its bend point

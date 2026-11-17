@@ -17,6 +17,8 @@ export const DEFENSE_LINES = ["slide", "closeout", "trap", "deny", "switch"] as 
 export const LINE_KINDS = [...OFFENSE_LINES, ...DEFENSE_LINES] as const;
 export type LineKind = (typeof LINE_KINDS)[number];
 export const isDefenseLine = (k: LineKind) => (DEFENSE_LINES as readonly string[]).includes(k);
+// Every line can curve but a pass (the ball goes straight).
+export const canCurve = (k: LineKind) => k !== "pass";
 // The lines that move their player to its end (all but a pass).
 const MOVES = (k: LineKind) => k !== "pass";
 
@@ -118,7 +120,7 @@ export function cleanFrames(v: unknown): Frame[] | string {
       if (!spots.some((s) => s.id === l.from)) return `${where}: a line starts from a player who isn't there.`;
       if (isDefenseLine(l.kind) === isOffense(l.from))
         return `${where}: ${isOffense(l.from) ? "defensive actions are for X1–X5" : "offensive actions are for 1–5"}.`;
-      const bent = l.bx !== undefined || l.by !== undefined;
+      const bent = (l.bx !== undefined || l.by !== undefined) && canCurve(l.kind);
       if (bent && !(num(l.bx) && num(l.by))) return `${where}: a curved line isn't readable.`;
       lines.push({ kind: l.kind, from: l.from, x: clampX(l.x), y: clampY(l.y), ...(bent ? { bx: clampX(l.bx), by: clampY(l.by) } : {}) });
     }
