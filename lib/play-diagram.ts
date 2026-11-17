@@ -21,7 +21,32 @@ export const isDefenseLine = (k: LineKind) => (DEFENSE_LINES as readonly string[
 const MOVES = (k: LineKind) => k !== "pass";
 
 export type Spot = { id: string; x: number; y: number };
-export type PlayLine = { kind: LineKind; from: string; x: number; y: number };
+// bx, by (optional): a point the line bends through (a curve); without it the line is straight.
+export type PlayLine = { kind: LineKind; from: string; x: number; y: number; bx?: number; by?: number };
+
+// A curved line is a quadratic curve from its player through (bx, by) at its middle to its end. Its control point:
+export function bendControl(from: { x: number; y: number }, l: PlayLine): { x: number; y: number } | null {
+  if (l.bx === undefined || l.by === undefined) return null;
+  return { x: 2 * l.bx - (from.x + l.x) / 2, y: 2 * l.by - (from.y + l.y) / 2 };
+}
+// The point at t (0 = the player, 1 = the end) along a line, straight or curved.
+export function linePoint(from: { x: number; y: number }, l: PlayLine, t: number): { x: number; y: number } {
+  const c = bendControl(from, l);
+  if (!c) return { x: from.x + (l.x - from.x) * t, y: from.y + (l.y - from.y) * t };
+  const a = (1 - t) * (1 - t);
+  const b = 2 * (1 - t) * t;
+  const d = t * t;
+  return { x: a * from.x + b * c.x + d * l.x, y: a * from.y + b * c.y + d * l.y };
+}
+// How far a point is from a line (straight or curved), for tapping one.
+export function lineDistance(from: { x: number; y: number }, l: PlayLine, px: number, py: number): number {
+  let best = Infinity;
+  for (let i = 0; i <= 32; i++) {
+    const p = linePoint(from, l, i / 32);
+    best = Math.min(best, Math.hypot(p.x - px, p.y - py));
+  }
+  return best;
+}
 export type Frame = { spots: Spot[]; ball: string | null; lines: PlayLine[] };
 
 export const MAX_FRAMES = 12;
@@ -93,7 +118,9 @@ export function cleanFrames(v: unknown): Frame[] | string {
       if (!spots.some((s) => s.id === l.from)) return `${where}: a line starts from a player who isn't there.`;
       if (isDefenseLine(l.kind) === isOffense(l.from))
         return `${where}: ${isOffense(l.from) ? "defensive actions are for X1–X5" : "offensive actions are for 1–5"}.`;
-      lines.push({ kind: l.kind, from: l.from, x: clampX(l.x), y: clampY(l.y) });
+      const bent = l.bx !== undefined || l.by !== undefined;
+      if (bent && !(num(l.bx) && num(l.by))) return `${where}: a curved line isn't readable.`;
+      lines.push({ kind: l.kind, from: l.from, x: clampX(l.x), y: clampY(l.y), ...(bent ? { bx: clampX(l.bx), by: clampY(l.by) } : {}) });
     }
     out.push({ spots, ball, lines });
   }

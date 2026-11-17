@@ -4,12 +4,23 @@ import { useMemo, useState } from "react";
 import { GroupTextButton } from "./Contacts";
 
 // A list to pick people from, in levels that open when tapped (e.g. Gender → Grade → Team → Coach). A tick on any level
-// picks everyone under it; then Text sends one group text to the picked cells (split into texts of 19 when more).
-export type PickNode = { key: string; label: string; sub?: string; cell?: string | null; children?: PickNode[] };
+// picks everyone under it; then Text sends one group text to the picked cells (split into texts of 19 when more), or
+// (email) Email opens one email to the picked addresses (Bcc).
+export type PickNode = { key: string; label: string; sub?: string; cell?: string | null; email?: string | null; children?: PickNode[] };
 
 const leaves = (n: PickNode): PickNode[] => (n.children ? n.children.flatMap(leaves) : [n]);
 
-export default function PeoplePicker({ tree, textLabel, empty }: { tree: PickNode[]; textLabel: string; empty: string }) {
+export default function PeoplePicker({
+  tree,
+  textLabel,
+  empty,
+  email = false,
+}: {
+  tree: PickNode[];
+  textLabel: string;
+  empty: string;
+  email?: boolean;
+}) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const all = useMemo(() => tree.flatMap(leaves), [tree]);
   const toggle = (keys: string[], on: boolean) =>
@@ -21,6 +32,7 @@ export default function PeoplePicker({ tree, textLabel, empty }: { tree: PickNod
     });
   if (!all.length) return <p className="text-sm text-zinc-500">{empty}</p>;
   const cells = all.filter((l) => picked.has(l.key)).map((l) => l.cell ?? null);
+  const emails = [...new Set(all.filter((l) => picked.has(l.key) && l.email).map((l) => l.email!.toLowerCase()))];
 
   const box = (n: PickNode) => {
     const keys = leaves(n).map((l) => l.key);
@@ -62,7 +74,9 @@ export default function PeoplePicker({ tree, textLabel, empty }: { tree: PickNod
         {box(n)}
         <span className="min-w-0 flex-1 truncate">{n.label}</span>
         {n.sub && <span className="shrink-0 text-xs text-zinc-500">{n.sub}</span>}
-        {!n.cell && <span className="shrink-0 text-xs text-red-600 dark:text-red-400">no cell</span>}
+        {email
+          ? !n.email && <span className="shrink-0 text-xs text-red-600 dark:text-red-400">no email</span>
+          : !n.cell && <span className="shrink-0 text-xs text-red-600 dark:text-red-400">no cell</span>}
       </label>
     );
 
@@ -86,7 +100,22 @@ export default function PeoplePicker({ tree, textLabel, empty }: { tree: PickNod
         {tree.map((n) => node(n, 0))}
       </div>
       <div className="flex flex-wrap gap-2">
-        <GroupTextButton cells={cells} label={textLabel} />
+        {email ? (
+          emails.length ? (
+            <a
+              href={`mailto:?bcc=${emails.map(encodeURIComponent).join(",")}`}
+              className="shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
+            >
+              ✉️ {textLabel} ({emails.length})
+            </a>
+          ) : (
+            <span className="shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue opacity-50 ring-1 ring-thunder-blue/30 dark:text-blue-400">
+              ✉️ {textLabel} (0)
+            </span>
+          )
+        ) : (
+          <GroupTextButton cells={cells} label={textLabel} />
+        )}
       </div>
     </div>
   );

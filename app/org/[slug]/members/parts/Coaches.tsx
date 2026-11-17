@@ -33,6 +33,7 @@ export default async function OrgCoachesPart({ user, slug, view }: { user: Sessi
           <CoachTools
             coaches={coachTree(users)}
             volunteers={null}
+            email={admin}
             chat={chatter ? <ChatPanel chatKey={orgKey(slug, "coaches")} /> : null}
             alerts={
               alerter

@@ -132,7 +132,8 @@ export const TEAM_COACHES = `coalesce((select json_agg(k order by k.head desc, k
               select s.coach_id, s.role from team_staff s
                where s.team_id = t.thunder_team_id and s.role in ('HeadCoach', 'AsstCoach')
               union all
-              select oc.coach_id, oc.role from org_team_coaches oc where oc.team_id = t.org_team_id) p
+              select oc.coach_id, oc.role from org_team_coaches oc
+               where oc.team_id = t.org_team_id and oc.role in ('HeadCoach', 'AsstCoach')) p
         join users u on u.coach_id = p.id
       union all
       select 'w:' || coalesce(t.partner_id::text, t.owner_coach_id) || ':' || lower(t.coach_first || ' ' || t.coach_last),

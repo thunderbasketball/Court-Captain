@@ -12,7 +12,7 @@ import AppHeader from "../../../../AppHeader";
 import TeamPage, { type TeamStaffRow } from "../../../../TeamPage";
 import { DateChips, ProgramButton, RegisterLeagueButton } from "../../../../leagues/LeagueButtons";
 import { easternDate } from "@/lib/time";
-import { HeadCoachEmailButton, WaitingCoachButton } from "../../../../CoachContactTools";
+import { HeadCoachEmailButton, StaffEdit, WaitingCoachButton } from "../../../../CoachContactTools";
 import { listOrgRoster } from "@/lib/org-rosters";
 import { AddPlayerButton, ImportPlayersButton, RemovePlayerButton } from "../RosterTools";
 import { AddCoachButton, AltNameButton, DeleteTeamButton, RemoveCoachButton } from "../TeamTools";
@@ -137,6 +137,9 @@ export async function OrgTeamView({
           add: canManage && <AddCoachButton org={slug} teamId={t.id} hasHead={hasHead} />,
           remove: (c: TeamStaffRow) => canManage && <RemoveCoachButton org={slug} teamId={t.id} coachId={c.coachId} name={`${c.first} ${c.last}`.trim()} />,
           headEmail: (c: TeamStaffRow) => canManage && <HeadCoachEmailButton org={slug} teamId={t.id} name={`${c.first} ${c.last}`.trim()} />,
+          edit: (c: TeamStaffRow) => who && (
+              <StaffEdit org={slug} teamId={t.id} coachId={c.coachId} role={c.role} first={c.first} last={c.last} cell={c.cell} email={c.email} />
+            ),
           viewAs: who && !user.actingBy,
           me: user.coachId,
         }}

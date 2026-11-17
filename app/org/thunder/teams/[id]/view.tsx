@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { hasFeature } from "@/lib/features";
-import { HeadCoachEmailButton, WaitingCoachButton } from "../../../../CoachContactTools";
+import { HeadCoachEmailButton, StaffEdit, WaitingCoachButton } from "../../../../CoachContactTools";
 import { requireFeature } from "@/lib/features-server";
 import { db } from "@/lib/db";
 import { gradesText } from "@/lib/event-names";
@@ -231,6 +231,10 @@ export async function ThunderTeamView({
               <RemoveStaffButton teamId={team.id} coachId={s.coachId} role={s.role as never} label={`${s.first} ${s.last}`} />
             ),
           headEmail: (s: TeamStaffRow) => asDirector && <HeadCoachEmailButton org="thunder" teamId={team.id} name={`${s.first} ${s.last}`} />,
+          edit: (s: TeamStaffRow) =>
+            (who || isThunderAdmin(user)) && (
+              <StaffEdit org="thunder" teamId={team.id} coachId={s.coachId} role={s.role} first={s.first} last={s.last} cell={s.cell} email={s.email} />
+            ),
           viewAs: admin,
           me: user.coachId,
         }}

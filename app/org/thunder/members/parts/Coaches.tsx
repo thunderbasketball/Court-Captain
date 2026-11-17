@@ -1,6 +1,7 @@
+import { db } from "@/lib/db";
 import { listVolunteerCoaches } from "@/lib/coaches";
 import { gradeLabel } from "@/lib/grades";
-import { hasArea } from "@/lib/org-admin";
+import { hasArea, isOrgAdmin, isThunderAdmin } from "@/lib/org-admin";
 import { formatCell } from "@/lib/phone";
 import { listUsers } from "@/lib/users";
 import ChatPanel from "../../../../ChatPanel";
@@ -37,6 +38,7 @@ export default async function CoachesPart({ user, view }: { user: SessionUser; v
         <CoachTools
           coaches={coachTree(users)}
           volunteers={volunteerTree(open)}
+          email={isThunderAdmin(user) || (await isOrgAdmin(db, user.coachId, "thunder"))}
           chat={<ChatPanel chatKey="coaches" />}
           alerts={[
             { key: "active", label: `Active coaches (${active.length})`, audience: { roles: ["HeadCoach", "AsstCoach"] }, to: "all coaches" },

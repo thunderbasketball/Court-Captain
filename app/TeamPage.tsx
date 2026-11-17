@@ -50,6 +50,7 @@ export default function TeamPage(p: {
     add?: ReactNode;
     remove: (s: TeamStaffRow) => ReactNode;
     headEmail: (s: TeamStaffRow) => ReactNode; // a Head Coach without an email: add it
+    edit?: (s: TeamStaffRow) => ReactNode; // Owners and Admins: a staff member's name, cell and email
     viewAs: boolean; // Owners and Admins: 👁 and the person's dashboard
     me: string;
   };
@@ -183,6 +184,7 @@ export default function TeamPage(p: {
                   </div>
                 )
               )}
+              {p.staff.edit?.(s)}
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs">{s.addedBy && `Added by ${s.addedBy}`}</p>
                 {p.staff.remove(s)}

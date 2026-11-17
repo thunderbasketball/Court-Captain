@@ -50,7 +50,7 @@ export function AddCoachButton({ org, teamId, hasHead }: { org: string; teamId: 
   const [msg, setMsg] = useState<string | null>(null);
   return (
     <>
-      <PopUp label={<AddPersonIcon />} ariaLabel="Add a coach" title="Add a coach" className={addIconBtn}>
+      <PopUp label={<AddPersonIcon />} ariaLabel="Add staff" title="Add staff" className={addIconBtn}>
         {(close) => (
           <CoachForm
             org={org}
@@ -121,7 +121,7 @@ function CoachForm({
           required
         />
       </label>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         {!hasHead && (
           <button type="button" className={pillCls(role === "HeadCoach")} onClick={() => setRole("HeadCoach")}>
             Head Coach
@@ -130,10 +130,16 @@ function CoachForm({
         <button type="button" className={pillCls(role === "AsstCoach")} onClick={() => setRole("AsstCoach")}>
           Assistant Coach
         </button>
+        <button type="button" className={pillCls(role === "Manager")} onClick={() => setRole("Manager")}>
+          Team Manager
+        </button>
+        <button type="button" className={pillCls(role === "TeamParent")} onClick={() => setRole("TeamParent")}>
+          Team Parent
+        </button>
       </div>
       {error && <Alert tone="red">{error}</Alert>}
       <button type="submit" disabled={busy} className={`${primaryBtn} w-full`}>
-        {busy ? "Adding…" : "Add coach"}
+        {busy ? "Adding…" : role === "Manager" || role === "TeamParent" ? "Add to staff" : "Add coach"}
       </button>
     </form>
   );

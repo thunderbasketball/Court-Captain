@@ -42,6 +42,7 @@ export function coachTree(users: UserListItem[]): PickNode[] {
                 label: `${l.u.firstName} ${l.u.lastName}`,
                 sub: l.t.label.split(" · ")[1],
                 cell: l.u.cell,
+                email: l.u.email,
               })),
           })),
         };
@@ -53,7 +54,7 @@ export function coachTree(users: UserListItem[]): PickNode[] {
     out.push({
       key: "none",
       label: "No team yet",
-      children: loose.map((u) => ({ key: `n-${u.coachId}`, label: `${u.firstName} ${u.lastName}`, sub: "Coach", cell: u.cell })),
+      children: loose.map((u) => ({ key: `n-${u.coachId}`, label: `${u.firstName} ${u.lastName}`, sub: "Coach", cell: u.cell, email: u.email })),
     });
   return out;
 }

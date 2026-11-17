@@ -390,7 +390,7 @@ export async function settleThunderName(q: Pick<PoolClient, "query">, base: stri
 
 // Re-applies the naming rule after a change: the Head Coach's last name, else the coach waiting for a cell's, else the
 // current one is kept.
-async function rename(q: PoolClient, teamId: string): Promise<string> {
+export async function rename(q: PoolClient, teamId: string): Promise<string> {
   const t = await q.query<{
     name: string;
     gender: "Boys" | "Girls";

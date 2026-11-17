@@ -68,7 +68,11 @@ export async function canUsePlaybook(q: Q, viewer: SessionUser, ref: TeamRef): P
   }
   if (!(await q.query("select 1 from org_teams where id = $1 and org = $2", [ref.teamId, ref.org])).rows[0]) return false;
   if (await orgHasArea(q, viewer.coachId, ref.org as OrgSlug, "teams")) return true;
-  const r = await q.query("select 1 from org_team_coaches where team_id = $1 and coach_id = $2", [ref.teamId, viewer.coachId]);
+  const r = await q.query("select 1 from org_team_coaches where team_id = $1 and coach_id = $2 and role = any($3)", [
+    ref.teamId,
+    viewer.coachId,
+    COACHES,
+  ]);
   return !!r.rows[0];
 }
 

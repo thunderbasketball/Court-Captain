@@ -342,4 +342,23 @@ Coed,3,REC,,,,`;
     expect(await removeOrgPlayer(deps(), cam, org, t.id, r.players[0].id)).toMatchObject({ ok: false });
     expect(await removeOrgPlayer(deps(), jo, org, t.id, r.players[0].id)).toEqual({ ok: true });
   });
+
+  it("Team Managers and Team Parents join the staff without becoming coaches", async () => {
+    const made = await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: ["5"], level: "COMP", headCoach: "none" } as Parameters<
+      typeof createOrgTeam
+    >[3]);
+    const id = (made as { id: string }).id;
+    const add = (role: string, cell: string, first: string) =>
+      addOrgTeamCoach(deps(), jo, org, id, { first, last: "Staff", cell, role });
+    expect(await add("Manager", "4235550201", "Max")).toMatchObject({ ok: true });
+    expect(await add("TeamParent", "4235550202", "Pam")).toMatchObject({ ok: true });
+    expect(await add("Boss", "4235550203", "Bo")).toMatchObject({ ok: false });
+    expect(await add("TeamParent", "4235550201", "Max")).toMatchObject({ ok: false, message: expect.stringContaining("already") });
+    const t = (await getOrgTeam(deps(), jo, org, id))!.team;
+    expect(t.coaches.map((c) => c.role).sort()).toEqual(["Manager", "TeamParent"]);
+    expect(t.name).toBe("5B TBD"); // no Head Coach yet
+    expect([await hasRole("5550201", "Coach"), await hasRole("5550202", "Coach")]).toEqual([false, false]);
+    expect(await removeOrgTeamCoach(deps(), jo, org, id, "5550201")).toEqual({ ok: true });
+    expect((await getOrgTeam(deps(), jo, org, id))!.team.coaches.map((c) => c.role)).toEqual(["TeamParent"]);
+  });
 });

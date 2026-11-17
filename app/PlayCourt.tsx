@@ -10,7 +10,10 @@ import {
   MAX_LINES,
   OFFENSE,
   defenderSpot,
+  bendControl,
   isDefenseLine,
+  lineDistance,
+  linePoint,
   isOffense,
   nextFrame,
   startFrame,
@@ -49,29 +52,42 @@ function CourtLines() {
 // A line from where its player stands to its end, shortened so it starts at the player's edge.
 const RED = "#dc2626";
 function LinePath({ line, from, ids, faint = false }: { line: PlayLine; from: Spot; ids: { arrow: string; red: string }; faint?: boolean }) {
-  const dx = line.x - from.x;
-  const dy = line.y - from.y;
-  const len = Math.hypot(dx, dy);
-  if (len < R + 4) return null;
-  const ux = dx / len;
-  const uy = dy / len;
-  const sx = from.x + ux * (R + 2);
-  const sy = from.y + uy * (R + 2);
+  const c = bendControl(from, line);
+  // Leaves the player's circle heading toward the curve's control point (or the end, when straight).
+  const hx = (c ?? line).x - from.x;
+  const hy = (c ?? line).y - from.y;
+  const hl = Math.hypot(hx, hy);
+  const len = Math.hypot(line.x - from.x, line.y - from.y);
+  if (len < R + 4 || hl < 1) return null;
+  const sx = from.x + (hx / hl) * (R + 2);
+  const sy = from.y + (hy / hl) * (R + 2);
   const ex = line.x;
   const ey = line.y;
+  const start = { x: sx, y: sy };
+  // The point and its direction at t along the drawn line (from the circle's edge to the end).
+  const pt = (t: number) => linePoint(start, line, t);
+  const dir = (t: number) => {
+    const a = pt(Math.max(0, t - 0.01));
+    const b = pt(Math.min(1, t + 0.01));
+    const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    return { ux: (b.x - a.x) / d, uy: (b.y - a.y) / d };
+  };
+  const d = c ? `M${sx} ${sy} Q${2 * line.bx! - (sx + ex) / 2} ${2 * line.by! - (sy + ey) / 2} ${ex} ${ey}` : `M${sx} ${sy} L${ex} ${ey}`;
   const red = isDefenseLine(line.kind);
   const common = { stroke: red ? RED : "currentColor", strokeWidth: 4, fill: "none", opacity: faint ? 0.35 : 1, strokeLinecap: "round" as const };
   const arrow = `url(#${red ? ids.red : ids.arrow})`;
-  // A short bar across the line at t (0 = its start, 1 = its end), `w` each side.
-  const bar = (t: number, w: number) => {
-    const cx = sx + (line.x - sx) * t;
-    const cy = sy + (line.y - sy) * t;
-    return <line x1={cx + uy * w} y1={cy - ux * w} x2={cx - uy * w} y2={cy + ux * w} />;
+  // A short bar across the line at t (0 = its start, 1 = its end), `w` each side, moved `back` toward the start.
+  const bar = (t: number, w: number, back = 0) => {
+    const p = pt(t);
+    const { ux, uy } = dir(t);
+    const x = p.x - ux * back;
+    const y = p.y - uy * back;
+    return <line x1={x + uy * w} y1={y - ux * w} x2={x - uy * w} y2={y + ux * w} />;
   };
   if (line.kind === "closeout")
     return (
       <g {...common}>
-        <line x1={sx} y1={sy} x2={line.x} y2={line.y} markerEnd={arrow} />
+        <path d={d} markerEnd={arrow} />
         {bar(0.62, 11)}
         {bar(0.74, 11)}
       </g>
@@ -79,54 +95,53 @@ function LinePath({ line, from, ids, faint = false }: { line: PlayLine; from: Sp
   if (line.kind === "trap")
     return (
       <g {...common}>
-        <line x1={sx} y1={sy} x2={line.x} y2={line.y} />
+        <path d={d} />
         {bar(1, 18)}
-        <g transform={`translate(${-ux * 9} ${-uy * 9})`}>{bar(1, 18)}</g>
+        {bar(1, 18, 9)}
       </g>
     );
   if (line.kind === "deny")
     return (
       <g {...common}>
-        <line x1={sx} y1={sy} x2={line.x} y2={line.y} strokeDasharray="2 9" />
-        <circle cx={line.x} cy={line.y} r={7} fill={RED} stroke="none" />
+        <path d={d} strokeDasharray="2 9" />
+        <circle cx={ex} cy={ey} r={7} fill={RED} stroke="none" />
       </g>
     );
   if (line.kind === "switch") {
-    const mx = (sx + line.x) / 2 - uy * 16;
-    const my = (sy + line.y) / 2 + ux * 16;
+    const m = pt(0.5);
+    const { ux, uy } = dir(0.5);
     return (
       <g {...common}>
-        <line x1={sx} y1={sy} x2={line.x} y2={line.y} strokeDasharray="12 10" markerEnd={arrow} />
-        <text x={mx} y={my} textAnchor="middle" dominantBaseline="central" fill={RED} stroke="none" fontSize={20} fontWeight={800}>
+        <path d={d} strokeDasharray="12 10" markerEnd={arrow} />
+        <text x={m.x - uy * 16} y={m.y + ux * 16} textAnchor="middle" dominantBaseline="central" fill={RED} stroke="none" fontSize={20} fontWeight={800}>
           S
         </text>
       </g>
     );
   }
-  if (line.kind === "screen") {
-    const px = -uy * 22;
-    const py = ux * 22;
+  if (line.kind === "screen")
     return (
       <g {...common}>
-        <line x1={sx} y1={sy} x2={ex} y2={ey} />
-        <line x1={ex - px} y1={ey - py} x2={ex + px} y2={ey + py} strokeWidth={6} />
+        <path d={d} />
+        <g strokeWidth={6}>{bar(1, 22)}</g>
       </g>
     );
-  }
   if (line.kind === "dribble") {
     // A zigzag along the line, straight for its last bit so the arrow sits cleanly.
-    const run = Math.hypot(ex - sx, ey - sy);
+    const run = Math.hypot(ex - sx, ey - sy) * (c ? 1.15 : 1);
     const n = Math.max(2, Math.floor((run - 24) / 16));
     const pts = [`M${sx} ${sy}`];
-    for (let i = 1; i <= n; i++) {
-      const t = (i * 16) / run;
-      const side = i % 2 ? 9 : -9;
-      pts.push(`L${sx + (ex - sx) * t - uy * side} ${sy + (ey - sy) * t + ux * side}`);
+    for (let k = 1; k <= n; k++) {
+      const t = (k * 16) / run;
+      const p = pt(t);
+      const { ux, uy } = dir(t);
+      const side = k % 2 ? 9 : -9;
+      pts.push(`L${p.x - uy * side} ${p.y + ux * side}`);
     }
     pts.push(`L${ex} ${ey}`);
     return <path d={pts.join(" ")} {...common} strokeLinejoin="round" markerEnd={arrow} />;
   }
-  return <line x1={sx} y1={sy} x2={ex} y2={ey} {...common} strokeDasharray={line.kind === "pass" ? "12 10" : undefined} markerEnd={arrow} />;
+  return <path d={d} {...common} strokeDasharray={line.kind === "pass" ? "12 10" : undefined} markerEnd={arrow} />;
 }
 
 function Player({ spot, ball, moving }: { spot: Spot; ball: boolean; moving: boolean }) {
@@ -291,7 +306,7 @@ export function PlayViewer({ frames, name }: { frames: Frame[]; name: string }) 
   );
 }
 
-type Tool = "move" | LineKind | "ball" | "erase";
+type Tool = "move" | LineKind | "ball" | "curve" | "erase";
 // Offense's tools (blue), then defense's (red; X1–X5 only).
 const TOOLS: { key: Tool; label: string }[] = [
   { key: "move", label: "Move" },
@@ -300,6 +315,7 @@ const TOOLS: { key: Tool; label: string }[] = [
   { key: "pass", label: "Pass" },
   { key: "screen", label: "Screen" },
   { key: "ball", label: "Ball" },
+  { key: "curve", label: "Curve" },
   { key: "erase", label: "Erase" },
 ];
 const D_TOOLS: { key: Tool; label: string }[] = [
@@ -318,6 +334,7 @@ const HINT: Record<Tool, string> = {
   pass: "Drag from the player with the ball to where the pass goes.",
   screen: "Drag from a player to where they set the screen.",
   ball: "Tap the player who has the ball.",
+  curve: "Draw the line first (player to its end), then drag the line to bend it. Drag it back straight to undo the bend.",
   erase: "Tap a line to erase it.",
   slide: "Drag from a defender to where they slide, help or rotate.",
   closeout: "Drag from a defender to the shooter they close out on.",
@@ -355,6 +372,7 @@ export function PlayEditor({ frames, onChange }: { frames: Frame[]; onChange: (f
   }, [playing, frames.length]);
   const [tool, setTool] = useState<Tool>("cut");
   const [drag, setDrag] = useState<{ from: string; x: number; y: number } | null>(null);
+  const [bending, setBending] = useState<number | null>(null); // Curve: the line being bent
   const [msg, setMsg] = useState<string | null>(null);
   const svg = useRef<SVGSVGElement>(null);
   const i = Math.min(at, frames.length - 1);
@@ -377,15 +395,17 @@ export function PlayEditor({ frames, onChange }: { frames: Frame[]; onChange: (f
     if (playing) return;
     setMsg(null);
     const p = point(e);
-    if (tool === "erase") {
+    if (tool === "erase" || tool === "curve") {
       const hit = frame.lines
         .map((l, n) => {
           const f = frame.spots.find((s) => s.id === l.from);
-          return { n, d: f ? segDist(p.x, p.y, f.x, f.y, l.x, l.y) : Infinity };
+          return { n, d: f ? lineDistance(f, l, p.x, p.y) : Infinity };
         })
         .sort((a, b) => a.d - b.d)[0];
-      if (hit && hit.d < 22) setFrame({ ...frame, lines: frame.lines.filter((_, n) => n !== hit.n) });
-      return;
+      if (!hit || hit.d >= 22) return tool === "curve" && setMsg(frame.lines.length ? "Drag a line to bend it." : "Draw a line first, then bend it.");
+      if (tool === "erase") return setFrame({ ...frame, lines: frame.lines.filter((_, n) => n !== hit.n) });
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return setBending(hit.n);
     }
     const who = playerAt(p.x, p.y);
     if (!who) return;
@@ -401,12 +421,26 @@ export function PlayEditor({ frames, onChange }: { frames: Frame[]; onChange: (f
     setDrag({ from: who.id, x: p.x, y: p.y });
   };
   const move = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (bending !== null) {
+      const p = point(e);
+      const l = frame.lines[bending];
+      const f = l && frame.spots.find((s) => s.id === l.from);
+      if (!l || !f) return;
+      // Close to the straight line: straight again.
+      const { bx: _x, by: _y, ...plain } = l;
+      void _x;
+      void _y;
+      const straight = segDist(p.x, p.y, f.x, f.y, l.x, l.y) < 8;
+      const next = straight ? plain : { ...plain, bx: Math.round(p.x), by: Math.round(p.y) };
+      return setFrame({ ...frame, lines: frame.lines.map((x, n) => (n === bending ? next : x)) });
+    }
     if (!drag) return;
     const p = point(e);
     if (tool === "move") setFrame({ ...frame, spots: frame.spots.map((s) => (s.id === drag.from ? { ...s, x: Math.round(p.x), y: Math.round(p.y) } : s)) });
     setDrag({ ...drag, x: p.x, y: p.y });
   };
   const up = () => {
+    if (bending !== null) return setBending(null);
     if (!drag) return;
     const from = frame.spots.find((s) => s.id === drag.from);
     if (tool !== "move" && from && Math.hypot(drag.x - from.x, drag.y - from.y) > R + 10) {

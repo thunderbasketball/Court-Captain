@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanFrames, defenderSpot, nextFrame, startFrame, type Frame } from "./play-diagram";
+import { cleanFrames, defenderSpot, lineDistance, linePoint, nextFrame, startFrame, type Frame } from "./play-diagram";
 
 describe("CourtPlaybook diagrams", () => {
   it("starts with 1–5 in their spots and the ball with 1", () => {
@@ -64,5 +64,19 @@ describe("CourtPlaybook diagrams", () => {
     expect(cleanFrames([{ ...startFrame(), lines: [{ kind: "cut", from: "X3", x: 1, y: 1 }] }])).toMatch(/isn't there/);
     expect(cleanFrames([{ ...startFrame(), lines: Array.from({ length: 21 }, () => ({ kind: "cut", from: "1", x: 1, y: 1 })) }])).toMatch(/20 lines/);
     expect(cleanFrames("<script>")).toMatch(/frames/);
+  });
+
+  it("curved lines: bent through a point, kept on the court, measured for tapping", () => {
+    const f = startFrame();
+    const kept = cleanFrames([{ ...f, lines: [{ kind: "cut", from: "1", x: 400, y: 100, bx: 900, by: 250.6 }] }]) as Frame[];
+    expect(kept[0].lines[0]).toEqual({ kind: "cut", from: "1", x: 400, y: 100, bx: 500, by: 251 });
+    expect(cleanFrames([{ ...f, lines: [{ kind: "cut", from: "1", x: 4, y: 1, bx: "a", by: 2 }] }])).toMatch(/curved/);
+    const from = { x: 100, y: 300 };
+    const l = { kind: "cut" as const, from: "1", x: 300, y: 300, bx: 200, by: 200 };
+    expect(linePoint(from, l, 0.5)).toEqual({ x: 200, y: 200 }); // passes through its bend point
+    expect(linePoint(from, l, 1)).toEqual({ x: 300, y: 300 });
+    expect(lineDistance(from, l, 200, 205)).toBeLessThan(6);
+    expect(lineDistance(from, { ...l, bx: undefined, by: undefined }, 200, 205)).toBeGreaterThan(90); // straight: far
+    expect(nextFrame({ ...f, lines: [{ ...l, from: "1" }] }).spots.find((s) => s.id === "1")).toMatchObject({ x: 300, y: 300 });
   });
 });

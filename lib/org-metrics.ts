@@ -221,7 +221,8 @@ async function coachLogins(q: Pick<Queryable, "query">, org: string): Promise<Or
   const staff =
     org === "thunder"
       ? `select s.coach_id, t.name from team_staff s join teams t on t.id = s.team_id where s.role in ('HeadCoach', 'AsstCoach')`
-      : `select c.coach_id, t.name from org_team_coaches c join org_teams t on t.id = c.team_id where t.org = $1`;
+      : `select c.coach_id, t.name from org_team_coaches c join org_teams t on t.id = c.team_id
+         where t.org = $1 and c.role in ('HeadCoach', 'AsstCoach')`;
   const r = await q.query<OrgMetrics["coaches"][number]>(
     `select u.coach_id as id, u.first_name || ' ' || u.last_name as name, array_agg(x.name order by x.name) as teams,
             u.last_login_at as "lastLogin"

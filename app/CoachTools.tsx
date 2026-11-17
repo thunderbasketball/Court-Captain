@@ -16,17 +16,20 @@ const pill = (on: boolean) =>
 
 // The Coaches card's 📣 (Members, every organization), opened inside the card: Text coaches (pick by Gender → Grade →
 // Team → Coach), Chat with coaches (with Chat), Text volunteers (Thunder: Gender → Grade → Role → Volunteer) and Alert
-// (pick who: Active coaches, Volunteers, Inactive coaches). Each opens right here.
+// (pick who: Active coaches, Volunteers, Inactive coaches); Owners and Admins also Email coaches (the same picker). Each
+// opens right here.
 export default function CoachTools({
   coaches,
   volunteers,
   chat,
   alerts,
+  email = false,
 }: {
   coaches: PickNode[];
   volunteers: PickNode[] | null; // Thunder's registration volunteers not on a team
   chat: ReactNode | null;
   alerts: AlertChoice[];
+  email?: boolean; // Owners and Admins: Email coaches too
 }) {
   const [tool, setTool] = useState<string | null>(null);
   const [alertKey, setAlertKey] = useState(alerts[0]?.key ?? "");
@@ -38,6 +41,11 @@ export default function CoachTools({
         <button type="button" aria-expanded={tool === "text"} onClick={() => show("text")} className={pill(tool === "text")}>
           💬 Text coaches
         </button>
+        {email && (
+          <button type="button" aria-expanded={tool === "email"} onClick={() => show("email")} className={pill(tool === "email")}>
+            ✉️ Email coaches
+          </button>
+        )}
         {chat && (
           <button type="button" aria-expanded={tool === "chat"} onClick={() => show("chat")} className={pill(tool === "chat")}>
             🗨️ Chat with coaches
@@ -55,6 +63,12 @@ export default function CoachTools({
         )}
       </div>
       {tool === "text" && <PeoplePicker tree={coaches} textLabel="Text" empty="No coaches yet." />}
+      {tool === "email" && (
+        <div className="space-y-2">
+          <p className="text-sm text-zinc-500">Opens your email app with the picked coaches in Bcc (nothing is sent by the app).</p>
+          <PeoplePicker tree={coaches} textLabel="Email" empty="No coaches yet." email />
+        </div>
+      )}
       {tool === "chat" && chat}
       {tool === "vtext" && volunteers && (
         <PeoplePicker tree={volunteers} textLabel="Text" empty="No volunteers waiting: every one is on a team." />

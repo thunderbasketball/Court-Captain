@@ -42,7 +42,12 @@ const isCoachId = (v: unknown): v is string => typeof v === "string" && /^\d{7}$
 export const COACH_ROLES = [
   { key: "HeadCoach", name: "Head Coach" },
   { key: "AsstCoach", name: "Assistant Coach" },
+  { key: "Manager", name: "Team Manager" },
+  { key: "TeamParent", name: "Team Parent" },
 ] as const;
+// Head and Assistant Coaches are coaches (the organization's Coach role, the playbook…); a Team Manager or Team Parent
+// is on the team's Staff card only.
+export const isCoachRole = (r: string) => r === "HeadCoach" || r === "AsstCoach";
 type CoachRole = (typeof COACH_ROLES)[number]["key"];
 
 // Built-in organizations have their own team pages; this is for registered ones with Team Management.
@@ -132,7 +137,7 @@ export async function listOrgCoaches(deps: Deps, viewer: SessionUser, org: unkno
             json_agg(json_build_object('id', t.id::text, 'name', t.name, 'role', c.role)
                      order by c.role desc, t.gender, t.grade, lower(t.name)) as teams
      from org_team_coaches c join org_teams t on t.id = c.team_id join users u on u.coach_id = c.coach_id
-     where t.org = $1
+     where t.org = $1 and c.role in ('HeadCoach', 'AsstCoach')
      group by u.coach_id order by lower(u.last_name), lower(u.first_name)`,
     [o],
   );
@@ -261,7 +266,7 @@ const lockTeams = (q: Pick<Queryable, "query">, org: string) =>
 
 // Re-applies the naming rule after the Head Coach changes (or the coach waiting for a cell); its copy in a league
 // follows ("ER 5B Harris").
-async function renameOrgTeam(q: PoolClient, org: string, teamId: string) {
+export async function renameOrgTeam(q: PoolClient, org: string, teamId: string) {
   await lockTeams(q, org);
   const t = await q.query<{
     name: string;
@@ -421,7 +426,8 @@ export async function deleteOrgTeam(deps: Deps, viewer: SessionUser, org: unknow
 
 async function dropCoachRoleIfIdle(q: Pick<Queryable, "query">, org: string, coachId: string, viewer: SessionUser) {
   const still = await q.query(
-    "select 1 from org_team_coaches c join org_teams t on t.id = c.team_id where t.org = $1 and c.coach_id = $2 limit 1",
+    `select 1 from org_team_coaches c join org_teams t on t.id = c.team_id
+     where t.org = $1 and c.coach_id = $2 and c.role in ('HeadCoach', 'AsstCoach') limit 1`,
     [org, coachId],
   );
   if (!still.rowCount) await q.query("select set_role($1, $2, 'Coach', false, $3)", [coachId, org, by(viewer)]);
@@ -429,7 +435,8 @@ async function dropCoachRoleIfIdle(q: Pick<Queryable, "query">, org: string, coa
 
 export type OrgCoachInput = { first: unknown; last: unknown; cell: unknown; role: unknown; email?: unknown };
 
-// Add a coach by name and cell (their login is made if new). One Head Coach per team.
+// Add staff by name and cell (their login is made if new): Head Coach (one per team), Assistant Coach, Team Manager or
+// Team Parent. Only coaches get the organization's Coach role.
 export async function addOrgTeamCoach(
   deps: Deps,
   viewer: SessionUser,
@@ -445,7 +452,7 @@ export async function addOrgTeamCoach(
     const cell = typeof input.cell === "string" ? normalizeCell(input.cell) : null;
     if (!cell) throw new TeamError("Enter the coach's 10-digit cell number.");
     const role = COACH_ROLES.find((r) => r.key === input.role);
-    if (!role) throw new TeamError("Pick Head Coach or Assistant Coach.");
+    if (!role) throw new TeamError("Pick Head Coach, Assistant Coach, Team Manager or Team Parent.");
     const email = input.email ? cleanEmail(input.email) : null;
     if (input.email && !email) throw new TeamError("Enter a real email address (or leave it blank).");
     const o = await mustManage(deps.pool, viewer, org);
@@ -464,7 +471,7 @@ export async function addOrgTeamCoach(
          on conflict do nothing`,
         [teamId, m.coachId, role.key, by(viewer), deps.now()],
       );
-      if (!ins.rowCount) throw new TeamError(`${m.who} already coaches this team.`);
+      if (!ins.rowCount) throw new TeamError(`${m.who} is already on this team's staff.`);
       // Its copy in a league (Scenic City) shows the new Head Coach; the team takes their last name ("4G Epps").
       if (role.key === "HeadCoach") {
         // A coach waiting for a cell is replaced by the real one.
@@ -472,11 +479,12 @@ export async function addOrgTeamCoach(
         await q.query("update scenic_teams set coach_id = $2 where org_team_id = $1", [teamId, m.coachId]);
         await renameOrgTeam(q, o, teamId);
       }
-      await q.query("select set_role($1, $2, 'Coach', true, $3), set_role($1, $2, 'Request', false, $3)", [
-        m.coachId,
-        o,
-        by(viewer),
-      ]);
+      if (isCoachRole(role.key))
+        await q.query("select set_role($1, $2, 'Coach', true, $3), set_role($1, $2, 'Request', false, $3)", [
+          m.coachId,
+          o,
+          by(viewer),
+        ]);
       return { name: m.who, newLogin: m.newLogin };
     });
   });
