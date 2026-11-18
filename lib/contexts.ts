@@ -89,6 +89,17 @@ export async function userContexts(pool: Pick<Pool, "query">, viewer: SessionUse
   for (const r of others.rows)
     if (!out.some((c) => c.key === `org:${r.org}`))
       out.push({ key: `org:${r.org}`, org: r.org, label: r.role, href: `/org/${r.org}` });
+  // On a registered organization's team staff without a role there (a Team Manager or Team Parent): a chip too, its Home
+  // showing their team.
+  const onStaff = await pool.query<{ org: string; role: Role }>(
+    `select distinct on (t.org) t.org, c.role from org_team_coaches c join org_teams t on t.id = c.team_id
+      where c.coach_id = $1 and t.org <> all($2::text[]) and t.archived_at is null
+      order by t.org, array_position(array['HeadCoach','AsstCoach','Manager','TeamParent'], c.role)`,
+    [viewer.coachId, BUILT_IN],
+  );
+  for (const r of onStaff.rows)
+    if (!out.some((c) => c.key === `org:${r.org}`))
+      out.push({ key: `org:${r.org}`, org: r.org, label: ROLE_LABEL[r.role] ?? "Team staff", href: `/org/${r.org}` });
   if (staff) {
     const all = await pool.query<{ slug: string }>(
       "select slug from organizations where slug <> all($1::text[]) order by lower(short_name)",

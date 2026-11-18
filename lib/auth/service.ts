@@ -62,6 +62,7 @@ export type UserRow = {
   thunder_areas: Area[]; // Director areas in Thunder (SPEC section 14)
   on_team: boolean; // holds any team staff role (HeadCoach, AsstCoach, Manager, TeamParent)
   any_role: boolean; // a role (not just a Request) in any organization
+  on_org_team: boolean; // on a registered organization's team staff (a Team Manager or Team Parent has no role there)
   any_request: boolean; // a pending Request in any organization
 };
 
@@ -123,11 +124,14 @@ const ON_TEAM = `exists (select 1 from team_staff ts where ts.coach_id = u.coach
   has_role(u.coach_id, 'thunder', 'Family') as thunder_family,
   array(select a.area from active_director_areas a where a.coach_id = u.coach_id and a.org = 'thunder') as thunder_areas,
   exists (select 1 from org_roles r where r.coach_id = u.coach_id and r.role <> 'Request') as any_role,
-  exists (select 1 from org_roles r where r.coach_id = u.coach_id and r.role = 'Request') as any_request`;
+  exists (select 1 from org_roles r where r.coach_id = u.coach_id and r.role = 'Request') as any_request,
+  exists (select 1 from org_team_coaches oc join org_teams ot on ot.id = oc.team_id
+           where oc.coach_id = u.coach_id and ot.archived_at is null) as on_org_team`;
 
-// Asked for access somewhere and holds no role anywhere yet (a role in any organization, or a team place, lets them in).
+// Asked for access somewhere and holds no role anywhere yet (a role in any organization, or a place on any
+// organization's team staff, lets them in).
 function pending(u: UserRow): boolean {
-  return u.any_request && !u.any_role && !u.on_team;
+  return u.any_request && !u.any_role && !u.on_team && !u.on_org_team;
 }
 
 // Deactivated / still-pending people can't go any further.
@@ -300,8 +304,8 @@ export async function getSessionUser(deps: Deps, token: string | undefined): Pro
   return toSessionUser(real);
 }
 
-// An Admin may view the app as anyone in their organization: anyone with a role (or Request) there, its officials, or,
-// for Thunder, anyone on a team's staff. CourtCaptain staff (support for every organization) may view as anyone. SQL condition on the
+// An Admin may view the app as anyone in their organization: anyone with a role (or Request) there, its officials, or
+// anyone on one of its teams' staff (Thunder's, or another organization's Team Managers and Team Parents too). CourtCaptain staff (support for every organization) may view as anyone. SQL condition on the
 // two coach ids.
 // (Wrapped in parentheses: it's combined with `and` in queries.)
 const CAN_VIEW_AS = (admin: string, target: string) => `(exists (select 1 from platform_admins p where p.coach_id = ${admin})
@@ -309,7 +313,9 @@ const CAN_VIEW_AS = (admin: string, target: string) => `(exists (select 1 from p
   select 1 from org_roles a where a.coach_id = ${admin} and a.role = 'Admin'
     and (exists (select 1 from org_roles t where t.coach_id = ${target} and t.org = a.org)
          or exists (select 1 from org_officials f where f.coach_id = ${target} and f.org = a.org)
-         or (a.org = 'thunder' and exists (select 1 from team_staff ts where ts.coach_id = ${target})))))`;
+         or (a.org = 'thunder' and exists (select 1 from team_staff ts where ts.coach_id = ${target}))
+         or exists (select 1 from org_team_coaches oc join org_teams ot on ot.id = oc.team_id
+                     where oc.coach_id = ${target} and ot.org = a.org))))`;
 
 // Can this Admin see this person (View as, their dashboard)? Anyone in an organization they're an Admin of.
 export async function adminCanSee(q: Pick<Queryable, "query">, adminId: string, targetId: string): Promise<boolean> {

@@ -68,11 +68,14 @@ export default async function OrgHome({
   const org: OrgSlug = asked;
   const o = isOrgSlug(org) ? await orgInfo(db, org) : null;
   if (!o) notFound();
-  // Anyone with a role there (CourtCaptain staff too, in the background); everyone else goes to their own start page.
+  // Anyone with a role there (CourtCaptain staff too, in the background) or on one of its teams' staff (a Team Manager or
+  // Team Parent sees their team); everyone else goes to their own start page.
   const roles = (
     await db.query<{ role: string }>(
       `select role from org_roles where coach_id = $1 and org = $2 and role <> 'Request'
-       union select 'Director' where acts_as($1, $2, 'Director')`,
+       union select 'Director' where acts_as($1, $2, 'Director')
+       union select 'Staff' where exists (select 1 from org_team_coaches c join org_teams t on t.id = c.team_id
+                                           where c.coach_id = $1 and t.org = $2 and t.archived_at is null)`,
       [user.coachId, org],
     )
   ).rows.map((r) => r.role);

@@ -742,6 +742,28 @@ describe("sessions", () => {
     expect((await auth.getSessionUser(deps, t))?.actingBy).toBeUndefined();
   });
 
+  it("act as: an organization's Admin views its Team Managers and Team Parents (no role there); they log in, not pending", async () => {
+    await addUser({}); // Earl
+    await db.pool.query("insert into organizations (slug, name, short_name, kind) values ('chatt', 'City of Chattanooga', 'Chatt', 'Organization') on conflict do nothing");
+    await db.pool.query("insert into org_role_types (org, role) values ('chatt', 'Admin') on conflict do nothing");
+    await grant(db.pool, "5551234 chatt Admin");
+    await addUser({ cell: "4235550002", email: "pat@example.com", coach: false }); // a Team Manager there, with an old Request
+    await grant(db.pool, "5550002 thunder Request");
+    const team = (
+      await db.pool.query<{ id: string }>(
+        "insert into org_teams (org, name, gender, grade_low, grade, level, created_by) values ('chatt', '5B TBD', 'Boys', 5, 5, 'COMP', 'x') returning id::text",
+      )
+    ).rows[0].id;
+    const t = token(await auth.submitPin(deps, CELL, "5678"));
+    expect(await auth.setActingAs(deps, t, "5550002")).toMatchObject({ ok: false, message: "You can only view people in your organization." });
+    await db.pool.query("insert into org_team_coaches (team_id, coach_id, role, added_by) values ($1, '5550002', 'Manager', 'x')", [team]);
+    expect(await auth.setActingAs(deps, t, "5550002")).toEqual({ ok: true });
+    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5550002", requestPending: false, hasThunderRole: false });
+    // Off the staff: View as ends at once.
+    await db.pool.query("delete from org_team_coaches");
+    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5551234" });
+  });
+
   it("dashboards: an Admin may see anyone in their organization; a Director, or someone outside it, may not", async () => {
     await addUser({ director: true });
     await grant(db.pool, "5551234 thunder Admin");
