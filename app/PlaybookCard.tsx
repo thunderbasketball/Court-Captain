@@ -5,7 +5,8 @@ import { useState, type ReactNode } from "react";
 import type { LibraryPlay, Play } from "@/lib/playbook";
 import { PLAY_KINDS, playKindLabel, playbookPanel, visibilityLabel, type PlayKind, type Visibility } from "@/lib/play-kinds";
 import { CardPanel, closeCardPanel } from "./CardIcons";
-import { Alert } from "./client-ui";
+import { Alert, PopUp } from "./client-ui";
+import { MAX_VIDEOS, videoPlayer } from "@/lib/play-video";
 import { fieldLabel, inputCls, primaryBtn } from "./ui";
 import { addTeamPlay, changeTeamPlay, copyLibraryPlay, removePlayFormation, removeTeamPlay, savePlayFormation } from "./playbook/actions";
 import { FORMATION_KINDS, formationsFor, fromFormation, isBuiltIn, type Formation, type FormationKind } from "@/lib/play-formations";
@@ -75,6 +76,8 @@ function PlayForm({
   const [frames, setFrames] = useState<Frame[]>(play?.frames ?? []); // its drawing ([] = not drawn)
   // Who sees it: a new play starts as Team (the organization's own: Org). Private only for the person who made it.
   const [visibility, setVisibility] = useState<Visibility>(play?.visibility ?? (teamId ? "team" : "org"));
+  // Links to videos of it being run (one box to start; + Add another link, up to 5).
+  const [videos, setVideos] = useState<string[]>(play?.videos.length ? play.videos : [""]);
   const choices = (["private", "team", "org", "public"] as const).filter(
     (v) => (teamId || v !== "team") && (v !== "private" || !play || play.mine || play.visibility === "private"),
   );
@@ -87,7 +90,7 @@ function PlayForm({
         e.preventDefault();
         setBusy(true);
         setMsg(null);
-        const input = { name, kind, notes, frames, visibility, formation: hasFormation ? formation : null };
+        const input = { name, kind, notes, frames, visibility, formation: hasFormation ? formation : null, videos };
         const r = play ? await changeTeamPlay(org, teamId, play.id, input) : await addTeamPlay(org, teamId, input);
         setBusy(false);
         if (!r.ok) return setMsg(r.message);
@@ -97,6 +100,7 @@ function PlayForm({
           setFrames([]);
           setVisibility(teamId ? "team" : "org");
           setFormation(preset?.formation ?? null);
+          setVideos([""]);
         }
         router.refresh();
         onDone();
@@ -199,6 +203,42 @@ function PlayForm({
           placeholder="Who goes where, the reads, when to call it"
         />
       </label>
+      <div>
+        <span className={fieldLabel}>Video links (optional)</span>
+        <p className="mb-1.5 text-xs text-zinc-500">Examples of the play being run: a YouTube, Vimeo or other video link.</p>
+        <div className="space-y-1.5">
+          {videos.map((v, n) => (
+            <div key={n} className="flex items-center gap-2">
+              <input
+                className={inputCls}
+                type="url"
+                inputMode="url"
+                autoCapitalize="none"
+                autoCorrect="off"
+                value={v}
+                maxLength={500}
+                onChange={(e) => setVideos(videos.map((x, k) => (k === n ? e.target.value : x)))}
+                placeholder="https://youtu.be/…"
+              />
+              {(videos.length > 1 || v) && (
+                <button
+                  type="button"
+                  aria-label="Remove this link"
+                  onClick={() => setVideos(videos.length > 1 ? videos.filter((_, k) => k !== n) : [""])}
+                  className="shrink-0 px-1 text-lg text-zinc-400 hover:text-red-600"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+        {videos.length < MAX_VIDEOS && videos.every((v) => v.trim()) && (
+          <button type="button" onClick={() => setVideos([...videos, ""])} className="mt-1.5 text-sm font-medium text-thunder-blue hover:underline">
+            + Add another link
+          </button>
+        )}
+      </div>
       {msg && <Alert tone="red">{msg}</Alert>}
       <div className="flex gap-2">
         <button className={primaryBtn} disabled={busy}>
@@ -228,6 +268,7 @@ function PlayRow({ org, teamId, play, own }: { org: string; teamId: string; play
           <span className="min-w-0 truncate text-sm font-medium">
             {play.name}
             {play.frames.length > 1 && <span className="ml-2 text-xs font-normal text-zinc-500">{play.frames.length} frames</span>}
+            {play.videos.length > 0 && <span className="ml-2 text-xs font-normal text-zinc-500">▶ {play.videos.length}</span>}
             <VisTag v={play.visibility} />
           </span>
           <span aria-hidden className="text-zinc-400 transition-transform group-open:rotate-180">
@@ -240,6 +281,7 @@ function PlayRow({ org, teamId, play, own }: { org: string; teamId: string; play
           ) : (
             <>
               {play.frames.length > 0 && <PlayViewer frames={play.frames} name={play.name} />}
+              <Videos name={play.name} links={play.videos} />
               {play.notes ? <p className="whitespace-pre-wrap text-zinc-700 dark:text-zinc-300">{play.notes}</p> : <p className="text-zinc-500">No notes yet.</p>}
               <p className="text-xs text-zinc-500">
                 Added by {play.addedBy}
@@ -303,6 +345,7 @@ function LibraryRow({ org, teamId, play }: { org: string; teamId: string; play: 
         </summary>
         <div className="space-y-2 px-4 pb-3 text-sm">
           {play.frames.length > 0 && <PlayViewer frames={play.frames} name={play.name} />}
+          <Videos name={play.name} links={play.videos} />
           {play.notes ? <p className="whitespace-pre-wrap text-zinc-700 dark:text-zinc-300">{play.notes}</p> : <p className="text-zinc-500">No notes.</p>}
           <p className="text-xs text-zinc-500">
             {play.formation && `${play.formation} · `}
@@ -618,5 +661,51 @@ function Library({ title, tone, plays, row }: { title: string; tone: string; pla
         <ByKind plays={plays} row={(p) => row(p as LibraryPlay)} />
       </div>
     </details>
+  );
+}
+
+// A play's video links: a ▶ button each (none without links). YouTube, Vimeo and video files play in a pop-up; any other
+// link opens in a new tab.
+function Videos({ name, links }: { name: string; links: string[] }) {
+  if (!links.length) return null;
+  const btn = "inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-medium text-thunder-blue ring-1 ring-thunder-blue/40 hover:bg-blue-50 dark:hover:bg-blue-500/10";
+  return (
+    <div className="flex flex-wrap gap-2">
+      {links.map((url, n) => {
+        const v = videoPlayer(url);
+        const label = `▶ Video${links.length > 1 ? ` ${n + 1}` : ""}`;
+        if (v.kind === "link")
+          return (
+            <a key={n} href={v.src} target="_blank" rel="noopener noreferrer" className={btn} title={v.label}>
+              {label} <span className="text-xs font-normal text-zinc-500">({v.label} ↗)</span>
+            </a>
+          );
+        return (
+          <PopUp key={n} label={label} ariaLabel={`${name}: video ${n + 1}`} title={`${name}${links.length > 1 ? ` · Video ${n + 1}` : ""}`} className={btn}>
+            {() => (
+              <div className="space-y-2">
+                <div className="aspect-video w-full overflow-hidden rounded-lg bg-black sm:w-[36rem]">
+                  {v.kind === "file" ? (
+                    <video src={v.src} controls autoPlay playsInline className="size-full" />
+                  ) : (
+                    <iframe
+                      src={v.src}
+                      title={`${name}: video ${n + 1}`}
+                      className="size-full"
+                      allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+                      allowFullScreen
+                      referrerPolicy="strict-origin-when-cross-origin"
+                    />
+                  )}
+                </div>
+                <a href={url} target="_blank" rel="noopener noreferrer" className="text-xs text-thunder-blue hover:underline">
+                  Open on {v.label} ↗
+                </a>
+              </div>
+            )}
+          </PopUp>
+        );
+      })}
+    </div>
   );
 }

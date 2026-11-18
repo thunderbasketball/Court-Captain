@@ -227,4 +227,26 @@ describe("CourtPlaybook: each team's plays", () => {
     const c = (await copyPlay(deps(), other, E, h.id)) as { id: string };
     expect((await listPlays(deps(), other, E))!.find((p) => p.id === c.id)!.formation).toBe("Horns");
   });
+
+  it("video links: web links only, up to 5, each once; kept when not sent; copied with the play", async () => {
+    const p = (await addPlay(deps(), coach, T, {
+      name: "Horns",
+      kind: "Offense",
+      videos: ["youtu.be/dQw4w9WgXcQ", "", "https://youtu.be/dQw4w9WgXcQ", "https://vimeo.com/123456789"],
+    })) as { id: string };
+    expect(p).toMatchObject({ ok: true });
+    expect((await listPlays(deps(), coach, T))![0].videos).toEqual(["https://youtu.be/dQw4w9WgXcQ", "https://vimeo.com/123456789"]);
+    expect(await addPlay(deps(), coach, T, { name: "X", kind: "Offense", videos: ["javascript:alert(1)"] })).toMatchObject({ ok: false });
+    expect(await addPlay(deps(), coach, T, { name: "X", kind: "Offense", videos: [1] })).toMatchObject({ ok: false });
+    const six = ["a", "b", "c", "d", "e", "f"].map((x) => `https://example.com/${x}`);
+    expect(await addPlay(deps(), coach, T, { name: "X", kind: "Offense", videos: six })).toMatchObject({ ok: false, message: expect.stringContaining("Up to 5") });
+    // Not sent: kept. Sent empty: cleared.
+    expect(await changePlay(deps(), coach, T, p.id, { name: "Horns", kind: "Offense" })).toEqual({ ok: true });
+    expect((await listPlays(deps(), coach, T))![0].videos).toHaveLength(2);
+    expect(await changePlay(deps(), coach, T, p.id, { name: "Horns", kind: "Offense", visibility: "public", videos: ["https://vimeo.com/123456789"] })).toEqual({ ok: true });
+    const c = (await copyPlay(deps(), other, E, p.id)) as { id: string };
+    expect((await listPlays(deps(), other, E))!.find((x) => x.id === c.id)!.videos).toEqual(["https://vimeo.com/123456789"]);
+    expect(await changePlay(deps(), coach, T, p.id, { name: "Horns", kind: "Offense", videos: [] })).toEqual({ ok: true });
+    expect((await listPlays(deps(), coach, T))![0].videos).toEqual([]);
+  });
 });

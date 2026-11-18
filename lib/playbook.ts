@@ -15,6 +15,7 @@ import type { OrgSlug } from "./orgs";
 import { PLAY_KINDS, VISIBILITIES, type PlayKind, type Visibility } from "./play-kinds";
 import { cleanFrames, type Frame } from "./play-diagram";
 import { withTx } from "./sql";
+import { MAX_VIDEOS, cleanVideoUrl } from "./play-video";
 import { FORMATION_KINDS, type Formation } from "./play-formations";
 
 export { PLAY_KINDS, VISIBILITIES, type PlayKind, type Visibility };
@@ -35,13 +36,22 @@ export type Play = {
   changedBy: string | null;
   visibility: Visibility;
   formation: string | null; // an Offense or Defense play's Base Formation (none: Other)
+  videos: string[]; // links to videos of it being run (up to 5)
   sharedBy: string | null; // who set who sees it (when it's been set)
   mine: boolean; // the viewer made it (only they can make it Private)
 };
 // A play in a library: the organization's own (team null) or a team's; `orgName` is set for another organization's
 // Public play.
 export type LibraryPlay = Play & { team: string | null; teamId: string | null; orgName: string | null };
-export type PlayInput = { name?: unknown; kind?: unknown; notes?: unknown; frames?: unknown; visibility?: unknown; formation?: unknown }; // frames: its drawing
+export type PlayInput = {
+  name?: unknown;
+  kind?: unknown;
+  notes?: unknown;
+  frames?: unknown; // its drawing
+  visibility?: unknown;
+  formation?: unknown;
+  videos?: unknown; // links to videos of it being run (not sent: kept as they are)
+};
 
 const SLUG = /^[a-z0-9-]{1,40}$/;
 const ID = /^\d{1,18}$/;
@@ -55,7 +65,7 @@ const COACHES = ["HeadCoach", "AsstCoach"];
 const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`.trim() || v.coachId;
 // $4 = the viewer's coach id. The organization's own plays are never Team (read as Org).
 const cols = (p = "") =>
-  `${p}id::text, ${p}name, ${p}kind, ${p}notes, ${p}frames, ${p}added_by as "addedBy", ${p}updated_by as "changedBy", ${p}shared_by as "sharedBy", ${p}formation,
+  `${p}id::text, ${p}name, ${p}kind, ${p}notes, ${p}frames, ${p}added_by as "addedBy", ${p}updated_by as "changedBy", ${p}shared_by as "sharedBy", ${p}formation, ${p}videos,
    case when ${p}visibility = 'team' and ${p}thunder_team_id is null and ${p}org_team_id is null then 'org' else ${p}visibility end as visibility,
    coalesce(${p}made_by = $4, false) as mine`;
 // A Private play is seen only by the person who made it.
@@ -133,7 +143,15 @@ export async function orgLibrary(deps: Deps, viewer: SessionUser, org: string, f
   return r.rows;
 }
 
-type Clean = { name: string; kind: PlayKind; notes: string; frames: Frame[]; visibility: Visibility | null; formation: string | null };
+type Clean = {
+  name: string;
+  kind: PlayKind;
+  notes: string;
+  frames: Frame[];
+  visibility: Visibility | null;
+  formation: string | null;
+  videos: string[] | null; // null: not sent (kept)
+};
 // A formation's name: up to 40 letters, never starting with = + - @. Null when there's none; a message when it's wrong.
 function cleanFormationName(v: unknown, what = "A formation's name"): string | null | { error: string } {
   if (v === undefined || v === null || v === "") return null;
@@ -161,7 +179,22 @@ function clean(input: PlayInput): Clean | string {
   // Its Base Formation (Offense and Defense only).
   const formation = kind === "Offense" || kind === "Defense" ? cleanFormationName(input.formation, "A formation") : null;
   if (formation && typeof formation === "object") return formation.error;
-  return { name, kind, notes, frames, visibility, formation };
+  // Video links: web addresses (http or https), up to 5, each once; blanks left out.
+  let videos: string[] | null = null;
+  if (input.videos !== undefined) {
+    if (!Array.isArray(input.videos) || input.videos.length > 20 || input.videos.some((v) => typeof v !== "string"))
+      return "The video links aren't readable.";
+    const typed = (input.videos as string[]).filter((v) => v.trim());
+    const out: string[] = [];
+    for (const v of typed) {
+      const u = cleanVideoUrl(v);
+      if (!u) return `"${v.trim().slice(0, 60)}" isn't a web link (it should start with https://).`;
+      if (!out.includes(u)) out.push(u);
+    }
+    if (out.length > MAX_VIDEOS) return `Up to ${MAX_VIDEOS} video links.`;
+    videos = out;
+  }
+  return { name, kind, notes, frames, visibility, formation, videos };
 }
 
 const taken = (e: unknown) => (e as { code?: string })?.code === "23505";
@@ -180,8 +213,8 @@ async function insert(deps: Deps, viewer: SessionUser, ref: TeamRef, c: Clean) {
   const vals = "$1, nullif($2::text, '')::bigint";
   try {
     const r = await deps.pool.query<{ id: string }>(
-      `insert into plays (${owner}, name, kind, notes, frames, added_by, added_at, made_by, visibility, shared_by, shared_at, formation)
-       values (${vals}, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) returning id::text`,
+      `insert into plays (${owner}, name, kind, notes, frames, added_by, added_at, made_by, visibility, shared_by, shared_at, formation, videos)
+       values (${vals}, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) returning id::text`,
       [
         ref.org,
         ref.teamId,
@@ -196,6 +229,7 @@ async function insert(deps: Deps, viewer: SessionUser, ref: TeamRef, c: Clean) {
         asDefault ? null : by(viewer),
         asDefault ? null : deps.now(),
         c.formation,
+        c.videos ?? [],
       ],
     );
     return { ok: true as const, id: r.rows[0].id };
@@ -237,11 +271,11 @@ export async function changePlay(deps: Deps, viewer: SessionUser, ref: TeamRef, 
       await q.query(
         `update plays set name = $3, kind = $4, notes = $5, updated_by = $6, updated_at = $7,
                 frames = case when $9::boolean then $10::jsonb else frames end,
-                visibility = $11, formation = $13,
+                visibility = $11, formation = $13, videos = coalesce($14::text[], videos),
                 shared_by = case when $12::boolean then $6 else shared_by end,
                 shared_at = case when $12::boolean then $7 else shared_at end
           where id = $8 and ${whose(ref)}`,
-        [ref.org, ref.teamId, c.name, c.kind, c.notes, by(viewer), deps.now(), id, input.frames !== undefined, JSON.stringify(c.frames), vis, moved, c.formation],
+        [ref.org, ref.teamId, c.name, c.kind, c.notes, by(viewer), deps.now(), id, input.frames !== undefined, JSON.stringify(c.frames), vis, moved, c.formation, c.videos],
       );
       return { ok: true as const };
     });
@@ -264,8 +298,8 @@ export async function removePlay(deps: Deps, viewer: SessionUser, ref: TeamRef, 
 export async function copyPlay(deps: Deps, viewer: SessionUser, to: TeamRef, id: unknown): Promise<Result<{ id: string }>> {
   if (!(await canUsePlaybook(deps.pool, viewer, to))) return { ok: false, message: noRight(to) };
   if (typeof id !== "string" || !ID.test(id)) return { ok: false, message: "That play is no longer shared." };
-  const r = await deps.pool.query<{ name: string; kind: PlayKind; notes: string; frames: Frame[]; formation: string | null }>(
-    `select name, kind, notes, frames, formation from plays
+  const r = await deps.pool.query<{ name: string; kind: PlayKind; notes: string; frames: Frame[]; formation: string | null; videos: string[] }>(
+    `select name, kind, notes, frames, formation, videos from plays
       where id = $1
         and (visibility = 'public'
              or (org = $2 and (visibility = 'org' or (thunder_team_id is null and org_team_id is null and visibility <> 'private'))))`,
