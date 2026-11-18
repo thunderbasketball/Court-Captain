@@ -397,7 +397,8 @@ function segDist(px: number, py: number, ax: number, ay: number, bx: number, by:
 
 // Drawing a play: pick a tool, then drag on the court. Frames: each new one starts where the last one ends (players at
 // their lines' ends, the ball with whoever it was passed to). Players on and off the court by number.
-export function PlayEditor({ frames, onChange }: { frames: Frame[]; onChange: (f: Frame[]) => void }) {
+// `spotsOnly`: a Base Formation (where the players stand): one frame, only Move and Ball, no lines.
+export function PlayEditor({ frames, onChange, spotsOnly = false }: { frames: Frame[]; onChange: (f: Frame[]) => void; spotsOnly?: boolean }) {
   const [at, setAt] = useState(0);
   // ▶ Play: runs through the frames from 1, the players gliding from each to the next (drawing waits until it ends).
   const [playing, setPlaying] = useState(false);
@@ -414,7 +415,7 @@ export function PlayEditor({ frames, onChange }: { frames: Frame[]; onChange: (f
     }, 1500);
     return () => clearInterval(t);
   }, [playing, frames.length]);
-  const [tool, setTool] = useState<Tool>("cut");
+  const [tool, setTool] = useState<Tool>(spotsOnly ? "move" : "cut");
   const [drag, setDrag] = useState<{ from: string; x: number; y: number } | null>(null);
   const [bending, setBending] = useState<number | null>(null); // Curve: the line being bent
   const [msg, setMsg] = useState<string | null>(null);
@@ -528,7 +529,7 @@ export function PlayEditor({ frames, onChange }: { frames: Frame[]; onChange: (f
   return (
     <div className="space-y-2">
       {/* Frames: 1, 2, 3 … and + Next frame (starts where this one ends). */}
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className={`flex flex-wrap items-center gap-1.5 ${spotsOnly ? "hidden" : ""}`}>
         {frames.map((_, n) => (
           <button key={n} type="button" aria-pressed={n === i} onClick={() => setAt(n)} className={chip(n === i)}>
             {n + 1}
@@ -564,13 +565,13 @@ export function PlayEditor({ frames, onChange }: { frames: Frame[]; onChange: (f
         )}
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {TOOLS.map((t) => (
+        {TOOLS.filter((t) => !spotsOnly || t.key === "move" || t.key === "ball").map((t) => (
           <button key={t.key} type="button" aria-pressed={tool === t.key} onClick={() => setTool(t.key)} className={chip(tool === t.key)}>
             {t.label}
           </button>
         ))}
       </div>
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className={`flex flex-wrap items-center gap-1.5 ${spotsOnly ? "hidden" : ""}`}>
         <span className="mr-1 text-xs font-semibold text-red-700 dark:text-red-300">Defense</span>
         {D_TOOLS.map((t) => (
           <button key={t.key} type="button" aria-pressed={tool === t.key} onClick={() => setTool(t.key)} className={dChip(tool === t.key)}>
@@ -580,7 +581,8 @@ export function PlayEditor({ frames, onChange }: { frames: Frame[]; onChange: (f
       </div>
       <p className="text-xs text-zinc-500">
         {HINT[tool]}
-        {tool !== "erase" && tool !== "ball" && " Drag a line's dot to curve it (back to straight to undo)."}
+        {!spotsOnly && tool !== "erase" && tool !== "ball" && " Drag a line's dot to curve it (back to straight to undo)."}
+        {spotsOnly && " Put players on or off the court below."}
       </p>
       <Court
         frame={frame}
@@ -593,7 +595,7 @@ export function PlayEditor({ frames, onChange }: { frames: Frame[]; onChange: (f
         onPointerUp={up}
         label={`Drawing frame ${i + 1} of ${frames.length}`}
         preview={dragFrom && drag ? { kind: tool as LineKind, from: drag.from, x: drag.x, y: drag.y } : null}
-        handles={!playing}
+        handles={!playing && !spotsOnly}
       />
       {msg && <p className="text-xs font-medium text-red-600 dark:text-red-400">{msg}</p>}
       <div className="flex flex-wrap items-center gap-1">
@@ -615,7 +617,7 @@ export function PlayEditor({ frames, onChange }: { frames: Frame[]; onChange: (f
           </button>
         ))}
       </div>
-      <div className="flex flex-wrap gap-3 text-sm font-medium">
+      <div className={`flex flex-wrap gap-3 text-sm font-medium ${spotsOnly ? "hidden" : ""}`}>
         <button
           type="button"
           disabled={!frame.lines.length}

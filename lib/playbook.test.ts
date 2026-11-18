@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb } from "./testing/db";
-import { addPlay, canKeepOrgPlaybook, canUsePlaybook, changePlay, copyPlay, listPlays, orgLibrary, removePlay, sharePlay } from "./playbook";
+import { addPlay, canKeepOrgPlaybook, canUsePlaybook, changePlay, copyPlay, listFormations, listPlays, orgLibrary, removeFormation, removePlay, saveFormation } from "./playbook";
 import { startFrame } from "./play-diagram";
+import { BUILT_IN, formationsFor } from "./play-formations";
 
 describe("CourtPlaybook: each team's plays", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -111,8 +112,9 @@ describe("CourtPlaybook: each team's plays", () => {
 
     // A team shares its play; the library has the organization's plays first, then the shared ones with their team.
     const horns = (await addPlay(deps(), coach, T, { name: "Horns", kind: "Offense", notes: "Elbows" })) as { id: string };
-    expect(await sharePlay(deps(), parent, T, horns.id, true)).toMatchObject({ ok: false });
-    expect(await sharePlay(deps(), coach, T, horns.id, true)).toEqual({ ok: true });
+    const org = { name: "Horns", kind: "Offense", notes: "Elbows", visibility: "org" };
+    expect(await changePlay(deps(), parent, T, horns.id, org)).toMatchObject({ ok: false });
+    expect(await changePlay(deps(), coach, T, horns.id, org)).toEqual({ ok: true });
     expect((await orgLibrary(deps(), admin, "thunder"))!.map((p) => [p.name, p.team, p.sharedBy])).toEqual([
       ["Thunder Motion", null, null],
       ["Horns", "4G A", "P 5550001"],
@@ -129,8 +131,100 @@ describe("CourtPlaybook: each team's plays", () => {
     expect(await copyPlay(deps(), admin, O, horns.id)).toMatchObject({ ok: true });
     expect(await copyPlay(deps(), other, E, own.id)).toMatchObject({ ok: false }); // another organization's
     // Not shared any more: can't be copied.
-    expect(await sharePlay(deps(), coach, T, horns.id, false)).toEqual({ ok: true });
+    expect(await changePlay(deps(), coach, T, horns.id, { ...org, visibility: "team" })).toEqual({ ok: true });
     expect(await copyPlay(deps(), admin, { org: "thunder", teamId: "" }, horns.id)).toMatchObject({ ok: false });
     expect((await orgLibrary(deps(), admin, "thunder"))!.map((p) => p.name)).toEqual(["Horns", "Thunder Motion"]);
+  });
+
+  it("who sees each play: Private (only its maker), Team, Org (the organization's library), Public (every organization)", async () => {
+    await db.pool.query("insert into users (coach_id, first_name, last_name, cell) values ('5550006', 'As', 'St', '4235550006')");
+    await db.pool.query("insert into team_staff (team_id, coach_id, role, added_by) values ($1, '5550006', 'AsstCoach', 'x')", [T.teamId]);
+    const asst = person("5550006");
+    const O = { org: "thunder", teamId: "" };
+    // A new play is Team; the setting is checked; the organization's own plays have no Team.
+    const p = (await addPlay(deps(), coach, T, { name: "Secret", kind: "Offense", visibility: "private" })) as { id: string };
+    expect(p).toMatchObject({ ok: true });
+    const team = (await addPlay(deps(), coach, T, { name: "Box", kind: "Inbounds" })) as { id: string };
+    expect(await addPlay(deps(), coach, T, { name: "X", kind: "Offense", visibility: "everyone" })).toMatchObject({ ok: false });
+    expect(await addPlay(deps(), director, O, { name: "X", kind: "Offense", visibility: "team" })).toMatchObject({ ok: false });
+    const mine = (await listPlays(deps(), coach, T))!;
+    expect(mine.map((x) => [x.name, x.visibility, x.mine])).toEqual([
+      ["Secret", "private", true],
+      ["Box", "team", true],
+    ]);
+    // Private: the other coach and the Director of Teams don't see, change or delete it.
+    expect((await listPlays(deps(), asst, T))!.map((x) => [x.name, x.mine])).toEqual([["Box", false]]);
+    expect((await listPlays(deps(), director, T))!.map((x) => x.name)).toEqual(["Box"]);
+    expect(await changePlay(deps(), asst, T, p.id, { name: "Secret", kind: "Offense", visibility: "public" })).toMatchObject({ ok: false });
+    expect(await removePlay(deps(), asst, T, p.id)).toMatchObject({ ok: false });
+    // Only its maker may make a play Private.
+    expect(await changePlay(deps(), asst, T, team.id, { name: "Box", kind: "Inbounds", visibility: "private" })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("Only the coach who made"),
+    });
+    // Private and Team plays aren't in the library and can't be copied.
+    expect(await orgLibrary(deps(), other, "east-ridge", E.teamId)).toEqual([]);
+    expect(await copyPlay(deps(), other, E, team.id)).toMatchObject({ ok: false });
+    // Public: every organization's coaches see it (with the organization's name) and copy it; who set it is recorded.
+    expect(await changePlay(deps(), asst, T, team.id, { name: "Box", kind: "Inbounds", visibility: "public" })).toEqual({ ok: true });
+    expect((await listPlays(deps(), coach, T))!.find((x) => x.id === team.id)).toMatchObject({ visibility: "public", sharedBy: "P 5550006" });
+    expect((await orgLibrary(deps(), other, "east-ridge", E.teamId))!.map((x) => [x.name, x.orgName, x.team])).toEqual([["Box", "Thunder", "4G A"]]);
+    const copy = (await copyPlay(deps(), other, E, team.id)) as { id: string };
+    expect(copy).toMatchObject({ ok: true });
+    expect((await listPlays(deps(), other, E))!.map((x) => [x.name, x.visibility, x.mine])).toEqual([["Box", "team", true]]);
+    // Its own organization sees it too; its own team doesn't get it back in the library.
+    await db.pool.query("insert into users (coach_id, first_name, last_name, cell) values ('5550005', 'Ad', 'Min', '4235550005')");
+    await db.pool.query("select set_role('5550005', 'thunder', 'Admin', true, 'test')");
+    expect((await orgLibrary(deps(), person("5550005"), "thunder"))!.map((x) => [x.name, x.orgName])).toEqual([["Box", null]]);
+    expect(await orgLibrary(deps(), coach, "thunder", T.teamId)).toEqual([]);
+    // Back to Team: gone from every library, no longer copyable.
+    expect(await changePlay(deps(), coach, T, team.id, { name: "Box", kind: "Inbounds", visibility: "team" })).toEqual({ ok: true });
+    expect(await orgLibrary(deps(), other, "east-ridge", E.teamId)).toEqual([]);
+    expect(await copyPlay(deps(), other, E, team.id)).toMatchObject({ ok: false });
+  });
+
+  it("Base Formations: built in, a playbook's own (drawn spots), plays grouped by them; renames carry plays along", async () => {
+    // The built-ins: Offense and Defense, each player once and on the court.
+    for (const k of ["Offense", "Defense"] as const) expect(formationsFor(k, []).map((f) => f.name)).toEqual(BUILT_IN.filter((b) => b.kind === k).map((b) => b.name));
+    expect(formationsFor("Defense", []).find((f) => f.name === "Man-to-Man")!.spots.spots).toHaveLength(10);
+    // A play keeps its formation (Offense and Defense only; checked).
+    const h = (await addPlay(deps(), coach, T, { name: "Horns Twist", kind: "Offense", formation: "Horns" })) as { id: string };
+    expect(h).toMatchObject({ ok: true });
+    await addPlay(deps(), coach, T, { name: "Box", kind: "Inbounds", formation: "Horns" });
+    expect(await addPlay(deps(), coach, T, { name: "X", kind: "Offense", formation: "=SUM(1)" })).toMatchObject({ ok: false });
+    expect((await listPlays(deps(), coach, T))!.map((p) => [p.name, p.formation])).toEqual([
+      ["Horns Twist", "Horns"],
+      ["Box", null],
+    ]);
+    // A playbook's own formation: its coaches add it; another organization's coach can't; names unique per type.
+    const spots = { spots: [{ id: "1", x: 250, y: 320 }, { id: "5", x: 250, y: 60 }], ball: "1", lines: [{ kind: "cut", from: "5", x: 1, y: 1 }] };
+    expect(await saveFormation(deps(), other, T, null, { kind: "Offense", name: "Stack", spots })).toMatchObject({ ok: false });
+    expect(await saveFormation(deps(), coach, T, null, { kind: "Offense", name: "Stack", spots: { spots: [], ball: null, lines: [] } })).toMatchObject({ ok: false });
+    expect(await saveFormation(deps(), coach, T, null, { kind: "Inbounds", name: "Stack", spots })).toMatchObject({ ok: false });
+    const st = (await saveFormation(deps(), coach, T, null, { kind: "Offense", name: "Stack", spots })) as { id: string };
+    expect(st).toMatchObject({ ok: true });
+    expect(await saveFormation(deps(), director, T, null, { kind: "Offense", name: "stack", spots })).toMatchObject({ ok: false, message: expect.stringContaining("already") });
+    expect(await saveFormation(deps(), director, T, null, { kind: "Defense", name: "Stack", spots: { spots: [{ id: "X1", x: 1, y: 1 }], ball: null, lines: [] } })).toMatchObject({ ok: true });
+    const own = (await listFormations(deps(), coach, T))!;
+    expect(own.map((f) => [f.kind, f.name, f.addedBy])).toEqual([
+      ["Offense", "Stack", "P 5550001"],
+      ["Defense", "Stack", "P 5550003"],
+    ]);
+    expect(own[0].spots.lines).toEqual([]); // spots only
+    expect(await listFormations(deps(), other, T)).toBeNull();
+    // A built-in's name: the playbook's own version replaces it.
+    const mine = (await saveFormation(deps(), coach, T, null, { kind: "Offense", name: "Horns", spots })) as { id: string };
+    expect(formationsFor("Offense", (await listFormations(deps(), coach, T))!).find((f) => f.name === "Horns")).toMatchObject({ id: mine.id });
+    // Renaming carries its plays along; deleting leaves them under the name.
+    await addPlay(deps(), coach, T, { name: "Stack Pop", kind: "Offense", formation: "stack" });
+    expect(await saveFormation(deps(), coach, T, st.id, { kind: "Offense", name: "Stack High", spots })).toMatchObject({ ok: true });
+    expect((await listPlays(deps(), coach, T))!.find((p) => p.name === "Stack Pop")!.formation).toBe("Stack High");
+    expect(await removeFormation(deps(), other, E, st.id)).toMatchObject({ ok: false });
+    expect(await removeFormation(deps(), coach, T, st.id)).toEqual({ ok: true });
+    expect(formationsFor("Offense", (await listFormations(deps(), coach, T))!, ["Stack High"]).map((f) => f.name)).toContain("Stack High");
+    // A copy keeps its formation.
+    await changePlay(deps(), coach, T, h.id, { name: "Horns Twist", kind: "Offense", formation: "Horns", visibility: "public" });
+    const c = (await copyPlay(deps(), other, E, h.id)) as { id: string };
+    expect((await listPlays(deps(), other, E))!.find((p) => p.id === c.id)!.formation).toBe("Horns");
   });
 });

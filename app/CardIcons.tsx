@@ -63,7 +63,9 @@ export function PanelIcon({ id, label, children, className = iconBtn }: { id: st
       aria-label={label}
       title={label}
       onClick={(e) => {
-        const d = e.currentTarget.closest(".relative")?.querySelector("details");
+        // Inside a card's title (a summary), the tap opens the panel only; the card is opened here.
+        e.preventDefault();
+        const d = e.currentTarget.closest(".relative")?.querySelector("details") ?? e.currentTarget.closest("details");
         if (d) d.open = true;
         pending.add(id); // taken by the panel if it's already here (below), or when it arrives
         window.dispatchEvent(new CustomEvent(EVENT, { detail: id }));

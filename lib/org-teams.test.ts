@@ -15,6 +15,7 @@ import {
   undoTeamImport,
   setOrgHeadCoachEmail,
   setOrgWaitingCoach,
+  updateOrgTeam,
 } from "./org-teams";
 import { addOrgPlayer, importOrgPlayers, listOrgRoster, previewPlayerImport, removeOrgPlayer } from "./org-rosters";
 import { createTestDb } from "./testing/db";
@@ -96,6 +97,56 @@ describe("teams for a registered organization", () => {
       [p],
     );
     expect(await add("REC")).toMatchObject({ ok: true });
+  });
+
+  it("Edit team: gender, grades and level change (renamed by the rule, its League copy too); REC rules; not while in a League", async () => {
+    const made = (await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: ["4"], level: "COMP", headCoach: "none" } as Parameters<
+      typeof createOrgTeam
+    >[3])) as { id: string; name: string };
+    expect(made.name).toBe("4B TBD");
+    const edit = (input: object, who = jo) => updateOrgTeam(deps(), who, org, made.id, { gender: "Boys", grades: ["4"], level: "COMP", ...input });
+    // Only its Admins and Directors of Teams; checked.
+    const sam = { ...jo, coachId: "5550009", firstName: "Sam" };
+    expect(await edit({ level: "REC" }, sam)).toMatchObject({ ok: false });
+    expect(await edit({ grades: ["4", "6"] })).toMatchObject({ ok: false });
+    expect(await edit({ level: "Varsity" })).toMatchObject({ ok: false });
+    // COMP → REC, then grades: renamed, who changed it recorded; its League copy follows.
+    await db.pool.query(
+      `insert into scenic_teams (name, gender, grade_low, grade, level, coach_id, created_by, updated_by, org_team_id, owner_coach_id)
+       values ('ER 4B TBD', 'Boys', 4, 4, 'COMP', null, 't', 't', $1, '5550001')`,
+      [made.id],
+    );
+    expect(await edit({ level: "REC" })).toEqual({ ok: true, name: "4B TBD" });
+    expect(await edit({ level: "REC", grades: ["5", "4"] })).toEqual({ ok: true, name: "5B TBD" });
+    const t = (await getOrgTeam(deps(), jo, org, made.id))!.team;
+    expect(t).toMatchObject({ level: "REC", grades: ["4", "5"], changedBy: "Jordan Harris" });
+    expect((await db.pool.query("select level, grade_low, grade from scenic_teams where org_team_id = $1", [made.id])).rows[0]).toEqual({
+      level: "REC",
+      grade_low: 4,
+      grade: 5,
+    });
+    // REC limited to other organizations by a current League: back to COMP is fine, REC isn't.
+    const p = (
+      await db.pool.query<{ id: string }>(
+        `insert into scenic_programs (kind, name, starts_on, ends_on, reg_opens, reg_closes, created_by, updated_by, rec_limited_by)
+         values ('League', 'Winter', '2026-12-05', '2027-02-28', '2026-10-01', '2026-11-30', 'x', 'x', 'x') returning id::text`,
+      )
+    ).rows[0].id;
+    expect(await edit({ level: "COMP", grades: ["4", "5"] })).toMatchObject({ ok: true });
+    expect(await edit({ level: "REC", grades: ["4", "5"] })).toMatchObject({ ok: false, message: expect.stringContaining("REC is only") });
+    // Registered in that League: no change until it's withdrawn.
+    await db.pool.query(
+      `insert into scenic_divisions (program_id, gender, grade_low, grade_high) values ($1, 'Boys', 4, 5);
+       insert into scenic_grade_groups (division_id, grade, level) select id, 5, 'COMP' from scenic_divisions;
+       insert into scenic_pools (group_id, name) select id, 'A' from scenic_grade_groups;`.replace("$1", p),
+    );
+    await db.pool.query(
+      "insert into scenic_registrations (program_id, team_id, pool_id, registered_by) select $1, id, (select id from scenic_pools), 't' from scenic_teams where org_team_id = $2",
+      [p, made.id],
+    );
+    expect(await edit({ level: "COMP", grades: ["5"] })).toMatchObject({ ok: false, message: expect.stringContaining("Withdraw it from Winter first") });
+    await db.pool.query("update scenic_registrations set removed_by = 'x'");
+    expect(await edit({ level: "COMP", grades: ["5"] })).toEqual({ ok: true, name: "5B TBD" });
   });
 
   it("teams are named Grade + Gender + Head Coach (TBD until one), numbered when the same; renamed when the Head Coach changes", async () => {

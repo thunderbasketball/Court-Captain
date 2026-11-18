@@ -1,13 +1,13 @@
 "use client";
 
-import { AddPersonIcon, addIconBtn } from "../../../../CardIcons";
-import { useRef, useState, useTransition } from "react";
+import { AddPersonIcon, CardPanel, PanelIcon, addIconBtn, closeCardPanel } from "../../../../CardIcons";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { GRADES, LEVELS } from "@/lib/team-names";
 import type { PersonOption, Role } from "@/lib/teams";
 import { addStaff, deleteTeam, removeStaff, updateTeam } from "../actions";
 import { fieldLabel, inputCls, pillCls, primaryBtn } from "../../../../ui";
-import { Alert, CloseButton, Toast, dialogCls, useConfirm } from "../../../../client-ui";
+import { Alert, Toast, useConfirm } from "../../../../client-ui";
 
 const ROLE_CHOICES: { role: Role; label: string }[] = [
   { role: "HeadCoach", label: "Head Coach" },
@@ -181,7 +181,23 @@ export function RemoveStaffButton({
 const NEW = "new";
 
 // Add staff (a person-plus icon) on the Staff card; opens the form in a pop-up.
-export function AddStaffButton({
+// The roles still open: one person per role; the Director can also replace the Head Coach.
+const openRoles = (canSetHead: boolean, filledRoles: Role[]) =>
+  ROLE_CHOICES.filter((r) => (r.role === "HeadCoach" ? canSetHead : !filledRoles.includes(r.role)));
+export const addStaffPanel = (teamId: string) => `add-staff-${teamId}`;
+
+// Add staff: the icon on the Staff card's title line (none once every role is filled) opens the form at the top of the
+// card (no pop-up).
+export function AddStaffButton({ teamId, canSetHead, filledRoles }: { teamId: string; canSetHead: boolean; filledRoles: Role[] }) {
+  if (!openRoles(canSetHead, filledRoles).length) return null;
+  return (
+    <PanelIcon id={addStaffPanel(teamId)} label="Add staff" className={addIconBtn}>
+      <AddPersonIcon />
+    </PanelIcon>
+  );
+}
+
+export function AddStaffPanel({
   teamId,
   gender,
   grades,
@@ -203,7 +219,7 @@ export function AddStaffButton({
   const router = useRouter();
   // One person per role: open roles only. The Director can also replace the head coach.
   const hasHead = filledRoles.includes("HeadCoach");
-  const roles = ROLE_CHOICES.filter((r) => (r.role === "HeadCoach" ? canSetHead : !filledRoles.includes(r.role)));
+  const roles = openRoles(canSetHead, filledRoles);
   const [picked, setRole] = useState<Role | null>(null);
   const role =
     picked && roles.some((r) => r.role === picked) ? picked : (roles.find((r) => r.role !== "HeadCoach") ?? roles[0])?.role;
@@ -213,9 +229,7 @@ export function AddStaffButton({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [busy, start] = useTransition();
-  const dialog = useRef<HTMLDialogElement>(null);
-  const close = () => dialog.current?.close();
-  const [confirm, confirmDialog] = useConfirm();
+  const close = () => closeCardPanel(addStaffPanel(teamId));
 
   const matches = (v: PersonOption) => v.gender === gender && grades.includes(v.grade ?? "");
   const option = (o: PersonOption) => (
@@ -230,38 +244,14 @@ export function AddStaffButton({
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => {
-          setError(null);
-          dialog.current?.showModal();
-        }}
-        aria-label="Add staff"
-        title="Add staff"
-        className={addIconBtn}
-      >
-        <AddPersonIcon />
-      </button>
       {done && <Toast key={done} message={done} />}
-      {confirmDialog}
-      <dialog ref={dialog} className={dialogCls} onClick={(e) => e.target === dialog.current && close()}>
+      <CardPanel id={addStaffPanel(teamId)}>
         <form
-          className="space-y-5 p-5"
-          onSubmit={async (e) => {
+          className="space-y-5 pt-3"
+          onSubmit={(e) => {
             e.preventDefault();
             setError(null);
             setDone(null);
-            if (
-              role === "HeadCoach" &&
-              hasHead &&
-              !(await confirm({
-                title: "Replace the head coach?",
-                message: <p>The current head coach comes off this team, and the team is renamed after the new one.</p>,
-                confirmLabel: "Replace head coach",
-                tone: "warning",
-              }))
-            )
-              return;
             start(async () => {
               const r = await addStaff(teamId, { role, person: person === NEW ? p : person });
               if (!r.ok) return setError(r.message);
@@ -277,10 +267,6 @@ export function AddStaffButton({
             });
           }}
         >
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Add staff</h2>
-            <CloseButton onClick={close} />
-          </div>
           <div>
             <span className={fieldLabel}>Role</span>
             <div className="flex flex-wrap gap-2">
@@ -291,7 +277,9 @@ export function AddStaffButton({
               ))}
             </div>
             {role === "HeadCoach" && hasHead && (
-              <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">This replaces the current head coach.</p>
+              <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+                This replaces the current head coach: they come off this team, and the team is renamed after the new one.
+              </p>
             )}
           </div>
 
@@ -367,11 +355,16 @@ export function AddStaffButton({
           )}
 
           {error && <Alert tone="red">{error}</Alert>}
-          <button type="submit" disabled={busy || !ready} className={primaryBtn}>
-            {busy ? "Adding…" : "Add to team"}
-          </button>
+          <div className="flex items-center gap-3">
+            <button type="submit" disabled={busy || !ready} className={primaryBtn}>
+              {busy ? "Adding…" : role === "HeadCoach" && hasHead ? "Replace head coach" : "Add to team"}
+            </button>
+            <button type="button" onClick={close} className="text-sm font-medium text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
+              Cancel
+            </button>
+          </div>
         </form>
-      </dialog>
+      </CardPanel>
     </>
   );
 }

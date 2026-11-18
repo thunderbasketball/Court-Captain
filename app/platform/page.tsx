@@ -13,7 +13,7 @@ import { ResetLoginButton } from "../ResetLoginButton";
 import { ViewAsButton } from "../ViewAsButton";
 import MembersCards from "../MembersCards";
 import { formatCell } from "@/lib/phone";
-import { AddOwner, AddStaff, DeleteOrganization, FeatureSwitch, FeaturesGear, RemoveOwner, RemoveStaff } from "./PlatformTools";
+import { AddOwner, AddStaff, DeleteOrganization, FeatureSwitch, FeaturesGear, FeaturesPanel, RemoveOwner, RemoveStaff } from "./PlatformTools";
 import SupportAdmin from "./SupportAdmin";
 import { listArticles } from "@/lib/support";
 
@@ -151,30 +151,8 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
                             </p>
                           )}
                         </div>
-                        {/* The gear: this organization's features in a pop-up (a button, so it doesn't open or close the card). */}
-                        <FeaturesGear orgName={o.name}>
-                          <p className="text-sm text-zinc-500">{o.features.filter((f) => f.on).length} on</p>
-                          <ul className="divide-y divide-zinc-950/5 dark:divide-white/10">
-                            {o.features.map((f) => (
-                              <li key={f.key} className="flex items-center justify-between gap-3 py-2">
-                                <div className="min-w-0">
-                                  <p className={`text-sm font-medium ${f.on ? "" : "text-zinc-500"}`}>{f.name}</p>
-                                  <p className="text-xs text-zinc-500">
-                                    {f.always
-                                      ? "Comes with every organization"
-                                      : f.since
-                                        ? `On since ${date(f.since)} (${how[f.source ?? ""] ?? f.source})`
-                                        : "Off"}
-                                  </p>
-                                </div>
-                                {!f.always && <FeatureSwitch org={o.slug} orgName={o.name} feature={f.key} name={f.name} on={f.on} />}
-                              </li>
-                            ))}
-                          </ul>
-                          {o.slug !== "thunder" && o.slug !== "scenic-city" && (
-                            <DeleteOrganization org={o.slug} orgName={o.name} teams={o.stats.teams} />
-                          )}
-                        </FeaturesGear>
+                        {/* The gear: this organization's features, opened at the top of its card (no pop-up). */}
+                        <FeaturesGear org={o.slug} orgName={o.name} />
                         <svg
                           viewBox="0 0 20 20"
                           fill="currentColor"
@@ -184,6 +162,29 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
                           <path d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" />
                         </svg>
                       </summary>
+                      <FeaturesPanel org={o.slug} orgName={o.name}>
+                        <p className="text-sm text-zinc-500">{o.features.filter((f) => f.on).length} on</p>
+                        <ul className="divide-y divide-zinc-950/5 dark:divide-white/10">
+                          {o.features.map((f) => (
+                            <li key={f.key} className="flex items-center justify-between gap-3 py-2">
+                              <div className="min-w-0">
+                                <p className={`text-sm font-medium ${f.on ? "" : "text-zinc-500"}`}>{f.name}</p>
+                                <p className="text-xs text-zinc-500">
+                                  {f.always
+                                    ? "Comes with every organization"
+                                    : f.since
+                                      ? `On since ${date(f.since)} (${how[f.source ?? ""] ?? f.source})`
+                                      : "Off"}
+                                </p>
+                              </div>
+                              {!f.always && <FeatureSwitch org={o.slug} orgName={o.name} feature={f.key} name={f.name} on={f.on} />}
+                            </li>
+                          ))}
+                        </ul>
+                        {o.slug !== "thunder" && o.slug !== "scenic-city" && (
+                          <DeleteOrganization org={o.slug} orgName={o.name} teams={o.stats.teams} />
+                        )}
+                      </FeaturesPanel>
                       <div className="border-t border-zinc-100 p-4 dark:border-white/5">
                         <h3 className="mb-1.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Owners</h3>
                         {/* Each Owner's contact info, View as (view only) for support, and 🔑 Reset login (PIN 1234, email cleared). */}

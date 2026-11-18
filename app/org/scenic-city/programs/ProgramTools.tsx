@@ -27,6 +27,8 @@ import {
 import { Alert, CloseButton, OnPage, PopUp, Toast, dialogCls, useConfirm } from "../../../client-ui";
 import { fieldLabel, inputCls, pillCls } from "../../../ui";
 import { GearIcon } from "../../../OrgSettings";
+import { CardPanel, PanelIcon, closeCardPanel } from "../../../CardIcons";
+import SubCard from "../../../SubCard";
 import { REG_OPTIONS, type ProgramOption } from "@/lib/program-options";
 import RegisterChoices from "./RegisterChoices";
 import GradeRulesForm, { rulesSummary } from "../../../GradeRulesForm";
@@ -328,90 +330,73 @@ export function ProgramLogo({ src, className = "size-12" }: { src: string | null
   return <img src={src} alt="" className={`${className} shrink-0 rounded-xl object-contain`} />;
 }
 
-// Directors of Programs: add, change or remove the program's logo (PNG, JPEG or WebP, up to 512 KB).
+// Directors of Programs: add, change or remove the program's logo (PNG, JPEG or WebP, up to 512 KB), right in the gear's
+// Logo card.
 export function ProgramLogoEditor({ id, logo }: { id: string; logo: string | null }) {
   const router = useRouter();
-  const ref = useRef<HTMLDialogElement>(null);
   const [busy, start] = useTransition();
   const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
   const save = (form: FormData) =>
     start(async () => {
       setError(null);
+      setDone(null);
       const r = await setProgramLogo(id, form);
       if (!r.ok) return setError(r.message);
-      ref.current?.close();
       setPreview(null);
+      setDone(form.get("remove") === "1" ? "Removed." : "Saved.");
       router.refresh();
     });
   return (
-    <>
-      <button
-        type="button"
-        className={`${smallBtn} text-scenic-navy ring-scenic-navy/30 dark:text-zinc-200 dark:ring-white/20`}
-        onClick={() => ref.current?.showModal()}
-      >
-        {logo ? "Logo" : "+ Logo"}
+    <form
+      className="space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        save(new FormData(e.currentTarget));
+        e.currentTarget.reset();
+      }}
+    >
+      <span className={fieldLabel}>PNG, JPEG or WebP, up to 512 KB</span>
+      <div className="flex items-center gap-3">
+        {preview || logo ? (
+          // eslint-disable-next-line @next/next/no-img-element -- the chosen file or the current logo
+          <img src={preview ?? logo!} alt="" className="size-16 rounded-xl object-contain ring-1 ring-zinc-950/10" />
+        ) : (
+          <span className="grid size-16 place-items-center rounded-xl text-xs text-zinc-400 ring-1 ring-zinc-950/10 ring-dashed">None</span>
+        )}
+        <input
+          name="logo"
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          required
+          className="min-w-0 text-sm"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            setPreview(f ? URL.createObjectURL(f) : null);
+          }}
+        />
+      </div>
+      {error && <Alert tone="red">{error}</Alert>}
+      {done && <Alert tone="green">{done}</Alert>}
+      <button type="submit" disabled={busy} className={`${navyBtn} w-full`}>
+        {busy ? "Saving…" : "Save logo"}
       </button>
-      <dialog ref={ref} className={dialogCls}>
-        <form
-          className="space-y-3 p-5"
-          onSubmit={(e) => {
-            e.preventDefault();
-            save(new FormData(e.currentTarget));
+      {logo && (
+        <button
+          type="button"
+          disabled={busy}
+          className="w-full text-sm text-red-600 hover:underline"
+          onClick={() => {
+            const f = new FormData();
+            f.set("remove", "1");
+            save(f);
           }}
         >
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Program logo</h2>
-            <CloseButton onClick={() => ref.current?.close()} />
-          </div>
-          <span className={fieldLabel}>PNG, JPEG or WebP, up to 512 KB</span>
-          <div className="flex items-center gap-3">
-            {preview || logo ? (
-              // eslint-disable-next-line @next/next/no-img-element -- the chosen file or the current logo
-              <img
-                src={preview ?? logo!}
-                alt=""
-                className="size-16 rounded-xl object-contain ring-1 ring-zinc-950/10"
-              />
-            ) : (
-              <span className="grid size-16 place-items-center rounded-xl text-xs text-zinc-400 ring-1 ring-zinc-950/10 ring-dashed">
-                None
-              </span>
-            )}
-            <input
-              name="logo"
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              required
-              className="min-w-0 text-sm"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                setPreview(f ? URL.createObjectURL(f) : null);
-              }}
-            />
-          </div>
-          {error && <Alert tone="red">{error}</Alert>}
-          <button type="submit" disabled={busy} className={`${navyBtn} w-full`}>
-            {busy ? "Saving…" : "Save logo"}
-          </button>
-          {logo && (
-            <button
-              type="button"
-              disabled={busy}
-              className="w-full text-sm text-red-600 hover:underline"
-              onClick={() => {
-                const f = new FormData();
-                f.set("remove", "1");
-                save(f);
-              }}
-            >
-              Remove logo
-            </button>
-          )}
-        </form>
-      </dialog>
-    </>
+          Remove logo
+        </button>
+      )}
+    </form>
   );
 }
 
@@ -472,32 +457,48 @@ export function ProgramRulesEditor({ id, rules }: { id: string; rules: { name: s
   );
 }
 
+// Delete the program, asked right there (no pop-up).
 export function DeleteProgram({ id, name, teams }: { id: string; name: string; teams: number }) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [confirm, confirmDialog] = useConfirm();
-  return (
-    <>
+  const [sure, setSure] = useState(false);
+  if (!sure)
+    return (
       <button
         type="button"
-        disabled={busy}
+        onClick={() => setSure(true)}
         className={`${smallBtn} text-red-600 ring-red-600/30 hover:bg-red-50 dark:ring-red-400/30 dark:hover:bg-red-500/10`}
-        onClick={async () => {
-          const msg = `Are you sure? ${teams ? `Its ${teams} team registration${teams === 1 ? "" : "s"} go too (the teams stay). ` : ""}This can't be undone.`;
-          if (!(await confirm({ title: `Delete ${name}?`, message: msg, confirmLabel: "Delete" }))) return;
-          start(async () => {
-            const r = await deleteProgram(id);
-            if (!r.ok) return setError(r.message);
-            router.replace("/org/scenic-city/programs");
-          });
-        }}
       >
         Delete
       </button>
-      {error && <Toast key={error} message={error} />}
-      {confirmDialog}
-    </>
+    );
+  return (
+    <div className="space-y-2 text-sm">
+      <p>
+        Delete {name}? {teams ? `Its ${teams} team registration${teams === 1 ? "" : "s"} go too (the teams stay). ` : ""}This can&apos;t be undone.
+      </p>
+      <div className="flex gap-3 font-medium">
+        <button
+          type="button"
+          disabled={busy}
+          className="text-red-600 hover:underline dark:text-red-400"
+          onClick={() =>
+            start(async () => {
+              const r = await deleteProgram(id);
+              if (!r.ok) return setError(r.message);
+              router.replace("/org/scenic-city/programs");
+            })
+          }
+        >
+          Yes, delete {name}
+        </button>
+        <button type="button" className="text-zinc-500 hover:underline" onClick={() => setSure(false)}>
+          Keep it
+        </button>
+      </div>
+      {error && <Alert tone="red">{error}</Alert>}
+    </div>
   );
 }
 
@@ -1213,7 +1214,22 @@ export function GradesAccepted({ programId, rows }: { programId: string; rows: G
   );
 }
 
-// Directors of Programs: the program's gear: Edit (dates, registration, options), Logo, Grades accepted, Delete.
+// Directors of Programs: the program's gear (top right of its card) opens its settings right under the card's title as
+// cards (no pop-ups): Edit (type, name, dates, registration and options), Logo, Rules (a League), Grades accepted,
+// Grade requirements, REC open to, and Delete (with no teams registered). Tap the gear again to close.
+export const programSettingsPanel = (id: string) => `program-settings-${id}`;
+export function ProgramGearIcon({ program }: { program: { id: string; name: string } }) {
+  return (
+    <PanelIcon
+      id={programSettingsPanel(program.id)}
+      label={`${program.name} settings`}
+      className="shrink-0 rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+    >
+      <GearIcon className="size-5" />
+    </PanelIcon>
+  );
+}
+
 export function ProgramSettings({
   program,
   logo,
@@ -1233,90 +1249,52 @@ export function ProgramSettings({
   grades: GradeRow[] | null; // null: no divisions yet
   rec: RecLimitView;
 }) {
+  const id = programSettingsPanel(program.id);
+  const note = (t: string) => <p className="mb-2 text-xs text-zinc-500">{t}</p>;
   return (
-    <PopUp
-      label={<GearIcon className="size-5" />}
-      ariaLabel={`${program.name} settings`}
-      title={`${program.name} settings`}
-      className="shrink-0 rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-    >
-      {() => (
-        <ul className="divide-y divide-zinc-100 dark:divide-white/5">
-          <li className="flex items-center justify-between gap-3 py-2.5">
-            <span className="text-sm text-zinc-600 dark:text-zinc-300">Type, name, dates, registration and options</span>
-            <ProgramEditor program={program} />
-          </li>
-          <li className="flex items-center justify-between gap-3 py-2.5">
-            <span className="text-sm text-zinc-600 dark:text-zinc-300">The program&apos;s logo</span>
-            <ProgramLogoEditor id={program.id} logo={logo} />
-          </li>
-          {program.kind === "League" && (
-            <li className="flex items-center justify-between gap-3 py-2.5">
-              <span className="text-sm text-zinc-600 dark:text-zinc-300">
-                Rules
-                <span className="block text-xs text-zinc-500">{rules ? rules.name : "Not added yet"} · on hosts&apos; Documents</span>
-              </span>
-              <PopUp label={rules ? "Rules" : "+ Rules"} title="League rules (PDF)" className={editBtn}>
-                {() => <ProgramRulesEditor id={program.id} rules={rules} />}
-              </PopUp>
-            </li>
-          )}
-          <li className="flex items-center justify-between gap-3 py-2.5">
-            <span className="text-sm text-zinc-600 dark:text-zinc-300">
-              Grades accepted
-              <span className="block text-xs text-zinc-500">
-                {grades ? gradesSummary(grades) : "Add a division first"}
-              </span>
-            </span>
-            {grades && (
-              <PopUp label="Edit" title="Grades accepted" className={editBtn}>
-                {() => <GradesAccepted programId={program.id} rows={grades} />}
-              </PopUp>
-            )}
-          </li>
-          <li className="flex items-center justify-between gap-3 py-2.5">
-            <span className="text-sm text-zinc-600 dark:text-zinc-300">
-              Grade requirements
-              <span className="block text-xs text-zinc-500">{rulesSummary(gradeRules, today)}</span>
-            </span>
-            <PopUp label="Edit" title="Grade requirements" className={editBtn}>
-              {(close) => (
-                <GradeRulesForm
-                  rules={gradeRules}
-                  today={today}
-                  save={(r) => setProgramGradeRules(program.id, r)}
-                  onSaved={close}
-                />
-              )}
-            </PopUp>
-          </li>
-          <li className="flex items-center justify-between gap-3 py-2.5">
-            <span className="text-sm text-zinc-600 dark:text-zinc-300">
-              REC open to
-              <span className="block text-xs text-zinc-500">
-                {rec.limited
-                  ? `${rec.partners.length} invited organization${rec.partners.length === 1 ? "" : "s"}`
-                  : "Everyone"}
-              </span>
-            </span>
-            <PopUp label="Edit" title="REC open to" className={editBtn}>
-              {(close) => <RecLimitEditor programId={program.id} rec={rec} onSaved={close} />}
-            </PopUp>
-          </li>
-          {/* Delete only with no teams registered (the server refuses it too). */}
-          {teams === 0 && (
-            <li className="flex items-center justify-between gap-3 py-2.5">
-              <span className="text-sm text-zinc-600 dark:text-zinc-300">Delete the program</span>
-              <DeleteProgram id={program.id} name={program.name} teams={0} />
-            </li>
-          )}
-        </ul>
+    <CardPanel id={id} className="mt-3 space-y-2 border-t border-zinc-100 pt-3 dark:border-white/5">
+      <SubCard title="Edit">
+        {note("Type, name, dates, registration and options")}
+        <ProgramEditor program={program} inline={() => closeCardPanel(id)} />
+      </SubCard>
+      <SubCard title={logo ? "Logo" : "Logo (none yet)"}>
+        <ProgramLogoEditor id={program.id} logo={logo} />
+      </SubCard>
+      {program.kind === "League" && (
+        <SubCard title={rules ? "Rules" : "Rules (not added yet)"}>
+          {note(`${rules ? rules.name : "Not added yet"} · on hosts' Documents`)}
+          <ProgramRulesEditor id={program.id} rules={rules} />
+        </SubCard>
       )}
-    </PopUp>
+      <SubCard title="Grades accepted">
+        {grades ? (
+          <>
+            {note(gradesSummary(grades))}
+            <GradesAccepted programId={program.id} rows={grades} />
+          </>
+        ) : (
+          note("Add a division first")
+        )}
+      </SubCard>
+      <SubCard title="Grade requirements">
+        {note(rulesSummary(gradeRules, today))}
+        <GradeRulesForm rules={gradeRules} today={today} save={(r) => setProgramGradeRules(program.id, r)} onSaved={() => closeCardPanel(id)} />
+      </SubCard>
+      <SubCard title="REC open to">
+        {note(rec.limited ? `${rec.partners.length} invited organization${rec.partners.length === 1 ? "" : "s"}` : "Everyone")}
+        <RecLimitEditor programId={program.id} rec={rec} onSaved={() => closeCardPanel(id)} />
+      </SubCard>
+      {/* Delete only with no teams registered (the server refuses it too). */}
+      {teams === 0 && (
+        <div className="flex items-start justify-between gap-3 px-1 pt-1">
+          <span className="text-sm text-zinc-600 dark:text-zinc-300">Delete the program</span>
+          <DeleteProgram id={program.id} name={program.name} teams={0} />
+        </div>
+      )}
+    </CardPanel>
   );
 }
 
-const editBtn = `${smallBtn} text-scenic-navy ring-scenic-navy/30 dark:text-zinc-200 dark:ring-white/20`;
 
 // One line for the gear: the grades on per row that has any ("Boys REC K–9 · Boys COMP 2–9 …").
 function gradesSummary(rows: GradeRow[]) {

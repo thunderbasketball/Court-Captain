@@ -63,7 +63,9 @@ export type OrgTeam = {
   name: string;
   gender: Gender;
   grade: string; // "3rd" or "3rd/4th"
+  grades: string[]; // as picked: "3", or "3" and "4" ("PK", "K" … "12")
   level: "COMP" | "REC";
+  changedBy: string | null; // who last changed its gender, grades or level
   altName: string | null; // e.g. "Bolts"
   players: number; // on its roster (none yet: ROSTER MUST BE ENTERED)
   createdBy: string;
@@ -80,12 +82,13 @@ async function teams(q: Pick<Queryable, "query">, org: string, onlyFor: string |
     grade: number;
     level: "COMP" | "REC";
     created_by: string;
+    updated_by: string | null;
     alt_name: string | null;
     players: number;
     coaches: OrgTeamCoach[];
     waiting: OrgTeam["waitingCoach"];
   }>(
-    `select t.id::text, t.name, t.gender, t.grade_low, t.grade, t.level, t.created_by, t.alt_name,
+    `select t.id::text, t.name, t.gender, t.grade_low, t.grade, t.level, t.created_by, t.updated_by, t.alt_name,
             case when t.coach_first is null then null else json_build_object('first', t.coach_first, 'last', t.coach_last) end as waiting,
             (select count(*)::int from org_team_players p where p.team_id = t.id) as players,
             coalesce((select json_agg(json_build_object('id', c.coach_id, 'name', u.first_name || ' ' || u.last_name, 'cell', u.cell,
@@ -103,8 +106,10 @@ async function teams(q: Pick<Queryable, "query">, org: string, onlyFor: string |
     name: t.name,
     gender: t.gender,
     grade: gradeLabel(t.grade_low, t.grade),
+    grades: [...new Set([t.grade_low, t.grade])].map(gradeStr),
     level: t.level,
     createdBy: t.created_by,
+    changedBy: t.updated_by,
     altName: t.alt_name,
     players: t.players,
     coaches: t.coaches,
@@ -331,6 +336,64 @@ export async function createOrgTeam(
         ]);
       }
       return { id: t.rows[0].id, name };
+    });
+  });
+}
+
+// Change a team's gender, grades or level (Admins and Directors of Teams). Its name follows the rule again, and so does
+// its copy in a League. A REC team needs REC open to the organization. While it's in a League program that hasn't ended,
+// it can't change (its division and games depend on them): it's withdrawn from that program first.
+export async function updateOrgTeam(
+  deps: Deps,
+  viewer: SessionUser,
+  org: unknown,
+  id: unknown,
+  input: { gender: unknown; grades: unknown; level: unknown },
+): Promise<Result<{ name: string }>> {
+  return run(async () => {
+    if (!isId(id)) throw new TeamError("That team no longer exists.");
+    const o = await mustManage(deps.pool, viewer, org);
+    const gender = isGender(input.gender) ? input.gender : null;
+    if (!gender) throw new TeamError("Pick Boys, Girls or Coed.");
+    const grades = Array.isArray(input.grades) ? [...new Set(input.grades as string[])] : [];
+    if (!gradesOk(grades, true)) throw new TeamError("Pick one grade, or two next to each other.");
+    const level = LEVELS.find((l) => l === input.level);
+    if (!level) throw new TeamError("Pick COMP or REC.");
+    const preK = preKProblem(gender, grades, level);
+    if (preK) throw new TeamError(preK);
+    const nums = grades.map(gradeNum).sort((a, b) => a - b);
+    return withTx(deps.pool, async (q) => {
+      await lockTeams(q, o);
+      const t = await q.query<{ gender: string; grade_low: number; grade: number; level: string; name: string }>(
+        "select gender, grade_low, grade, level, name from org_teams where id = $1 and org = $2 and archived_at is null for update",
+        [id, o],
+      );
+      const cur = t.rows[0];
+      if (!cur) throw new TeamError("That team no longer exists.");
+      if (cur.gender === gender && cur.grade_low === nums[0] && cur.grade === nums.at(-1) && cur.level === level) return { name: cur.name };
+      if (level === "REC" && cur.level !== "REC" && !(await recAllowed(q, o, deps.now()))) throw new TeamError(REC_CLOSED);
+      const inLeague = await q.query<{ name: string }>(
+        `select p.name from scenic_registrations r join scenic_teams st on st.id = r.team_id join scenic_programs p on p.id = r.program_id
+          where st.org_team_id = $1 and r.removed_by is null and p.ends_on >= ($2::timestamptz at time zone 'America/New_York')::date
+          order by p.starts_on limit 1`,
+        [id, deps.now()],
+      );
+      if (inLeague.rows[0])
+        throw new TeamError(
+          `${cur.name} is registered in ${inLeague.rows[0].name}, where its division and games depend on its gender, grade and level. Withdraw it from ${inLeague.rows[0].name} first, change it, then register it again.`,
+        );
+      await q.query(
+        "update org_teams set gender = $3, grade_low = $4, grade = $5, level = $6, updated_by = $7, updated_at = $8 where id = $1 and org = $2",
+        [id, o, gender, nums[0], nums.at(-1), level, by(viewer), deps.now()],
+      );
+      await q.query("update scenic_teams set gender = $2, grade_low = $3, grade = $4, level = $5 where org_team_id = $1", [
+        id,
+        gender,
+        nums[0],
+        nums.at(-1),
+        level,
+      ]);
+      return { name: await renameOrgTeam(q, o, id) };
     });
   });
 }

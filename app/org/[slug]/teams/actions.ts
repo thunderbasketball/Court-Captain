@@ -22,6 +22,9 @@ const deps = () => ({ pool: db, now: () => new Date() });
 export async function addTeam(org: string, input: teams.OrgTeamInput) {
   return guarded((u) => teams.createOrgTeam(deps(), u, org, input));
 }
+export async function editTeam(org: string, id: string, input: { gender: unknown; grades: unknown; level: unknown }) {
+  return guarded((u) => teams.updateOrgTeam(deps(), u, org, id, input));
+}
 export async function setAltName(org: string, id: string, alt: string) {
   return guarded((u) => teams.setOrgTeamAltName(deps(), u, org, id, alt));
 }

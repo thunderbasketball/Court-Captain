@@ -313,15 +313,9 @@ export function EmailLink({ email }: { email: string }) {
   );
 }
 
-// Simulated (DEV) teams (Scheduler's Simulation mode, development only) are highlighted purple wherever their name shows.
-export const isDevTeam = (name: string | null | undefined) => !!name?.endsWith("(DEV)");
-export const devTeamCls = "rounded bg-violet-200 px-1 text-violet-900 dark:bg-violet-500/30 dark:text-violet-100";
+// A team's name wherever it shows.
 export function TeamName({ name, className = "" }: { name: string; className?: string }) {
-  return isDevTeam(name) ? (
-    <span className={`${devTeamCls} ${className}`}>{name}</span>
-  ) : (
-    <span className={className}>{name}</span>
-  );
+  return <span className={className}>{name}</span>;
 }
 
 // Scheduler: REC or COMP, so a game's level is clear at a glance (COMP solid, REC outlined).

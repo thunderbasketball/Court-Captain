@@ -6,18 +6,28 @@ import { addOrgOwnerByCell, deleteOrganization, setOrgOwner, setOrgFeature, setP
 import { PopUp, Toast, useConfirm } from "../client-ui";
 import { inputCls } from "../ui";
 import { GearIcon } from "../OrgSettings";
+import { CardPanel, PanelIcon } from "../CardIcons";
 
-// The gear on an organization's card: its features in a pop-up (each with its switch).
-export function FeaturesGear({ orgName, children }: { orgName: string; children: ReactNode }) {
+// The gear on an organization's card (top right): opens the card with its features at the top (each with its switch),
+// right there; tap again to close. No pop-up.
+export const featuresPanel = (org: string) => `features-${org}`;
+export function FeaturesGear({ org, orgName }: { org: string; orgName: string }) {
   return (
-    <PopUp
-      label={<GearIcon className="size-5" />}
-      ariaLabel={`${orgName} features`}
-      title={`${orgName} features`}
+    <PanelIcon
+      id={featuresPanel(org)}
+      label={`${orgName} features`}
       className="grid size-9 shrink-0 place-items-center rounded-full text-zinc-500 ring-1 ring-zinc-950/10 hover:bg-zinc-50 hover:text-zinc-800 dark:ring-white/15 dark:hover:bg-white/5 dark:hover:text-zinc-100"
     >
-      {() => children}
-    </PopUp>
+      <GearIcon className="size-5" />
+    </PanelIcon>
+  );
+}
+export function FeaturesPanel({ org, orgName, children }: { org: string; orgName: string; children: ReactNode }) {
+  return (
+    <CardPanel id={featuresPanel(org)} className="border-b border-zinc-100 p-4 dark:border-white/5">
+      <h3 className="mb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">{orgName} features</h3>
+      {children}
+    </CardPanel>
   );
 }
 

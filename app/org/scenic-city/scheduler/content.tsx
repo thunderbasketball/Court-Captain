@@ -23,9 +23,7 @@ import { GamePlace, HomeAway } from "../../../LeagueGames";
 import type { ScheduledGame } from "@/lib/scenic-games";
 import { GameDayGear, ProgramGear } from "./GameLengthInput";
 import { GridBoard } from "./GridBoard";
-import { SimulationToggle } from "./SimulationToggle";
 import { CreateAllMatchups } from "./CreateAllMatchups";
-import { simulatedTeams } from "@/lib/dev-teams";
 
 import { PageFrame } from "../../../ui";
 import { hasFeature } from "@/lib/features";
@@ -94,11 +92,7 @@ export async function SchedulerContent({
       };
     })
     .filter((d) => d.programs.length);
-  const [sim, programLength] = await Promise.all([
-    simulatedTeams(db),
-    program ? programGameLength({ pool: db, now: () => new Date() }, user, program.id) : null,
-  ]);
-  const simOn = !!program && sim.teams > 0 && sim.programId === program.id;
+  const programLength = program ? await programGameLength({ pool: db, now: () => new Date() }, user, program.id) : null;
   const publishing = program
     ? { can: await canPublish(db, user), by: (await schedulePublished(db, program.id))?.by ?? null }
     : { can: false, by: null };
@@ -108,8 +102,7 @@ export async function SchedulerContent({
   return (
     <>
       {!embedded && <AppHeader user={user} context={scenic.key} tab="scheduler" />}
-      {/* Yellow while the program being scheduled is in Simulation mode. */}
-      <div className={`flex flex-1 flex-col ${simOn ? "bg-amber-100 dark:bg-amber-950/40" : ""}`}>
+      <div className="flex flex-1 flex-col">
         <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 py-6">
           <PageTitle title="Scheduler" subtitle="Each Game Day across every League: its teams, matchups and grid." />
           {program && (
@@ -145,24 +138,10 @@ export async function SchedulerContent({
                     programName={program.name}
                     minutes={programLength.minutes}
                     setBy={who ? programLength.setBy : null}
-                    simulation={
-                      <SimulationToggle
-                        teams={sim.teams}
-                        inProgram={sim.programId}
-                        inProgramName={sim.programName}
-                        programId={program.id}
-                        programName={program.name}
-                      />
-                    }
                   />
                 )}
               </div>
             </div>
-          )}
-          {simOn && (
-            <p className="rounded-xl border border-dashed border-amber-500 bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900 dark:border-amber-400/60 dark:bg-amber-500/15 dark:text-amber-200">
-              Simulation mode · {sim.teams} (DEV) teams in {program!.name}. Turn it off in the gear.
-            </p>
           )}
           {!day ? (
             <p className={`${card} px-4 py-3 text-sm text-zinc-500`}>

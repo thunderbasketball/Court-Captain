@@ -20,6 +20,7 @@ import {
   AddPool,
   MoveTeam,
   ProgramLogo,
+  ProgramGearIcon,
   ProgramSettings,
   RegisterTeam,
   TeamOffButton,
@@ -132,23 +133,24 @@ export async function ProgramContent({
             <div className="flex shrink-0 items-center gap-1">
               {!embedded && <RegBadge status={p.status} />}
               {/* The gear, top right: Edit, Logo, Delete (Directors of Programs). */}
-              {manage && (
-                <ProgramSettings
-                  program={p}
-                  logo={p.logo}
-                  teams={p.teams}
-                  grades={p.divisionList.length ? gradeRows : null}
-                  rec={{ ...rec!, by: who ? rec!.by : null }}
-                  gradeRules={await programGradeRules(db, p.id)}
-                  today={p.today}
-                  rules={
-                    (await db.query<{ name: string }>("select rules_name as name from scenic_programs where id = $1 and rules is not null", [p.id]))
-                      .rows[0] ?? null
-                  }
-                />
-              )}
+              {manage && <ProgramGearIcon program={p} />}
             </div>
           </div>
+          {manage && (
+            <ProgramSettings
+              program={p}
+              logo={p.logo}
+              teams={p.teams}
+              grades={p.divisionList.length ? gradeRows : null}
+              rec={{ ...rec!, by: who ? rec!.by : null }}
+              gradeRules={await programGradeRules(db, p.id)}
+              today={p.today}
+              rules={
+                (await db.query<{ name: string }>("select rules_name as name from scenic_programs where id = $1 and rules is not null", [p.id]))
+                  .rows[0] ?? null
+              }
+            />
+          )}
           <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
             <dt className="text-zinc-500">Season</dt>
             <dd>

@@ -1,11 +1,12 @@
 "use client";
 
-import { AddPersonIcon, addIconBtn } from "../../../CardIcons";
+import { AddPersonIcon, CardPanel, PanelIcon, addIconBtn, closeCardPanel } from "../../../CardIcons";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Alert, PopUp, Toast, useConfirm } from "../../../client-ui";
+import { Alert, Toast, useConfirm } from "../../../client-ui";
 import { fieldLabel, inputCls, pillCls, primaryBtn } from "../../../ui";
-import { addCoach, removeCoach, removeTeam, setAltName } from "./actions";
+import { addCoach, editTeam, removeCoach, removeTeam, setAltName } from "./actions";
+import { GRADES, LEVELS, PREK, gradeSort, type Gender } from "@/lib/team-names";
 
 
 // Delete a team (asks first). Its coaches come off it.
@@ -44,26 +45,36 @@ export function DeleteTeamButton({ org, id, name }: { org: string; id: string; n
   );
 }
 
-// + Add on a team's Coaches: a pop-up for name, cell and Head or Assistant Coach.
-export function AddCoachButton({ org, teamId, hasHead }: { org: string; teamId: string; hasHead: boolean }) {
+// Add staff on a team's Staff card: the icon on its title line opens the form at the top of the card (no pop-up).
+export const addStaffPanel = (teamId: string) => `add-staff-${teamId}`;
+export function AddCoachButton({ teamId }: { teamId: string }) {
+  return (
+    <PanelIcon id={addStaffPanel(teamId)} label="Add staff" className={addIconBtn}>
+      <AddPersonIcon />
+    </PanelIcon>
+  );
+}
+
+export function AddCoachPanel({ org, teamId, hasHead }: { org: string; teamId: string; hasHead: boolean }) {
   const router = useRouter();
   const [msg, setMsg] = useState<string | null>(null);
+  const id = addStaffPanel(teamId);
   return (
     <>
-      <PopUp label={<AddPersonIcon />} ariaLabel="Add staff" title="Add staff" className={addIconBtn}>
-        {(close) => (
+      <CardPanel id={id}>
+        <div className="pt-3">
           <CoachForm
             org={org}
             teamId={teamId}
             hasHead={hasHead}
             onAdded={(text) => {
-              close();
+              closeCardPanel(id);
               setMsg(text);
               router.refresh();
             }}
           />
-        )}
-      </PopUp>
+        </div>
+      </CardPanel>
       {msg && <Toast key={msg} message={msg} />}
     </>
   );
@@ -191,44 +202,124 @@ export function RemoveCoachButton({
   );
 }
 
-// The team's Alternate name ("Bolts"): change or clear it (Admins and Directors of Teams).
-export function AltNameButton({ org, id, alt }: { org: string; id: string; alt: string | null }) {
+// Edit on the team's card (Admins and Directors of Teams): its gender, grades, level (REC or COMP) and Alternate name,
+// right there (no pop-up). The name follows the rule; a team in a League program that hasn't ended is withdrawn first
+// (the server says so).
+export function TeamEditButton({
+  org,
+  id,
+  team,
+}: {
+  org: string;
+  id: string;
+  team: { gender: Gender; grades: string[]; level: "COMP" | "REC"; altName: string | null; changedBy: string | null };
+}) {
   const router = useRouter();
-  return (
-    <PopUp label={alt ? "Edit alternate name" : "+ Alternate name"} title="Alternate name" link>
-      {(close) => <AltNameForm org={org} id={id} alt={alt} onDone={() => (close(), router.refresh())} />}
-    </PopUp>
-  );
-}
-
-function AltNameForm({ org, id, alt, onDone }: { org: string; id: string; alt: string | null; onDone: () => void }) {
-  const [value, setValue] = useState(alt ?? "");
+  const [open, setOpen] = useState(false);
+  const [gender, setGender] = useState<Gender>(team.gender);
+  const [grades, setGrades] = useState<string[]>(team.grades);
+  const [level, setLevel] = useState<string>(team.level);
+  const [alt, setAlt] = useState(team.altName ?? "");
   const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
   const [busy, start] = useTransition();
+  const reset = () => {
+    setGender(team.gender);
+    setGrades(team.grades);
+    setLevel(team.level);
+    setAlt(team.altName ?? "");
+    setError(null);
+  };
+  // One grade, or two next to each other; Pre-K is on its own, Coed and REC.
+  const tapGrade = (g: string) => {
+    if (g === PREK) {
+      setGrades([PREK]);
+      setGender("Coed");
+      setLevel("REC");
+      return;
+    }
+    if (gender === "Coed") setGender("Boys");
+    setGrades((cur) => {
+      if (cur.includes(PREK)) return [g];
+      if (cur.includes(g)) return cur.length > 1 ? cur.filter((x) => x !== g) : cur;
+      if (cur.length === 1 && Math.abs(gradeSort(cur[0]) - gradeSort(g)) === 1) return [...cur, g].sort((x, y) => gradeSort(x) - gradeSort(y));
+      return [g];
+    });
+  };
+  if (!open)
+    return (
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" onClick={() => (reset(), setDone(null), setOpen(true))} className="text-sm font-medium text-thunder-blue hover:underline">
+          Edit team
+        </button>
+        {done && <span className="text-sm text-emerald-700 dark:text-emerald-400">{done}</span>}
+        {team.changedBy && <span className="text-xs text-zinc-500">Changed by {team.changedBy}</span>}
+      </div>
+    );
   return (
     <form
-      className="space-y-3"
+      className="space-y-3 rounded-xl bg-zinc-50 p-3 dark:bg-white/5"
       onSubmit={(e) => {
         e.preventDefault();
         start(async () => {
-          const r = await setAltName(org, id, value);
+          setError(null);
+          const r = await editTeam(org, id, { gender, grades, level });
           if (!r.ok) return setError(r.message);
-          onDone();
+          if (alt.trim() !== (team.altName ?? "")) {
+            const a = await setAltName(org, id, alt);
+            if (!a.ok) return setError(a.message);
+          }
+          setOpen(false);
+          setDone(`Saved ✓ ${r.name}`);
+          router.refresh();
         });
       }}
     >
-      <p className="text-sm text-zinc-500">Shown after the team&apos;s name. Leave blank for none.</p>
-      <input
-        className={inputCls}
-        maxLength={60}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        placeholder="e.g. Bolts"
-      />
+      <div>
+        <span className={fieldLabel}>Gender</span>
+        <div className="flex flex-wrap gap-2">
+          {(["Boys", "Girls"] as const).map((g) => (
+            <button key={g} type="button" className={pillCls(gender === g)} onClick={() => (setGender(g), grades.includes(PREK) && setGrades(["K"]))}>
+              {g}
+            </button>
+          ))}
+          {gender === "Coed" && <span className={pillCls(true)}>Coed</span>}
+        </div>
+      </div>
+      <div>
+        <span className={fieldLabel}>Grade (one, or two next to each other)</span>
+        <div className="flex flex-wrap gap-1.5">
+          {[PREK, ...GRADES].map((g) => (
+            <button key={g} type="button" className={`${pillCls(grades.includes(g))} min-w-10`} onClick={() => tapGrade(g)}>
+              {g === PREK ? "Pre-K" : g}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <span className={fieldLabel}>Level</span>
+        <div className="flex gap-2">
+          {LEVELS.map((l) => (
+            <button key={l} type="button" className={pillCls(level === l)} onClick={() => setLevel(l)} disabled={grades.includes(PREK) && l === "COMP"}>
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+      <label className="block">
+        <span className={fieldLabel}>Alternate name (optional)</span>
+        <input className={inputCls} maxLength={60} value={alt} onChange={(e) => setAlt(e.target.value)} placeholder="e.g. Bolts" />
+      </label>
       {error && <Alert tone="red">{error}</Alert>}
-      <button type="submit" disabled={busy} className={`${primaryBtn} w-full`}>
-        {busy ? "Saving…" : "Save"}
-      </button>
+      <div className="flex items-center gap-3">
+        <button type="submit" disabled={busy || !grades.length} className={primaryBtn}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className="text-sm font-medium text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
+          Cancel
+        </button>
+      </div>
     </form>
   );
 }
+

@@ -20,7 +20,7 @@ import { scheduleAnalysis } from "@/lib/scenic-analysis";
 import { uniformRequests } from "@/lib/uniforms";
 import AppHeader from "./AppHeader";
 import { AddIcon } from "./CardIcons";
-import DocumentsCard from "./documents/DocumentsCard";
+import CourtSyncCard, { anyCourtSync, courtSyncAlert, type CourtSyncParts } from "./hosting/CourtSyncCard";
 import { GymToolIcons, GymToolPanels } from "./GymTools";
 import MembersCards, { type MemberCard } from "./MembersCards";
 import { OrgMetricsWithVisits, todoCounts } from "./OrgMetrics";
@@ -29,7 +29,6 @@ import SubCard from "./SubCard";
 import SupportCard from "./SupportCard";
 import OfficialsCard from "./officials/OfficialsCard";
 import GamesToOfficiateCard from "./officiating/GamesToOfficiateCard";
-import { OfficiatingOffersCard, OfficiatingRequestsCard } from "./officiating/OfficiatingCards";
 // Each part's contents (several still read the data where that organization keeps it today: Thunder's own teams,
 // practices and uniforms tables, Scenic City's League tables, and every other organization's).
 import { OrgTeamsContent } from "./org/[slug]/teams/content";
@@ -47,19 +46,15 @@ import { TeamGymsContent } from "./org/thunder/facilities/team-gyms-content";
 import { MembersContent } from "./org/thunder/members/content";
 import { ScenicTeamsContent } from "./org/scenic-city/teams/content";
 import { SchedulerContent } from "./org/scenic-city/scheduler/content";
-import { GameDaysContent } from "./org/scenic-city/game-days/content";
-import { CourtsContent } from "./org/scenic-city/courts/content";
-import { PartnersContent } from "./org/scenic-city/partners/content";
 import { ScenicUsersContent } from "./org/scenic-city/users/content";
 import { ScenicCoachesContent } from "./org/scenic-city/members/coaches/content";
-import { HostingSitesMembersContent } from "./org/scenic-city/members/hosting-sites/content";
 import { ScheduleAnalysis } from "./org/scenic-city/ScheduleAnalysis";
 import OrgPlaybookCard from "./OrgPlaybookCard";
 
 // Every organization's Home (SPEC.md section 14), one page for all: a stack of cards in one order, each shown only when
 // the organization has that feature and the person has the role for it, never because of which organization it is:
-// Home · Teams · Programs · Scheduler · Practice · Uniforms · Facilities · Documents · Members · Games to officiate ·
-// CourtSync · Support. Only open cards are built (`?open=teams,members`); a card's title, count and red alert always show.
+// Home · Teams · Programs · Scheduler · Practice · Uniforms · Facilities (with CourtSync) · Members · Games to officiate ·
+// Support. Only open cards are built (`?open=teams,members`); a card's title, count and red alert always show.
 export default async function OrgHome({
   org: asked,
   searchParams,
@@ -148,6 +143,16 @@ export default async function OrgHome({
       {leagueTeams && <ScenicTeamsContent searchParams={inner} embedded />}
     </div>
   );
+  // CourtSync's parts (each for who may see it), gathered in one card inside Facilities.
+  const courtSync: CourtSyncParts = {
+    host: hostsGames,
+    documents: !!documents,
+    league: leagueFacilities,
+    noOfficials,
+    officiating,
+    officiatingWait,
+    officialsGroup: !!toOfficiate,
+  };
   const facilitiesBody = (
     <div className="space-y-2">
       {ownGyms &&
@@ -172,37 +177,23 @@ export default async function OrgHome({
         ) : (
           <OrgFacilitiesContent params={here} embedded />
         ))}
-      {leagueFacilities && (
-        <>
-          <SubCard title="Game days">
-            <GameDaysContent embedded />
-          </SubCard>
-          <SubCard title="Courts">
-            <CourtsContent embedded />
-          </SubCard>
-          <SubCard
-            title="Hosting Organizations"
-            count={noOfficials ? `${noOfficials} ${noOfficials === 1 ? "gym" : "gyms"} without officials` : undefined}
-            alert={noOfficials > 0}
-          >
-            <PartnersContent embedded />
-          </SubCard>
-        </>
-      )}
+      {/* Everything CourtSync, in one card. */}
+      <CourtSyncCard org={org} user={user} parts={courtSync} />
     </div>
   );
-  // Members: a League keeps its Staff, Hosting Organizations, Coaches, Officials Groups and Officials as cards; clubs
+  // Members: a League keeps its Staff, Coaches and Officials as cards (Hosting Organizations and Officials Groups are in
+  // Facilities → CourtSync); clubs
   // their Staff, Coaches, Players, Families and Officials (inside the part).
   const league = has("hosting-partners");
   const membersBody = league ? (
-    <LeagueMembers user={user} org={org} admin={admin} asking={asking} sites={facilitiesArea} coaches={teamsArea || programsArea} officiating={officiating} wait={officiatingWait} officials={officials && has("officials")} />
+    <LeagueMembers user={user} org={org} admin={admin} asking={asking} coaches={teamsArea || programsArea} officials={officials && has("officials")} />
   ) : org === "thunder" ? (
     <MembersContent searchParams={inner} embedded />
   ) : (
     <OrgMembersContent params={here} searchParams={inner} embedded />
   );
   const showMembers = league
-    ? admin || facilitiesArea || teamsArea || programsArea || !!officiating
+    ? admin || teamsArea || programsArea || (officials && has("officials"))
     : admin || (has("team-building") && teamsArea) || playersArea || officials;
 
   const cards: MemberCard[] = [
@@ -258,8 +249,9 @@ export default async function OrgHome({
         ]
       : []),
     ...(uniformsOn ? [{ key: "uniforms", title: "Uniforms", alert: !!alerts?.uniforms, body: <UniformsContent embedded /> }] : []),
-    ...(ownGyms || leagueFacilities ? [{ key: "facilities", title: "Facilities", alert: noOfficials > 0, body: facilitiesBody }] : []),
-    ...(documents ? [{ key: "documents", title: "Documents", body: <DocumentsCard org={org} user={user} /> }] : []),
+    ...(ownGyms || anyCourtSync(courtSync)
+      ? [{ key: "facilities", title: "Facilities", alert: courtSyncAlert(courtSync), body: facilitiesBody }]
+      : []),
     // CourtPlaybook: the organization's own playbook and the plays its teams shared (Owners and Admins).
     ...(has("playbook") && admin ? [{ key: "playbook", title: "Playbook", body: <OrgPlaybookCard org={org} user={user} /> }] : []),
     ...(showMembers
@@ -267,8 +259,8 @@ export default async function OrgHome({
           {
             key: "members",
             title: "Members",
-            // Join requests waiting, officials groups asking to officiate, or CourtOfficials without an Assigner.
-            alert: (metrics?.waiting.requests ?? 0) > 0 || asking > 0 || officiatingWait > 0 || assigners === 0,
+            // Join requests waiting, or CourtOfficials without an Assigner.
+            alert: (metrics?.waiting.requests ?? 0) > 0 || asking > 0 || assigners === 0,
             body: membersBody,
           },
         ]
@@ -284,8 +276,6 @@ export default async function OrgHome({
           },
         ]
       : []),
-    // An Officials Group's CourtSync: ask leagues to officiate their games (its Admins and Officials Assigners).
-    ...(toOfficiate ? [{ key: "courtsync", title: "CourtSync", body: <OfficiatingOffersCard org={org} user={user} /> }] : []),
     { key: "support", title: "Support", alert: (metrics?.waiting.newChats ?? 0) > 0, body: <SupportCard user={user} org={org} /> },
   ];
 
@@ -324,27 +314,21 @@ async function Analysis({ user }: { user: SessionUser }) {
   return days ? <ScheduleAnalysis days={days} /> : <p className="text-sm text-zinc-500">No upcoming Game Days.</p>;
 }
 
-// A League's Members: Staff (Admins), Hosting Organizations (Facilities), Coaches (Teams or Programs), Officials Groups
-// asking to officiate its games, and its own Officials.
+// A League's Members: Staff (Admins), Coaches (Teams or Programs) and its own Officials. (Hosting Organizations and
+// Officials Groups are in Facilities → CourtSync.)
 function LeagueMembers({
   user,
   org,
   admin,
   asking,
-  sites,
   coaches,
-  officiating,
-  wait,
   officials,
 }: {
   user: SessionUser;
   org: OrgSlug;
   admin: boolean;
   asking: number;
-  sites: boolean;
   coaches: boolean;
-  officiating: unknown[] | null;
-  wait: number;
   officials: boolean;
 }): ReactNode {
   return (
@@ -354,19 +338,9 @@ function LeagueMembers({
           <ScenicUsersContent embedded />
         </SubCard>
       )}
-      {sites && (
-        <SubCard title="Hosting Organizations">
-          <HostingSitesMembersContent embedded />
-        </SubCard>
-      )}
       {coaches && (
         <SubCard title="Coaches">
           <ScenicCoachesContent embedded />
-        </SubCard>
-      )}
-      {officiating && (
-        <SubCard title="Officials Groups" count={wait ? `${wait} waiting` : officiating.length} alert={wait > 0}>
-          <OfficiatingRequestsCard org={org} user={user} />
         </SubCard>
       )}
       {officials && (

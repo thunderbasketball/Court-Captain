@@ -1,6 +1,6 @@
 "use client";
 
-import { CoachBadge, LevelTag, TeamName, isDevTeam, type CoachTag } from "../../../ui";
+import { CoachBadge, LevelTag, TeamName, type CoachTag } from "../../../ui";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, useConfirm } from "../../../client-ui";
@@ -172,9 +172,7 @@ export function MatchupBoard({
               ? "bg-red-50 ring-2 ring-red-500 dark:bg-red-500/15"
               : before
                 ? "bg-amber-50 ring-2 ring-amber-500 dark:bg-amber-500/15"
-                : isDevTeam(t?.name)
-                  ? "bg-violet-50 ring-1 ring-violet-300 dark:bg-violet-500/10 dark:ring-violet-400/30"
-                  : "bg-white ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/15"
+                : "bg-white ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/15"
         }`}
       >
         <span className="flex items-center gap-1 font-medium">

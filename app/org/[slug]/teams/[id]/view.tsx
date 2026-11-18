@@ -15,13 +15,13 @@ import { easternDate } from "@/lib/time";
 import { HeadCoachEmailButton, StaffEdit, WaitingCoachButton } from "../../../../CoachContactTools";
 import { listOrgRoster } from "@/lib/org-rosters";
 import { AddPlayerButton, ImportPlayersButton, RemovePlayerButton } from "../RosterTools";
-import { AddCoachButton, AltNameButton, DeleteTeamButton, RemoveCoachButton } from "../TeamTools";
+import { AddCoachButton, AddCoachPanel, DeleteTeamButton, TeamEditButton, RemoveCoachButton } from "../TeamTools";
 import { followRename } from "@/lib/org-rename";
 import { canChangeOwnPractices, ownPracticeLocations, ownPracticesOn, upcomingOwnPractices } from "@/lib/team-practices";
 import TeamPractices from "../../../../TeamPractices";
 import NextSevenDays from "../../../../NextSevenDays";
 import { takesAttendance } from "@/lib/event-attendance";
-import { listPlays, orgLibrary } from "@/lib/playbook";
+import { listFormations, listPlays, orgLibrary } from "@/lib/playbook";
 import PlaybookCard from "../../../../PlaybookCard";
 import { playbookPanel } from "@/lib/play-kinds";
 import { AddIcon } from "../../../../CardIcons";
@@ -78,6 +78,7 @@ export async function OrgTeamView({
   // Its playbook (CourtPlaybook): its coaches and the Directors of Teams; null for anyone else.
   const plays = await listPlays({ pool: db, now: () => new Date() }, user, ref);
   const library = plays ? await orgLibrary({ pool: db, now: () => new Date() }, user, slug, t.id) : null; // to copy from
+  const formations = plays ? await listFormations({ pool: db, now: () => new Date() }, user, ref) : null; // its own Base Formations
 
   const split = (name: string) => {
     const at = name.indexOf(" ");
@@ -110,7 +111,11 @@ export async function OrgTeamView({
         edit={
           canManage && (
             <div className="mt-3">
-              <AltNameButton org={slug} id={t.id} alt={t.altName} />
+              <TeamEditButton
+                org={slug}
+                id={t.id}
+                team={{ gender: t.gender, grades: t.grades, level: t.level, altName: t.altName, changedBy: who ? t.changedBy : null }}
+              />
             </div>
           )
         }
@@ -134,7 +139,8 @@ export async function OrgTeamView({
             tool: canManage && <WaitingCoachButton org={slug} teamId={t.id} first={t.waitingCoach.first} last={t.waitingCoach.last} />,
           },
           chatKey: teamChat ? orgKey(slug, `team-${t.id}`) : null,
-          add: canManage && <AddCoachButton org={slug} teamId={t.id} hasHead={hasHead} />,
+          add: canManage && <AddCoachButton teamId={t.id} />,
+          addPanel: canManage && <AddCoachPanel org={slug} teamId={t.id} hasHead={hasHead} />,
           remove: (c: TeamStaffRow) => canManage && <RemoveCoachButton org={slug} teamId={t.id} coachId={c.coachId} name={`${c.first} ${c.last}`.trim()} />,
           headEmail: (c: TeamStaffRow) => canManage && <HeadCoachEmailButton org={slug} teamId={t.id} name={`${c.first} ${c.last}`.trim()} />,
           edit: (c: TeamStaffRow) => who && (
@@ -319,7 +325,7 @@ export async function OrgTeamView({
           plays && {
             count: plays.length,
             action: <AddIcon id={playbookPanel(t.id)} label="Add a play" />,
-            body: <PlaybookCard org={slug} teamId={t.id} plays={plays} library={library ?? []} />,
+            body: <PlaybookCard org={slug} teamId={t.id} plays={plays} library={library ?? []} formations={formations ?? []} />,
           }
         }
         footer={canManage && <DeleteTeamButton org={slug} id={t.id} name={t.name} />}

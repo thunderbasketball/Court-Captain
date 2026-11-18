@@ -47,7 +47,8 @@ export default function TeamPage(p: {
     list: TeamStaffRow[];
     waiting: { first: string; last: string; tool?: ReactNode } | null; // a Head Coach named without a cell yet
     chatKey: string | null; // the team's staff chat
-    add?: ReactNode;
+    add?: ReactNode; // the Add staff icon (title line)
+    addPanel?: ReactNode; // its form, opened at the top of the card
     remove: (s: TeamStaffRow) => ReactNode;
     headEmail: (s: TeamStaffRow) => ReactNode; // a Head Coach without an email: add it
     edit?: (s: TeamStaffRow) => ReactNode; // Owners and Admins: a staff member's name, cell and email
@@ -134,6 +135,7 @@ export default function TeamPage(p: {
           </span>
         }
       >
+        {p.staff.addPanel}
         {p.staff.chatKey && (
           <CardPanel id={`chat-team-${t.id}`}>
             <ChatPanel chatKey={p.staff.chatKey} />

@@ -15,7 +15,7 @@ import TeamPractices from "../../../../TeamPractices";
 import { canEvaluate, listEvaluations } from "@/lib/evaluations";
 import { listRoster, rosterCandidates } from "@/lib/rosters";
 import { listUniforms, uniformsMissing } from "@/lib/uniforms";
-import { listPlays, orgLibrary } from "@/lib/playbook";
+import { listFormations, listPlays, orgLibrary } from "@/lib/playbook";
 import PlaybookCard from "../../../../PlaybookCard";
 import { playbookPanel } from "@/lib/play-kinds";
 import { AddIcon } from "../../../../CardIcons";
@@ -39,7 +39,7 @@ import { ScheduleList } from "../../../../LeagueGames";
 import { teamScrimmages } from "@/lib/scrimmages";
 import NextSevenDays from "../../../../NextSevenDays";
 import { myPlayers, rsvpsFor, takesAttendance } from "@/lib/event-attendance";
-import { AddStaffButton, DeleteTeamButton, RemoveStaffButton, TeamEditForm } from "./TeamEditor";
+import { AddStaffButton, AddStaffPanel, DeleteTeamButton, RemoveStaffButton, TeamEditForm } from "./TeamEditor";
 import { hasArea, isThunderAdmin, seesWho } from "@/lib/org-admin";
 
 // A Thunder team's page: on its own address, or (`embedded`) inside its row on the Teams list (no header, no ← Teams).
@@ -135,6 +135,7 @@ export async function ThunderTeamView({
   // Its playbook (CourtPlaybook): its coaches and the Directors of Teams; null for anyone else.
   const plays = await listPlays(deps, user, { org: "thunder", teamId: team.id });
   const library = plays ? await orgLibrary(deps, user, "thunder", team.id) : null; // to copy from
+  const formations = plays ? await listFormations(deps, user, { org: "thunder", teamId: team.id }) : null; // its own Base Formations
   // Each player's uniform number (with Uniforms), shown before their name on the Roster.
   const number = new Map((uniforms ?? []).flatMap((u) => (u.number ? [[u.registrantId, u.number] as const] : [])));
 
@@ -213,8 +214,9 @@ export async function ThunderTeamView({
             tool: asDirector && <WaitingCoachButton org="thunder" teamId={team.id} first={team.waitingCoach.first} last={team.waitingCoach.last} />,
           },
           chatKey: chatOn ? `team-${team.id}` : null,
-          add: canEditStaff && (
-            <AddStaffButton
+          add: canEditStaff && <AddStaffButton teamId={team.id} canSetHead={asDirector} filledRoles={team.staff.map((s) => s.role)} />,
+          addPanel: canEditStaff && (
+            <AddStaffPanel
               teamId={team.id}
               gender={team.gender}
               grades={team.grades}
@@ -369,7 +371,7 @@ export async function ThunderTeamView({
           plays && {
             count: plays.length,
             action: <AddIcon id={playbookPanel(team.id)} label="Add a play" />,
-            body: <PlaybookCard org={"thunder"} teamId={team.id} plays={plays} library={library ?? []} />,
+            body: <PlaybookCard org={"thunder"} teamId={team.id} plays={plays} library={library ?? []} formations={formations ?? []} />,
           }
         }
         footer={canEditTeam && <DeleteTeamButton teamId={team.id} name={team.name} players={roster?.length ?? 0} practices={practices.length} />}

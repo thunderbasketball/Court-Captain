@@ -3,7 +3,7 @@
 // The Scheduler's gears. The program's gear (next to Scheduling for): its game length, used on each of its Game Days,
 // and Simulation mode. Each Game Day's gear: the day's override, its own game length and, if wanted, its own time slots
 // for every gym; Cancel override goes back to the program's setting. Placed games move with their blocks.
-import { useState, useTransition, type ReactNode } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { clearDayOverride, setDayOverride, setProgramGameLength } from "../actions";
 import { Alert, PopUp, useConfirm } from "../../../client-ui";
@@ -68,19 +68,17 @@ function Minutes({ id, value, onChange }: { id: string; value: string; onChange:
   );
 }
 
-// The program's gear: its game length (every Game Day without an override) and Simulation mode (passed in).
+// The program's gear: its game length (every Game Day without an override).
 export function ProgramGear({
   programId,
   programName,
   minutes,
   setBy,
-  simulation,
 }: {
   programId: string;
   programName: string;
   minutes: number;
   setBy: string | null;
-  simulation: ReactNode;
 }) {
   const [value, setValue] = useState(String(minutes));
   const { busy, run, messages } = useSave();
@@ -111,7 +109,6 @@ export function ProgramGear({
               {busy ? "Saving…" : "Save"}
             </button>
           </form>
-          {simulation}
         </div>
       )}
     </PopUp>

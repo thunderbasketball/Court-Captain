@@ -11,7 +11,6 @@ import * as teams from "@/lib/scenic-teams";
 import * as clubs from "@/lib/scenic-club-teams";
 import * as matchups from "@/lib/scenic-matchups";
 import * as grid from "@/lib/scenic-grid";
-import * as simulation from "@/lib/dev-teams";
 import * as courts from "@/lib/scenic-courts";
 import * as bindings from "@/lib/scenic-bindings";
 import * as fastbreak from "@/lib/fastbreak/orgs";
@@ -226,10 +225,6 @@ export async function placeGame(matchupId: string, slot: { court: string; starts
   return guarded((u) => grid.placeGame(deps, u, matchupId, slot), "programs");
 }
 
-// Simulation mode (development only): simulated (DEV) teams on or off.
-export async function setSimulation(on: boolean, programId: string) {
-  return guarded((u) => simulation.setSimulation(deps, u, on === true, programId), "programs");
-}
 
 // Facilities → Courts: which divisions may play on a court (none: every division).
 export async function setCourtDivisions(courtKey: string, divisionIds: string[]) {
