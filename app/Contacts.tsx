@@ -273,9 +273,9 @@ function TeamPicker({
   );
 }
 
-// Email the picked people: ✉️ opens the device's email app with them in Bcc (nothing is sent by the app), and
-// 📋 Copy emails copies the addresses (comma-separated) to paste into Gmail or another web mail's Bcc, for a computer
-// with no email app set up. With nobody picked, it says to pick first.
+// Email the picked people: ✉️ opens the device's email app with them in Bcc (nothing is sent by the app); Open in Gmail
+// opens a Gmail draft in a new tab with them in Bcc (any computer signed in to Gmail, no settings); 📋 Copy emails copies
+// the addresses (comma-separated) to paste into any web mail's Bcc. With nobody picked, it says to pick first.
 export function EmailButtons({ emails, label, pickHint }: { emails: string[]; label: string; pickHint: string }) {
   const [copied, setCopied] = useState<string | null>(null);
   const btn =
@@ -308,6 +308,14 @@ export function EmailButtons({ emails, label, pickHint }: { emails: string[]; la
     <span className="flex flex-wrap items-center gap-2">
       <a href={`mailto:?bcc=${emails.map(encodeURIComponent).join(",")}`} className={btn}>
         ✉️ {label} ({emails.length})
+      </a>
+      <a
+        href={`https://mail.google.com/mail/?view=cm&fs=1&bcc=${encodeURIComponent(emails.join(","))}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={btn}
+      >
+        Open in Gmail ↗
       </a>
       <button type="button" onClick={copy} className={btn}>
         📋 Copy emails
