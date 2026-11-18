@@ -8,7 +8,7 @@ import { CardPanel, closeCardPanel } from "./CardIcons";
 import { Alert, PopUp } from "./client-ui";
 import { MAX_VIDEOS, videoPlayer } from "@/lib/play-video";
 import { fieldLabel, inputCls, primaryBtn } from "./ui";
-import { addTeamPlay, changeTeamPlay, copyLibraryPlay, removePlayFormation, removeTeamPlay, savePlayFormation } from "./playbook/actions";
+import { addTeamPlay, changeTeamPlay, copyLibraryPlay, draftTeamPlay, removePlayFormation, removeTeamPlay, savePlayFormation } from "./playbook/actions";
 import { FORMATION_KINDS, formationsFor, fromFormation, isBuiltIn, type Formation, type FormationKind } from "@/lib/play-formations";
 import { GearIcon } from "./OrgSettings";
 import { PanelIcon } from "./CardIcons";
@@ -78,6 +78,11 @@ function PlayForm({
   const [visibility, setVisibility] = useState<Visibility>(play?.visibility ?? (teamId ? "team" : "org"));
   // Links to videos of it being run (one box to start; + Add another link, up to 5).
   const [videos, setVideos] = useState<string[]>(play?.videos.length ? play.videos : [""]);
+  // ✨ Draft from description: Claude draws a first version from the coach's words.
+  const [drafting, setDrafting] = useState(false);
+  const [described, setDescribed] = useState("");
+  const [draftBusy, setDraftBusy] = useState(false);
+  const [draftMsg, setDraftMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const choices = (["private", "team", "org", "public"] as const).filter(
     (v) => (teamId || v !== "team") && (v !== "private" || !play || play.mine || play.visibility === "private"),
   );
@@ -176,6 +181,56 @@ function PlayForm({
       {/* Its drawing on a half court. */}
       <div>
         <span className={fieldLabel}>Diagram</span>
+        {drafting ? (
+          <div className="mb-3 space-y-2 rounded-xl bg-violet-50 p-3 dark:bg-violet-500/10">
+            <p className="text-xs text-violet-900 dark:text-violet-200">
+              Say who starts where and what each player does, in order. Claude draws a first version for you to check and fix.
+            </p>
+            <textarea
+              className={`${inputCls} min-h-24`}
+              value={described}
+              maxLength={1500}
+              onChange={(e) => setDescribed(e.target.value)}
+              placeholder="Horns. 1 dribbles to the right wing, 5 sets a ball screen, 4 pops to the top, 2 cuts baseline to the left corner."
+            />
+            {draftMsg && <Alert tone={draftMsg.ok ? "green" : "red"}>{draftMsg.text}</Alert>}
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                disabled={draftBusy || described.trim().length < 10}
+                onClick={async () => {
+                  setDraftBusy(true);
+                  setDraftMsg(null);
+                  const r = await draftTeamPlay(org, teamId, {
+                    description: described,
+                    kind,
+                    formation: hasFormation ? formation : null,
+                    start: frames[0] ?? (picked ? fromFormation(picked) : null),
+                  });
+                  setDraftBusy(false);
+                  if (!r.ok) return setDraftMsg({ ok: false, text: r.message });
+                  setFrames(r.frames);
+                  if (!notes.trim() && r.notes) setNotes(r.notes);
+                  setDraftMsg({ ok: true, text: `Drafted ✓ ${r.frames.length} frame${r.frames.length === 1 ? "" : "s"}. Check it below, fix anything, then save.` });
+                }}
+                className="rounded-full bg-violet-600 px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {draftBusy ? "Drafting… (up to a minute)" : frames.length ? "✨ Draft it (replaces the drawing)" : "✨ Draft it"}
+              </button>
+              <button type="button" onClick={() => setDrafting(false)} className="text-sm text-zinc-500 hover:underline">
+                Close
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => (setDrafting(true), setDraftMsg(null))}
+            className="mb-2 mr-2 rounded-full px-3 py-1 text-sm font-medium text-violet-700 ring-1 ring-violet-500/40 dark:text-violet-300"
+          >
+            ✨ Draft from description
+          </button>
+        )}
         {frames.length ? (
           <>
             <PlayEditor frames={frames} onChange={setFrames} />

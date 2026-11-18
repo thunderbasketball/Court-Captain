@@ -3,7 +3,8 @@ import type { ReactNode } from "react";
 import { formatCell } from "@/lib/phone";
 import { MustBeEntered } from "./TeamRow";
 import { ViewAsButton } from "./ViewAsButton";
-import { CardPanel, ChatIcon, EmailIcon, PanelIcon, TextIcon } from "./CardIcons";
+import { CardPanel, ChatIcon, EmailPanelIcon, PanelIcon, TextIcon } from "./CardIcons";
+import { EmailButtons } from "./Contacts";
 import ChatPanel from "./ChatPanel";
 import { Chip, CollapseCard, EmailLink, JerseyNumber, PersonRow, PhoneLink, card } from "./ui";
 import RosterPlayerRow from "./org/thunder/teams/RosterPlayerRow";
@@ -77,6 +78,7 @@ export default function TeamPage(p: {
 }) {
   const t = p.team;
   const hasHead = p.staff.list.some((s) => s.role === "HeadCoach");
+  const staffEmails = [...new Set(p.staff.list.flatMap((s) => (s.email ? [s.email.toLowerCase()] : [])))];
   return (
     <main className={p.embedded ? "space-y-4 rounded-2xl bg-zinc-50 p-3 dark:bg-white/5" : "mx-auto w-full max-w-xl flex-1 space-y-4 px-4 py-6"}>
       {p.back && (
@@ -130,12 +132,18 @@ export default function TeamPage(p: {
                 <ChatIcon />
               </PanelIcon>
             )}
-            <EmailIcon emails={p.staff.list.flatMap((s) => (s.email ? [s.email] : []))} label="Email staff" />
+            <EmailPanelIcon id={`email-staff-${t.id}`} emails={staffEmails} label="Email staff" />
             {p.staff.add}
           </span>
         }
       >
         {p.staff.addPanel}
+        {/* ✉️ Email staff: the email app, or 📋 Copy emails to paste into web mail. */}
+        <CardPanel id={`email-staff-${t.id}`}>
+          <div className="pt-3">
+            <EmailButtons emails={staffEmails} label="Email staff" pickHint="" />
+          </div>
+        </CardPanel>
         {p.staff.chatKey && (
           <CardPanel id={`chat-team-${t.id}`}>
             <ChatPanel chatKey={p.staff.chatKey} />
@@ -211,11 +219,16 @@ export default function TeamPage(p: {
                 <ChatIcon />
               </PanelIcon>
             )}
-            <EmailIcon emails={p.roster.emails} label="Email parents" />
+            <EmailPanelIcon id={`email-parents-${t.id}`} emails={p.roster.emails} label="Email parents" />
             {p.roster.add}
           </span>
         }
       >
+        <CardPanel id={`email-parents-${t.id}`}>
+          <div className="pt-3">
+            <EmailButtons emails={[...new Set(p.roster.emails.map((e) => e.toLowerCase()))]} label="Email parents" pickHint="" />
+          </div>
+        </CardPanel>
         {p.roster.chatKey && (
           <CardPanel id={`chat-parents-${t.id}`}>
             <ChatPanel chatKey={p.roster.chatKey} />

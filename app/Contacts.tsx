@@ -265,21 +265,54 @@ function TeamPicker({
         })}
       </div>
       {email ? (
-        emails.length ? (
-          <a
-            href={`mailto:?bcc=${emails.map(encodeURIComponent).join(",")}`}
-            className="inline-flex shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
-          >
-            ✉️ Email Head Coaches ({emails.length})
-          </a>
-        ) : (
-          <span className="inline-flex shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue opacity-50 ring-1 ring-thunder-blue/30 dark:text-blue-400">
-            ✉️ Email Head Coaches (0)
-          </span>
-        )
+        <EmailButtons emails={emails} label="Email Head Coaches" pickHint="Tick teams above first." />
       ) : (
         <GroupTextButton cells={cells} label="Text Head Coaches" />
       )}
     </div>
+  );
+}
+
+// Email the picked people: ✉️ opens the device's email app with them in Bcc (nothing is sent by the app), and
+// 📋 Copy emails copies the addresses (comma-separated) to paste into Gmail or another web mail's Bcc, for a computer
+// with no email app set up. With nobody picked, it says to pick first.
+export function EmailButtons({ emails, label, pickHint }: { emails: string[]; label: string; pickHint: string }) {
+  const [copied, setCopied] = useState<string | null>(null);
+  const btn =
+    "inline-flex shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10";
+  if (!emails.length)
+    return (
+      <span className="flex flex-wrap items-center gap-2">
+        <span className={`${btn} opacity-50`}>✉️ {label} (0)</span>
+        <span className="text-xs text-zinc-500">{pickHint}</span>
+      </span>
+    );
+  const copy = async () => {
+    const text = emails.join(", ");
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Older browsers: copy through a hidden box.
+      const t = document.createElement("textarea");
+      t.value = text;
+      t.style.position = "fixed";
+      t.style.opacity = "0";
+      document.body.appendChild(t);
+      t.select();
+      document.execCommand("copy");
+      t.remove();
+    }
+    setCopied(`Copied ✓ ${emails.length} email${emails.length === 1 ? "" : "s"}. Paste them into Bcc.`);
+  };
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <a href={`mailto:?bcc=${emails.map(encodeURIComponent).join(",")}`} className={btn}>
+        ✉️ {label} ({emails.length})
+      </a>
+      <button type="button" onClick={copy} className={btn}>
+        📋 Copy emails
+      </button>
+      {copied && <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">{copied}</span>}
+    </span>
   );
 }

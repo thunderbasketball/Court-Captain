@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { GroupTextButton } from "./Contacts";
+import { EmailButtons, GroupTextButton } from "./Contacts";
 
 // A list to pick people from, in levels that open when tapped (e.g. Gender → Grade → Team → Coach). A tick on any level
 // picks everyone under it; then Text sends one group text to the picked cells (split into texts of 19 when more), or
@@ -101,18 +101,7 @@ export default function PeoplePicker({
       </div>
       <div className="flex flex-wrap gap-2">
         {email ? (
-          emails.length ? (
-            <a
-              href={`mailto:?bcc=${emails.map(encodeURIComponent).join(",")}`}
-              className="shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
-            >
-              ✉️ {textLabel} ({emails.length})
-            </a>
-          ) : (
-            <span className="shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-thunder-blue opacity-50 ring-1 ring-thunder-blue/30 dark:text-blue-400">
-              ✉️ {textLabel} (0)
-            </span>
-          )
+          <EmailButtons emails={emails} label={textLabel} pickHint="Tick coaches above (or Everyone) first." />
         ) : (
           <GroupTextButton cells={cells} label={textLabel} />
         )}

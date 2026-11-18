@@ -38,20 +38,17 @@ export function TextIcon({ cells, label }: { cells: (string | null)[]; label: st
   );
 }
 
-export function EmailIcon({ emails, label }: { emails: string[]; label: string }) {
-  const list = [...new Set(emails.filter(Boolean).map((e) => e.toLowerCase()))];
-  if (!list.length) return null;
+// ✉️ on a card's title line that opens, in the card, Email (the email app, Bcc) and 📋 Copy emails (EmailButtons, in an
+// EmailPanel with the same id). Nothing when no one has an email.
+export function EmailPanelIcon({ id, emails, label }: { id: string; emails: string[]; label: string }) {
+  const n = new Set(emails.filter(Boolean).map((e) => e.toLowerCase())).size;
+  if (!n) return null;
   return (
-    <a
-      href={`mailto:?bcc=${list.map(encodeURIComponent).join(",")}`}
-      aria-label={`${label} (${list.length})`}
-      title={`${label} (${list.length})`}
-      className={iconBtn}
-    >
+    <PanelIcon id={id} label={`${label} (${n})`}>
       <span aria-hidden className="text-sm">
         ✉️
       </span>
-    </a>
+    </PanelIcon>
   );
 }
 
