@@ -5,6 +5,10 @@
 //   updated) or their login is made (starter PIN 1234), and they take this spot on the staff. A coach gets the Coach role.
 // A new email is confirmed with a code at their next login. A Head Coach's team (and every team they head) is renamed to
 // match their last name.
+// Their role can change too (`newRole`): Head Coach ↔ Assistant Coach, Team Manager or Team Parent. A Head Coach moved
+// to another role leaves the team TBD (renamed so) until a new Head Coach is set; someone becomes Head Coach only while
+// the team has none (change the current one's role first). Thunder keeps one person per role. A coach role gives the
+// organization's Coach role; leaving the coach roles takes it away when they coach none of the organization's teams.
 import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { cleanEmail, cleanName } from "./auth/validate";
@@ -24,7 +28,15 @@ const ROLES = ["HeadCoach", "AsstCoach", "Manager", "TeamParent"];
 const COACHES = ["HeadCoach", "AsstCoach"];
 const LABEL: Record<string, string> = { HeadCoach: "Head Coach", AsstCoach: "Assistant Coach", Manager: "Team Manager", TeamParent: "Team Parent" };
 
-export type StaffEditInput = { coachId: unknown; role: unknown; first: unknown; last: unknown; cell: unknown; email: unknown };
+export type StaffEditInput = {
+  coachId: unknown;
+  role: unknown;
+  first: unknown;
+  last: unknown;
+  cell: unknown;
+  email: unknown;
+  newRole?: unknown; // their role from now on (not sent: the same)
+};
 
 export async function editTeamStaff(deps: Deps, viewer: SessionUser, org: unknown, teamId: unknown, input: StaffEditInput): Promise<Result> {
   if (!isOrgSlug(org)) return { ok: false, message: "That organization doesn't exist." };
@@ -35,6 +47,8 @@ export async function editTeamStaff(deps: Deps, viewer: SessionUser, org: unknow
   if (!role || typeof input.coachId !== "string" || !/^\d{7}$/.test(input.coachId))
     return { ok: false, message: "That person isn't on this team's staff." };
   const oldId = input.coachId;
+  const finalRole = input.newRole === undefined || input.newRole === null ? role : ROLES.includes(String(input.newRole)) ? String(input.newRole) : null;
+  if (!finalRole) return { ok: false, message: "Pick Head Coach, Assistant Coach, Team Manager or Team Parent." };
   const first = cleanName(input.first);
   const last = cleanName(input.last);
   if (!first || !last) return { ok: false, message: "Enter a first and last name (letters only)." };
@@ -88,16 +102,48 @@ export async function editTeamStaff(deps: Deps, viewer: SessionUser, org: unknow
           who,
           now,
         ]);
-        if (COACHES.includes(role)) {
-          await q.query("select set_role($1, $2, 'Coach', true, $3), set_role($1, $2, 'Request', false, $3)", [personId, org, who]);
-          if (!thunder) await dropCoachIfIdle(q, org, oldId, who);
-        }
-        // A league's copy of this team (Scenic City) follows its new Head Coach (Thunder's follows in rename()).
-        if (!thunder && role === "HeadCoach")
-          await q.query("update scenic_teams set coach_id = $2 where org_team_id = $1", [teamId, personId]);
+        if (!thunder && COACHES.includes(role)) await dropCoachIfIdle(q, org, oldId, who);
       }
-      // Team names carry the Head Coach's last name: this team (a Head Coach's spot) and every team the person heads.
-      if (role === "HeadCoach") await (thunder ? rename(q, teamId) : renameOrgTeam(q, org, teamId));
+      // A new role: Head Coach only while the team has none; Thunder keeps one person per role.
+      if (finalRole !== role) {
+        const held = await q.query<{ who: string }>(
+          `select u.first_name || ' ' || u.last_name as who from ${staff} s join users u on u.coach_id = s.coach_id
+            where s.team_id = $1 and s.role = $2 and s.coach_id <> $3 limit 1`,
+          [teamId, finalRole, personId],
+        );
+        if (held.rows[0] && (thunder || finalRole === "HeadCoach"))
+          throw new EditError(
+            `This team already has a ${LABEL[finalRole]} (${held.rows[0].who}). ${finalRole === "HeadCoach" ? "Change their role first, then make" : "Remove or change them first, then make"} ${first} ${last} ${LABEL[finalRole]}.`,
+          );
+        if (thunder) {
+          const mine = await q.query("select 1 from team_staff where team_id = $1 and coach_id = $2 and role = $3", [teamId, personId, finalRole]);
+          if (mine.rowCount) throw new EditError(`${first} ${last} is already ${LABEL[finalRole]} on this team.`);
+        }
+        await q.query(`update ${staff} set role = $4, added_by = $5, added_at = $6 where team_id = $1 and coach_id = $2 and role = $3`, [
+          teamId,
+          personId,
+          role,
+          finalRole,
+          who,
+          now,
+        ]);
+        // A new Head Coach replaces a coach still waiting for a cell.
+        if (finalRole === "HeadCoach")
+          await q.query(`update ${thunder ? "teams" : "org_teams"} set coach_first = null, coach_last = null where id = $1`, [teamId]);
+      }
+      // The organization's Coach role follows the coach roles.
+      if (COACHES.includes(finalRole) && (personId !== oldId || !COACHES.includes(role)))
+        await q.query("select set_role($1, $2, 'Coach', true, $3), set_role($1, $2, 'Request', false, $3)", [personId, org, who]);
+      if (!thunder && COACHES.includes(role) && !COACHES.includes(finalRole)) await dropCoachIfIdle(q, org, personId, who);
+      // A league's copy of this team (Scenic City) follows its Head Coach, or none (Thunder's follows in rename()).
+      if (!thunder && (role === "HeadCoach" || finalRole === "HeadCoach"))
+        await q.query(
+          "update scenic_teams set coach_id = (select coach_id from org_team_coaches where team_id = $1 and role = 'HeadCoach' limit 1) where org_team_id = $1",
+          [teamId],
+        );
+      // Team names carry the Head Coach's last name (or TBD without one): this team, and every team the person heads.
+      if (role === "HeadCoach" || finalRole === "HeadCoach")
+        await (thunder ? rename(q, teamId, role === "HeadCoach" && finalRole !== "HeadCoach") : renameOrgTeam(q, org, teamId));
       await renameHeaded(q, personId);
       return made;
     });

@@ -93,4 +93,59 @@ describe("Owners and Admins edit a team's Head Coach", () => {
     t = await team();
     expect([t.name, t.coaches.map((c) => c.name).sort()]).toEqual(["4G Lee", ["Max Warden", "Patricia Lee"]]);
   });
+
+  it("switches roles: Head Coach to Assistant leaves TBD; another becomes Head Coach; Coach role follows; Thunder too", async () => {
+    const made = (await createOrgTeam(deps(), jo, org, {
+      gender: "Girls",
+      grades: ["4"],
+      level: "COMP",
+      headCoach: { first: "Cindy", last: "Smith", cell: "4235550123" },
+    })) as { id: string };
+    const id = made.id;
+    expect(await addOrgTeamCoach(deps(), jo, org, id, { first: "Ann", last: "Bell", cell: "4235550301", role: "TeamParent" })).toMatchObject({ ok: true });
+    const sw = (coachId: string, role: string, newRole: string, first: string, last: string, cell: string) =>
+      editTeamStaff(deps(), jo, org, id, { coachId, role, newRole, first, last, cell, email: "" });
+    const team = async () => (await getOrgTeam(deps(), jo, org, id))!.team;
+    // A second Head Coach is refused while there is one.
+    expect(await sw("5550301", "TeamParent", "HeadCoach", "Ann", "Bell", "4235550301")).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("already has a Head Coach (Cindy Smith)"),
+    });
+    expect(await sw("5550301", "TeamParent", "Boss", "Ann", "Bell", "4235550301")).toMatchObject({ ok: false });
+    // Head Coach → Assistant: the team is TBD; its League copy has no coach.
+    await db.pool.query(
+      "insert into scenic_teams (name, gender, grade_low, grade, level, coach_id, created_by, updated_by, org_team_id, owner_coach_id) values ('ER 4G Smith', 'Girls', 4, 4, 'COMP', '5550123', 't', 't', $1, '5550001')",
+      [id],
+    );
+    expect(await sw("5550123", "HeadCoach", "AsstCoach", "Cindy", "Smith", "4235550123")).toMatchObject({ ok: true });
+    let t = await team();
+    expect([t.name, t.coaches.map((c) => [c.name, c.role]).sort()]).toEqual(["4G TBD", [["Ann Bell", "TeamParent"], ["Cindy Smith", "AsstCoach"]]]);
+    expect((await db.pool.query("select coach_id from scenic_teams where org_team_id = $1", [id])).rows[0].coach_id).toBeNull();
+    expect(await hasRole("5550123", "Coach")).toBe(true);
+    // Team Parent → Head Coach: renamed for her; she gets the Coach role; the League copy follows.
+    expect(await sw("5550301", "TeamParent", "HeadCoach", "Ann", "Bell", "4235550301")).toMatchObject({ ok: true });
+    t = await team();
+    expect(t.name).toBe("4G Bell");
+    expect(await hasRole("5550301", "Coach")).toBe(true);
+    expect((await db.pool.query("select coach_id from scenic_teams where org_team_id = $1", [id])).rows[0].coach_id).toBe("5550301");
+    // Assistant → Team Manager: no longer a coach anywhere here, so the Coach role goes.
+    expect(await sw("5550123", "AsstCoach", "Manager", "Cindy", "Smith", "4235550123")).toMatchObject({ ok: true });
+    expect(await hasRole("5550123", "Coach")).toBe(false);
+
+    // Thunder: one person per role; Head Coach → Assistant leaves TBD.
+    await db.pool.query("select set_role('5550001', 'thunder', 'Admin', true, 'test')");
+    const th = (
+      await db.pool.query<{ id: string }>(
+        "insert into teams (name, gender, grades, grade_sort, level, created_by) values ('5B Smith', 'Boys', '{5}', 5, 'REC', 'x') returning id::text",
+      )
+    ).rows[0].id;
+    await db.pool.query("insert into team_staff (team_id, coach_id, role, added_by) values ($1, '5550123', 'HeadCoach', 'x'), ($1, '5550301', 'AsstCoach', 'x')", [th]);
+    const tsw = (coachId: string, role: string, newRole: string, first: string, last: string, cell: string) =>
+      editTeamStaff(deps(), jo, "thunder", th, { coachId, role, newRole, first, last, cell, email: "" });
+    expect(await tsw("5550123", "HeadCoach", "AsstCoach", "Cindy", "Smith", "4235550123")).toMatchObject({ ok: false, message: expect.stringContaining("already has a Assistant Coach") });
+    expect(await tsw("5550123", "HeadCoach", "Manager", "Cindy", "Smith", "4235550123")).toMatchObject({ ok: true });
+    expect((await db.pool.query("select name from teams where id = $1", [th])).rows[0].name).toBe("5B TBD");
+    expect(await tsw("5550301", "AsstCoach", "HeadCoach", "Ann", "Bell", "4235550301")).toMatchObject({ ok: true });
+    expect((await db.pool.query("select name from teams where id = $1", [th])).rows[0].name).toBe("5B Bell");
+  });
 });

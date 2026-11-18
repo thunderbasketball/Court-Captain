@@ -17,5 +17,6 @@ export async function saveStaffInfo(org: string, teamId: string, input: StaffEdi
     last: input?.last,
     cell: input?.cell,
     email: input?.email,
+    newRole: input?.newRole,
   });
 }

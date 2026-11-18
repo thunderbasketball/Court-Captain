@@ -390,7 +390,8 @@ export async function settleThunderName(q: Pick<PoolClient, "query">, base: stri
 
 // Re-applies the naming rule after a change: the Head Coach's last name, else the coach waiting for a cell's, else the
 // current one is kept.
-export async function rename(q: PoolClient, teamId: string): Promise<string> {
+// `tbd`: the Head Coach just left the spot (moved to another role): with no Head Coach it's "4G TBD", not the old name.
+export async function rename(q: PoolClient, teamId: string, tbd = false): Promise<string> {
   const t = await q.query<{
     name: string;
     gender: "Boys" | "Girls";
@@ -406,7 +407,9 @@ export async function rename(q: PoolClient, teamId: string): Promise<string> {
     [teamId],
   );
   const r = t.rows[0];
-  const base = teamName(r.gender, r.grades, r.head_last ?? r.coach_last ?? (baseName(r.name).replace(/^\S+\s*/, "") || "Team"));
+  const last = r.head_last ?? r.coach_last;
+  const base =
+    !last && tbd ? tbdBase(r.gender, r.grades) : teamName(r.gender, r.grades, last ?? (baseName(r.name).replace(/^\S+\s*/, "") || "Team"));
   await syncThunderCopy(q, teamId); // its copy in a league follows (Head Coach now; the name below)
   // Same name by the rule (numbered or not): kept.
   if (r.name.toLowerCase() === base.toLowerCase() || baseName(r.name).toLowerCase() === base.toLowerCase()) return r.name;

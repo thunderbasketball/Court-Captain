@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, PopUp, Toast, useConfirm } from "./client-ui";
-import { fieldLabel, inputCls, primaryBtn } from "./ui";
+import { fieldLabel, inputCls, pillCls, primaryBtn } from "./ui";
 import * as thunder from "./org/thunder/teams/actions";
 import * as orgs from "./org/[slug]/teams/actions";
 import { setScenicCoachEmail } from "./org/scenic-city/actions";
@@ -197,6 +197,13 @@ export function HeadCoachEmailButton({ org, teamId, name }: { org: string; teamI
 
 // Owners and Admins: Edit opens a staff member's name, cell and email right in their row (Save / Cancel). A different
 // cell puts that person in this spot (found by cell, or their login made).
+const STAFF_ROLES = [
+  { role: "HeadCoach", label: "Head Coach" },
+  { role: "AsstCoach", label: "Assistant Coach" },
+  { role: "Manager", label: "Team Manager" },
+  { role: "TeamParent", label: "Team Parent" },
+];
+
 export function StaffEdit({
   org,
   teamId,
@@ -222,6 +229,7 @@ export function StaffEdit({
   const [last, setLast] = useState(initialLast);
   const [cell, setCell] = useState(initialCell ?? "");
   const [email, setEmail] = useState(initialEmail ?? "");
+  const [newRole, setNewRole] = useState(role);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, start] = useTransition();
@@ -236,6 +244,7 @@ export function StaffEdit({
             setLast(initialLast);
             setCell(initialCell ?? "");
             setEmail(initialEmail ?? "");
+            setNewRole(role);
             setError(null);
             setSaved(null);
             setOpen(true);
@@ -254,7 +263,7 @@ export function StaffEdit({
         e.preventDefault();
         start(async () => {
           setError(null);
-          const r = await saveStaffInfo(org, teamId, { coachId, role, first, last, cell, email });
+          const r = await saveStaffInfo(org, teamId, { coachId, role, first, last, cell, email, newRole });
           if (!r.ok) return setError(r.message);
           setOpen(false);
           setSaved(r.newLogin ? `Saved ✓ ${first} ${last}'s login is their cell; starter PIN 1234.` : "Saved ✓");
@@ -296,6 +305,22 @@ export function StaffEdit({
           onChange={(e) => setEmail(e.target.value)}
         />
       </label>
+      <div>
+        <span className={fieldLabel}>Role</span>
+        <div className="flex flex-wrap gap-1.5">
+          {STAFF_ROLES.map((r) => (
+            <button key={r.role} type="button" className={pillCls(newRole === r.role)} onClick={() => setNewRole(r.role)}>
+              {r.label}
+            </button>
+          ))}
+        </div>
+        {role === "HeadCoach" && newRole !== "HeadCoach" && (
+          <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">The team is TBD until a new Head Coach is set.</p>
+        )}
+        {role !== "HeadCoach" && newRole === "HeadCoach" && (
+          <p className="mt-1 text-xs text-zinc-500">Only while the team has no Head Coach: change the current one&apos;s role first. The team is renamed for them.</p>
+        )}
+      </div>
       <p className="text-xs text-zinc-500">
         {sameCell
           ? "A new email is confirmed with a code at their next login."
