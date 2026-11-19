@@ -1,21 +1,12 @@
 // Scenic City Members (SPEC.md section 13): the hosting sites' Owners and Admins, and the coaches in each program.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
-import { listDirectors, orgHasArea } from "./org-admin";
+import { orgHasArea } from "./org-admin";
 import { easternDate } from "./time";
 
 type Deps = { pool: Pool; now: () => Date };
 const ORG = "scenic-city";
 type Person = { id: string; name: string; cell: string; email: string | null };
-
-// People's emails by login (shown when their card is opened).
-async function emailsOf(pool: Pool, ids: string[]): Promise<Map<string, string | null>> {
-  const r = await pool.query<{ id: string; email: string | null }>(
-    "select coach_id as id, email from users where coach_id = any($1::text[])",
-    [ids],
-  );
-  return new Map(r.rows.map((x) => [x.id, x.email]));
-}
 
 // Members → Hosting Sites (Admins and Directors of Facilities): each approved hosting site, by name, with the people who
 // run it: an organization's Owners and Admins (CourtCaptain staff stay hidden), or a school's contacts.
@@ -27,28 +18,43 @@ export async function hostingSiteStaff(
   const sites = await deps.pool.query<{ id: string; name: string; org: string | null }>(
     "select id::text, name, org_slug as org from partners where approved and hosts_games order by lower(name)",
   );
-  return Promise.all(
-    sites.rows.map(async (p) => {
-      if (p.org) {
-        const admins = (await listDirectors(deps.pool, p.org)).filter((d) => d.admin);
-        const emails = await emailsOf(deps.pool, admins.map((d) => d.id));
-        const people = admins.map((d) => ({
-          id: d.id,
-          name: d.name,
-          cell: d.cell,
-          email: emails.get(d.id) ?? null,
-          role: d.owner ? "Owner" : "Admin",
-        }));
-        return { ...p, people };
-      }
-      const c = await deps.pool.query<Person>(
-        `select u.coach_id as id, u.first_name || ' ' || u.last_name as name, u.cell, u.email
-         from partner_contacts pc join users u using (coach_id) where pc.partner_id = $1
-         order by lower(u.last_name), lower(u.first_name)`,
-        [p.id],
-      );
-      return { ...p, people: c.rows.map((x) => ({ ...x, role: "Contact" })) };
-    }),
+  // All sites' people in two queries: organizations' Owners and Admins, and schools' contacts.
+  const orgs = [...new Set(sites.rows.flatMap((p) => (p.org ? [p.org] : [])))];
+  const plain = sites.rows.filter((p) => !p.org).map((p) => p.id);
+  const [admins, contacts] = await Promise.all([
+    orgs.length
+      ? deps.pool.query<Person & { org: string; owner: boolean }>(
+          `select org, id, name, cell, email, owner from (
+             select distinct r.org, u.coach_id as id, u.first_name || ' ' || u.last_name as name, u.cell, u.email,
+                    has_role(u.coach_id, r.org, 'Owner') as owner, lower(u.last_name) as l, lower(u.first_name) as f
+               from org_roles r join users u on u.coach_id = r.coach_id
+              where r.org = any($1::text[]) and has_role(u.coach_id, r.org, 'Admin')
+                and not exists (select 1 from platform_admins pa where pa.coach_id = u.coach_id) -- CourtCaptain staff stay hidden
+           ) x order by org, l, f`,
+          [orgs],
+        )
+      : null,
+    plain.length
+      ? deps.pool.query<Person & { partner: string }>(
+          `select pc.partner_id::text as partner, u.coach_id as id, u.first_name || ' ' || u.last_name as name, u.cell, u.email
+             from partner_contacts pc join users u using (coach_id) where pc.partner_id = any($1::bigint[])
+            order by lower(u.last_name), lower(u.first_name)`,
+          [plain],
+        )
+      : null,
+  ]);
+  return sites.rows.map((p) =>
+    p.org
+      ? {
+          ...p,
+          people: (admins?.rows ?? [])
+            .filter((d) => d.org === p.org)
+            .map((d) => ({ id: d.id, name: d.name, cell: d.cell, email: d.email, role: d.owner ? "Owner" : "Admin" })),
+        }
+      : {
+          ...p,
+          people: (contacts?.rows ?? []).filter((c) => c.partner === p.id).map(({ partner: _p, ...c }) => (void _p, { ...c, role: "Contact" })),
+        },
   );
 }
 

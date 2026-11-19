@@ -14,7 +14,6 @@ import { OfficiatingOffersCard, OfficiatingRequestsCard } from "../officiating/O
 import { GameDaysContent } from "../org/scenic-city/game-days/content";
 import { CourtsContent } from "../org/scenic-city/courts/content";
 import { PartnersContent } from "../org/scenic-city/partners/content";
-import { HostingSitesMembersContent } from "../org/scenic-city/members/hosting-sites/content";
 
 const STATUS = {
   pending: ["Request sent, waiting for approval", "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"],
@@ -109,12 +108,7 @@ export default function CourtSyncCard({ org, user, parts: p }: { org: OrgSlug; u
               count={p.noOfficials ? `${p.noOfficials} ${p.noOfficials === 1 ? "gym" : "gyms"} without officials` : undefined}
               alert={p.noOfficials > 0}
             >
-              <div className="space-y-3">
-                <PartnersContent embedded />
-                <SubCard title="Their contacts">
-                  <HostingSitesMembersContent embedded />
-                </SubCard>
-              </div>
+              <PartnersContent embedded />
             </SubCard>
           </>
         )}

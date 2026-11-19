@@ -69,20 +69,64 @@ export async function ThunderTeamView({
   const asDirector = hasArea(user, "teams") && !(active?.key === `team:${team.id}` && team.myRoles.length > 0);
   const canEditTeam = asDirector && team.canEditTeam;
   const canEditStaff = asDirector || team.myRoles.includes("HeadCoach");
-  // Only the Director picks from the full user and volunteer lists; a head coach adds people by cell number.
-  const options = asDirector ? await personOptions(deps, user) : null;
-  const [practices, roster, candidates, mayEvaluate] = await Promise.all([
+  const ref = { org: "thunder" as const, teamId: team.id };
+  const canBook = asDirector || team.myRoles.some((r) => r !== "TeamParent");
+  // Everything below is read side by side (one after another made the page slow); each piece is explained where it's used.
+  const [
+    options,
+    practices,
+    roster,
+    candidates,
+    mayEvaluate,
+    { rules: gradeRules },
+    who,
+    games,
+    own,
+    scrimsByTeam,
+    canOwn,
+    myKids,
+    [uniformsOn, chatOn],
+    missingUniforms,
+    plays,
+    staffTakes,
+    gymChoices,
+    sp,
+  ] = await Promise.all([
+    // Only the Director picks from the full user and volunteer lists; a head coach adds people by cell number.
+    asDirector ? personOptions(deps, user) : null,
     upcomingForTeam(deps, team.id),
     listRoster(deps, user, team.id),
     asDirector ? rosterCandidates(deps, user, team.id) : [],
     canEvaluate(db, user, team.id),
+    orgGradeRules(db, "thunder", new Date()), // set in the organization's gear
+    // Who did it (Created by, Added by, Rostered by, booked by) shows only to Owners and Admins.
+    seesWho(db, user, "thunder"),
+    // Its Scenic City League games (opponent, time and gym once scheduled): matchups are made for its copy there.
+    db
+      .query<{ id: string }>("select id::text from scenic_teams where thunder_team_id = $1", [team.id])
+      .then(async (r) => {
+        const copy = r.rows[0]?.id;
+        return copy ? ((await scheduledGames(db, [copy]))[copy] ?? []) : [];
+      }),
+    // Its own-gym practices (a place the team found itself: any time and length, no limits), with the booked ones.
+    upcomingOwnPractices(deps, ref, 12),
+    // Its scrimmages (another Thunder team, an outside team, or TBD), on Next 7 days and Games.
+    teamScrimmages(deps, "thunder", [team.id]),
+    canChangeOwnPractices(db, user, ref),
+    // Staff whose own children are on the team answer ✓ / ✗ for them in Next 7 days (as their parent).
+    myPlayers(db, user, ref), // shown while viewing as them too (view only)
+    Promise.all([hasFeature(db, "thunder", "uniforms"), hasFeature(db, "thunder", "chat")]),
+    uniformsMissing(deps, team.id), // Uniforms: its title flashes red while anything is missing
+    // Its playbook (CourtPlaybook): its coaches and the Directors of Teams; null for anyone else.
+    listPlays(deps, user, ref),
+    takesAttendance(db, user, ref),
+    canBook ? teamGymChoices(deps, user, team.id) : null,
+    searchParams,
   ]);
+  const scrims = scrimsByTeam[team.id] ?? [];
   const players = roster ?? [];
   const schoolYear = schoolYearOf(easternDate(new Date())); // for each player's grade eligibility
-  const { rules: gradeRules } = await orgGradeRules(db, "thunder", new Date()); // set in the organization's gear
   const issue = rosterIssue(team.grades, players, schoolYear, gradeRules); // "1 Too old": the Players card's title turns red
-  // Who did it (Created by, Added by, Rostered by, booked by) shows only to Owners and Admins.
-  const who = await seesWho(db, user, "thunder");
   // Every parent's cell and email once, for one group text or email to the team's families. A group text holds 19
   // numbers at most: more than that, one cell per player (the first parent with one); still more, it splits into texts.
   const allParentCells = [...new Set(players.flatMap((p) => p.parents.flatMap((g) => (g.cell ? [g.cell] : []))))];
@@ -91,51 +135,43 @@ export async function ThunderTeamView({
     ? [...new Set(players.flatMap((p) => p.parents.flatMap((g) => (g.cell ? [g.cell] : [])).slice(0, 1)))]
     : allParentCells;
   const parentEmails = [...new Set(players.flatMap((p) => p.parents.flatMap((g) => (g.email ? [g.email.toLowerCase()] : []))))];
-  // Its Scenic City League games (opponent, time and gym once scheduled): matchups are made for its copy there.
-  const copy = (await db.query<{ id: string }>("select id::text from scenic_teams where thunder_team_id = $1", [team.id])).rows[0]
-    ?.id;
-  const games = copy ? ((await scheduledGames(db, [copy]))[copy] ?? []) : [];
   const published = games.filter((g) => g.published); // the Games card: only once its League's schedule is published
-  const canBook = asDirector || team.myRoles.some((r) => r !== "TeamParent");
   // Owners and Admins: 👁 View as on the team's staff and on players' parents who have a login (matched by cell), even
   // while on the team's own chip; who they may view is checked again when they tap it.
   const admin = isThunderAdmin(user) && !user.actingBy;
-  const parentLogins: Record<string, string> = admin
-    ? Object.fromEntries(
-        (
-          await db.query<{ cell: string; coach_id: string }>("select cell, coach_id from users where active and cell = any($1)", [
-            allParentCells,
-          ])
-        ).rows.map((u) => [u.cell, u.coach_id]),
-      )
-    : {};
-  // Its own-gym practices (a place the team found itself: any time and length, no limits), with the booked ones.
-  const own = await upcomingOwnPractices(deps, { org: "thunder", teamId: team.id }, 12);
-  // Its scrimmages (another Thunder team, an outside team, or TBD), on Next 7 days and Games.
-  const scrims = (await teamScrimmages({ pool: db, now: () => new Date() }, "thunder", [team.id]))[team.id] ?? [];
-  const canOwn = await canChangeOwnPractices(db, user, { org: "thunder", teamId: team.id });
-  // Staff whose own children are on the team answer ✓ / ✗ for them in Next 7 days (as their parent).
-  const myKids = await myPlayers(db, user, { org: "thunder", teamId: team.id }); // shown while viewing as them too (view only)
   // One page: the team's card on top, then Staff, Players, Available players, Uniforms and Practices as cards that open
   // when tapped (no tabs). An old link with ?tab=roster (or uniforms, practices, staff) opens that card.
-  const sp = await searchParams;
   const requested = sp.tab;
   const week = typeof sp.week === "string" ? sp.week : undefined; // the Full schedule's week
   const opened = typeof requested === "string" ? requested : "";
-  // Available players: still eligible (not on any team), for the coaches to star and evaluate.
-  const available = mayEvaluate
-    ? ((await listEvaluations(deps, user, team.id)) ?? []).filter((c) => c.registered && !c.rosteredOn.length)
-    : null;
-  // Uniforms: its title flashes red while anything is missing.
-  const [uniformsOn, chatOn] = await Promise.all([hasFeature(db, "thunder", "uniforms"), hasFeature(db, "thunder", "chat")]);
-  const [uniforms, missingUniforms] = await Promise.all([
+  // The second round: what needs the first (players, practices, plays, Uniforms on), again side by side.
+  const [parentLogins, available, uniforms, library, formations, ownLocations, rsvps, parentOptions] = await Promise.all([
+    admin
+      ? db
+          .query<{ cell: string; coach_id: string }>("select cell, coach_id from users where active and cell = any($1)", [allParentCells])
+          .then((r): Record<string, string> => Object.fromEntries(r.rows.map((u) => [u.cell, u.coach_id])))
+      : ({} as Record<string, string>),
+    // Available players: still eligible (not on any team), for the coaches to star and evaluate.
+    mayEvaluate
+      ? listEvaluations(deps, user, team.id).then((l) => (l ?? []).filter((c) => c.registered && !c.rosteredOn.length))
+      : null,
     uniformsOn ? listUniforms(deps, user, team.id) : null,
-    uniformsMissing(deps, team.id),
+    plays ? orgLibrary(deps, user, "thunder", team.id) : null, // to copy from
+    plays ? listFormations(deps, user, ref) : null, // its own Base Formations
+    canOwn ? ownPracticeLocations(deps, ref) : [],
+    rsvpsFor(
+      db,
+      ref,
+      [
+        ...practices.map((p) => ({ kind: "slot" as const, id: p.id })),
+        ...own.map((p) => ({ kind: "own" as const, id: p.id })),
+        ...published.map((g) => ({ kind: "game" as const, id: g.id })),
+        ...scrims.map((x) => ({ kind: "scrimmage" as const, id: x.id })),
+      ],
+      myKids.map((p) => p.player),
+    ),
+    canEditStaff ? rosterParentOptions(deps, team.id) : [],
   ]);
-  // Its playbook (CourtPlaybook): its coaches and the Directors of Teams; null for anyone else.
-  const plays = await listPlays(deps, user, { org: "thunder", teamId: team.id });
-  const library = plays ? await orgLibrary(deps, user, "thunder", team.id) : null; // to copy from
-  const formations = plays ? await listFormations(deps, user, { org: "thunder", teamId: team.id }) : null; // its own Base Formations
   // Each player's uniform number (with Uniforms), shown before their name on the Roster.
   const number = new Map((uniforms ?? []).flatMap((u) => (u.number ? [[u.registrantId, u.number] as const] : [])));
 
@@ -184,19 +220,9 @@ export async function ThunderTeamView({
             scrims={scrims}
             now={new Date()}
             team={{ org: "thunder", teamId: team.id }}
-            staff={await takesAttendance(db, user, { org: "thunder", teamId: team.id })}
+            staff={staffTakes}
             mine={myKids}
-            rsvps={await rsvpsFor(
-              db,
-              { org: "thunder", teamId: team.id },
-              [
-                ...practices.map((p) => ({ kind: "slot" as const, id: p.id })),
-                ...own.map((p) => ({ kind: "own" as const, id: p.id })),
-                ...published.map((g) => ({ kind: "game" as const, id: g.id })),
-                ...scrims.map((x) => ({ kind: "scrimmage" as const, id: x.id })),
-              ],
-              myKids.map((p) => p.player),
-            )}
+            rsvps={rsvps}
           />
         }
         staff={{
@@ -224,7 +250,7 @@ export async function ThunderTeamView({
               filledRoles={team.staff.map((s) => s.role)}
               users={options?.users ?? []}
               volunteers={options?.volunteers ?? []}
-              parents={await rosterParentOptions(deps, team.id)}
+              parents={parentOptions}
             />
           ),
           remove: (s: TeamStaffRow) =>
@@ -336,8 +362,8 @@ export async function ThunderTeamView({
                 <BookPracticesPanel
                   org="thunder"
                   teamId={team.id}
-                  choices={await teamGymChoices(deps, user, team.id)}
-                  own={canOwn ? { locations: await ownPracticeLocations(deps, { org: "thunder", teamId: team.id }), today: easternDate(new Date()) } : null}
+                  choices={gymChoices}
+                  own={canOwn ? { locations: ownLocations, today: easternDate(new Date()) } : null}
                   scheduleHref={null}
                 />
               )}
@@ -348,7 +374,7 @@ export async function ThunderTeamView({
                 own={own}
                 canChange={canOwn}
                 canCancel={canBook}
-                locations={canOwn ? await ownPracticeLocations(deps, { org: "thunder", teamId: team.id }) : []}
+                locations={ownLocations}
                 today={easternDate(new Date())}
                 who={who}
                 empty="No practices yet."

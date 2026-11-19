@@ -365,46 +365,91 @@ export type PartnerHours = {
 
 // The partner's courts and their hours on every upcoming game day. Null if the viewer can't manage this partner.
 export async function partnerHours(deps: Deps, viewer: SessionUser, partnerId: unknown): Promise<PartnerHours | null> {
-  if (!isId(partnerId) || !(await canManage(deps.pool, viewer, partnerId))) return null;
+  if (!isId(partnerId)) return null;
+  return (await partnersHours(deps, viewer, [partnerId])).get(partnerId) ?? null;
+}
+
+// The same for many partners at once (Hosting Organizations lists them all): a handful of queries in all, not a handful
+// per partner. Only the partners this person may manage are in the result.
+export async function partnersHours(deps: Deps, viewer: SessionUser, partnerIds: string[]): Promise<Map<string, PartnerHours>> {
+  const out = new Map<string, PartnerHours>();
+  const ids = [...new Set(partnerIds.filter(isId))];
+  if (!ids.length) return out;
+  const mine = await deps.pool.query<{ id: string; org: string | null }>(
+    `select p.id::text, p.org_slug as org from partners p
+      where p.id = any($2::bigint[])
+        and (acts_as($1, 'scenic-city', 'Director')
+             or (has_role($1, 'scenic-city', 'Partner') and exists (select 1 from partner_contacts c where c.partner_id = p.id and c.coach_id = $1)))`,
+    [viewer.coachId, ids],
+  );
+  if (!mine.rows.length) return out;
   const days = (await listGameDays(deps, viewer)) ?? [];
-  // An organization partner (e.g. Thunder): its gyms marked Partner Games in its Facilities, each a whole gym.
-  const org = (await deps.pool.query<{ org: string | null }>("select org_slug as org from partners where id = $1", [partnerId]))
-    .rows[0]?.org;
-  if (org) {
-    const gyms = await deps.pool.query<{ id: string; gym: string; gymKey: string; name: string }>(
-      `select id::text, name as gym, 'o' || id as "gymKey", 'Whole gym' as name from gyms where active and org = $1 order by lower(name)`,
-      [org],
-    );
-    const a = await deps.pool.query<HoursWindow & { key: string }>(
-      `select a.gym_id || ':' || d.id as key, to_char(a.starts, 'HH24:MI') as starts, to_char(a.ends, 'HH24:MI') as ends, a.set_by as "setBy"
-       from gym_availability a join gyms g on g.id = a.gym_id join game_days d on d.day = a.day
-       where a.use = 'partner' and g.org = $2 and d.id = any($1::bigint[])`,
-      [days.map((d) => d.id), org],
-    );
-    return {
-      days,
-      gyms: gyms.rows.map((g) => ({ key: g.gymKey, name: g.gym })),
-      courts: gyms.rows,
-      hours: Object.fromEntries(a.rows.map(({ key, ...w }) => [key, w])),
-    };
+  const dayIds = days.map((d) => d.id);
+  const orgs = [...new Set(mine.rows.flatMap((r) => (r.org ? [r.org] : [])))];
+  const plain = mine.rows.filter((r) => !r.org).map((r) => r.id);
+  const [ogyms, oavail, pgyms, courts, hours] = await Promise.all([
+    // An organization partner (e.g. Thunder): its gyms marked Partner Games in its Facilities, each a whole gym.
+    orgs.length
+      ? deps.pool.query<{ org: string; id: string; gym: string; gymKey: string; name: string }>(
+          `select org, id::text, name as gym, 'o' || id as "gymKey", 'Whole gym' as name from gyms
+            where active and org = any($1::text[]) order by lower(name)`,
+          [orgs],
+        )
+      : null,
+    orgs.length
+      ? deps.pool.query<HoursWindow & { org: string; key: string }>(
+          `select g.org, a.gym_id || ':' || d.id as key, to_char(a.starts, 'HH24:MI') as starts, to_char(a.ends, 'HH24:MI') as ends,
+                  a.set_by as "setBy"
+             from gym_availability a join gyms g on g.id = a.gym_id join game_days d on d.day = a.day
+            where a.use = 'partner' and g.org = any($2::text[]) and d.id = any($1::bigint[])`,
+          [dayIds, orgs],
+        )
+      : null,
+    // A school or club partner: its own gyms and courts, and their hours.
+    plain.length
+      ? deps.pool.query<{ partner: string; key: string; name: string }>(
+          "select partner_id::text as partner, 'p' || id as key, name from partner_gyms where partner_id = any($1::bigint[]) order by lower(name)",
+          [plain],
+        )
+      : null,
+    plain.length
+      ? deps.pool.query<{ partner: string; id: string; gym: string; gymKey: string; name: string }>(
+          `select g.partner_id::text as partner, c.id::text, g.name as gym, 'p' || g.id as "gymKey", c.name
+             from partner_courts c join partner_gyms g on g.id = c.gym_id
+            where g.partner_id = any($1::bigint[]) order by lower(g.name), length(c.name), lower(c.name)`,
+          [plain],
+        )
+      : null,
+    plain.length
+      ? deps.pool.query<HoursWindow & { partner: string; key: string }>(
+          `select g.partner_id::text as partner, h.court_id || ':' || h.game_day_id as key, to_char(h.starts, 'HH24:MI') as starts,
+                  to_char(h.ends, 'HH24:MI') as ends, h.set_by as "setBy"
+             from court_hours h join partner_courts c on c.id = h.court_id join partner_gyms g on g.id = c.gym_id
+            where g.partner_id = any($1::bigint[]) and h.game_day_id = any($2::bigint[])`,
+          [plain, dayIds],
+        )
+      : null,
+  ]);
+  for (const r of mine.rows) {
+    if (r.org) {
+      const gyms = (ogyms?.rows ?? []).filter((g) => g.org === r.org).map(({ org: _o, ...g }) => (void _o, g));
+      const avail = (oavail?.rows ?? []).filter((a) => a.org === r.org);
+      out.set(r.id, {
+        days,
+        gyms: gyms.map((g) => ({ key: g.gymKey, name: g.gym })),
+        courts: gyms,
+        hours: Object.fromEntries(avail.map(({ key, org: _o, ...w }) => (void _o, [key, w]))),
+      });
+    } else {
+      out.set(r.id, {
+        days,
+        gyms: (pgyms?.rows ?? []).filter((g) => g.partner === r.id).map(({ key, name }) => ({ key, name })),
+        courts: (courts?.rows ?? []).filter((c) => c.partner === r.id).map(({ partner: _p, ...c }) => (void _p, c)),
+        hours: Object.fromEntries((hours?.rows ?? []).filter((h) => h.partner === r.id).map(({ key, partner: _p, ...w }) => (void _p, [key, w]))),
+      });
+    }
   }
-  const pgyms = await deps.pool.query<{ key: string; name: string }>(
-    "select 'p' || id as key, name from partner_gyms where partner_id = $1 order by lower(name)",
-    [partnerId],
-  );
-  const courts = await deps.pool.query<{ id: string; gym: string; gymKey: string; name: string }>(
-    `select c.id::text, g.name as gym, 'p' || g.id as "gymKey", c.name from partner_courts c join partner_gyms g on g.id = c.gym_id
-     where g.partner_id = $1 order by lower(g.name), length(c.name), lower(c.name)`,
-    [partnerId],
-  );
-  const h = await deps.pool.query<HoursWindow & { key: string }>(
-    `select h.court_id || ':' || h.game_day_id as key, to_char(h.starts, 'HH24:MI') as starts, to_char(h.ends, 'HH24:MI') as ends,
-            h.set_by as "setBy"
-     from court_hours h join partner_courts c on c.id = h.court_id join partner_gyms g on g.id = c.gym_id
-     where g.partner_id = $1 and h.game_day_id = any($2::bigint[])`,
-    [partnerId, days.map((d) => d.id)],
-  );
-  return { days, gyms: pgyms.rows, courts: courts.rows, hours: Object.fromEntries(h.rows.map(({ key, ...w }) => [key, w])) };
+  return out;
 }
 
 const isTime = (v: unknown): v is string => typeof v === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);

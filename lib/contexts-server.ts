@@ -3,11 +3,13 @@ import { cookies } from "next/headers";
 import type { SessionUser } from "./auth/service";
 import { CONTEXT_COOKIE, pickContext, userContexts, type RoleContext } from "./contexts";
 import { db } from "./db";
+import { memo } from "./request-memo";
 import type { ScenicRole } from "./orgs";
 
-// The viewer's roles, and which one they used last (falls back to their first).
+// The viewer's roles, and which one they used last (falls back to their first). Worked out once per page (the header,
+// the page and its cards all ask; lib/request-memo.ts), fresh in actions.
 export async function currentContexts(user: SessionUser): Promise<{ contexts: RoleContext[]; active: RoleContext | null }> {
-  const contexts = await userContexts(db, user);
+  const contexts = await memo(db, `contexts:${user.coachId}`, () => userContexts(db, user));
   const remembered = (await cookies()).get(CONTEXT_COOKIE)?.value;
   return { contexts, active: pickContext(contexts, remembered) };
 }

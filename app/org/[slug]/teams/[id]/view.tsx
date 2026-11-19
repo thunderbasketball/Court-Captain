@@ -52,33 +52,47 @@ export async function OrgTeamView({
     notFound();
   }
   const { team: t, canManage } = found;
-  const who = await seesWho(db, user, slug); // Owners and Admins see who did it
-  const asked = (await searchParams).tab;
+  const deps = { pool: db, now: () => new Date() };
+  const ref = { org: slug, teamId: t.id };
+  // Everything below is read side by side (one after another made the page slow).
+  const [who, sp, practicesOn, roster, progs, games, chatOn, own, mayChangeOwn, scrimsByTeam, plays, staffTakes] = await Promise.all([
+    seesWho(db, user, slug), // Owners and Admins see who did it
+    searchParams,
+    ownPracticesOn(db, slug), // Practices only with CourtFacility (own gym practices are part of it)
+    listOrgRoster(deps, user, slug, t.id),
+    teamPrograms(deps, user, slug, t.id),
+    // Its League games (opponent, time and gym once scheduled): matchups are made for its copy in the League.
+    db
+      .query<{ id: string }>("select id::text from scenic_teams where org_team_id = $1", [t.id])
+      .then(async (r) => {
+        const copy = r.rows[0]?.id;
+        return copy ? ((await scheduledGames(db, [copy]))[copy] ?? []) : [];
+      }),
+    hasFeature(db, slug, "team-chat"),
+    upcomingOwnPractices(deps, ref, 12), // its own-gym practices (a place the team found itself), also for Next 7 days
+    canChangeOwnPractices(db, user, ref),
+    // Its scrimmages (another of the organization's teams, an outside team, or TBD), on Next 7 days and Games.
+    teamScrimmages(deps, slug, [t.id]),
+    // Its playbook (CourtPlaybook): its coaches and the Directors of Teams; null for anyone else.
+    listPlays(deps, user, ref),
+    takesAttendance(db, user, ref),
+  ]);
+  const asked = sp.tab;
   const opened = typeof asked === "string" ? asked : "";
-  // Practices only with CourtFacility (own gym practices are part of it).
-  const practicesOn = await ownPracticesOn(db, slug);
-  const roster = await listOrgRoster({ pool: db, now: () => new Date() }, user, slug, t.id);
   const today = easternDate(new Date());
-  const progs = await teamPrograms({ pool: db, now: () => new Date() }, user, slug, t.id);
-  // Its League games (opponent, time and gym once scheduled): matchups are made for its copy in the League.
-  const copy = (await db.query<{ id: string }>("select id::text from scenic_teams where org_team_id = $1", [t.id])).rows[0]?.id;
-  const games = copy ? ((await scheduledGames(db, [copy]))[copy] ?? []) : [];
   const day = (d: string) =>
     new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
   const hasHead = t.coaches.some((c) => c.role === "HeadCoach");
   // Team chat (CourtPlayers): the team's coaches and the Directors, opened right here (who can open it is checked again).
-  const teamChat = (await hasFeature(db, slug, "team-chat")) && (canManage || t.coaches.some((c) => c.id === user.coachId));
-  // Practices: its own-gym practices (a place the team found itself: any time and length, no limits).
-  const ref = { org: slug, teamId: t.id };
-  const own = await upcomingOwnPractices({ pool: db, now: () => new Date() }, ref, 12); // also for Next 7 days
-  const canOwn = practicesOn && (await canChangeOwnPractices(db, user, ref));
+  const teamChat = chatOn && (canManage || t.coaches.some((c) => c.id === user.coachId));
+  const canOwn = practicesOn && mayChangeOwn;
   const published = games.filter((g) => g.published);
-  // Its scrimmages (another of the organization's teams, an outside team, or TBD), on Next 7 days and Games.
-  const scrims = (await teamScrimmages({ pool: db, now: () => new Date() }, slug, [t.id]))[t.id] ?? [];
-  // Its playbook (CourtPlaybook): its coaches and the Directors of Teams; null for anyone else.
-  const plays = await listPlays({ pool: db, now: () => new Date() }, user, ref);
-  const library = plays ? await orgLibrary({ pool: db, now: () => new Date() }, user, slug, t.id) : null; // to copy from
-  const formations = plays ? await listFormations({ pool: db, now: () => new Date() }, user, ref) : null; // its own Base Formations
+  const scrims = scrimsByTeam[t.id] ?? [];
+  const [library, formations, ownLocations] = await Promise.all([
+    plays ? orgLibrary(deps, user, slug, t.id) : null, // to copy from
+    plays ? listFormations(deps, user, ref) : null, // its own Base Formations
+    canOwn ? ownPracticeLocations(deps, ref) : [],
+  ]);
 
   const split = (name: string) => {
     const at = name.indexOf(" ");
@@ -127,7 +141,7 @@ export async function OrgTeamView({
             scrims={scrims}
             now={new Date()}
             team={ref}
-            staff={await takesAttendance(db, user, ref)}
+            staff={staffTakes}
             mine={[]}
             rsvps={{}}
           />
@@ -300,7 +314,7 @@ export async function OrgTeamView({
                         org={slug}
                         teamId={t.id}
                         choices={null}
-                        own={{ locations: await ownPracticeLocations({ pool: db }, ref), today }}
+                        own={{ locations: ownLocations, today }}
                         scheduleHref={null}
                       />
                     )}

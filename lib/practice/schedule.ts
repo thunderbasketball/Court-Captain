@@ -302,10 +302,10 @@ export async function teamGymChoices(
   const thisWeek = weekOf(deps.now()).start;
   let weeks: WeekGrid[];
   try {
-    weeks = [
-      await weekGrid(deps, viewer, thisWeek, { teamId }),
-      await weekGrid(deps, viewer, weekOf(new Date(thisWeek.getTime() + 8 * 86_400_000)).start, { teamId }),
-    ];
+    weeks = await Promise.all([
+      weekGrid(deps, viewer, thisWeek, { teamId }),
+      weekGrid(deps, viewer, weekOf(new Date(thisWeek.getTime() + 8 * 86_400_000)).start, { teamId }),
+    ]);
   } catch {
     return null; // not on this team (and not a Director of Facilities)
   }

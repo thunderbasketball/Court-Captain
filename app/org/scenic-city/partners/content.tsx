@@ -10,7 +10,7 @@ import { db } from "@/lib/db";
 import { currentScenic } from "@/lib/contexts-server";
 import { hostingRequests } from "@/lib/org-partnerships";
 import { TZ, timeLabel } from "@/lib/time";
-import { listPartners, partnerHours } from "@/lib/scenic-partners";
+import { listPartners, partnersHours } from "@/lib/scenic-partners";
 import { shortDate } from "@/lib/program-options";
 import AppHeader from "../../../AppHeader";
 import { FacilitiesNav } from "../ScenicNav";
@@ -21,7 +21,9 @@ import { ChatIcon, iconBtn } from "../../../CardIcons";
 import { orgKey } from "@/lib/chat";
 import { PartnerButton } from "./PartnerEditor";
 
-import { PageFrame } from "../../../ui";
+import { Chip, EmailLink, PageFrame, PersonRow, PhoneLink } from "../../../ui";
+import { hostingSiteStaff } from "@/lib/scenic-members";
+import { formatCell } from "@/lib/phone";
 import { hasFeature } from "@/lib/features";
 
 // Scenic City Directors: every partner. A partner's contacts: their own. Sorted by name.
@@ -48,18 +50,19 @@ export async function PartnersContent({
   const requests = isDirector ? ((await hostingRequests(deps, user, "scenic-city")) ?? []) : [];
   const waiting = requests.filter((r) => r.status === "pending");
   // Each site's availability (its courts' hours on every upcoming game day), shown when its card is opened.
-  const avail = new Map(
-    await Promise.all(partners.map(async (p) => [p.id, await partnerHours(deps, user, p.id)] as const)),
-  );
+  const avail = await partnersHours(deps, user, partners.map((p) => p.id)); // all at once
   const hm = (t: string) => timeLabel(t).replace(":00 ", " ");
   // Officials: which approved officials group schedules officials at each gym (Admins and Directors of Scheduling,
   // Programs or Facilities pick it).
-  const [canAssign, groups, officiating, who] = await Promise.all([
+  const [canAssign, groups, officiating, who, staff] = await Promise.all([
     assignsGymOfficials(db, user, "scenic-city"),
     approvedGroups(db, "scenic-city"),
     gymOfficials(db, "scenic-city"),
     seesWho(db, user, "scenic-city"),
+    // Who runs each site (an organization's Owners and Admins, or a school's contacts), shown on its card.
+    hostingSiteStaff(deps, user),
   ]);
+  const contactsOf = new Map((staff ?? []).map((s) => [s.id, s.people]));
 
   return (
     <>
@@ -126,7 +129,6 @@ export async function PartnersContent({
               >
                 <p className="text-sm text-zinc-500">
                   {p.kind} · {[p.hostsGames && "Hosting games", p.registersTeams && "Registering teams"].filter(Boolean).join(" · ")}
-                  {!p.org && ` · ${p.contacts.length ? p.contacts.map((c) => c.name).join(", ") : "No contacts yet"}`}
                 </p>
                 {/* A hosting organization: the CourtSync chat with its Facilities people, opened right here. */}
                 {isDirector && p.org && p.approved && (
@@ -138,6 +140,41 @@ export async function PartnersContent({
                   </div>
                 )}
                 <div className="mt-3 space-y-2">
+                  {(() => {
+                    // Its contacts, each person one line (tap for cell and email); a card of them only when there are 2 or more.
+                    const people = contactsOf.get(p.id);
+                    if (!people) return null;
+                    if (!people.length) return <p className="text-sm text-zinc-500">No contacts yet.</p>;
+                    const list = (
+                      <ul className="divide-y divide-zinc-100 dark:divide-white/5">
+                        {people.map((c) => {
+                          const [first, ...rest] = c.name.split(" ");
+                          return (
+                            <PersonRow
+                              key={c.id}
+                              first={first}
+                              last={rest.join(" ")}
+                              avatarTone={c.role === "Contact" ? "zinc" : "blue"}
+                              collapsed
+                              chips={<Chip tone={c.role === "Contact" ? "zinc" : "blue"}>{c.role}</Chip>}
+                            >
+                              <p>
+                                <PhoneLink cell={c.cell} label={formatCell(c.cell)} />
+                              </p>
+                              <p className="truncate">{c.email ? <EmailLink email={c.email} /> : "No email"}</p>
+                            </PersonRow>
+                          );
+                        })}
+                      </ul>
+                    );
+                    return people.length === 1 ? (
+                      <div className="-mx-4">{list}</div>
+                    ) : (
+                      <SubCard title="Contacts" count={people.length}>
+                        {list}
+                      </SubCard>
+                    );
+                  })()}
                   {!h?.gyms.length && <p className="text-sm text-zinc-500">No gyms yet.</p>}
                   {h?.gyms.map((g) => {
                     const courts = h.courts.filter((c) => c.gymKey === g.key);
