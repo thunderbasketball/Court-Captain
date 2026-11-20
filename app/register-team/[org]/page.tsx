@@ -27,7 +27,7 @@ export default function RegisterTeamPage({ params, searchParams }: PageProps<"/r
   );
 }
 
-// Register a team (SPEC.md section 13), no login needed: linked from the organization's login page while it has Team
+// Register an organization's teams (SPEC.md section 13), no login needed: linked from the organization's login page while it has Team
 // Registrations on. Scenic City only (its League teams).
 async function RegisterTeam({
   params,
@@ -45,7 +45,7 @@ async function RegisterTeam({
     <>
       <div className="mb-6 flex flex-col items-center gap-2 text-center">
         <OrgLogo src={o.bigLogo} name={o.name} color={o.color} className="size-24 rounded-2xl text-4xl" />
-        <h1 className="text-xl font-semibold tracking-tight">Register a team</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Register</h1>
         <p className="text-sm text-zinc-500">{o.name}</p>
       </div>
       <div className={`${card} p-5`}>

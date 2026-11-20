@@ -6,7 +6,7 @@ import { REC_LIMITED } from "@/lib/program-options";
 import { loadPublicProgram } from "../../league/actions";
 import { ProgramSchedule, ProgramTeams } from "../../PublicProgramViews";
 import { MyTeams } from "../../FollowTeams";
-import RegisterChoice from "./RegisterChoice";
+import Link from "next/link";
 
 export type ProgramCard = {
   id: string;
@@ -51,7 +51,6 @@ export default function PublicPrograms({ org, programs }: { org: string; program
 
 function Program({ org, p }: { org: string; p: ProgramCard }) {
   const [open, setOpen] = useState(false);
-  const [asking, setAsking] = useState(false);
   const [tab, setTab] = useState<"teams" | "schedule">("teams");
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -101,25 +100,17 @@ function Program({ org, p }: { org: string; p: ProgramCard }) {
             </span>
           )}
         </button>
-        {p.register && !asking && (
-          <button
-            type="button"
-            onClick={() => setAsking(true)}
+        {p.register && (
+          // One form for an organization's teams (one or more), this event already picked.
+          <Link
+            href={`/register-team/${org}?program=${p.id}`}
             className="shrink-0 rounded-full bg-thunder-blue px-3.5 py-1.5 text-sm font-semibold text-white hover:bg-thunder-blue/90"
           >
             Register
-          </button>
+          </Link>
         )}
       </div>
 
-      {asking && (
-        <div className="mt-3 space-y-2">
-          <RegisterChoice org={org} programId={p.id} />
-          <button type="button" onClick={() => setAsking(false)} className="text-xs text-zinc-500 hover:underline">
-            Cancel
-          </button>
-        </div>
-      )}
 
       {open && (
         <div className="mt-3">

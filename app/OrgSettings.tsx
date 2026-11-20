@@ -27,7 +27,9 @@ export default function OrgSettings({
   canRename,
   warnings,
   featureSettings,
+  deleteCard,
 }: {
+  deleteCard?: ReactNode; // Owners (not Thunder or Scenic City): Delete organization
   featureSettings?: ReactNode; // a card per feature with settings (CourtClub, Chat), when it has any
   warnings: ReactNode; // Warning Configurations' inside: a card per feature it has (passed in)
   org: string;
@@ -106,6 +108,7 @@ export default function OrgSettings({
           </SubCard>
           {featureSettings && <SubCard title="Feature Settings">{featureSettings}</SubCard>}
           <SubCard title="Warning Configurations">{warnings}</SubCard>
+          {deleteCard && <SubCard title="Delete organization">{deleteCard}</SubCard>}
           </div>
         )}
       </HeaderDrop>

@@ -117,7 +117,7 @@ export async function OrgTeamsContent({
             list.canManage && !solo
               ? {
                   add: (
-                    <AddTeamPanel
+                    <AddTeamPanel orgName={o.short || o.name} me={{ value: `user:${user.coachId}`, firstName: user.firstName, lastName: user.lastName }}
                       people={(coaches ?? []).map((c) => {
                         const [firstName, ...rest] = c.name.split(" ");
                         return { value: `user:${c.id}`, firstName, lastName: rest.join(" "), detail: "Coach" };

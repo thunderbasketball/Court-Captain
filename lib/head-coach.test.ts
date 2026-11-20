@@ -45,7 +45,7 @@ describe("Owners and Admins edit a team's Head Coach", () => {
       level: "COMP",
       headCoach: { first: "Cindy", last: "Smith", cell: "4235550123" },
     });
-    expect(made).toMatchObject({ ok: true, name: "4G Smith" });
+    expect(made).toMatchObject({ ok: true, name: "4G East Ridge Smith" });
     const id = (made as { id: string }).id;
     const edit = (who: SessionUser, input: Record<string, unknown>) =>
       editTeamStaff(deps(), who, org, id, { coachId: "5550123", role: "HeadCoach", first: "Cindy", last: "Clemons", cell: "4235550123", email: "", ...input });
@@ -64,13 +64,13 @@ describe("Owners and Admins edit a team's Head Coach", () => {
     // Same cell: name and email; the team follows the last name.
     expect(await edit(jo, { email: "Cindy@Example.com" })).toEqual({ ok: true, newLogin: false });
     let t = await team();
-    expect([t.name, t.coaches.map((c) => [c.name, c.email, c.cell])]).toEqual(["4G Clemons", [["Cindy Clemons", "cindy@example.com", "4235550123"]]]);
+    expect([t.name, t.coaches.map((c) => [c.name, c.email, c.cell])]).toEqual(["4G East Ridge Clemons", [["Cindy Clemons", "cindy@example.com", "4235550123"]]]);
     expect((await db.pool.query("select updated_by from users where coach_id = '5550123'")).rows[0].updated_by).toBe("Jordan Harris");
 
     // A new cell nobody has: their login is made and they take the spot; the old coach loses the Coach role.
     expect(await edit(jo, { first: "Dana", last: "Moss", cell: "4235550456", email: "dana@example.com" })).toEqual({ ok: true, newLogin: true });
     t = await team();
-    expect([t.name, t.coaches.map((c) => [c.id, c.role, c.email])]).toEqual(["4G Moss", [["5550456", "HeadCoach", "dana@example.com"]]]);
+    expect([t.name, t.coaches.map((c) => [c.id, c.role, c.email])]).toEqual(["4G East Ridge Moss", [["5550456", "HeadCoach", "dana@example.com"]]]);
     expect([await hasRole("5550456", "Coach"), await hasRole("5550123", "Coach")]).toEqual([true, false]);
 
     // Someone who has a login (Pat): found by cell, their name updated, email kept when left blank.
@@ -79,7 +79,7 @@ describe("Owners and Admins edit a team's Head Coach", () => {
       await editTeamStaff(deps(), jo, org, id, { coachId: "5550456", role: "HeadCoach", first: "Patricia", last: "Lee", cell: "(423) 555-0007", email: "" }),
     ).toEqual({ ok: true, newLogin: false });
     t = await team();
-    expect([t.name, t.coaches.map((c) => [c.id, c.name, c.email])]).toEqual(["4G Lee", [["5550007", "Patricia Lee", "pat@example.com"]]]);
+    expect([t.name, t.coaches.map((c) => [c.id, c.name, c.email])]).toEqual(["4G East Ridge Lee", [["5550007", "Patricia Lee", "pat@example.com"]]]);
 
     // A Team Manager's row edits the same way; a person already on the staff can't take a second spot here.
     expect(await addOrgTeamCoach(deps(), jo, org, id, { first: "Max", last: "Ward", cell: "4235550201", role: "Manager" })).toMatchObject({ ok: true });
@@ -91,7 +91,7 @@ describe("Owners and Admins edit a team's Head Coach", () => {
       await editTeamStaff(deps(), jo, org, id, { coachId: "5550201", role: "Manager", first: "Patricia", last: "Lee", cell: "4235550007", email: "" }),
     ).toMatchObject({ ok: false, message: expect.stringContaining("already on this team's staff") });
     t = await team();
-    expect([t.name, t.coaches.map((c) => c.name).sort()]).toEqual(["4G Lee", ["Max Warden", "Patricia Lee"]]);
+    expect([t.name, t.coaches.map((c) => c.name).sort()]).toEqual(["4G East Ridge Lee", ["Max Warden", "Patricia Lee"]]);
   });
 
   it("switches roles: Head Coach to Assistant leaves TBD; another becomes Head Coach; Coach role follows; Thunder too", async () => {
@@ -119,13 +119,13 @@ describe("Owners and Admins edit a team's Head Coach", () => {
     );
     expect(await sw("5550123", "HeadCoach", "AsstCoach", "Cindy", "Smith", "4235550123")).toMatchObject({ ok: true });
     let t = await team();
-    expect([t.name, t.coaches.map((c) => [c.name, c.role]).sort()]).toEqual(["4G TBD", [["Ann Bell", "TeamParent"], ["Cindy Smith", "AsstCoach"]]]);
+    expect([t.name, t.coaches.map((c) => [c.name, c.role]).sort()]).toEqual(["4G East Ridge TBD", [["Ann Bell", "TeamParent"], ["Cindy Smith", "AsstCoach"]]]);
     expect((await db.pool.query("select coach_id from scenic_teams where org_team_id = $1", [id])).rows[0].coach_id).toBeNull();
     expect(await hasRole("5550123", "Coach")).toBe(true);
     // Team Parent → Head Coach: renamed for her; she gets the Coach role; the League copy follows.
     expect(await sw("5550301", "TeamParent", "HeadCoach", "Ann", "Bell", "4235550301")).toMatchObject({ ok: true });
     t = await team();
-    expect(t.name).toBe("4G Bell");
+    expect(t.name).toBe("4G East Ridge Bell");
     expect(await hasRole("5550301", "Coach")).toBe(true);
     expect((await db.pool.query("select coach_id from scenic_teams where org_team_id = $1", [id])).rows[0].coach_id).toBe("5550301");
     // Assistant → Team Manager: no longer a coach anywhere here, so the Coach role goes.

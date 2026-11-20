@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { switchSoloToOrg } from "@/lib/court-solo";
 import { setOrgGradeRules } from "@/lib/grade-rules";
 import { createOrganization, renameOrg, setOrgAbbr, setOrgColor, setOrgLogo, type Logo } from "@/lib/org-signup";
+import { deleteOrganization } from "@/lib/org-delete";
 
 const deps = { pool: db, now: () => new Date() };
 
@@ -108,6 +109,23 @@ export async function renameOrganization(org: string, name: string, short: strin
     return r;
   } catch (e) {
     console.error("Organization rename failed:", e);
+    return { ok: false as const, message: "Something went wrong. Please try again." };
+  }
+}
+
+// Owners: delete their organization once it has no teams (typing its name; checked again in lib/org-delete).
+export async function deleteOwnOrganization(org: string, typedName: string) {
+  const user = await currentUser();
+  if (!user) return { ok: false as const, message: "Please log in again." };
+  if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  try {
+    const r = await deleteOrganization(deps, user, String(org), typedName);
+    // The remembered role chip pointed at it: forget it.
+    const jar = await cookies();
+    if (r.ok && jar.get(CONTEXT_COOKIE)?.value === `org:${org}`) jar.delete(CONTEXT_COOKIE);
+    return r;
+  } catch (e) {
+    console.error("Organization delete failed:", e);
     return { ok: false as const, message: "Something went wrong. Please try again." };
   }
 }

@@ -1,4 +1,5 @@
-// Deleting an organization (SPEC.md section 14): CourtCaptain Admins only, typing its name to confirm. It removes the
+// Deleting an organization (SPEC.md section 14): CourtCaptain Admins (any organization), or its own Owner once it has no
+// teams (Organization settings), typing its name to confirm. It removes the
 // organization and everything that is its own: its teams (with coaches and rosters), their copies in Scenic City's
 // Leagues and those registrations, its imports, roles, features, gyms, partner listing and partnerships. People's logins
 // stay. Thunder and Scenic City can't be deleted. Refused while any of its teams has League games, or a game is set at
@@ -14,8 +15,12 @@ type Deps = { pool: Pool; now: () => Date };
 type Result = { ok: true; teams: number } | { ok: false; message: string };
 
 export async function deleteOrganization(deps: Deps, viewer: SessionUser, org: unknown, typedName: unknown): Promise<Result> {
-  if (!(await isPlatformAdmin(deps.pool, viewer.coachId))) return { ok: false, message: "Only a CourtCaptain Admin can do that." };
   if (!isOrgSlug(org)) return { ok: false, message: "That organization no longer exists." };
+  const platform = await isPlatformAdmin(deps.pool, viewer.coachId);
+  const owner =
+    platform ||
+    (await deps.pool.query<{ ok: boolean }>("select has_role($1, $2, 'Owner') as ok", [viewer.coachId, org])).rows[0].ok;
+  if (!owner) return { ok: false, message: "Only the organization's Owner can delete it." };
   if ((BUILT_IN as readonly string[]).includes(org)) return { ok: false, message: "Thunder and Scenic City can't be deleted." };
   return withTx(deps.pool, async (q) => {
     const o = await q.query<{ name: string }>("select name from organizations where slug = $1 for update", [org]);
@@ -23,6 +28,22 @@ export async function deleteOrganization(deps: Deps, viewer: SessionUser, org: u
     const name = o.rows[0].name;
     const typed = typeof typedName === "string" ? typedName.trim().toLowerCase() : "";
     if (typed !== name.trim().toLowerCase()) return { ok: false as const, message: `Type ${name} exactly to delete it.` };
+    // Its Owner: only with no teams at all (its own, archived ones too, or a one-team club's team in a League).
+    if (!platform) {
+      const n = (
+        await q.query<{ n: number }>(
+          `select (select count(*) from org_teams where org = $1)
+                + (select count(*) from scenic_teams t join partners p on p.id = t.partner_id where p.org_slug = $1 and t.org_team_id is null)
+                  ::int as n`,
+          [org],
+        )
+      ).rows[0].n;
+      if (n > 0)
+        return {
+          ok: false as const,
+          message: `${name} still has ${n} team${n === 1 ? "" : "s"}. Delete ${n === 1 ? "it" : "them"} on its Teams page first.`,
+        };
+    }
 
     // Its teams in Scenic City: copies of its own teams, and teams listed under its partner record (a CourtSolo team).
     const copies = (

@@ -1,3 +1,4 @@
+import { inName } from "@/lib/team-names";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { formatCell } from "@/lib/phone";
@@ -99,7 +100,7 @@ export default function TeamPage(p: {
             <div className="flex items-start justify-between gap-2">
               <h1 className="text-2xl font-semibold tracking-tight">
                 {t.name}
-                {t.altName && <span className="font-normal text-zinc-500"> · {t.altName}</span>}
+                {t.altName && !inName(t.name, t.altName) && <span className="font-normal text-zinc-500"> · {t.altName}</span>}
               </h1>
               <Chip tone={t.level === "COMP" ? "orange" : "zinc"}>{t.level}</Chip>
             </div>

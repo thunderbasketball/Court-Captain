@@ -60,11 +60,11 @@ export async function partnerFor(q: Pick<Queryable, "query">, org: OrgSlug, byNa
   return ins.rows[0].id;
 }
 
-// The team's copy in Scenic City (named with its organization's Abbreviation first, "ER 5B Harris"), made or brought up to date (its Head Coach, or none yet: added later, copied then).
-async function copyOf(q: Pick<Queryable, "query">, orgTeamId: string, partnerId: string, byName: string, now: Date) {
+// The team's copy in Scenic City (its name; a REC team's with its organization's Abbreviation first, "ER 5B East Ridge Harris"), made or brought up to date (its Head Coach, or none yet: added later, copied then).
+export async function copyOf(q: Pick<Queryable, "query">, orgTeamId: string, partnerId: string, byName: string, now: Date) {
   const r = await q.query<{ id: string }>(
     `insert into scenic_teams (name, gender, grade_low, grade, level, partner_id, coach_id, created_by, created_at, updated_by, updated_at, org_team_id)
-     select ${leagueNameSql("org", "t.name")}, t.gender, t.grade_low, t.grade, t.level, $2, c.coach_id, $3, $4, $3, $4, t.id
+     select ${leagueNameSql("org", "t.name", "t.level")}, t.gender, t.grade_low, t.grade, t.level, $2, c.coach_id, $3, $4, $3, $4, t.id
      from org_teams t join organizations org on org.slug = t.org left join org_team_coaches c on c.team_id = t.id and c.role = 'HeadCoach' where t.id = $1
      on conflict (org_team_id) do update set name = excluded.name, gender = excluded.gender, grade_low = excluded.grade_low,
        grade = excluded.grade, level = excluded.level, partner_id = excluded.partner_id, coach_id = excluded.coach_id

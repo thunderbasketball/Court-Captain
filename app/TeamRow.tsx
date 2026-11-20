@@ -1,3 +1,4 @@
+import { inName } from "@/lib/team-names";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Chip, GroupCard, JerseyNumber, card, genderTint } from "./ui";
@@ -146,7 +147,7 @@ export default function TeamRow({
               }`}
             >
               {name}
-              {altName && <span className="font-normal text-zinc-500"> · {altName}</span>}
+              {altName && !inName(name, altName) && <span className="font-normal text-zinc-500"> · {altName}</span>}
             </span>
             {issue && <Chip tone="red">{issue}</Chip>}
           </>

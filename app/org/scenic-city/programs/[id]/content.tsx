@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { currentScenic } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
-import { seesWho } from "@/lib/org-admin";
+import { isOrgOwner, seesWho } from "@/lib/org-admin";
 import { REG_OPTIONS, entryLine, money } from "@/lib/program-options";
 import { requireFeature } from "@/lib/features-server";
 import { formatCell } from "@/lib/phone";
@@ -76,8 +76,10 @@ export async function ProgramContent({
     : [];
   const games = p.kind === "League" ? await programSchedule(db, p.id) : []; // the Schedule card
   const fee = p.feeCents === null ? null : `$${(p.feeCents / 100).toFixed(2)}`;
-  // Paid / Unpaid (Directors of Programs, when the program charges): set in each team's ⋯ menu; unpaid shows behind the team.
+  // Paid / Unpaid (when the program charges): unpaid shows behind the team to Directors of Programs; only Scenic City's
+  // Owners mark it, in each team's ⋯ menu (checked again on the server).
   const charges = manage && (!!fee || p.options.length > 0);
+  const marksPaid = charges && (await isOrgOwner(db, user.coachId, "scenic-city"));
   const unpaid = (t: { paid: boolean; removedBy: string | null }) => charges && !t.paid && !t.removedBy;
   const shown = manage ? p.divisionList : p.divisionList.filter((d) => d.teams);
   // A League's Game Days with their teams, then the Brackets (lib: teamsByDate, shared with the Scheduler).
@@ -410,7 +412,7 @@ export async function ProgramContent({
                                             canSitOut={schedule}
                                             out={!!t.removedBy}
                                             canWithdraw={t.canWithdraw}
-                                            paid={charges ? t.paid : null}
+                                            paid={marksPaid ? t.paid : null}
                                           />
                                         </div>
                                       </li>

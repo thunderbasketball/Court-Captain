@@ -1,12 +1,14 @@
 "use client";
 
-// Register a team: 1) the Head Coach's cell, 2) the program, the team, the Head Coach, optional staff, a PIN and (a
-// League) ALL Season or Game Days, 3) the emailed code. Then they're registered and logged in. No Level: set on the server.
+// Register: 1) your cell (your login), 2) the program, your organization's name, you, and each team (+ Add another team):
+// gender, grade, its Head Coach (you or someone else), optional staff and (a League) ALL Season or Game Days, 3) the
+// emailed code. Then the organization and its teams are registered and you're logged in. No Level: set on the server.
 import { useState, useTransition, type ReactNode } from "react";
 import type { Choice as RegChoice } from "@/lib/program-options";
 import type { OpenProgram, TeamStep } from "@/lib/team-signup";
 import RegisterChoices from "../../org/scenic-city/programs/RegisterChoices";
 import { formatCell, normalizeCell } from "@/lib/phone";
+import { signupTeamName } from "@/lib/team-names";
 import {
   completeTeamSignup,
   forgotTeamPin,
@@ -27,6 +29,31 @@ const ROLES = [
 ] as const;
 type Person = { first: string; last: string; cell: string; email: string };
 const blank: Person = { first: "", last: "", cell: "", email: "" };
+// One team on the form (key: kept while others are added or removed, so each keeps what was typed).
+type TeamDraft = {
+  key: number;
+  alt: string; // its Alternate name: in its name in place of the organization's
+  gender: string;
+  grade: string;
+  me: boolean; // its Head Coach is the person registering
+  head: Person;
+  staff: Record<string, Person>;
+  open: Record<string, boolean>;
+  choice: RegChoice | undefined;
+};
+const newTeam = (key: number): TeamDraft => ({ key, alt: "", gender: "", grade: "", me: true, head: blank, staff: {}, open: {}, choice: undefined });
+
+// Grade pills: Pre-K (on its own), K (0) and 1st–12th; one grade, or two next to each other ("7-8").
+const GRADE_PILLS = [{ value: "PK", label: "Pre-K" }, { value: "0", label: "K" }, ...Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }))];
+const gradeOn = (grade: string, g: string) => (g === "PK" ? grade === "PK" : grade !== "PK" && grade.split("-").includes(g));
+function pickGrade(grade: string, g: string): string {
+  if (g === "PK" || grade === "PK" || !grade) return grade === g ? "" : g;
+  const on = grade.split("-").map(Number);
+  const n = Number(g);
+  if (on.includes(n)) return on.length === 2 ? String(on.find((x) => x !== n)) : ""; // tap again: off
+  if (on.length === 1 && Math.abs(on[0] - n) === 1) return `${Math.min(on[0], n)}-${Math.max(on[0], n)}`; // next to it: both
+  return g; // anywhere else: just that grade
+}
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -53,7 +80,6 @@ export function TeamSignupForm({
   // A returning coach's CourtSolo accounts and organizations (what they came to do is asked first).
   type Accounts = NonNullable<Extract<TeamStep, { step: "form" }>["accounts"]>;
   const [accounts, setAccounts] = useState<Accounts>({ solo: [], orgs: [] });
-  const [replace, setReplace] = useState<string | null>(null); // their CourtSolo account whose team this new one replaces
   const [switching, setSwitching] = useState<string | null>(null);
   const [orgName, setOrgName] = useState("");
   const [orgShort, setOrgShort] = useState("");
@@ -61,15 +87,19 @@ export function TeamSignupForm({
   const [error, setError] = useState<string | null>(null);
   const [busy, start] = useTransition();
 
-  const [name, setName] = useState("");
-  const [gender, setGender] = useState("");
-  const [grade, setGrade] = useState("");
+  const [orgFullName, setOrgFullName] = useState("");
+  const [orgShortName, setOrgShortName] = useState("");
+  const [teams, setTeams] = useState<TeamDraft[]>([newTeam(1)]);
+  // A team's name: "8B Testing Basketball Epps" (grade and gender, the organization, the Head Coach's last name), or with its
+  // Alternate name in the organization's place ("8B Bolts Epps"). Set on the server; shown here as they type.
+  const orgPart = orgShortName.trim() || orgFullName; // its short name (asked when the name is over 20 letters)
+  const defaultName = (t: TeamDraft) =>
+    t.grade ? signupTeamName(t.gender, t.grade, t.alt.trim() || orgPart, t.me ? head.last : t.head.last) : "";
+  const setTeam = (key: number, change: Partial<TeamDraft>) => setTeams((list) => list.map((t) => (t.key === key ? { ...t, ...change } : t)));
   const fixed = programs.find((p) => p.id === preset) ?? (programs.length === 1 ? programs[0] : undefined);
   const [programId, setProgramId] = useState(fixed?.id ?? "");
   const program = programs.find((p) => p.id === programId);
   const [head, setHead] = useState<Person>(blank);
-  const [staff, setStaff] = useState<Record<string, Person>>({});
-  const [open, setOpen] = useState<Record<string, boolean>>({});
   const [pin, setPin] = useState("");
   const [pin1, setPin1] = useState("");
   const [pin2, setPin2] = useState("");
@@ -102,29 +132,25 @@ export function TeamSignupForm({
       setError(null);
       setError(next(await call()));
     });
-  // The League's ALL Season or Game Days picked (kept so "Send a new code" can resend).
-  const [choice, setChoice] = useState<RegChoice | undefined>();
-  const signup = (c: RegChoice | undefined) =>
+  const signup = () =>
     startTeamSignup({
       programId,
-      choice: c,
-      name,
-      gender,
-      grade,
+      orgName: orgFullName,
+      orgShort: orgShortName,
       ...head,
       pin: existing ? pin : undefined,
       pin1: existing ? undefined : pin1,
       pin2: existing ? undefined : pin2,
-      staff: ROLES.filter((r) => open[r.key]).map((r) => ({ role: r.key, ...(staff[r.key] ?? blank) })),
-      replace: replace ?? undefined,
+      teams: teams.map((t) => ({
+        alt: t.alt,
+        gender: t.gender,
+        grade: t.grade,
+        head: t.me ? "me" : t.head,
+        staff: ROLES.filter((r) => t.open[r.key]).map((r) => ({ role: r.key, ...(t.staff[r.key] ?? blank) })),
+        choice: t.choice,
+      })),
     });
-  const send = () => go(() => signup(choice));
-  // From the League's date picker: its button sends the code.
-  const sendWithDates = async (c: RegChoice) => {
-    setChoice(c);
-    const message = next(await signup(c));
-    return message ? { ok: false as const, message } : { ok: true as const };
-  };
+  const send = () => go(signup);
   const pinInput = (value: string, set: (v: string) => void, label: string) => (
     <Field label={label}>
       <input
@@ -191,9 +217,9 @@ export function TeamSignupForm({
         }}
       >
         <p className="text-sm text-zinc-600 dark:text-zinc-300">
-          Register a team with Scenic City. Start with the Head Coach&apos;s cell: it&apos;s their login.
+          Register your teams with Scenic City. Start with your cell: it&apos;s your login.
         </p>
-        <Field label="Head Coach's cell">
+        <Field label="Your cell">
           <input
             className={inputCls}
             type="tel"
@@ -222,12 +248,6 @@ export function TeamSignupForm({
         {accounts.solo.map((a) => (
           <section key={a.slug} className="space-y-2">
             <h2 className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Your team: {a.teamName ?? a.name}</h2>
-            {/* Already in this event: a CourtSolo account has one team, so another team means switching to CourtOrg. */}
-            {event && a.inPrograms.includes(event.id) && (
-              <p className="rounded-xl bg-zinc-50 px-3 py-2.5 text-sm text-zinc-600 dark:bg-white/5 dark:text-zinc-300">
-                {a.teamName} is already registered for {event.name}. To register another team, switch to a club with more teams.
-              </p>
-            )}
             {a.teamName && !(event && a.inPrograms.includes(event.id)) && (
               <button
                 type="button"
@@ -240,27 +260,6 @@ export function TeamSignupForm({
                 </span>
                 <span className="block text-xs text-zinc-500">The same team: pick its dates on your team&apos;s page.</span>
               </button>
-            )}
-            {!(event && a.inPrograms.includes(event.id)) && (
-              <button
-              type="button"
-              className={choiceBtn}
-              disabled={busy || !!a.busyIn}
-              onClick={() => {
-                setReplace(a.slug);
-                setError(null);
-                setScreen("form");
-              }}
-            >
-              <span className="block font-semibold">
-                {a.teamName ? `Archive ${a.teamName} and create a new team` : "Create your team"}
-              </span>
-              <span className="block text-xs text-zinc-500">
-                {a.busyIn
-                  ? `Not yet: ${a.teamName} is in ${a.busyIn} until it ends.`
-                  : "A one-team club has one active team. The old one stays as history."}
-              </span>
-            </button>
             )}
             <button
               type="button"
@@ -307,16 +306,14 @@ export function TeamSignupForm({
             disabled={busy}
             onClick={() => go(() => goTeamSignup(head.cell, pin, { to: "org", slug: o.slug }))}
           >
-            <span className="block font-semibold">Add a team to {o.name}</span>
-            <span className="block text-xs text-zinc-500">Add it on {o.name}&apos;s Teams page and register it there.</span>
+            <span className="block font-semibold">Register {o.name}&apos;s teams</span>
+            <span className="block text-xs text-zinc-500">Add and register them on {o.name}&apos;s Teams page.</span>
           </button>
         ))}
-        {!accounts.solo.length && (
-          <button type="button" className={choiceBtn} disabled={busy} onClick={() => setScreen("form")}>
-            <span className="block font-semibold">Create a separate stand-alone team</span>
-            <span className="block text-xs text-zinc-500">Its own one-team CourtClub account.</span>
-          </button>
-        )}
+        <button type="button" className={choiceBtn} disabled={busy} onClick={() => setScreen("form")}>
+          <span className="block font-semibold">Register a new organization</span>
+          <span className="block text-xs text-zinc-500">A separate organization with its own teams.</span>
+        </button>
         {error && <Alert tone="red">{error}</Alert>}
       </div>
     );
@@ -331,8 +328,8 @@ export function TeamSignupForm({
         }}
       >
         <p className="text-sm text-zinc-600 dark:text-zinc-300">
-          {formatCell(normalizeCell(head.cell) ?? head.cell)} already has a login. Enter its PIN to log in; the Head Coach&apos;s
-          information fills in from it.
+          {formatCell(normalizeCell(head.cell) ?? head.cell)} already has a login. Enter its PIN to log in; your information
+          fills in from it.
         </p>
         {pinInput(pin, setPin, "PIN")}
         {error && <Alert tone="red">{error}</Alert>}
@@ -434,8 +431,8 @@ export function TeamSignupForm({
         }}
       >
         <p className="text-sm">
-          We emailed a 6-digit code to <strong>{maskedEmail}</strong>. Enter it to finish registering {name} in {" "}
-          {program?.name}.
+          We emailed a 6-digit code to <strong>{maskedEmail}</strong>. Enter it to finish registering {orgFullName}&apos;s{" "}
+          {teams.length === 1 ? "team" : `${teams.length} teams`} in {program?.name}.
         </p>
         <Field label="Code">
           <input
@@ -449,7 +446,7 @@ export function TeamSignupForm({
         </Field>
         {error && <Alert tone="red">{error}</Alert>}
         <button className={primaryBtn} disabled={busy}>
-          {busy ? "Checking…" : "Register team"}
+          {busy ? "Checking…" : teams.length === 1 ? "Register team" : "Register teams"}
         </button>
         <button type="button" disabled={busy} onClick={send} className="w-full text-sm text-thunder-blue hover:underline">
           Send a new code
@@ -465,19 +462,10 @@ export function TeamSignupForm({
         send();
       }}
     >
-      {replace && (
-        <p className="rounded-xl bg-amber-50 px-3 py-2.5 text-sm text-amber-900 ring-1 ring-amber-600/20 ring-inset dark:bg-amber-500/10 dark:text-amber-200">
-          This new team replaces {accounts.solo.find((x) => x.slug === replace)?.teamName ?? "your team"}, which is archived (kept
-          as history).{" "}
-          <button type="button" className="font-semibold underline" onClick={() => setScreen("choose")}>
-            Change
-          </button>
-        </p>
-      )}
       <section className="space-y-4">
         <h2 className="font-semibold">Program</h2>
         {fixed ? (
-          // Picked on the login page (or the only one open): shown, not asked.
+          // Picked on the page (or the only one open): shown, not asked.
           <p className="rounded-xl bg-zinc-50 px-3 py-2.5 text-sm font-medium dark:bg-white/5">
             {fixed.name} <span className="font-normal text-zinc-500">({fixed.kind})</span>
           </p>
@@ -496,113 +484,159 @@ export function TeamSignupForm({
       </section>
 
       <section className="space-y-4">
-        <h2 className="font-semibold">Team</h2>
-        <Field label="Team name (like 5B Hixson Hoops)">
-          <input className={inputCls} maxLength={60} autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} />
+        <h2 className="font-semibold">Your organization</h2>
+        <Field label="Organization name (like Hixson Hoops)">
+          <input className={inputCls} maxLength={60} autoComplete="organization" value={orgFullName} onChange={(e) => setOrgFullName(e.target.value)} />
         </Field>
-        <div>
-          <span className={fieldLabel}>Gender</span>
-          <div className="flex gap-2">
-            {["Boys", "Girls"].map((g) => (
-              <button key={g} type="button" className={pillCls(gender === g)} onClick={() => setGender(g)}>
-                {g}
-              </button>
-            ))}
-          </div>
-        </div>
-        <Field label="Grade">
-          <select
-            className={inputCls}
-            value={grade}
-            onChange={(e) => {
-              setGrade(e.target.value);
-              // Pre-K teams are Coed.
-              if (e.target.value === "PK") setGender("Coed");
-              else if (gender === "Coed") setGender("");
-            }}
-          >
-            <option value="" disabled>
-              Pick…
-            </option>
-            {grades.map((g) => (
-              <option key={g.value} value={g.value}>
-                {g.label}
-              </option>
-            ))}
-          </select>
-        </Field>
+        {orgFullName.trim().length > 20 && (
+          <Field label="Short name (up to 20 letters)">
+            <input className={inputCls} maxLength={20} value={orgShortName} onChange={(e) => setOrgShortName(e.target.value)} />
+          </Field>
+        )}
       </section>
 
       <section className="space-y-4">
-        <h2 className="font-semibold">Head Coach</h2>
+        <h2 className="font-semibold">You</h2>
         {person(head, setHead, "Email", existing)}
         {existing ? (
           <p className="text-sm text-zinc-600 dark:text-zinc-300">Logged in with this cell&apos;s PIN. Check the email.</p>
         ) : (
           <>
-            <p className="text-sm text-zinc-600 dark:text-zinc-300">Choose a 4-digit PIN for the Head Coach&apos;s login.</p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-300">Choose a 4-digit PIN for your login.</p>
             <div className="grid grid-cols-2 gap-3">
               {pinInput(pin1, setPin1, "PIN")}
               {pinInput(pin2, setPin2, "PIN again")}
             </div>
           </>
         )}
+        <p className="text-xs text-zinc-500">You&apos;ll be your organization&apos;s Owner.</p>
       </section>
 
-      <section className="space-y-3">
-        <h2 className="font-semibold">
-          Other staff <span className="font-normal text-zinc-500">(optional)</span>
-        </h2>
-        {ROLES.map((r) =>
-          open[r.key] ? (
-            <div key={r.key} className="space-y-3 rounded-xl bg-zinc-50 p-3 dark:bg-white/5">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold">{r.label}</span>
-                <button
-                  type="button"
-                  className="text-sm text-zinc-500 hover:underline"
-                  onClick={() => setOpen({ ...open, [r.key]: false })}
-                >
-                  Remove
+      {teams.map((t, i) => (
+        <section key={t.key} className="space-y-4 rounded-2xl p-4 ring-1 ring-zinc-950/10 dark:ring-white/10">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="font-semibold">{teams.length > 1 ? `Team ${i + 1}` : "Team"}</h2>
+            {teams.length > 1 && (
+              <button type="button" className="text-sm text-zinc-500 hover:underline" onClick={() => setTeams(teams.filter((x) => x.key !== t.key))}>
+                Remove
+              </button>
+            )}
+          </div>
+          <div>
+            <span className={fieldLabel}>Gender</span>
+            <div className="flex gap-2">
+              {["Boys", "Girls"].map((g) => (
+                <button key={g} type="button" className={pillCls(t.gender === g)} onClick={() => setTeam(t.key, { gender: g })}>
+                  {g}
                 </button>
-              </div>
-              {person(staff[r.key] ?? blank, (p) => setStaff({ ...staff, [r.key]: p }), "Email (optional)")}
+              ))}
             </div>
-          ) : (
-            <button
-              key={r.key}
-              type="button"
-              className="mr-2 rounded-full px-3 py-1.5 text-sm font-medium ring-1 ring-zinc-950/10 dark:ring-white/15"
-              onClick={() => setOpen({ ...open, [r.key]: true })}
-            >
-              + {r.label}
-            </button>
-          ),
-        )}
-      </section>
-
-      {program?.league && error && <Alert tone="red">{error}</Alert>}
-      {program?.league ? (
-        // A League: pick ALL Season or Game Days; its button sends the code.
-        <section className="space-y-3">
-          <h2 className="font-semibold">Register for</h2>
-          <RegisterChoices
-            options={program.league.options}
-            gameDates={program.league.gameDates}
-            today={today}
-            entry={null}
-            save={sendWithDates}
-            saveLabel="Email me a code"
-          />
+          </div>
+          <div>
+            <span className={fieldLabel}>Grade (one, or two next to each other)</span>
+            <div className="grid grid-cols-5 gap-2 sm:grid-cols-7">
+              {GRADE_PILLS.filter((g) => g.value !== "PK" || grades.some((x) => x.value === "PK")).map((g) => (
+                <button
+                  key={g.value}
+                  type="button"
+                  className={pillCls(gradeOn(t.grade, g.value))}
+                  onClick={() => {
+                    const grade = pickGrade(t.grade, g.value);
+                    // Pre-K teams are Coed.
+                    setTeam(t.key, { grade, gender: grade === "PK" ? "Coed" : t.gender === "Coed" ? "" : t.gender });
+                  }}
+                >
+                  {g.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-3">
+            <span className={fieldLabel}>Head Coach</span>
+            <div className="flex gap-2">
+              <button type="button" className={pillCls(t.me)} onClick={() => setTeam(t.key, { me: true })}>
+                Me
+              </button>
+              <button type="button" className={pillCls(!t.me)} onClick={() => setTeam(t.key, { me: false })}>
+                Someone else
+              </button>
+            </div>
+            {!t.me && person(t.head, (p) => setTeam(t.key, { head: p }), "Email")}
+          </div>
+          <Field label="Alternate name (optional; in the team's name instead of the organization's)">
+            <input
+              className={inputCls}
+              maxLength={60}
+              autoComplete="off"
+              placeholder="e.g. Bolts"
+              value={t.alt}
+              onChange={(e) => setTeam(t.key, { alt: e.target.value })}
+            />
+          </Field>
+          <div className="rounded-xl bg-zinc-50 px-3 py-2.5 dark:bg-white/5">
+            <p className="text-xs text-zinc-500">Team name</p>
+            <p className="font-semibold">{defaultName(t) || "Pick the grade first"}</p>
+          </div>
+          <div className="space-y-3">
+            <span className={fieldLabel}>
+              Other staff <span className="font-normal text-zinc-500">(optional)</span>
+            </span>
+            {ROLES.map((r) =>
+              t.open[r.key] ? (
+                <div key={r.key} className="space-y-3 rounded-xl bg-zinc-50 p-3 dark:bg-white/5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold">{r.label}</span>
+                    <button
+                      type="button"
+                      className="text-sm text-zinc-500 hover:underline"
+                      onClick={() => setTeam(t.key, { open: { ...t.open, [r.key]: false } })}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  {person(t.staff[r.key] ?? blank, (p) => setTeam(t.key, { staff: { ...t.staff, [r.key]: p } }), "Email (optional)")}
+                </div>
+              ) : (
+                <button
+                  key={r.key}
+                  type="button"
+                  className="mr-2 mb-2 rounded-full px-3 py-1.5 text-sm font-medium ring-1 ring-zinc-950/10 dark:ring-white/15"
+                  onClick={() => setTeam(t.key, { open: { ...t.open, [r.key]: true } })}
+                >
+                  + {r.label}
+                </button>
+              ),
+            )}
+          </div>
+          {program?.league && (
+            // A League: what this team registers for (ALL Season or Game Days), with its fee.
+            <div className="space-y-3">
+              <span className={fieldLabel}>Register for</span>
+              <RegisterChoices
+                options={program.league.options}
+                gameDates={program.league.gameDates}
+                today={today}
+                entry={null}
+                onChange={(c) => setTeam(t.key, { choice: c })}
+              />
+            </div>
+          )}
         </section>
-      ) : (
-        <>
-          {error && <Alert tone="red">{error}</Alert>}
-          <button className={primaryBtn} disabled={busy || !program}>
-            {busy ? "Sending…" : "Email me a code"}
-          </button>
-        </>
+      ))}
+      {teams.length < 20 && (
+        <button
+          type="button"
+          className="w-full rounded-xl px-4 py-2.5 text-sm font-semibold text-thunder-blue border border-dashed border-thunder-blue/50 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-white/5"
+          onClick={() => setTeams([...teams, newTeam(Math.max(...teams.map((x) => x.key)) + 1)])}
+        >
+          + Add another team
+        </button>
       )}
+
+      {error && <Alert tone="red">{error}</Alert>}
+      <button className={primaryBtn} disabled={busy || !program}>
+        {busy ? "Sending…" : "Email me a code"}
+      </button>
       <button type="button" className="w-full text-sm text-zinc-500 hover:underline" onClick={() => setScreen("cell")}>
         ← Change cell
       </button>

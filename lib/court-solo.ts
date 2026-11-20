@@ -11,7 +11,7 @@ import { slugFor } from "./org-slug";
 import { dropScenicCoachIfIdle } from "./scenic-teams";
 import type { Queryable } from "./sql";
 
-import { SOLO_KIND } from "./solo-names";
+import { SOLO_KIND, leagueNameSql } from "./solo-names";
 
 // An Abbreviation for the account (never shown in leagues: Solo teams show "(Solo)").
 const abbrOf = (name: string) =>
@@ -219,8 +219,9 @@ export async function switchSoloToOrg(
   const abbr = abbrFor(String(input.name).trim()); // like a new organization's: "Hixson Hoops" → HH
   await deps.pool.query("update organizations set abbr = $2 where slug = $1", [r.slug, abbr]);
   await deps.pool.query(
-    `update scenic_teams st set name = $2 || ' ' || t.name from org_teams t where st.org_team_id = t.id and t.org = $1`,
-    [r.slug, abbr],
+    `update scenic_teams st set name = ${leagueNameSql("o", "t.name", "t.level")}
+       from org_teams t join organizations o on o.slug = t.org where st.org_team_id = t.id and t.org = $1`,
+    [r.slug],
   );
   return { ok: true, slug: r.slug };
 }

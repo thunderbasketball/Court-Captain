@@ -25,8 +25,7 @@ import {
   namePlanner,
   placeName,
   settleName,
-  tbdBase,
-  teamName,
+  orgTeamName,
   type NamedTeam,
 } from "./team-names";
 import { matchOrCreateUser } from "./user-match";
@@ -214,8 +213,9 @@ export async function resolveHead(q: PoolClient, v: unknown, now: Date): Promise
   return { coachId: m.coachId, lastName: m.lastName };
 }
 
-// The team's name by the rule (Grade + Gender + Head Coach's last name, or "TBD"), numbered with any team already named
-// that ("3G Campbell 1", "3G Campbell 2"). A team keeping its name by the rule keeps its number. Run inside the
+// The team's name by the rule (Grade + Gender + its Alternate name, else the organization's short name + Head Coach's
+// last name, or "TBD": "8B Bolts Epps", "8B Testing Basketball Epps"), numbered with any team already named that
+// ("3G ER Campbell 1", "3G ER Campbell 2"). A team keeping its name by the rule keeps its number. Run inside the
 // caller's transaction, after locking the organization's teams.
 async function ruleName(
   q: Pick<Queryable, "query">,
@@ -225,11 +225,13 @@ async function ruleName(
   last: string | null,
   exceptId: string | null,
   current: string | null = null,
+  alt: string | null = null, // its Alternate name, in place of the organization's
 ): Promise<string> {
   // A CourtSolo account's one team is named for the account ("Magic"), not by the rule.
   const solo = await q.query<{ name: string }>("select name from organizations where slug = $1 and kind = $2", [org, SOLO_KIND]);
   if (solo.rows[0]) return solo.rows[0].name;
-  const base = last ? teamName(gender, grades, last) : tbdBase(gender, grades);
+  const o = await q.query<{ short: string }>("select coalesce(short_name, name) as short from organizations where slug = $1", [org]);
+  const base = orgTeamName(gender, grades, alt?.trim() || o.rows[0]?.short || "", last);
   if (current && (current.toLowerCase() === base.toLowerCase() || baseName(current).toLowerCase() === base.toLowerCase()))
     return current;
   const teams = (
@@ -243,14 +245,31 @@ async function ruleName(
   return name;
 }
 
-// A team's name, and its copy's in a league ("ER 5B Harris").
+// A team's name, and its copy's in a league (a REC team's with the Abbreviation first).
 async function setOrgTeamName(q: Pick<Queryable, "query">, org: string, teamId: string, name: string) {
   await q.query("update org_teams set name = $2 where id = $1", [teamId, name]);
   await q.query(
-    `update scenic_teams st set name = ${leagueNameSql("o", "$2")}
-     from organizations o where st.org_team_id = $1 and o.slug = $3`,
+    `update scenic_teams st set name = ${leagueNameSql("o", "$2", "t.level")}
+     from organizations o, org_teams t where st.org_team_id = $1 and t.id = $1 and o.slug = $3`,
     [teamId, name, org],
   );
+}
+
+// Every team of the organization named by the rule again (after its short name changes, or the rule itself), and every
+// team's name in leagues brought up to date (after its Abbreviation changes). Teams with their own name keep it.
+// Run inside the caller's transaction. Returns how many teams changed name.
+export async function renameAllOrgTeams(q: PoolClient, org: string): Promise<number> {
+  const teams = (
+    await q.query<{ id: string; name: string }>("select id::text, name from org_teams where org = $1 and not own_name order by id", [org])
+  ).rows;
+  let changed = 0;
+  for (const t of teams) if ((await renameOrgTeam(q, org, t.id)) !== t.name) changed++;
+  await q.query(
+    `update scenic_teams st set name = ${leagueNameSql("o", "t.name", "t.level")}
+       from org_teams t join organizations o on o.slug = t.org where st.org_team_id = t.id and t.org = $1`,
+    [org],
+  );
+  return changed;
 }
 
 // After a team leaves a name (renamed or removed): the one left with it drops its number.
@@ -280,8 +299,9 @@ export async function renameOrgTeam(q: PoolClient, org: string, teamId: string) 
     grade: number;
     last: string | null;
     own_name: boolean;
+    alt_name: string | null;
   }>(
-    `select t.name, t.gender, t.grade_low, t.grade, coalesce(u.last_name, t.coach_last) as last, t.own_name from org_teams t
+    `select t.name, t.gender, t.grade_low, t.grade, coalesce(u.last_name, t.coach_last) as last, t.own_name, t.alt_name from org_teams t
      left join org_team_coaches c on c.team_id = t.id and c.role = 'HeadCoach' left join users u on u.coach_id = c.coach_id
      where t.id = $1`,
     [teamId],
@@ -289,10 +309,42 @@ export async function renameOrgTeam(q: PoolClient, org: string, teamId: string) 
   const r = t.rows[0];
   if (r.own_name) return r.name; // a team with its own name (CourtSolo, or brought over from it) keeps it
   const grades = [...new Set([r.grade_low, r.grade])].map(gradeStr);
-  const name = await ruleName(q, org, r.gender, grades, r.last, teamId, r.name);
+  const name = await ruleName(q, org, r.gender, grades, r.last, teamId, r.name, r.alt_name);
   await setOrgTeamName(q, org, teamId, name);
   if (name !== r.name) await settleOrgName(q, org, baseName(r.name));
   return name;
+}
+
+// A team from Register on the League page (lib/team-signup.ts), inside its transaction: named by the rule (its Alternate
+// name, when it has one, in place of the organization's), with its Head Coach and other staff (people already matched or made). Head and Assistant Coaches get the Coach role.
+export async function addSignupTeam(
+  q: Pick<Queryable, "query">,
+  org: string,
+  t: { gender: Gender; low: number; grade: number; level: string; alt: string | null },
+  staff: { coachId: string; lastName: string; role: "HeadCoach" | "AsstCoach" | "Manager" | "TeamParent" }[],
+  byName: string,
+  now: Date,
+): Promise<{ id: string; name: string }> {
+  await lockTeams(q, org);
+  const head = staff.find((s) => s.role === "HeadCoach");
+  const grades = [...new Set([t.low, t.grade])].map(gradeStr);
+  const name = await ruleName(q, org, t.gender, grades, head?.lastName ?? null, null, null, t.alt);
+  const r = await q.query<{ id: string }>(
+    `insert into org_teams (org, name, gender, grade_low, grade, level, created_by, created_at, alt_name)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id::text`,
+    [org, name, t.gender, t.low, t.grade, t.level, byName, now, t.alt],
+  );
+  const id = r.rows[0].id;
+  for (const s of staff) {
+    // One row per person on a team: someone listed twice keeps the first (higher) role.
+    await q.query(
+      `insert into org_team_coaches (team_id, coach_id, role, added_by, added_at)
+       select $1, $2, $3, $4, $5 where not exists (select 1 from org_team_coaches where team_id = $1 and coach_id = $2)`,
+      [id, s.coachId, s.role, byName, now],
+    );
+    if (s.role === "HeadCoach" || s.role === "AsstCoach") await q.query("select set_role($1, $2, 'Coach', true, $3)", [s.coachId, org, byName]);
+  }
+  return { id, name };
 }
 
 export async function createOrgTeam(
@@ -317,7 +369,7 @@ export async function createOrgTeam(
       await oneSoloTeam(q, o);
       if (level === "REC" && !(await recAllowed(q, o, deps.now()))) throw new TeamError(REC_CLOSED);
       const head = await resolveHead(q, input.headCoach, deps.now());
-      const name = await ruleName(q, o, gender, grades, head?.lastName ?? null, null);
+      const name = await ruleName(q, o, gender, grades, head?.lastName ?? null, null, null, alt);
       const nums = grades.map(gradeNum).sort((a, b) => a - b);
       const t = await q.query<{ id: string }>(
         `insert into org_teams (org, name, gender, grade_low, grade, level, created_by, created_at, alt_name)
@@ -398,20 +450,23 @@ export async function updateOrgTeam(
   });
 }
 
-// Change a team's Alternate name (blank removes it).
+// Change a team's Alternate name (blank removes it). It's in the team's name ("8B Bolts Epps"), so the team is renamed
+// by the rule (and its League copy).
 export async function setOrgTeamAltName(
   deps: Deps,
   viewer: SessionUser,
   org: unknown,
   id: unknown,
   alt: unknown,
-): Promise<Result> {
+): Promise<Result<{ name?: string }>> {
   return run(async () => {
     if (!isId(id)) throw new TeamError("That team no longer exists.");
     const o = await mustManage(deps.pool, viewer, org);
-    const r = await deps.pool.query("update org_teams set alt_name = $3 where id = $1 and org = $2", [id, o, cleanAlt(alt)]);
-    if (!r.rowCount) throw new TeamError("That team no longer exists.");
-    return {};
+    return withTx(deps.pool, async (q) => {
+      const r = await q.query("update org_teams set alt_name = $3 where id = $1 and org = $2", [id, o, cleanAlt(alt)]);
+      if (!r.rowCount) throw new TeamError("That team no longer exists.");
+      return { name: await renameOrgTeam(q, o, id) };
+    });
   });
 }
 
@@ -591,6 +646,9 @@ const importGrades = (g: string) => g.split("-").map((x) => (x === "0" ? "K" : x
 async function previewRows(q: Pick<Queryable, "query">, org: string, text: string, now: Date) {
   const parsed = parseTeamRows(text, { named: false, cellOptional: true });
   const rec = await recAllowed(q, org, now); // REC rows are a problem when the organization isn't invited to REC
+  const short =
+    (await q.query<{ short: string }>("select coalesce(short_name, name) as short from organizations where slug = $1", [org])).rows[0]
+      ?.short ?? ""; // in each team's name
   const { tooMany } = parsed;
   const teams = (
     await q.query<{ id: string; name: string; level: string; alt: string | null }>(
@@ -607,7 +665,7 @@ async function previewRows(q: Pick<Queryable, "query">, org: string, text: strin
   const seenAlt = new Set<string>();
   const rows: ImportPreviewRow[] = parsed.rows.map((p, i) => {
     const grades = p.grade ? importGrades(p.grade) : null;
-    const base = p.gender && grades ? (p.coach ? teamName(p.gender, grades, p.coach.last) : tbdBase(p.gender, grades)) : "";
+    const base = p.gender && grades ? orgTeamName(p.gender, grades, p.altName?.trim() || short, p.coach?.last ?? null) : "";
     const alt = !p.coach && p.altName ? p.altName.toLowerCase() : "";
     const errors = [
       ...p.errors,
@@ -685,7 +743,7 @@ export async function importTeams(
           await q.query("update users set email = $2 where coach_id = $1 and email is null", [m.coachId, c.email]);
         const waiting = c && !c.cell ? c : null;
         // Named by the rule from the coach's last name as it is on their login (or "TBD"); numbered when taken.
-        const name = await ruleName(q, o, r.gender!, importGrades(r.grade!), m?.lastName ?? waiting?.last ?? null, null);
+        const name = await ruleName(q, o, r.gender!, importGrades(r.grade!), m?.lastName ?? waiting?.last ?? null, null, null, r.altName ?? null);
         const t = await q.query<{ id: string }>(
           `insert into org_teams (org, name, gender, grade_low, grade, level, created_by, created_at, import_id, alt_name, coach_first, coach_last)
            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id::text`,

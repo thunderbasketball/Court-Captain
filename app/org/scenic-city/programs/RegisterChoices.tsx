@@ -23,7 +23,8 @@ const chip = (on: boolean) =>
 
 // What a team registers for in a League: ALL Season and/or Single Day options on Game Days. Shows each date's games
 // guaranteed (1GG/2GG), whether it makes the brackets, and the fee as they pick; checked again on the server.
-// `entry`: what it already has (adding to a registration). `save` registers; returns ok or a message.
+// `entry`: what it already has (adding to a registration). `save` registers; returns ok or a message. Without `save`
+// (one of several teams on Register), no button: `onChange` hands each pick up to the form.
 export default function RegisterChoices({
   options,
   gameDates,
@@ -31,17 +32,30 @@ export default function RegisterChoices({
   entry,
   save,
   saveLabel,
+  onChange,
 }: {
   options: ProgramOption[];
   gameDates: string[];
   today: string;
   entry: (Choice & ChoiceResult) | null;
-  save: (choice: Choice) => Promise<{ ok: true } | { ok: false; message: string }>;
+  save?: (choice: Choice) => Promise<{ ok: true } | { ok: false; message: string }>;
   saveLabel?: string; // the button (default Register, or Add to registration)
+  onChange?: (choice: Choice) => void;
 }) {
   const had: Choice = entry ? { allSeason: entry.allSeason, days: entry.days } : { allSeason: false, days: [] };
-  const [all, setAll] = useState(false);
-  const [days, setDays] = useState<Choice["days"]>([]);
+  const [all, setAllState] = useState(false);
+  const [days, setDaysState] = useState<Choice["days"]>([]);
+  // Each pick also goes up to the form (one of several teams).
+  const setAll = (v: boolean) => {
+    const nextDays = v ? days : keepValid(days, false); // a 2nd Game whose day no longer has a first game comes off
+    setAllState(v);
+    setDaysState(nextDays);
+    onChange?.({ allSeason: v, days: nextDays });
+  };
+  const setDays = (v: Choice["days"]) => {
+    setDaysState(v);
+    onChange?.({ allSeason: all, days: v });
+  };
   const [error, setError] = useState<string | null>(null);
   const [busy, start] = useTransition();
   const add: Choice = { allSeason: all, days };
@@ -96,10 +110,7 @@ export default function RegisterChoices({
                 className="mt-0.5 size-4"
                 checked={all}
                 disabled={!all && !fits({ allSeason: true, days })}
-                onChange={(e) => {
-                  setAll(e.target.checked);
-                  if (!e.target.checked) setDays(keepValid(days, false));
-                }}
+                onChange={(e) => setAll(e.target.checked)}
               />
               <span className="text-sm">
                 <span className="font-semibold">{o.name}</span>
@@ -181,6 +192,7 @@ export default function RegisterChoices({
           </div>
         ))}
       {error && <Alert tone="red">{error}</Alert>}
+      {save && (
       <button
         type="button"
         className={navyBtn}
@@ -188,13 +200,14 @@ export default function RegisterChoices({
         onClick={() =>
           start(async () => {
             setError(null);
-            const r = await save(add);
+            const r = await save!(add);
             if (!r.ok) setError(r.message);
           })
         }
       >
         {busy ? "Saving…" : (saveLabel ?? (entry ? "Add to registration" : "Register"))}
       </button>
+      )}
     </div>
   );
 }

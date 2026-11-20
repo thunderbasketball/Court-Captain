@@ -106,7 +106,7 @@ export async function TeamsContent({
             alert: { roles: ["coach"] },
           }}
           add={{
-            add: <AddTeamPanel people={[...people.users, ...people.volunteers]} create={createTeam} href="/org/thunder/teams/" />,
+            add: <AddTeamPanel me={{ value: `user:${user.coachId}`, firstName: user.firstName, lastName: user.lastName }} people={[...people.users, ...people.volunteers]} create={createTeam} href="/org/thunder/teams/" />,
             import: (
               <ImportTeamsPanel
                 preview={previewThunderImport}

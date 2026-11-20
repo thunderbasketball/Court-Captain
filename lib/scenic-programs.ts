@@ -8,7 +8,7 @@
 // Directors of Programs mark Paid.
 import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
-import { orgHasArea } from "./org-admin";
+import { isOrgOwner, orgHasArea } from "./org-admin";
 import { logoType, type Logo } from "./org-signup";
 import { REG_OPTIONS, closedReason, planChoice, type Choice, type ChoiceResult, type ProgramOption, type SingleKind } from "./program-options";
 import { clubAbbr } from "./scenic-club-teams";
@@ -155,10 +155,12 @@ export type RegisteredTeam = {
   partnerId: string | null; // the school or organization it comes from (its home gyms on the Scheduler Grid)
   coach: string | null; // an organization's team may have no Head Coach yet
   coachCell: string | null;
+  coachEmail: string | null;
   // Everyone who coaches it: its Head Coach (a login, or a name waiting for a cell) and the Assistant Coaches of the
   // Thunder or organization team it comes from. A key is the same on each team one person coaches.
   coaches: TeamCoach[];
   registeredBy: string;
+  registeredAt: Date;
   movedBy: string | null;
   paid: boolean;
   paidSetBy: string | null;
@@ -239,8 +241,10 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
       owner: string | null;
       coach: string;
       coach_cell: string;
+      coach_email: string | null;
       coaches: TeamCoach[];
       registered_by: string;
+      registered_at: Date;
       moved_by: string | null;
       paid: boolean;
       paid_set_by: string | null;
@@ -249,8 +253,9 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
     }>(
       `select r.pool_id::text, t.id::text as team_id, t.name, t.grade_low, t.grade, t.level, p.name as partner, coalesce(og.abbr, p.abbr) as partner_abbr, og.kind = 'Team' as solo_account, t.partner_id::text,
               o.first_name || ' ' || o.last_name as owner, c.first_name || ' ' || c.last_name as coach, c.cell as coach_cell,
+              coalesce(c.verified_email, c.email) as coach_email,
               ${TEAM_COACHES} as coaches,
-              r.registered_by, r.moved_by, r.paid, r.paid_set_by, r.removed_by,
+              r.registered_by, r.registered_at, r.moved_by, r.paid, r.paid_set_by, r.removed_by,
               coalesce((select json_object_agg(x.off, x.set_by) from scenic_team_off x
                         where x.program_id = r.program_id and x.team_id = r.team_id), '{}') as off
        from scenic_registrations r join scenic_teams t on t.id = r.team_id left join users c on c.coach_id = t.coach_id
@@ -281,8 +286,10 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
     partnerId: r.partner_id,
     coach: r.coach,
     coachCell: r.coach_cell,
+    coachEmail: r.coach_email,
     coaches: r.coaches,
     registeredBy: r.registered_by,
+    registeredAt: r.registered_at,
     movedBy: r.moved_by,
     paid: r.paid,
     paidSetBy: r.paid_set_by,
@@ -1550,7 +1557,7 @@ export async function withdrawTeams(
   );
 }
 
-// Directors of Programs: mark a registration Paid or Unpaid (who and when are recorded).
+// Scenic City's Owners only: mark a registration Paid or Unpaid (who and when are recorded).
 export async function setPaid(
   deps: Deps,
   viewer: SessionUser,
@@ -1559,7 +1566,7 @@ export async function setPaid(
   paid: boolean,
 ): Promise<Result> {
   if (!isId(programId) || !isId(teamId)) return { ok: false, message: "Pick a team." };
-  if (!(await isProgramsDirector(deps.pool, viewer))) return { ok: false, message: programsOnly };
+  if (!(await isOrgOwner(deps.pool, viewer.coachId, ORG))) return { ok: false, message: "Only Scenic City's Owners can mark teams paid." };
   const r = await deps.pool.query(
     "update scenic_registrations set paid = $3, paid_set_by = $4, paid_set_at = $5 where program_id = $1 and team_id = $2",
     [programId, teamId, paid === true, by(viewer), deps.now()],

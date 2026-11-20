@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { GRADES, LEVELS, PREK, gradeSort, teamName, type Gender } from "@/lib/team-names";
+import { GRADES, LEVELS, PREK, gradeSort, orgTeamName, teamName, type Gender } from "@/lib/team-names";
 import { Alert, PopUp } from "./client-ui";
 import { fieldLabel, inputCls, pillCls, primaryBtn } from "./ui";
 
@@ -18,6 +18,8 @@ type Create = (input: Input) => Promise<{ ok: true; id: string; name: string } |
 // `preK` (teams for Scenic City Leagues, not Thunder's): Pre-K is offered too, always Coed and REC ("PKC Lee").
 export default function AddTeamButton({
   people,
+  me,
+  orgName,
   create,
   href,
   clubs,
@@ -25,6 +27,8 @@ export default function AddTeamButton({
   noRec = false,
 }: {
   people: Person[];
+  me?: Me; // the person adding it: "Me" first in Head Coach
+  orgName?: string; // a registered organization's short name: in its teams' names ("8B Testing Basketball Smith")
   create: Create;
   href?: string;
   clubs?: Club[];
@@ -41,6 +45,8 @@ export default function AddTeamButton({
       {(close) => (
         <AddTeamForm
           people={people}
+          me={me}
+          orgName={orgName}
           clubs={clubs}
           preK={preK && !noRec}
           noRec={noRec}
@@ -60,6 +66,8 @@ export default function AddTeamButton({
 // or the page refreshes with a fresh form.
 export function AddTeamPanel({
   people,
+  me,
+  orgName,
   create,
   href,
   clubs,
@@ -67,6 +75,8 @@ export function AddTeamPanel({
   noRec = false,
 }: {
   people: Person[];
+  me?: Me; // the person adding it: "Me" first in Head Coach
+  orgName?: string; // a registered organization's short name: in its teams' names ("8B Testing Basketball Smith")
   create: Create;
   href?: string;
   clubs?: Club[];
@@ -82,6 +92,8 @@ export function AddTeamPanel({
       <AddTeamForm
         key={round}
         people={people}
+        me={me}
+        orgName={orgName}
         clubs={clubs}
         preK={preK && !noRec}
         noRec={noRec}
@@ -98,9 +110,12 @@ export function AddTeamPanel({
 }
 
 const NEW = "new";
+type Me = { value: string; firstName: string; lastName: string };
 
 function AddTeamForm({
   people,
+  me,
+  orgName,
   clubs,
   preK,
   noRec,
@@ -108,6 +123,8 @@ function AddTeamForm({
   onAdded,
 }: {
   people: Person[];
+  me?: Me;
+  orgName?: string;
   clubs?: Club[];
   preK: boolean;
   noRec: boolean;
@@ -150,13 +167,22 @@ function AddTeamForm({
     } else if (grades.includes(PREK)) setGrades([]);
   };
   const last =
-    coach === NEW ? person.last.trim() : coach === "none" ? "TBD" : (people.find((p) => p.value === coach)?.lastName ?? "");
+    coach === NEW
+      ? person.last.trim()
+      : coach === "none"
+        ? "TBD"
+        : (me?.value === coach ? me.lastName : people.find((p) => p.value === coach)?.lastName) ?? "";
   const abbr = !clubs
     ? ""
     : club === NEW
       ? newClub.abbr.trim().toUpperCase() || "…"
       : (clubs.find((c) => c.value === club)?.abbr ?? "");
-  const preview = gender && grades.length && last ? `${abbr ? `${abbr} ` : ""}${teamName(gender, grades, last)}` : "—";
+  const preview =
+    gender && grades.length && last
+      ? orgName
+        ? orgTeamName(gender, grades, alt.trim() || orgName, last === "TBD" ? null : last)
+        : `${abbr ? `${abbr} ` : ""}${teamName(gender, grades, last)}`
+      : "—";
   const clubReady = !clubs || (club && (club !== NEW || newClub.name.trim()));
   const ready = clubReady && gender && grades.length && coach && (coach !== NEW || (person.first && person.last && person.cell));
 
@@ -264,9 +290,14 @@ function AddTeamForm({
           <option value="" disabled>
             Choose…
           </option>
+          {me && (
+            <option value={me.value}>
+              Me ({me.firstName} {me.lastName})
+            </option>
+          )}
           <option value="none">No coach yet (named TBD until one is added)</option>
           <option value={NEW}>New person…</option>
-          {people.map((p) => (
+          {people.filter((p) => p.value !== me?.value).map((p) => (
             <option key={p.value} value={p.value}>
               {p.lastName}, {p.firstName}
               {p.detail ? ` · ${p.detail}` : ""}
@@ -299,7 +330,9 @@ function AddTeamForm({
         </div>
       )}
       <label className="block">
-        <span className={fieldLabel}>Alternate name (optional)</span>
+        <span className={fieldLabel}>
+          Alternate name (optional{orgName ? "; in the team's name instead of the organization's" : ""})
+        </span>
         <input
           className={inputCls}
           maxLength={60}
@@ -312,7 +345,7 @@ function AddTeamForm({
         <p className="text-xs text-zinc-500">Team name</p>
         <p className="text-lg font-semibold">
           {preview}
-          {alt.trim() && <span className="text-sm font-normal text-zinc-500"> · {alt.trim()}</span>}
+          {alt.trim() && !orgName && <span className="text-sm font-normal text-zinc-500"> · {alt.trim()}</span>}
         </p>
         <p className="text-xs text-zinc-500">If another team has this name, both get a number (1, 2).</p>
       </div>

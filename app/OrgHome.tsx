@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import { orgFeatures } from "@/lib/features";
 import { innerParams } from "@/lib/home-card-href";
 import { seesHostDocuments } from "@/lib/host-documents";
-import { assignerCount, isOrgAdmin, orgHasArea, type Area } from "@/lib/org-admin";
+import { assignerCount, isOrgAdmin, isOrgOwner, orgHasArea, type Area } from "@/lib/org-admin";
 import { orgMetrics, practiceMetrics, teamsMissing } from "@/lib/org-metrics";
 import { orgInfo } from "@/lib/org-registry";
 import { followRename } from "@/lib/org-rename";
@@ -24,6 +24,7 @@ import CourtSyncCard, { anyCourtSync, courtSyncAlert, type CourtSyncParts } from
 import { GymToolIcons, GymToolPanels } from "./GymTools";
 import MembersCards, { type MemberCard } from "./MembersCards";
 import { OrgMetricsWithVisits, todoCounts } from "./OrgMetrics";
+import RegistrationsCard from "./RegistrationsCard";
 import ProgramsCard, { programCount } from "./ProgramsCard";
 import SubCard from "./SubCard";
 import SupportCard from "./SupportCard";
@@ -104,6 +105,7 @@ export default async function OrgHome({
       db.query("select 1 from org_team_coaches c join org_teams t on t.id = c.team_id where t.org = $1 and c.coach_id = $2 limit 1", [org, user.coachId]),
     ]);
   const has = (f: Parameters<typeof features.has>[0]) => features.has(f);
+  const owner = await isOrgOwner(db, user.coachId, org); // Registrations (Owners only, for now)
   // A League's own coaches and solo teams (they register teams in its programs).
   const leagueMember = has("team-registration") && (roles.includes("Solo") || roles.includes("Coach"));
 
@@ -222,6 +224,15 @@ export default async function OrgHome({
     ...((has("player-registration") || has("team-registration") || has("programs")) && (admin || eventsArea || programsArea || leagueMember)
       ? [{ key: "programs", title: "Programs", count: await programCount(org), body: <ProgramsCard org={org} user={user} /> }]
       : []),
+    // Registrations, several views: CourtTeams (Scenic City's programs) every registered team; CourtPlayers every
+    // registered player. Its Owners only for now (checked again in lib/registrations-list).
+    ...(!owner
+      ? []
+      : org === "scenic-city" && has("team-registration")
+      ? [{ key: "registrations", title: "Registrations", body: <RegistrationsCard user={user} org={org} kind="teams" /> }]
+      : has("player-registration")
+        ? [{ key: "registrations", title: "Registrations", body: <RegistrationsCard user={user} org={org} kind="players" /> }]
+        : []),
     ...(scheduler ? [{ key: "scheduler", title: "Scheduler", body: <SchedulerContent embedded /> }] : []),
     ...(practiceOn
       ? [

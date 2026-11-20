@@ -14,6 +14,23 @@ export function teamName(gender: Gender, grades: string[], headLastName: string)
   return `${top}${gender[0]} ${headLastName.trim()}`;
 }
 
+// A registered organization's team (not Thunder's): grade and gender, the organization's short name, the Head Coach's
+// last name, "TBD" until there's one ("8B Testing Basketball Epps", "8B Testing Basketball TBD").
+export function orgTeamName(gender: Gender, grades: string[], org: string, headLastName: string | null): string {
+  const top = [...grades].sort((a, b) => gradeSort(b) - gradeSort(a))[0];
+  return `${top}${gender[0]} ${org.trim()} ${headLastName?.trim() || "TBD"}`.replace(/\s+/g, " ");
+}
+
+// True when a team's Alternate name is already in its name ("8B Bolts Epps"): not shown again after it.
+export const inName = (name: string, alt: string) => ` ${name.toLowerCase()} `.includes(` ${alt.trim().toLowerCase()} `);
+
+// Register's default team name, the same rule. `grade` as Register's grade choices send it ("8", "7-8", "PK"; 0 = K).
+export function signupTeamName(gender: string, grade: string, org: string, headLastName: string): string {
+  const grades = grade === PREK || grade === "-1" ? [PREK] : grade.split("-").map((n) => gradeStr(Number(n)));
+  const top = [...grades].sort((a, b) => gradeSort(b) - gradeSort(a))[0];
+  return [`${top}${gender ? gender[0] : ""}`, org.trim(), headLastName.trim() || "TBD"].filter(Boolean).join(" ").replace(/\s+/g, " ");
+}
+
 // One grade, or two next to each other (3rd/4th): what leagues place by. Grades as in GRADES ("K", "1" … "12"), and
 // Pre-K ("PK", on its own) where `preK` allows it.
 export function gradesOk(grades: string[], preK = false): boolean {

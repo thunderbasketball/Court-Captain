@@ -2,7 +2,9 @@
 // without importing the account code.
 export const SOLO_KIND = "Team";
 
-// A team's name in a league: just its name for a CourtSolo team, else its organization's Abbreviation first
-// ("ER 5B Harris"). `o` is the organizations row, `name` the team's name (SQL).
-export const leagueNameSql = (o: string, name: string) =>
-  `case when ${o}.kind = '${SOLO_KIND}' then ${name} else coalesce(${o}.abbr, upper(left(${o}.slug, 4))) || ' ' || ${name} end`;
+// A team's name in a league: its own name, with its organization's Abbreviation first for a REC team
+// ("TB 8B Testing Basketball Smith"); a CourtSolo team's is always just its name. `o` is the organizations row, `name` the
+// team's name and `level` its level (SQL).
+export const leagueNameSql = (o: string, name: string, level: string) =>
+  `case when ${o}.kind = '${SOLO_KIND}' or ${level} <> 'REC' then ${name}
+        else coalesce(${o}.abbr, upper(left(${o}.slug, 4))) || ' ' || ${name} end`;

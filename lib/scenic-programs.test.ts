@@ -471,13 +471,17 @@ describe("Scenic City programs", () => {
     expect(await withdrawTeam(deps(), dee, id, b5)).toEqual({ ok: true });
   });
 
-  it("Paid is set by Directors of Programs and recorded; a division with teams can't be removed; delete removes it all", async () => {
+  it("Paid is set by Scenic City's Owners only and recorded; a division with teams can't be removed; delete removes it all", async () => {
     const id = await newLeague();
     await div(id, "Boys", 5, 5, ["REC"]);
     await div(id, "Girls", 5, 5, ["REC"]);
     const b5 = await team(pat, baylor, "Baylor 5th", "Boys", "5");
     await registerTeam(deps(), pat, id, b5, ALL);
     expect(await setPaid(deps(), pat, id, b5, true)).toMatchObject({ ok: false });
+    // A Director of Programs who isn't an Owner can't; an Owner can.
+    expect(await setPaid(deps(), dee, id, b5, true)).toEqual({ ok: false, message: "Only Scenic City's Owners can mark teams paid." });
+    await db.pool.query("insert into org_role_types (org, role) values ('scenic-city', 'Owner') on conflict do nothing");
+    await db.pool.query("select set_role('9913694', 'scenic-city', 'Owner', true, 'test')");
     expect(await setPaid(deps(), dee, id, b5, true)).toEqual({ ok: true });
     expect((await db.pool.query("select paid, paid_set_by from scenic_registrations")).rows[0]).toEqual({
       paid: true,

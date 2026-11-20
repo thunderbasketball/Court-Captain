@@ -1,10 +1,12 @@
 // Registering a new organization on CourtCaptain (SPEC.md section 14). It's live at once: the person registering is its
 // Owner (also Admin and Director). They pick the features they need: those that work for any organization today are
 // turned on; the others are recorded as requested.
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { FEATURES, READY_FOR_ANY_ORG, featuresChanged, type FeatureKey } from "./features";
 import { slugFor } from "./org-slug";
+import { renameAllOrgTeams } from "./org-teams";
+import { leagueNameSql } from "./solo-names";
 import { withTx } from "./sql";
 
 export { slugFor };
@@ -40,7 +42,7 @@ export type NewOrgInput = { name: unknown; short: unknown; kind: unknown; color:
 export type Logo = { bytes: Uint8Array; type: string } | null;
 
 // Organization names: letters, numbers, spaces and . ' & - , ( ), starting with a letter or number (never a formula).
-const cleanOrgName = (v: unknown, max: number) => {
+export const cleanOrgName = (v: unknown, max: number) => {
   if (typeof v !== "string") return null;
   const s = v.trim().replace(/\s+/g, " ");
   return s.length >= 2 && s.length <= max && /^[A-Za-z0-9][A-Za-z0-9 .'&\-,()]*$/.test(s) ? s : null;
@@ -83,40 +85,17 @@ export async function createOrganization(
   return withTx(deps.pool, async (q) => {
     const taken = await q.query("select 1 from organizations where lower(name) = lower($1)", [name]);
     if (taken.rowCount) return { ok: false as const, message: `There's already an organization named ${name} on CourtCaptain.` };
-    const base = slugFor(name);
-    let slug = base;
-    for (let n = 2; (await q.query("select 1 from organizations where slug = $1", [slug])).rowCount; n++) slug = `${base}-${n}`;
-    await q.query(
-      `insert into organizations (slug, name, short_name, kind, color, logo, logo_type, logo_updated_at, created_by, created_at, abbr)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-      [
-        slug,
-        name,
-        short,
-        kind,
-        color,
-        logo ? Buffer.from(logo.bytes) : null,
-        logo ? logoType(logo.bytes) : null,
-        logo ? deps.now() : null,
-        by(viewer),
-        deps.now(),
-        abbrFor(short ?? name),
-      ],
-    );
-    await q.query(
-      "insert into org_role_types (org, role) select $1, r from unnest(array['Request', 'Coach', 'Director', 'Admin', 'Owner']) r",
-      [slug],
-    );
-    await q.query(
-      "select set_role($1, $2, 'Owner', true, $3), set_role($1, $2, 'Admin', true, $3), set_role($1, $2, 'Director', true, $3)",
-      [viewer.coachId, slug, by(viewer)],
-    );
-    for (const f of on)
-      await q.query(
-        "insert into org_features (org, feature, source, turned_on_by, turned_on_at) values ($1, $2, 'setup', $3, $4)",
-        [slug, f, by(viewer), deps.now()],
-      );
-    featuresChanged();
+    const slug = await insertOrganization(q, {
+      name,
+      short,
+      kind,
+      color,
+      logo: logo ? { bytes: Buffer.from(logo.bytes), type: logoType(logo.bytes) } : null,
+      byName: by(viewer),
+      ownerId: viewer.coachId,
+      now: deps.now(),
+      on,
+    });
     for (const f of requested)
       await q.query("insert into org_feature_requests (org, feature, asked_by, asked_at) values ($1, $2, $3, $4)", [
         slug,
@@ -126,6 +105,49 @@ export async function createOrganization(
       ]);
     return { ok: true as const, slug, on, requested };
   });
+}
+
+// The new organization's rows (inside the caller's transaction, its name checked free): its address from its name
+// (numbered if taken), its role types, the person registering as Owner, Admin and Director, and its features on.
+export async function insertOrganization(
+  q: Pick<PoolClient, "query">,
+  o: {
+    name: string;
+    short: string | null;
+    kind: string;
+    color: string;
+    logo: { bytes: Buffer; type: string | null } | null;
+    byName: string;
+    ownerId: string;
+    now: Date;
+    on: FeatureKey[];
+  },
+): Promise<string> {
+  const base = slugFor(o.name);
+  let slug = base;
+  for (let n = 2; (await q.query("select 1 from organizations where slug = $1", [slug])).rowCount; n++) slug = `${base}-${n}`;
+  await q.query(
+    `insert into organizations (slug, name, short_name, kind, color, logo, logo_type, logo_updated_at, created_by, created_at, abbr)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    [slug, o.name, o.short, o.kind, o.color, o.logo?.bytes ?? null, o.logo?.type ?? null, o.logo ? o.now : null, o.byName, o.now, abbrFor(o.short ?? o.name)],
+  );
+  await q.query(
+    "insert into org_role_types (org, role) select $1, r from unnest(array['Request', 'Coach', 'Director', 'Admin', 'Owner']) r",
+    [slug],
+  );
+  await q.query(
+    "select set_role($1, $2, 'Owner', true, $3), set_role($1, $2, 'Admin', true, $3), set_role($1, $2, 'Director', true, $3)",
+    [o.ownerId, slug, o.byName],
+  );
+  for (const f of o.on)
+    await q.query("insert into org_features (org, feature, source, turned_on_by, turned_on_at) values ($1, $2, 'setup', $3, $4)", [
+      slug,
+      f,
+      o.byName,
+      o.now,
+    ]);
+  featuresChanged();
+  return slug;
 }
 
 // The Owner (or an Admin) changes the logo later.
@@ -208,6 +230,8 @@ export async function renameOrg(
         deps.now(),
       ]);
     }
+    // Its teams carry its short name ("8B East Ham Harris"): renamed with it (not Thunder's, kept in its own tables).
+    if (slug !== "thunder") await renameAllOrgTeams(q, slug);
     return { ok: true as const, slug };
   });
 }
@@ -245,11 +269,11 @@ export async function setOrgAbbr(deps: Deps, viewer: SessionUser, org: string, a
   const admin = await deps.pool.query<{ ok: boolean }>("select acts_as($1, $2, 'Admin') as ok", [viewer.coachId, org]);
   if (!admin.rows[0].ok) return { ok: false, message: "Only an Admin of this organization can change its abbreviation." };
   await deps.pool.query("update organizations set abbr = $2 where slug = $1", [org, a]);
-  // Its teams' names in leagues follow (a CourtSolo team's is just its name).
+  // Its REC teams' names in leagues follow (the Abbreviation first; a CourtSolo team's is just its name).
   await deps.pool.query(
-    `update scenic_teams st set name = $2 || ' ' || t.name from org_teams t join organizations o on o.slug = t.org
-      where st.org_team_id = t.id and t.org = $1 and o.kind <> 'Team'`,
-    [org, a],
+    `update scenic_teams st set name = ${leagueNameSql("o", "t.name", "t.level")}
+       from org_teams t join organizations o on o.slug = t.org where st.org_team_id = t.id and t.org = $1`,
+    [org],
   );
   return { ok: true };
 }

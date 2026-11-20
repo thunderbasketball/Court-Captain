@@ -11,8 +11,12 @@ import { REC_LIMITED, shortDate } from "@/lib/program-options";
 import { easternDate } from "@/lib/time";
 import OrgLogo from "../../OrgLogo";
 import { ProgramSchedule, ProgramTeams } from "../../PublicProgramViews";
-import RegisterChoice from "../../login/[org]/RegisterChoice";
+import { TeamSignupForm } from "../../register-team/[org]/TeamSignupForm";
+import { GRADE_CHOICES } from "@/lib/scenic-teams";
+import { openPrograms } from "@/lib/team-signup";
 import { card } from "../../ui";
+import SubCard from "../../SubCard";
+import ShareButton from "../../ShareButton";
 
 export async function generateMetadata({ params }: PageProps<"/league/[org]">): Promise<Metadata> {
   return orgMetadata((await params).org);
@@ -28,15 +32,9 @@ export default function LeaguePage({ params, searchParams }: PageProps<"/league/
   );
 }
 
-const tabCls = (on: boolean) =>
-  `shrink-0 border-b-2 px-3 py-2 text-sm font-semibold ${
-    on
-      ? "border-thunder-orange text-zinc-900 dark:text-white"
-      : "border-transparent text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
-  }`;
-
 // The public League page (SPEC.md section 13): no login, no contact information. Scenic City's Leagues, each with
-// its Teams and, once published by a Director of Programs, its Schedule.
+// its Teams and, once published by a Director of Programs, its Schedule, as cards that open in place (an old ?tab= link
+// opens that card). Share sends the League's link.
 async function League({
   params,
   searchParams,
@@ -57,8 +55,10 @@ async function League({
   const league = pickedId ? await publicLeague(db, now, pickedId) : null;
   // Register tab while the League's registration is open and Team Registrations is on.
   const canRegister = !!league?.registering && (await hasFeature(db, org, "team-registration"));
-  const tab = sp.tab === "schedule" ? "schedule" : sp.tab === "register" && canRegister ? "register" : "teams";
-  const href = (l: string, t: string) => `/league/${org}?l=${l}&tab=${t}`;
+  // Register opens right in its card: the organization's name, the person registering and each of its teams.
+  const programs = canRegister ? await openPrograms(db, now) : [];
+  const tab = typeof sp.tab === "string" ? sp.tab : "";
+  const href = (l: string) => `/league/${org}?l=${l}`;
 
   return (
     <>
@@ -68,6 +68,7 @@ async function League({
           <h1 className="text-xl font-semibold tracking-tight">{o.name}</h1>
           <p className="text-sm text-zinc-500">League teams and schedule</p>
         </div>
+        <ShareButton path={league ? href(league.id) : `/league/${org}`} title={league ? `${o.name}: ${league.name}` : o.name} />
         <Link
           href={`/login/${org}`}
           className="shrink-0 rounded-full px-3.5 py-1.5 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/40 hover:bg-blue-50 dark:hover:bg-white/5"
@@ -83,7 +84,7 @@ async function League({
           {leagues.map((l) => (
             <Link
               key={l.id}
-              href={href(l.id, tab)}
+              href={href(l.id)}
               aria-current={l.id === league?.id ? "page" : undefined}
               className={`rounded-full px-3 py-1.5 text-sm font-medium ring-1 ${
                 l.id === league?.id
@@ -106,49 +107,27 @@ async function League({
             )}
             <h2 className="text-lg font-semibold">{league.name}</h2>
           </div>
-          <nav aria-label="League" className="mb-4 flex gap-1 border-b border-zinc-200 dark:border-white/10">
-            <Link
-              href={href(league.id, "teams")}
-              aria-current={tab === "teams" ? "page" : undefined}
-              className={tabCls(tab === "teams")}
-            >
-              Teams ({league.groups.reduce((n, g) => n + g.teams.length, 0)})
-            </Link>
-            <Link
-              href={href(league.id, "schedule")}
-              aria-current={tab === "schedule" ? "page" : undefined}
-              className={tabCls(tab === "schedule")}
-            >
-              Schedule
-            </Link>
+          <div className="space-y-2">
             {canRegister && (
-              <Link
-                href={href(league.id, "register")}
-                aria-current={tab === "register" ? "page" : undefined}
-                className={tabCls(tab === "register")}
-              >
-                Register
-              </Link>
+              <SubCard title="Register" count={`by ${shortDate(league.regCloses)}`} open={tab === "register"}>
+                <div className="space-y-3">
+                  <p className="text-sm text-zinc-600 dark:text-zinc-300">
+                    {shortDate(league.startsOn)} – {shortDate(league.endsOn)} · register by {shortDate(league.regCloses)}
+                  </p>
+                  {league.recLimited && (
+                    <p className="text-sm font-medium text-amber-700 dark:text-amber-300">{REC_LIMITED}. COMP is open to all.</p>
+                  )}
+                  <TeamSignupForm grades={GRADE_CHOICES} programs={programs} today={today} preset={league.id} />
+                </div>
+              </SubCard>
             )}
-          </nav>
-
-          {tab === "register" && (
-            <div className={`${card} space-y-3 p-4`}>
-              <p className="text-sm text-zinc-600 dark:text-zinc-300">
-                {shortDate(league.startsOn)} – {shortDate(league.endsOn)} · register by {shortDate(league.regCloses)}
-              </p>
-              {league.recLimited && (
-                <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
-                  {REC_LIMITED}. COMP is open to all.
-                </p>
-              )}
-              <RegisterChoice org={org} programId={league.id} />
-            </div>
-          )}
-
-          {tab === "teams" && <ProgramTeams org={org} groups={league.groups} wide />}
-
-          {tab === "schedule" && <ProgramSchedule days={league.schedule} today={today} />}
+            <SubCard title="Teams" count={league.groups.reduce((n, g) => n + g.teams.length, 0)} open={tab === "teams"}>
+              <ProgramTeams org={org} groups={league.groups} wide />
+            </SubCard>
+            <SubCard title="Schedule" count={league.schedule ? undefined : "not posted yet"} open={tab === "schedule"}>
+              <ProgramSchedule days={league.schedule} today={today} />
+            </SubCard>
+          </div>
         </>
       )}
 

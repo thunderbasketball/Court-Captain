@@ -8,6 +8,8 @@ import { ORG_COLORS } from "@/lib/org-signup";
 import { TZ } from "@/lib/time";
 import OrgLogo from "./OrgLogo";
 import OrgSettings from "./OrgSettings";
+import OrgDelete from "./OrgDelete";
+import { BUILT_IN } from "@/lib/orgs";
 import OrgGradeRules from "./OrgGradeRules";
 import { orgGradeRules } from "@/lib/grade-rules";
 import { easternDate } from "@/lib/time";
@@ -44,6 +46,18 @@ export default async function OrgGear({ org, coachId, user }: { org: string; coa
     hasFeature(db, org, "chat"),
   ]);
   const chatSetting = chatOn ? await chatEmailSetting(db, org) : null;
+  // Delete organization: its Owners, once it has no teams (Thunder and Scenic City never).
+  const deletable = owner && !(BUILT_IN as readonly string[]).includes(org);
+  const teamCount = deletable
+    ? (
+        await db.query<{ n: number }>(
+          `select (select count(*) from org_teams where org = $1)
+                + (select count(*) from scenic_teams t join partners p on p.id = t.partner_id where p.org_slug = $1 and t.org_team_id is null)
+                  ::int as n`,
+          [org],
+        )
+      ).rows[0].n
+    : 0;
   // Director roles, by the features that bring them (Admins switch each Active or off).
   const roles = user ? await directorRoles(db, user, org) : null;
   const requested = new Set(asked.rows.map((f) => f.feature));
@@ -61,6 +75,7 @@ export default async function OrgGear({ org, coachId, user }: { org: string; coa
       name={o.name}
       short={o.short}
       canRename={owner}
+      deleteCard={deletable ? <OrgDelete org={org} name={o.name} teams={teamCount} /> : undefined}
       featureSettings={
         (
           <div className="space-y-2">

@@ -125,7 +125,7 @@ describe("CourtSolo: a stand-alone team's own account", () => {
       abbr: "HH",
     });
     expect([...(await orgFeatureKeys(db.pool, "hixson-hoops"))].sort()).toEqual(["alerts", "court-club", "court-facilities"]);
-    expect((await db.pool.query("select name from scenic_teams where id = $1", [t1])).rows[0].name).toBe("HH Thunderbolts");
+    expect((await db.pool.query("select name from scenic_teams where id = $1", [t1])).rows[0].name).toBe("Thunderbolts"); // a COMP team: just its name (REC: the Abbreviation first)
     expect((await myAccounts(db.pool, "9913694", "2027-03-15")).orgs).toEqual([{ slug: "hixson-hoops", name: "Hixson Hoops" }]);
     // Now it can add teams: COMP (REC needs CourtSync).
     expect(
@@ -133,6 +133,6 @@ describe("CourtSolo: a stand-alone team's own account", () => {
     ).toMatchObject({ ok: false, message: expect.stringContaining("CourtSync") });
     expect(
       await createOrgTeam(deps(), earl, "hixson-hoops", { gender: "Boys", grades: ["6"], level: "COMP", headCoach: "none" }),
-    ).toMatchObject({ ok: true, name: "6B TBD" });
+    ).toMatchObject({ ok: true, name: "6B Hixson TBD" });
   }, 60_000);
 });

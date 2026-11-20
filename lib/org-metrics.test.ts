@@ -150,7 +150,7 @@ describe("Home metrics", () => {
     const m = (await orgMetrics(deps(), admin, org))!;
     expect(m).toMatchObject({ registrations: null, notOnTeam: null, uniforms: null, practices: null });
     expect(m.teams).toEqual({ total: 1, rec: 1, comp: 0, boys: 0, girls: 1 });
-    expect(m.missing.map((t) => [t.name, t.noCoach, t.noPlayers])).toEqual([["5G TBD", true, true]]);
+    expect(m.missing.map((t) => [t.name, t.noCoach, t.noPlayers])).toEqual([["5G East Ridge TBD", true, true]]);
     expect(await orgMetrics(deps(), director, org)).toBeNull();
   });
 });

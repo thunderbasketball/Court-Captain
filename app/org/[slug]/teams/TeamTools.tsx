@@ -307,7 +307,7 @@ export function TeamEditButton({
         </div>
       </div>
       <label className="block">
-        <span className={fieldLabel}>Alternate name (optional)</span>
+        <span className={fieldLabel}>Alternate name (optional; in the team&apos;s name instead of the organization&apos;s)</span>
         <input className={inputCls} maxLength={60} value={alt} onChange={(e) => setAlt(e.target.value)} placeholder="e.g. Bolts" />
       </label>
       {error && <Alert tone="red">{error}</Alert>}
