@@ -11,11 +11,12 @@ const Chevron = () => (
 );
 
 // A card inside a Home card (Registrations, Teams, To Do…): its title with a count in brackets, flashing red while it
-// has something to fix (`alert`), opening and closing on its own. `action`: buttons on the title line that don't toggle it.
+// has something to fix (`alert`), or steady amber to stand out (`warn`), opening and closing on its own. `action`: buttons on the title line that don't toggle it.
 export default function SubCard({
   title,
   count,
   alert = false,
+  warn = false,
   open = false,
   action,
   children,
@@ -23,6 +24,7 @@ export default function SubCard({
   title: string;
   count?: ReactNode;
   alert?: boolean;
+  warn?: boolean;
   open?: boolean;
   action?: ReactNode;
   children: ReactNode;
@@ -30,17 +32,21 @@ export default function SubCard({
   return (
     <div className="relative">
       <details
-        className={`group/s overflow-hidden rounded-xl bg-white ring-1 dark:bg-zinc-900 ${
-          alert ? "ring-red-300 dark:ring-red-500/40" : "ring-zinc-950/10 dark:ring-white/10"
+        className={`group/s overflow-hidden rounded-xl ring-1 ${
+          alert
+            ? "bg-white ring-red-300 dark:bg-zinc-900 dark:ring-red-500/40"
+            : warn
+              ? "bg-amber-50 ring-amber-300 dark:bg-amber-500/10 dark:ring-amber-500/40"
+              : "bg-white ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10"
         }`}
         open={open}
       >
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-2.5 select-none [&::-webkit-details-marker]:hidden">
           <span
-            className={`min-w-0 font-semibold ${action ? "pr-14" : ""} ${alert ? "animate-pulse text-red-600 dark:text-red-400" : ""}`}
+            className={`min-w-0 font-semibold ${action ? "pr-14" : ""} ${alert ? "animate-pulse text-red-600 dark:text-red-400" : warn ? "text-amber-800 dark:text-amber-300" : ""}`}
           >
             {title}
-            {count !== undefined && count !== null && <span className="font-normal text-zinc-500"> ({count})</span>}
+            {count !== undefined && count !== null && <span className={`font-normal ${warn ? "text-amber-700 dark:text-amber-400" : "text-zinc-500"}`}> ({count})</span>}
           </span>
           <Chevron />
         </summary>

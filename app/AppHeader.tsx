@@ -14,6 +14,7 @@ import { listOrgs, orgInfo } from "@/lib/org-registry";
 import { PLATFORM_BRAND } from "@/lib/orgs";
 import { featureGroup } from "@/lib/org-groups";
 import OrgLogo from "./OrgLogo";
+import RememberBrand from "./RememberBrand";
 import { myPracticesToday } from "@/lib/practice-attendance";
 import { localParts, zonedTime } from "@/lib/time";
 import { recordVisit } from "@/lib/site-visits";
@@ -397,6 +398,7 @@ export default async function AppHeader({
           {/* The organization's logo and name open its main page (what anyone sees: programs, teams, officials). A plain
               link, loaded fresh each time: that page used to send logged-in people straight back in, and the app's link
               preloading could keep that old answer. */}
+          <RememberBrand logo={platform || neutral ? null : brand.logo} name={brand.name} />
           <a href={platform || neutral ? "/" : brand.login} className="flex min-w-0 items-center gap-2">
             <OrgLogo src={brand.logo} name={brand.name} color={brand.color} className="h-9 w-auto min-w-9 rounded-md" />
             <span className="min-w-0 leading-tight">

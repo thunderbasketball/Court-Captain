@@ -23,6 +23,7 @@ const when = (iso: string) =>
 const dollars = (v: string | null) => (v === null ? null : `$${Number(v).toFixed(2).replace(/\.00$/, "")}`);
 const owes = (p: PlayerRegistration) => !p.feesWaivedBy && Number(p.amountRemaining ?? 0) > 0;
 const gradeName = (g: string) => (g === "K" ? "K" : `${g}${["", "st", "nd", "rd"][Number(g)] ?? "th"}`);
+const SMALL_TEAM = 7; // By team: a team with fewer registered players is highlighted
 const programKey = (p: PlayerRegistration) => p.programId ?? `name:${p.program}`;
 
 export default function PlayerRegistrationsView({ programs, rows }: { programs: { id: string; name: string }[]; rows: PlayerRegistration[] }) {
@@ -33,7 +34,8 @@ export default function PlayerRegistrationsView({ programs, rows }: { programs: 
   const shown = view === "owed" ? mine.filter(owes) : mine;
   const byName = (a: PlayerRegistration, b: PlayerRegistration) =>
     a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName);
-  // Grouped views: a card per grade (Boys then Girls, youngest first) or per team (Not on a team first, then by name).
+  // Grouped views: a card per grade (Boys then Girls, youngest first) or per team (Not on a team first, then by name;
+  // a team with fewer than 7 registered players in amber).
   const groups =
     view === "grade"
       ? [...new Map(shown.map((p) => [`${p.gender}|${String(p.gradeSort).padStart(2, "0")}`, `${p.gender} ${gradeName(p.grade)}`])).entries()]
@@ -48,6 +50,7 @@ export default function PlayerRegistrationsView({ programs, rows }: { programs: 
             .sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b, undefined, { numeric: true })))
             .map((k) => ({ key: k || "none", label: k || "Not on a team", rows: shown.filter((p) => (p.team ?? "") === k).sort(byName) }))
         : null;
+  const small = view === "team" ? (groups ?? []).filter((g) => g.key !== "none" && g.rows.length < SMALL_TEAM).length : 0;
   const owedCount = mine.filter(owes).length;
   const owedTotal = mine.filter(owes).reduce((n, p) => n + Number(p.amountRemaining ?? 0), 0);
 
@@ -73,12 +76,18 @@ export default function PlayerRegistrationsView({ programs, rows }: { programs: 
       <p className="text-sm text-zinc-500">
         {mine.length} player{mine.length === 1 ? "" : "s"} registered
         {view === "owed" ? ` · ${owedCount} owe ${dollars(owedTotal.toFixed(2))} (paid in TeamSnap)` : ""}
+        {small > 0 && (
+          <span className="text-amber-700 dark:text-amber-400">
+            {" "}
+            · {small} team{small === 1 ? "" : "s"} under {SMALL_TEAM} players
+          </span>
+        )}
       </p>
       {!shown.length && <p className="text-sm text-zinc-500">{view === "owed" ? "No fees owed." : "No players registered yet."}</p>}
       {groups ? (
         <div className="space-y-2">
           {groups.map((g) => (
-            <SubCard key={g.key} title={g.label} count={g.rows.length}>
+            <SubCard key={g.key} title={g.label} count={g.rows.length} warn={view === "team" && g.key !== "none" && g.rows.length < SMALL_TEAM}>
               <Rows rows={g.rows} />
             </SubCard>
           ))}

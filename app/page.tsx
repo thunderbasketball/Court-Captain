@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import Splash from "./Splash";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { currentContexts } from "@/lib/contexts-server";
@@ -9,7 +10,7 @@ import { Notice, card } from "./ui";
 // Home: go to the role the person used last (Director → Teams, or one of their teams).
 export default function Home() {
   return (
-    <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
+    <Suspense fallback={<Splash />}>
       <HomeContent />
     </Suspense>
   );

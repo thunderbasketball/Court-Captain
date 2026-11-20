@@ -19,6 +19,8 @@ import { shortDate } from "@/lib/program-options";
 import PublicPrograms, { type ProgramCard } from "./PublicPrograms";
 import { recruitingOn } from "@/lib/officials";
 import { ApplyToOfficiate } from "../../officials/ApplyToOfficiate";
+import SubCard from "../../SubCard";
+import FindMyPlayer from "../../find-player/FindMyPlayer";
 
 // The organization's logo as the tab icon (and on a phone's home screen) and its name in the tab title.
 export async function generateMetadata({ params }: PageProps<"/login/[org]">): Promise<Metadata> {
@@ -62,7 +64,8 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
           : endsOn
             ? `Ended ${shortDate(endsOn)}`
             : "Under way";
-  const seasons: ProgramCard[] = (await hasFeature(db, org, "player-registration")) // CourtPlayers
+  const players = await hasFeature(db, org, "player-registration"); // CourtPlayers
+  const seasons: ProgramCard[] = players
     ? (
         await db.query<{ id: string; name: string; kind: string; reg_closes: string | null; starts_on: string | null; ends_on: string | null }>(
           `select id::text, name, kind, reg_closes::text, starts_on::text, ends_on::text from player_programs
@@ -136,6 +139,15 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
       )}
       {/* Programs: tap one to see its Teams and (a League's, once published) Schedule; Register while it's open. */}
       <PublicPrograms org={org} programs={programs} />
+      {/* A parent: their player's team, practices and games (a code to the email on the registration; no login). */}
+      {players && (
+        <section className="mt-6 space-y-2">
+          <h2 className="px-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Parents</h2>
+          <SubCard title="Find my player's team">
+            <FindMyPlayer today={today} />
+          </SubCard>
+        </section>
+      )}
       {/* Apply to officiate: this organization's (with Accept recruits on) and its officials groups'. */}
       {recruiting.length > 0 && (
         <section className="mt-6 space-y-2">

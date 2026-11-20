@@ -44,7 +44,7 @@ export type Step =
   | { step: "loggedIn"; token: string; expiresAt: Date }
   | { step: "error"; message: string };
 
-type Purpose = "signup" | "starter" | "verify" | "reset" | "team";
+type Purpose = "signup" | "starter" | "verify" | "reset" | "team" | "find";
 
 export type UserRow = {
   coach_id: string;

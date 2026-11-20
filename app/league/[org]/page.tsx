@@ -17,6 +17,7 @@ import { openPrograms } from "@/lib/team-signup";
 import { card } from "../../ui";
 import SubCard from "../../SubCard";
 import ShareButton from "../../ShareButton";
+import FindMyPlayer from "../../find-player/FindMyPlayer";
 
 export async function generateMetadata({ params }: PageProps<"/league/[org]">): Promise<Metadata> {
   return orgMetadata((await params).org);
@@ -126,6 +127,9 @@ async function League({
             </SubCard>
             <SubCard title="Schedule" count={league.schedule ? undefined : "not posted yet"} open={tab === "schedule"}>
               <ProgramSchedule days={league.schedule} today={today} />
+            </SubCard>
+            <SubCard title="Find my player's team" open={tab === "find"}>
+              <FindMyPlayer today={today} />
             </SubCard>
           </div>
         </>

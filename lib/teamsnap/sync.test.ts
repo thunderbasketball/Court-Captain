@@ -112,4 +112,20 @@ describe("syncRegistrations", () => {
     await importRegistrations(db.pool, csv, "Earl Epps", now());
     expect(await sync(sheet(...players(2)))).toEqual({ status: "updated", imported: 2 });
   });
+  it("players keep their program when a later program is added (only an open one takes new players)", async () => {
+    await db.pool.query("delete from player_programs where org = 'thunder'");
+    const winter = (
+      await db.pool.query<{ id: string }>(
+        `insert into player_programs (org, name, reg_opens, created_by) values ('thunder', 'Winter', '2026-10-01', 'test') returning id::text`,
+      )
+    ).rows[0].id;
+    await sync(sheet(...players(2)));
+    await db.pool.query(
+      `insert into player_programs (org, name, reg_opens, starts_on, ends_on, created_by)
+       values ('thunder', 'Spring', '2099-02-01', '2099-03-01', '2099-07-31', 'test')`,
+    );
+    expect(await sync(sheet(...players(3, "Ann")))).toEqual({ status: "updated", imported: 3 });
+    const progs = await db.pool.query<{ program_id: string }>("select program_id::text from registrations order by registrant_id");
+    expect(progs.rows.map((r) => r.program_id)).toEqual([winter, winter, winter]);
+  });
 });

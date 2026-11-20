@@ -85,7 +85,8 @@ describe("events", () => {
     const fall = await prog("Fall", "2026-09-01");
     const spring = await prog("Spring", "2027-03-01");
     await db.pool.query("update registrations set program_id = $1", [fall]); // r1–r4 registered for Fall
-    await reg("r5", "Eve", "Girls", "4"); // a new registration joins the current (latest) program: Spring
+    await db.pool.query("update player_programs set reg_opens = '2026-10-01' where id = $1", [spring]); // Spring's registration is open
+    await reg("r5", "Eve", "Girls", "4"); // a new registration joins the latest program whose registration is open: Spring
     expect((await db.pool.query("select program_id::text as p from registrations where registrant_id = 'r5'")).rows[0].p).toBe(spring);
 
     const r = await createEvent(deps(), director, { ...tryouts, programId: fall, signupOpens: "2026-10-30", signupCloses: "2026-11-05" });
