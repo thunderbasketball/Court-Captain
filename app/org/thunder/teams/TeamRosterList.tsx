@@ -1,13 +1,13 @@
 import { formatCell } from "@/lib/phone";
 import { gradeLabel } from "@/lib/grades";
 import type { TeamListItem } from "@/lib/teams";
-import { EmailLink, PhoneLink } from "../../../ui";
+import { EmailLink, JerseyNumber, PhoneLink } from "../../../ui";
 import RosterPlayerRow from "./RosterPlayerRow";
 import EligibleChip, { bornLabel } from "../../../EligibleChip";
 import { schoolYearOf, type GradeRules } from "@/lib/eligibility";
 import { easternDate } from "@/lib/time";
 
-// A team card's roster, opened by its 👥 count right on the card: name, grade and (for Owners and Admins) who rostered
+// A team card's roster, opened by its 👥 count right on the card: jersey number (once set on Uniforms), name, grade and (for Owners and Admins) who rostered
 // them, by last name, with their birthday and a badge when they aren't eligible for the team's grade (age control date).
 // Tapping a player opens their parents (name, cell, email) and coach request.
 export default function TeamRosterList({
@@ -31,6 +31,7 @@ export default function TeamRosterList({
             <>
               <span className="flex min-w-0 flex-wrap items-center gap-1">
                 <span>
+                  <JerseyNumber n={p.number} />
                   {p.first} <span className="font-semibold">{p.last}</span>
                 </span>
                 <EligibleChip teamGrades={team.grades} grade={p.grade} birthdate={p.birthdate} year={year} rules={rules} />

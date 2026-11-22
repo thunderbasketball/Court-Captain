@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { BRAND_KEY } from "./Splash";
+import { BRAND_KEY } from "@/lib/brand-script";
 
 // Remembers on this phone the organization being looked at (its logo and name), for the loading screen (app/Splash.tsx).
 export default function RememberBrand({ logo, name }: { logo: string | null; name: string }) {

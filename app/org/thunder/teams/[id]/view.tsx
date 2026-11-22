@@ -12,9 +12,10 @@ import { teamGymChoices, upcomingForTeam } from "@/lib/practice/schedule";
 import { BookPracticesButton, BookPracticesPanel } from "../../../../BookPractices";
 import { canChangeOwnPractices, ownPracticeLocations, upcomingOwnPractices } from "@/lib/team-practices";
 import TeamPractices from "../../../../TeamPractices";
+import HowPracticesWork from "../../../../HowPracticesWork";
 import { canEvaluate, listEvaluations } from "@/lib/evaluations";
 import { listRoster, rosterCandidates } from "@/lib/rosters";
-import { listUniforms, uniformsMissing } from "@/lib/uniforms";
+import { canUnlockUniforms, listUniforms, uniformsMissing } from "@/lib/uniforms";
 import { listFormations, listPlays, orgLibrary } from "@/lib/playbook";
 import PlaybookCard from "../../../../PlaybookCard";
 import { playbookPanel } from "@/lib/play-kinds";
@@ -32,8 +33,11 @@ import SharedTeamPage, { type TeamStaffRow } from "../../../../TeamPage";
 import { Chip, EmailLink, PhoneLink } from "../../../../ui";
 import AvailablePlayers from "./AvailablePlayers";
 import UniformsBoard from "./UniformsBoard";
+import HowUniformsWork from "../../uniforms/HowUniformsWork";
 import { AddPlayersButton, RemovePlayerButton } from "./RosterTools";
 import { scheduledGames } from "@/lib/scenic-games";
+import { teamRequests } from "@/lib/schedule-requests";
+import ScheduleRequests from "../../../../ScheduleRequests";
 import { easternDate } from "@/lib/time";
 import { ScheduleList } from "../../../../LeagueGames";
 import { teamScrimmages } from "@/lib/scrimmages";
@@ -41,6 +45,7 @@ import NextSevenDays from "../../../../NextSevenDays";
 import { myPlayers, rsvpsFor, takesAttendance } from "@/lib/event-attendance";
 import { AddStaffButton, AddStaffPanel, DeleteTeamButton, RemoveStaffButton, TeamEditForm } from "./TeamEditor";
 import { hasArea, isThunderAdmin, seesWho } from "@/lib/org-admin";
+import { deleteBlock } from "@/lib/schedule-removal";
 
 // A Thunder team's page: on its own address, or (`embedded`) inside its row on the Teams list (no header, no ← Teams).
 export async function ThunderTeamView({
@@ -71,6 +76,11 @@ export async function ThunderTeamView({
   const canEditStaff = asDirector || team.myRoles.includes("HeadCoach");
   const ref = { org: "thunder" as const, teamId: team.id };
   const canBook = asDirector || team.myRoles.some((r) => r !== "TeamParent");
+  // Its copy in the League (matchups and schedule requests are made for it), and its schedule requests (its coaches).
+  const copyOf = db
+    .query<{ id: string }>("select id::text from scenic_teams where thunder_team_id = $1", [team.id])
+    .then((r) => r.rows[0]?.id ?? null);
+  const requestsOf = copyOf.then((copy) => teamRequests(deps, user, copy));
   // Everything below is read side by side (one after another made the page slow); each piece is explained where it's used.
   const [
     options,
@@ -102,12 +112,7 @@ export async function ThunderTeamView({
     // Who did it (Created by, Added by, Rostered by, booked by) shows only to Owners and Admins.
     seesWho(db, user, "thunder"),
     // Its Scenic City League games (opponent, time and gym once scheduled): matchups are made for its copy there.
-    db
-      .query<{ id: string }>("select id::text from scenic_teams where thunder_team_id = $1", [team.id])
-      .then(async (r) => {
-        const copy = r.rows[0]?.id;
-        return copy ? ((await scheduledGames(db, [copy]))[copy] ?? []) : [];
-      }),
+    copyOf.then(async (copy) => (copy ? ((await scheduledGames(db, [copy]))[copy] ?? []) : [])),
     // Its own-gym practices (a place the team found itself: any time and length, no limits), with the booked ones.
     upcomingOwnPractices(deps, ref, 12),
     // Its scrimmages (another Thunder team, an outside team, or TBD), on Next 7 days and Games.
@@ -135,6 +140,7 @@ export async function ThunderTeamView({
     ? [...new Set(players.flatMap((p) => p.parents.flatMap((g) => (g.cell ? [g.cell] : [])).slice(0, 1)))]
     : allParentCells;
   const parentEmails = [...new Set(players.flatMap((p) => p.parents.flatMap((g) => (g.email ? [g.email.toLowerCase()] : []))))];
+  const [copy, requests] = await Promise.all([copyOf, requestsOf]); // already loading beside the rest
   const published = games.filter((g) => g.published); // the Games card: only once its League's schedule is published
   // Owners and Admins: 👁 View as on the team's staff and on players' parents who have a login (matched by cell), even
   // while on the team's own chip; who they may view is checked again when they tap it.
@@ -145,7 +151,7 @@ export async function ThunderTeamView({
   const week = typeof sp.week === "string" ? sp.week : undefined; // the Full schedule's week
   const opened = typeof requested === "string" ? requested : "";
   // The second round: what needs the first (players, practices, plays, Uniforms on), again side by side.
-  const [parentLogins, available, uniforms, library, formations, ownLocations, rsvps, parentOptions] = await Promise.all([
+  const [parentLogins, available, uniformsAndUnlock, library, formations, ownLocations, rsvps, parentOptions] = await Promise.all([
     admin
       ? db
           .query<{ cell: string; coach_id: string }>("select cell, coach_id from users where active and cell = any($1)", [allParentCells])
@@ -155,7 +161,7 @@ export async function ThunderTeamView({
     mayEvaluate
       ? listEvaluations(deps, user, team.id).then((l) => (l ?? []).filter((c) => c.registered && !c.rosteredOn.length))
       : null,
-    uniformsOn ? listUniforms(deps, user, team.id) : null,
+    uniformsOn ? Promise.all([listUniforms(deps, user, team.id), canUnlockUniforms(db, user, team.id)]) : null,
     plays ? orgLibrary(deps, user, "thunder", team.id) : null, // to copy from
     plays ? listFormations(deps, user, ref) : null, // its own Base Formations
     canOwn ? ownPracticeLocations(deps, ref) : [],
@@ -172,6 +178,7 @@ export async function ThunderTeamView({
     ),
     canEditStaff ? rosterParentOptions(deps, team.id) : [],
   ]);
+  const [uniforms, canUnlock] = uniformsAndUnlock ?? [null, false];
   // Each player's uniform number (with Uniforms), shown before their name on the Roster.
   const number = new Map((uniforms ?? []).flatMap((u) => (u.number ? [[u.registrantId, u.number] as const] : [])));
 
@@ -234,6 +241,7 @@ export async function ThunderTeamView({
             cell: s.cell,
             email: s.email,
             addedBy: who ? s.addedBy : null,
+            verified: s.verified,
           })),
           waiting: team.waitingCoach && {
             ...team.waitingCoach,
@@ -330,11 +338,18 @@ export async function ThunderTeamView({
         }}
         gamesCount={published.length + scrims.length}
         games={
-          published.length + scrims.length ? (
+          <>
+            {requests && copy && requests.length > 0 && (
+              <div className="mb-3">
+                <ScheduleRequests teamId={copy} days={requests} />
+              </div>
+            )}
+            {published.length + scrims.length ? (
             <ScheduleList games={published} practices={[]} scrims={scrims} today={easternDate(new Date())} />
           ) : (
             <p className="text-sm text-zinc-500">The game schedule shows here once it&apos;s published.</p>
-          )
+          )}
+          </>
         }
         uniforms={
           uniforms && {
@@ -347,8 +362,11 @@ export async function ThunderTeamView({
                     A number for every player (unique on the team), and a size for players who ordered a uniform.
                     {uniforms.some((u) => u.late) && " ✱ Uniform added after registration."}
                   </p>
+                  <div className="mt-2">
+                    <HowUniformsWork />
+                  </div>
                 </div>
-                <UniformsBoard teamId={team.id} rows={who ? uniforms : uniforms.map((r) => ({ ...r, updatedBy: null }))} who={who} />
+                <UniformsBoard teamId={team.id} rows={who ? uniforms : uniforms.map((r) => ({ ...r, updatedBy: null }))} who={who} canUnlock={canUnlock} />
               </>
             ),
           }
@@ -358,6 +376,9 @@ export async function ThunderTeamView({
           action: canBook ? <BookPracticesButton teamId={team.id} /> : undefined,
           body: (
             <>
+              <div className="px-4 pb-3">
+                <HowPracticesWork gyms own={canOwn} />
+              </div>
               {canBook && (
                 <BookPracticesPanel
                   org="thunder"
@@ -400,7 +421,17 @@ export async function ThunderTeamView({
             body: <PlaybookCard org={"thunder"} teamId={team.id} plays={plays} library={library ?? []} formations={formations ?? []} />,
           }
         }
-        footer={canEditTeam && <DeleteTeamButton teamId={team.id} name={team.name} players={roster?.length ?? 0} practices={practices.length} />}
+        footer={
+          canEditTeam && (
+            <DeleteTeamButton
+              teamId={team.id}
+              name={team.name}
+              players={roster?.length ?? 0}
+              practices={practices.length}
+              block={await deleteBlock(db, "thunder", String(team.id), new Date())}
+            />
+          )
+        }
       />
     </>
   );

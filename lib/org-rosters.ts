@@ -1,6 +1,7 @@
 // Rosters for a registered organization's teams (SPEC.md section 14). Its Admins and Directors of Teams add players
-// (first, last, grade, optional jersey number) one at a time or many at once (pasted or a CSV, with a preview first),
-// and remove them; the team's coaches see the roster. Names and numbers are unique on a team.
+// (first, last, grade, birthdate, optional jersey number) one at a time or many at once (pasted or a CSV, with a preview
+// first), and remove them; the team's coaches see the roster. Names and numbers are unique on a team. A player without a
+// birthdate is warned about (and it can be filled in on the roster).
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { cleanName } from "./auth/validate";
@@ -14,7 +15,31 @@ const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
 const isId = (v: unknown): v is string => typeof v === "string" && /^\d{1,18}$/.test(v);
 const managersOnly = { ok: false as const, message: "Only an Admin or Director of Teams, or the team's Head or Assistant Coach, can change its roster." };
 
-export type OrgPlayer = { id: string; first: string; last: string; grade: number; jersey: string | null; addedBy: string };
+export type OrgPlayer = {
+  id: string;
+  first: string;
+  last: string;
+  grade: number;
+  jersey: string | null;
+  birthdate: string | null; // YYYY-MM-DD
+  birthdateBy: string | null;
+  addedBy: string;
+};
+
+// "2014-05-03", "5/3/2014" or "05-03-2014" → "2014-05-03" (a real date, a year from 1990 on); "" → null; else undefined.
+export function birthdateOf(v: unknown): string | null | undefined {
+  const s = typeof v === "string" ? v.trim() : "";
+  if (!s) return null;
+  let y: number, m: number, d: number;
+  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  const us = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/.exec(s);
+  if (iso) [y, m, d] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
+  else if (us) [m, d, y] = [Number(us[1]), Number(us[2]), Number(us[3])];
+  else return undefined;
+  const t = new Date(Date.UTC(y, m - 1, d));
+  if (t.getUTCFullYear() !== y || t.getUTCMonth() !== m - 1 || t.getUTCDate() !== d || y < 1990 || y > 2035) return undefined;
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
 
 // "3", "3rd", "K", "Kindergarten" → 0 … 12.
 export function gradeOf(v: unknown): number | null {
@@ -62,7 +87,8 @@ export async function listOrgRoster(
   const t = await teamFor(deps.pool, viewer, org, teamId);
   if (!t) return null;
   const r = await deps.pool.query<OrgPlayer>(
-    `select id::text, first_name as first, last_name as last, grade, jersey, added_by as "addedBy"
+    `select id::text, first_name as first, last_name as last, grade, jersey, to_char(birthdate, 'YYYY-MM-DD') as birthdate,
+            birthdate_by as "birthdateBy", added_by as "addedBy"
      from org_team_players where team_id = $1 order by lower(last_name), lower(first_name)`,
     [teamId],
   );
@@ -77,9 +103,9 @@ async function rosterOrg(q: Pick<Queryable, "query">, viewer: SessionUser, org: 
   return (await teamFor(q, viewer, org, teamId))?.manage ? org : null;
 }
 
-export type PlayerInput = { first: unknown; last: unknown; grade: unknown; jersey?: unknown };
+export type PlayerInput = { first: unknown; last: unknown; grade: unknown; jersey?: unknown; birthdate?: unknown };
 
-function cleanPlayer(p: PlayerInput): { first: string; last: string; grade: number; jersey: string | null } | string {
+function cleanPlayer(p: PlayerInput): { first: string; last: string; grade: number; jersey: string | null; birthdate: string | null } | string {
   const first = cleanName(p.first);
   const last = cleanName(p.last);
   if (!first || !last) return "First and last name (letters only)";
@@ -87,7 +113,9 @@ function cleanPlayer(p: PlayerInput): { first: string; last: string; grade: numb
   if (grade === null) return "Grade: K to 12";
   const j = jerseyOf(p.jersey);
   if (!j.ok) return "Jersey: a number up to 99";
-  return { first, last, grade, jersey: j.jersey };
+  const birthdate = birthdateOf(p.birthdate);
+  if (birthdate === undefined) return "Birthdate: a date like 5/3/2014";
+  return { first, last, grade, jersey: j.jersey, birthdate };
 }
 
 // Adds players to a team, skipping (and naming) any already on it or whose jersey number is taken. In one transaction.
@@ -114,9 +142,11 @@ async function addPlayers(deps: Deps, viewer: SessionUser, org: unknown, teamId:
         }
       }
       const ins = await q.query(
-        `insert into org_team_players (team_id, first_name, last_name, grade, jersey, added_by, added_at)
-         values ($1, $2, $3, $4, $5, $6, $7) on conflict do nothing`,
-        [teamId, p.first, p.last, p.grade, p.jersey, by(viewer), deps.now()],
+        `insert into org_team_players (team_id, first_name, last_name, grade, jersey, added_by, added_at, birthdate, birthdate_by, birthdate_at)
+         values ($1, $2, $3, $4, $5, $6::text, $7::timestamptz, $8::date, case when $8::date is null then null else $6::text end,
+                 case when $8::date is null then null else $7::timestamptz end)
+         on conflict do nothing`,
+        [teamId, p.first, p.last, p.grade, p.jersey, by(viewer), deps.now(), p.birthdate],
       );
       if (ins.rowCount) added.push(`${p.first} ${p.last}`);
       else skipped.push(`${p.first} ${p.last}: already on the team`);
@@ -137,6 +167,28 @@ export async function addOrgPlayer(
   return r;
 }
 
+// Fill in (or fix) a player's birthdate on the roster; who set it is recorded.
+export async function setOrgPlayerBirthdate(
+  deps: Deps,
+  viewer: SessionUser,
+  org: unknown,
+  teamId: unknown,
+  playerId: unknown,
+  birthdate: unknown,
+): Promise<Result> {
+  const o = await rosterOrg(deps.pool, viewer, org, teamId);
+  if (!o) return managersOnly;
+  if (!isId(teamId) || !isId(playerId)) return { ok: false, message: "That player isn't on this team." };
+  const b = birthdateOf(birthdate);
+  if (!b) return { ok: false, message: "Enter a birthdate like 5/3/2014." };
+  const r = await deps.pool.query(
+    `update org_team_players p set birthdate = $4, birthdate_by = $5, birthdate_at = $6 from org_teams t
+      where p.id = $1 and p.team_id = t.id and t.id = $2 and t.org = $3`,
+    [playerId, teamId, o, b, by(viewer), deps.now()],
+  );
+  return r.rowCount ? { ok: true } : { ok: false, message: "That player isn't on this team." };
+}
+
 export async function removeOrgPlayer(
   deps: Deps,
   viewer: SessionUser,
@@ -154,9 +206,9 @@ export async function removeOrgPlayer(
   return r.rowCount ? { ok: true } : { ok: false, message: "That player isn't on this team." };
 }
 
-// ---- Many at once: First, Last, Grade, Jersey (optional), one player per row ----
+// ---- Many at once: First, Last, Grade, Jersey (optional), Birthdate, one player per row ----
 
-export type PlayerImportRow = { line: number; first: string; last: string; grade: string; jersey: string; errors: string[] };
+export type PlayerImportRow = { line: number; first: string; last: string; grade: string; jersey: string; birthdate: string; errors: string[] };
 
 function fields(line: string): string[] {
   const sep = line.includes("\t") ? "\t" : ",";
@@ -170,10 +222,10 @@ export function parsePlayerRows(text: string): PlayerImportRow[] {
     .split("\n")
     .forEach((raw, i) => {
       if (!raw.trim()) return;
-      const [first = "", last = "", grade = "", jersey = ""] = fields(raw);
+      const [first = "", last = "", grade = "", jersey = "", birthdate = ""] = fields(raw);
       if (!rows.length && /^first/i.test(first) && /last/i.test(last)) return; // a header row
-      const p = cleanPlayer({ first, last, grade, jersey });
-      rows.push({ line: i + 1, first, last, grade, jersey, errors: typeof p === "string" ? [p] : [] });
+      const p = cleanPlayer({ first, last, grade, jersey, birthdate });
+      rows.push({ line: i + 1, first, last, grade, jersey, birthdate, errors: typeof p === "string" ? [p] : [] });
     });
   return rows.slice(0, 100);
 }

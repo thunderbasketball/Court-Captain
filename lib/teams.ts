@@ -21,6 +21,7 @@ import {
 import { hasArea } from "./org-admin";
 import { syncThunderCopy } from "./thunder-leagues";
 import { matchOrCreateUser } from "./user-match";
+import { scheduledRefusal } from "./team-guards";
 
 export { GRADES, LEVELS, teamName } from "./team-names";
 
@@ -67,12 +68,13 @@ export type TeamListItem = {
     grade: string;
     birthdate: string | null; // "YYYY-MM-DD" from registration
     rosteredBy: string;
+    number: string | null; // jersey number on this team (Uniforms)
     parents: Parent[];
     coachRequest: string | null;
   }[];
 };
 
-export type Contact = { coachId: string; role: Role; first: string; last: string; cell: string; email: string | null };
+export type Contact = { coachId: string; role: Role; first: string; last: string; cell: string; email: string | null; verified?: boolean };
 
 const roleOrder = `array_position(array['HeadCoach','AsstCoach','Manager','TeamParent'], s.role)`;
 
@@ -83,16 +85,17 @@ export async function listTeams(deps: Deps, viewer: SessionUser): Promise<TeamLi
     `select t.id::text, t.name, t.gender, t.grades, t.level, t.alt_name as "altName", t.created_by as "createdBy", t.practice_locations as "practiceLocations",
             case when t.coach_first is null then null else json_build_object('first', t.coach_first, 'last', t.coach_last) end as "waitingCoach",
             coalesce((select json_agg(json_build_object('coachId', u.coach_id, 'role', s.role, 'first', u.first_name, 'last', u.last_name,
-                                                        'cell', u.cell, 'email', u.email) order by ${roleOrder})
+                                                        'cell', u.cell, 'email', u.email, 'verified', (u.verified_email is not null and lower(trim(u.verified_email)) = lower(trim(coalesce(u.email, ''))))) order by ${roleOrder})
                       from team_staff s join users u on u.coach_id = s.coach_id where s.team_id = t.id), '[]') as staff,
             coalesce((select json_agg(json_build_object('registrantId', p.registrant_id, 'first', p.first_name, 'last', p.last_name,
-                                                        'grade', p.grade, 'rosteredBy', p.rostered_by,
+                                                        'grade', p.grade, 'rosteredBy', p.rostered_by, 'number', u.number,
                                                         'birthdate', to_char(g.birthdate, 'YYYY-MM-DD'),
                                                         'coachRequest', nullif(trim(g.coach_request), ''),
                                                         'p', json_build_array(g.parent1_first, g.parent1_last, g.parent1_cell, g.parent1_email,
                                                                               g.parent2_first, g.parent2_last, g.parent2_cell, g.parent2_email))
                                       order by lower(p.last_name), lower(p.first_name))
                       from team_players p left join registrations g on g.registrant_id = p.registrant_id
+                      left join team_uniforms u on u.team_id = p.team_id and u.registrant_id = p.registrant_id
                       where p.team_id = t.id), '[]') as players
      from teams t
      order by t.level = 'COMP' desc, t.gender, t.grade_sort, lower(t.name)`,
@@ -118,6 +121,7 @@ export type StaffMember = {
   cell: string;
   email: string | null;
   addedBy: string;
+  verified: boolean; // email verified
 };
 
 export type TeamDetail = Omit<TeamListItem, "headCoach" | "staff"> & {
@@ -139,7 +143,7 @@ export async function getTeam(deps: Deps, viewer: SessionUser, id: string): Prom
   if (!t.rows[0]) return null;
   const staff = await deps.pool.query<StaffMember>(
     `select s.coach_id as "coachId", s.role, u.first_name as "firstName", u.last_name as "lastName", u.cell, u.email,
-            s.added_by as "addedBy"
+            s.added_by as "addedBy", (u.verified_email is not null and lower(trim(u.verified_email)) = lower(trim(coalesce(u.email, '')))) as verified
      from team_staff s join users u on u.coach_id = s.coach_id
      where s.team_id = $1
      order by ${roleOrder}, lower(u.last_name), lower(u.first_name)`,
@@ -497,6 +501,10 @@ export async function deleteTeam(deps: Deps, viewer: SessionUser, id: string): P
     withTx(deps.pool, async (q) => {
       const t = await q.query<{ name: string }>("select name from teams where id = $1 for update", [id]);
       if (!t.rows[0]) throw new UserError("That team no longer exists.");
+      // On an event's schedule: removed through the Scheduler first (only registered: deleting withdraws it).
+      const copies = await q.query<{ id: string }>("select id::text from scenic_teams where thunder_team_id = $1", [id]);
+      const refused = await scheduledRefusal(q, copies.rows.map((c) => c.id), deps.now());
+      if (refused) throw new UserError(refused);
       await q.query("update slots set team_id = null, booked_by = null, booked_at = null where team_id = $1", [id]);
       await q.query("delete from teams where id = $1", [id]);
       await settleThunderName(q, baseName(t.rows[0].name));

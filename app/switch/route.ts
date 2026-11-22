@@ -8,11 +8,14 @@ import { isOrgSlug } from "@/lib/orgs";
 // Organization switcher and org login links: /switch?org=<slug> → the role used last there, else the first one.
 // /switch?org=courtcaptain → the CourtCaptain page (admins; the CourtCaptain login sends everyone here first).
 // Only switches to a role the person holds right now.
+// By path only, so the browser stays on the address it's using (req.url can be the server's own, localhost).
+const go = (path: string) => new NextResponse(null, { status: 307, headers: { Location: path } });
+
 export async function GET(req: NextRequest) {
   const user = await currentUser();
   const asked = req.nextUrl.searchParams.get("org");
   const org = isOrgSlug(asked) || asked === PLATFORM ? asked : null;
-  if (!user) return NextResponse.redirect(new URL(isOrgSlug(org) ? `/login/${org}` : "/login", req.url));
+  if (!user) return go(isOrgSlug(org) ? `/login/${org}` : "/login");
   const contexts = await userContexts(db, user);
   const to = req.nextUrl.searchParams.get("to");
   const remembered = req.cookies.get(CONTEXT_COOKIE)?.value;
@@ -20,8 +23,8 @@ export async function GET(req: NextRequest) {
     ? (contexts.find((c) => c.org === org && c.key === remembered) ?? contexts.find((c) => c.org === org))
     : contexts.find((c) => c.key === to);
   // No role there yet: home (the role used last, pending, or getting started).
-  if (!target) return NextResponse.redirect(new URL("/", req.url));
-  const res = NextResponse.redirect(new URL(target.href, req.url));
+  if (!target) return go("/");
+  const res = go(target.href);
   res.cookies.set(CONTEXT_COOKIE, target.key, {
     httpOnly: true,
     sameSite: "lax",

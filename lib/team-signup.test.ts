@@ -15,6 +15,8 @@ import {
 import { makeSoloAccount } from "./court-solo";
 import { withTx } from "./sql";
 import { createTestDb, testClock, testMailer } from "./testing/db";
+import type { StripeApi } from "./stripe/connect";
+import { cardFee, confirmPayment } from "./stripe/registration";
 
 describe("Register (an organization's teams, no login yet)", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -265,7 +267,7 @@ describe("Register (an organization's teams, no login yet)", () => {
     expect(await teamSignupGo(deps, "4235550101", "1111", { to: "register", slug })).toMatchObject({ step: "error" });
     expect(await teamSignupGo(deps, "4235550101", "2468", { to: "register", slug })).toMatchObject({
       step: "loggedIn",
-      next: "/org/magic?open=teams&view=register#teams",
+      next: "/org/magic?open=register#register",
     });
     expect(await teamSignupGo(deps, "4235550101", "2468", { to: "org", slug })).toMatchObject({ step: "error" }); // not an organization
     // Or a new organization alongside it (Magic stays as it is).
@@ -279,5 +281,59 @@ describe("Register (an organization's teams, no login yet)", () => {
     expect(
       await teamSignupGo(deps, "4235550101", "2468", { to: "switch", slug, name: "Lee Hoops", short: "Lee Hoops" }),
     ).toMatchObject({ step: "loggedIn", slug: "lee-hoops", next: "/org/lee-hoops?open=teams#teams" });
+  }, 60_000);
+  it("Scenic City takes cards: the teams are made, then registered only once Stripe says it's paid (one payment for all)", async () => {
+    const checkouts: { account: string; lines: { name: string; cents: number }[]; cancelUrl: string; successUrl: string }[] = [];
+    const paid = new Set<string>();
+    const stripe: StripeApi = {
+      live: false,
+      createAccount: async () => "acct_x",
+      isReady: async () => true,
+      onboardingLink: async () => "https://connect.stripe.test",
+      createCheckout: async (c) => {
+        checkouts.push(c);
+        return { id: `cs_test_${c.ref}`, url: `https://checkout.stripe.test/cs_test_${c.ref}` };
+      },
+      checkoutPaid: async ({ id }) => paid.has(id),
+      refund: async () => "re_test_1",
+    };
+    await db.pool.query(
+      "insert into org_stripe (org, livemode, account_id, connected_by, charges_enabled, fee_payer) values ('scenic-city', false, 'acct_league', 'Dee X', true, 'team')",
+    );
+    expect(await teamSignupStart(deps, form({ teams: [team(), second] }))).toMatchObject({ step: "code" });
+    const done = await teamSignupComplete(deps, "4235550101", mail.lastCode(), { stripe, base: "https://app.test" });
+    if (done.step !== "loggedIn") throw new Error(JSON.stringify(done));
+    expect(done.pay).toMatch(/^https:\/\/checkout\.stripe\.test\/cs_test_\d+$/);
+    // Logged in with the organization and both teams made, neither registered yet.
+    expect((await db.pool.query("select count(*)::int n from org_teams where org = 'hixson-hoops'")).rows[0].n).toBe(2);
+    expect((await db.pool.query("select count(*)::int n from scenic_registrations")).rows[0].n).toBe(0);
+    // One Checkout on the League's account: a line per team (its price), then Card processing on the total.
+    expect(checkouts).toHaveLength(1);
+    expect(checkouts[0].account).toBe("acct_league");
+    expect(checkouts[0].lines.slice(0, 2).map((l) => l.cents).sort()).toEqual([25000, 4000]); // each team's price
+    expect(checkouts[0].lines.slice(0, 2).every((l) => l.name.startsWith("Winter: "))).toBe(true);
+    expect(checkouts[0].lines[2].cents).toBe(cardFee(29000));
+    expect(checkouts[0].lines.at(-1)!.name).toBe("Card processing");
+    expect(checkouts[0].cancelUrl).toBe("https://app.test/org/hixson-hoops?open=register&paid=cancelled");
+
+    const id = done.pay!.split("cs_test_")[1];
+    const pdeps = { pool: db.pool, stripe, now: deps.now };
+    expect(await confirmPayment(pdeps, id, `cs_test_${id}`)).toMatchObject({ ok: true, registered: false });
+    paid.add(`cs_test_${id}`);
+    expect(await confirmPayment(pdeps, id, `cs_test_${id}`)).toEqual({
+      ok: true,
+      registered: true,
+      teamPage: "/org/hixson-hoops?open=teams",
+      message: "Paid and registered 2 teams.",
+      paidNow: { programId: prog, org: "hixson-hoops" }, // its invoice is emailed (once)
+    });
+    const regs = await db.pool.query("select paid, paid_set_by from scenic_registrations");
+    expect(regs.rows).toEqual([
+      { paid: true, paid_set_by: "Card (Stripe)" },
+      { paid: true, paid_set_by: "Card (Stripe)" },
+    ]);
+    // Again (Stripe's notice and the way back both arrive): still once.
+    expect(await confirmPayment(pdeps, id, `cs_test_${id}`)).toMatchObject({ ok: true, registered: true });
+    expect((await db.pool.query("select count(*)::int n from scenic_registrations")).rows[0].n).toBe(2);
   }, 60_000);
 });

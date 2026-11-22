@@ -71,12 +71,14 @@ export async function undoRegisterAll(
     const status = await programRegStatus(q, b.program_id, deps.now());
     if (status !== "open" && !(await isProgramsDirector(q, viewer)))
       return { ok: false as const, message: "Registration is closed. Ask a Scenic City Director of Programs." };
+    // Kept: teams marked Paid since, and teams already on the schedule (they request removal instead).
+    const onSchedule = `exists (select 1 from scenic_matchups m where m.program_id = r.program_id and r.team_id in (m.team_a, m.team_b))`;
     const kept = await q.query<{ name: string }>(
       `select st.name from scenic_registrations r join scenic_teams st on st.id = r.team_id
-       where r.batch_id = $1 and r.paid order by lower(st.name)`,
+       where r.batch_id = $1 and (r.paid or ${onSchedule}) order by lower(st.name)`,
       [batchId],
     );
-    const del = await q.query("delete from scenic_registrations where batch_id = $1 and not paid", [batchId]);
+    const del = await q.query(`delete from scenic_registrations r where r.batch_id = $1 and not r.paid and not ${onSchedule}`, [batchId]);
     await q.query("update scenic_register_batches set undone_by = $2, undone_at = $3 where id = $1", [
       batchId,
       by(viewer),

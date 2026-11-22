@@ -9,8 +9,6 @@ import { gradeLabel } from "@/lib/grades";
 import { listTeams, personOptions } from "@/lib/teams";
 import { AddTeamPanel } from "../../../AddTeam";
 import { listThunderImports } from "@/lib/thunder-team-import";
-import { thunderPrograms } from "@/lib/thunder-leagues";
-import RegisterPrograms from "../../../RegisterPrograms";
 import { easternDate } from "@/lib/time";
 import { rosterIssue, schoolYearOf } from "@/lib/eligibility";
 import { orgGradeRules } from "@/lib/grade-rules";
@@ -33,6 +31,7 @@ import { hasArea, isOrgAdmin, isThunderAdmin, seesWho } from "@/lib/org-admin";
 import { ViewAsButton } from "../../../ViewAsButton";
 
 import { PageFrame } from "../../../ui";
+import { currentRegistrations } from "@/lib/current-registrations";
 
 export async function TeamsContent({
   searchParams = Promise.resolve({}),
@@ -56,9 +55,6 @@ export async function TeamsContent({
   // Who can be a Head Coach: app users, and registration volunteers (their login is made when added).
   const people = await personOptions({ pool: db, now: () => new Date() }, user);
   const imports = (await listThunderImports({ pool: db, now: () => new Date() }, user)) ?? [];
-  // Cards: REC and COMP (Boys and Girls in each, by grade; youngest first), then Register (league programs).
-  const progs = await thunderPrograms({ pool: db, now: () => new Date() }, user);
-  const register = !!progs && progs.programs.length > 0;
   const sp = await searchParams;
   const view = sp.view;
   // Teams whose page is open right in their row (↗; `?team=<id>,…`): only those are built.
@@ -76,6 +72,7 @@ export async function TeamsContent({
   const schedules: Record<string, ScheduledGame[]> = Object.fromEntries(
     copies.map((c) => [c.team, (games[c.id] ?? []).filter((g) => g.published)]),
   );
+  const regs = await currentRegistrations(db, "thunder", teams.map((t) => String(t.id)), new Date()); // under each name
   const today = easternDate(new Date());
   const schoolYear = schoolYearOf(today); // each roster's grade eligibility (a red name and badge when off)
   const { rules: gradeRules } = await orgGradeRules(db, "thunder", new Date()); // set in the organization's gear
@@ -120,7 +117,6 @@ export async function TeamsContent({
           empty="No teams yet. Tap “+” to add or import some."
           teams={teams}
           view={view}
-          register={register && progs ? { count: progs.programs.length, body: <RegisterPrograms org="thunder" progs={progs} bare /> } : null}
           grade={(t) => (t.grades.length ? gradeLabel(t.grades[t.grades.length - 1]) : "No grade")}
           warn={(t) =>
             !!rosterIssue(t.grades, t.players, schoolYear, gradeRules) ||
@@ -151,6 +147,7 @@ export async function TeamsContent({
               altName={t.altName}
               gender={t.gender as "Boys" | "Girls"}
               level={t.level}
+              registrations={regs[String(t.id)]}
               sub={[...(t.grades.length > 1 ? [gradesText(t.grades)] : []), ...t.practiceLocations].join(" · ")}
               hasCoach={!!t.headCoach}
               waitingCoach={t.waitingCoach && `${t.waitingCoach.first} ${t.waitingCoach.last}`}

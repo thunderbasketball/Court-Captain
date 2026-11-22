@@ -10,6 +10,7 @@ import { withTx, type Queryable } from "./sql";
 import { timeLabel } from "./time";
 import { courtDivisionsOn } from "./scenic-courts";
 import { memo, remembering } from "./request-memo";
+import { requestClash } from "./schedule-requests";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -421,6 +422,13 @@ export async function placeGame(
     return {
       ok: false,
       message: `${court.gym} ${court.name} is open ${timeLabel(court.starts)}–${timeLabel(court.ends)}; a game doesn't fit then.`,
+    };
+  // Schedule requests: never in a block either team asked off (the whole game must fit their open blocks).
+  const asked = await requestClash(deps.pool, game.day, [game.a, game.b], start, len);
+  if (asked)
+    return {
+      ok: false,
+      message: `${asked.team} asked not to play ${asked.blocks.join(" or ")} (schedule request). Pick another time, or take the team out of this day if it can't be met.`,
     };
   return withTx(deps.pool, async (q) => {
     // One placement at a time per Game Day, so two Schedulers can't fill the same slot.

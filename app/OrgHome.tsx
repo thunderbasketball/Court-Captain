@@ -2,12 +2,12 @@ import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import type { SessionUser } from "@/lib/auth/service";
-import { currentScenic } from "@/lib/contexts-server";
+import { currentContexts, currentScenic } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
 import { orgFeatures } from "@/lib/features";
 import { innerParams } from "@/lib/home-card-href";
 import { seesHostDocuments } from "@/lib/host-documents";
-import { assignerCount, isOrgAdmin, isOrgOwner, orgHasArea, type Area } from "@/lib/org-admin";
+import { assignerCount, hasArea, isOrgAdmin, isOrgOwner, orgHasArea, type Area } from "@/lib/org-admin";
 import { orgMetrics, practiceMetrics, teamsMissing } from "@/lib/org-metrics";
 import { orgInfo } from "@/lib/org-registry";
 import { followRename } from "@/lib/org-rename";
@@ -37,8 +37,11 @@ import { OrgFacilitiesContent } from "./org/[slug]/facilities/content";
 import { OrgMembersContent } from "./org/[slug]/members/content";
 import { TeamsContent } from "./org/thunder/teams/content";
 import { PracticeContent } from "./org/thunder/practice/content";
+import HowPracticesWork from "./HowPracticesWork";
 import { SeasonContent } from "./org/thunder/practice/season/content";
 import { UniformsContent } from "./org/thunder/uniforms/content";
+import { VendorGear } from "./org/thunder/uniforms/VendorPanel";
+import { UniformSearchIcon } from "./org/thunder/uniforms/UniformSearch";
 import UniformRequests from "./org/thunder/UniformRequests";
 import { FacilitiesContent } from "./org/thunder/facilities/content";
 import { GymsContent } from "./org/thunder/facilities/gyms/content";
@@ -46,11 +49,19 @@ import { BLACKOUT_ADD, BlackoutsContent } from "./org/thunder/facilities/blackou
 import { TeamGymsContent } from "./org/thunder/facilities/team-gyms-content";
 import { MembersContent } from "./org/thunder/members/content";
 import { ScenicTeamsContent } from "./org/scenic-city/teams/content";
-import { SchedulerContent } from "./org/scenic-city/scheduler/content";
 import { ScenicUsersContent } from "./org/scenic-city/users/content";
 import { ScenicCoachesContent } from "./org/scenic-city/members/coaches/content";
 import { ScheduleAnalysis } from "./org/scenic-city/ScheduleAnalysis";
 import OrgPlaybookCard from "./OrgPlaybookCard";
+import RegisterPrograms from "./RegisterPrograms";
+import OpenInvoicesCard from "./OpenInvoicesCard";
+import { openInvoices } from "@/lib/invoices";
+import { stripeApi } from "@/lib/stripe/client";
+import { payee } from "@/lib/stripe/registration";
+import PaidNotice from "./PaidNotice";
+import { Suspense } from "react";
+import { orgPrograms } from "@/lib/org-leagues";
+import { thunderPrograms } from "@/lib/thunder-leagues";
 
 // Every organization's Home (SPEC.md section 14), one page for all: a stack of cards in one order, each shown only when
 // the organization has that feature and the person has the role for it, never because of which organization it is:
@@ -81,6 +92,14 @@ export default async function OrgHome({
     )
   ).rows.map((r) => r.role);
   if (!roles.length) redirect("/");
+  // Someone here only through a team's staff (no Owner, Admin or Director chip): their Home is their team's page, like a
+  // Thunder coach's team chip (the one they used last, else their first team).
+  {
+    const { contexts, active } = await currentContexts(user);
+    const mine = contexts.filter((c) => c.org === org);
+    if (mine.length && mine.every((c) => c.key.startsWith("team:") || c.key.startsWith("orgteam:")))
+      redirect((mine.find((c) => c.key === active?.key) ?? mine[0]).href);
+  }
   const sp = await searchParams;
   const openCard = typeof sp.open === "string" ? sp.open : null;
   const inner = Promise.resolve(innerParams(sp));
@@ -120,6 +139,7 @@ export default async function OrgHome({
   const leagueFacilities = has("hosting-partners") && facilitiesArea; // a League: game days, courts and hosting organizations
   const ownGyms = has("practice") ? facilitiesArea || practicesArea : hostsGames;
   const scheduler = has("programs") && schedulingArea;
+  const scenicTeamRegs = org === "scenic-city" && has("team-registration");
   const [alerts, requests, practice, documents, noOfficials, officiating, toOfficiate, assigners, asking] = await Promise.all([
     // Teams and Uniforms flash while a team or a uniform is missing something (teams kept in Thunder's tables).
     (clubTeams && org === "thunder") || uniformsOn ? directorAlerts(db, now) : null,
@@ -141,6 +161,14 @@ export default async function OrgHome({
       : (metrics ? metrics.missing.length : clubTeams ? (await teamsMissing(db, org)).length : 0) > 0 ||
         (leagueTeams && (await leagueTeamsMissing(now)));
 
+  // The League programs its teams register for (Register ALL Teams; null unless they manage its teams).
+  const regProgs = !clubTeams
+    ? null
+    : org === "thunder"
+      ? await thunderPrograms({ pool: db, now: () => now }, user)
+      : await orgPrograms({ pool: db, now: () => now }, user, org);
+  // League invoices with a balance due (its Open invoices card): only for those who manage its teams.
+  const invoices = clubTeams && org !== "scenic-city" ? await openInvoices(db, user, org) : [];
   // Each part's contents, by where its data is kept (see the imports).
   const teamsBody = (
     <div className="space-y-4">
@@ -220,20 +248,56 @@ export default async function OrgHome({
         ]
       : []),
     ...(clubTeams || leagueTeams ? [{ key: "teams", title: "Teams", count: metrics?.teams?.total, alert: teamAlert, body: teamsBody }] : []),
+    // Register ALL Teams: the League's programs its teams register for, many at once (those who manage its teams).
+    // Open invoices: League invoices with a balance due (whoever manages its teams), with View and Pay.
+    ...(invoices.length
+      ? [
+          {
+            key: "invoices",
+            title: "Open invoices",
+            count: invoices.length,
+            alert: true,
+            body: <OpenInvoicesCard invoices={invoices} canPay={!user.actingBy && !!(await payee(db, stripeApi()))} />,
+          },
+        ]
+      : []),
+    // Only while an event is open and some of its teams aren't in it yet (Nov 22).
+    ...(regProgs && regProgs.programs.some((p) => p.status === "open" && p.unregistered > 0)
+      ? [
+          {
+            key: "register",
+            title: "Register ALL Teams",
+            count: regProgs.programs.filter((p) => p.status === "open" && p.unregistered > 0).length, // events with teams to register
+            body: <RegisterPrograms org={org} progs={regProgs} />,
+          },
+        ]
+      : []),
     // Programs: seasons players register for (CourtPlayers) and Leagues, Circuits and Tournaments teams register for.
-    ...((has("player-registration") || has("team-registration") || has("programs")) && (admin || eventsArea || programsArea || leagueMember)
-      ? [{ key: "programs", title: "Programs", count: await programCount(org), body: <ProgramsCard org={org} user={user} /> }]
+    // A Scenic City League's Registrations (Owners) and Scheduler (Directors of Scheduling) are cards inside it.
+    ...((has("player-registration") || has("team-registration") || has("programs")) &&
+    (admin || eventsArea || programsArea || leagueMember || scheduler || (owner && scenicTeamRegs))
+      ? [
+          {
+            key: "programs",
+            title: "Programs",
+            count: await programCount(org),
+            // Its Scheduler: teams asking to come off a League's schedule.
+            alert:
+              !!scheduler &&
+              !!(await db.query("select 1 from scenic_schedule_removals where decision is null limit 1")).rowCount,
+            body: <ProgramsCard org={org} user={user} scheduler={scheduler} />,
+          },
+        ]
       : []),
     // Registrations, several views: CourtTeams (Scenic City's programs) every registered team; CourtPlayers every
     // registered player. Its Owners only for now (checked again in lib/registrations-list).
     ...(!owner
       ? []
-      : org === "scenic-city" && has("team-registration")
-      ? [{ key: "registrations", title: "Registrations", body: <RegistrationsCard user={user} org={org} kind="teams" /> }]
+      : scenicTeamRegs
+      ? [] // inside each program's card
       : has("player-registration")
         ? [{ key: "registrations", title: "Registrations", body: <RegistrationsCard user={user} org={org} kind="players" /> }]
         : []),
-    ...(scheduler ? [{ key: "scheduler", title: "Scheduler", body: <SchedulerContent embedded /> }] : []),
     ...(practiceOn
       ? [
           {
@@ -242,6 +306,7 @@ export default async function OrgHome({
             count: practice ? `${practice.thisWeek.booked} booked · ${practice.thisWeek.open} open this week` : undefined,
             body: (
               <div className="space-y-3">
+                <HowPracticesWork gyms own={has("practice")} />
                 <SubCard title="Practice Court Availability">
                   <SeasonContent embedded />
                 </SubCard>
@@ -262,7 +327,23 @@ export default async function OrgHome({
           },
         ]
       : []),
-    ...(uniformsOn ? [{ key: "uniforms", title: "Uniforms", alert: !!alerts?.uniforms, body: <UniformsContent embedded /> }] : []),
+    ...(uniformsOn
+      ? [
+          {
+            key: "uniforms",
+            title: "Uniforms",
+            alert: !!alerts?.uniforms,
+            // 🔍 search (current and past orders) and ⚙ the vendor's email and Cc (Directors of Uniforms), opened in the card.
+            action: hasArea(user, "uniforms") ? (
+              <span className="flex items-center gap-2">
+                <UniformSearchIcon />
+                {!user.actingBy && <VendorGear />}
+              </span>
+            ) : undefined,
+            body: <UniformsContent embedded />,
+          },
+        ]
+      : []),
     ...(ownGyms || anyCourtSync(courtSync)
       ? [{ key: "facilities", title: "Facilities", alert: courtSyncAlert(courtSync), body: facilitiesBody }]
       : []),
@@ -299,6 +380,9 @@ export default async function OrgHome({
   return (
     <>
       <AppHeader user={user} context={context} tab={org === "thunder" ? "thunder-home" : org === "scenic-city" ? "scenic-home" : "org-home"} />
+      <Suspense fallback={null}>
+        <PaidNotice />
+      </Suspense>
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
         <MembersCards cards={cards} open={openCard} heading={null} />
       </main>

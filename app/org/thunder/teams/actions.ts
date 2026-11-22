@@ -88,6 +88,11 @@ export async function setNeedsUniform(teamId: string, registrantId: string, on: 
   return guarded((u) => uniforms.setNeedsUniform(deps, u, String(teamId), String(registrantId), on === true), "uniforms");
 }
 
+// Unlock a player's uniform info to change it (a team coach, Admin, Director of Uniforms or Owner), or Lock it again.
+export async function setUniformLock(teamId: string, registrantId: string, unlock: boolean) {
+  return guarded((u) => uniforms.setUniformLock(deps, u, String(teamId), String(registrantId), unlock === true), "uniforms");
+}
+
 // Directors of Uniforms (Home): the player's uniform is on the TeamSnap order now.
 export async function markUniformAdded(teamId: string, registrantId: string) {
   return guarded((u) => uniforms.markUniformAdded(deps, u, String(teamId), String(registrantId)), "uniforms");

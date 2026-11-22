@@ -8,6 +8,8 @@ import type { PersonOption, Role } from "@/lib/teams";
 import { addStaff, deleteTeam, removeStaff, updateTeam } from "../actions";
 import { fieldLabel, inputCls, pillCls, primaryBtn } from "../../../../ui";
 import { Alert, Toast, useConfirm } from "../../../../client-ui";
+import type { DeleteBlock } from "@/lib/schedule-removal";
+import { DeleteBlockedNote } from "../../../../ScheduleRemoval";
 
 const ROLE_CHOICES: { role: Role; label: string }[] = [
   { role: "HeadCoach", label: "Head Coach" },
@@ -375,11 +377,13 @@ export function DeleteTeamButton({
   name,
   players,
   practices,
+  block,
 }: {
   teamId: string;
   name: string;
   players: number;
   practices: number;
+  block?: DeleteBlock | null; // on an event's schedule: the pop-up says what to do (no Delete); registered: deleting withdraws it
 }) {
   const router = useRouter();
   const [busy, start] = useTransition();
@@ -391,6 +395,10 @@ export function DeleteTeamButton({
         type="button"
         disabled={busy}
         onClick={async () => {
+          if (block?.why === "scheduled") {
+            await confirm({ title: `${name} can't be deleted yet`, message: <DeleteBlockedNote block={block} />, confirmLabel: null, tone: "warning" });
+            return;
+          }
           const what = [
             "its staff",
             `${players} rostered player${players === 1 ? "" : "s"}`,
@@ -400,8 +408,9 @@ export function DeleteTeamButton({
           if (
             !(await confirm({
               title: `Delete ${name}?`,
-              message: `Are you sure? This removes ${what}. It can't be undone.`,
+              message: `Are you sure? This removes ${what}.${block ? ` It's registered in ${block.program}; deleting it withdraws it.` : ""} It can't be undone.`,
               confirmLabel: "Delete team",
+              typeToConfirm: name, // the team's name must be typed
             }))
           )
             return;

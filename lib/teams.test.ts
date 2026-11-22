@@ -78,7 +78,7 @@ describe("teams", () => {
         level: "REC",
         createdBy: "Earl Epps",
         headCoach: { first: "Earl", last: "Epps", cell: "4239913694" },
-        staff: [{ coachId: "9913694", role: "HeadCoach", first: "Earl", last: "Epps", cell: "4239913694", email: null }],
+        staff: [{ coachId: "9913694", role: "HeadCoach", first: "Earl", last: "Epps", cell: "4239913694", email: null, verified: false }],
       }),
     ]);
   });

@@ -1,6 +1,7 @@
 // Team warnings (SPEC.md section 14, Teams card → Warnings): each organization turns on the ones it wants and sets their
 // numbers in the organization gear's Warnings card (its Admins): rosters with fewer than n players, teams whose staff haven't used the
-// app in n days, and (where uniforms are kept: Thunder) teams with uniform numbers or sizes missing.
+// app in n days, (where uniforms are kept: Thunder) teams with uniform numbers or sizes missing, and (typed-in rosters:
+// organizations without CourtPlayers) teams with players missing a birthdate.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { hasFeature } from "./features";
@@ -19,9 +20,11 @@ export type TeamWarnings = {
   settings: WarningSettings;
   setBy: string | null;
   uniformsKept: boolean; // the organization keeps uniform numbers and sizes (Thunder with Uniforms)
+  typedRosters: boolean; // its rosters are typed in (no CourtPlayers): birthdates are asked there
   roster: WarnedTeam[] | null; // null = turned off
   idle: WarnedTeam[] | null;
   uniforms: WarnedTeam[] | null;
+  birthdates: WarnedTeam[] | null;
   teams: number; // teams with any warning
 };
 
@@ -29,24 +32,26 @@ export type TeamWarnings = {
 export async function teamWarningSettings(
   q: Pick<Queryable, "query">,
   org: string,
-): Promise<{ settings: WarningSettings; setBy: string | null; uniformsKept: boolean }> {
-  const [o, uniformsKept] = await Promise.all([
+): Promise<{ settings: WarningSettings; setBy: string | null; uniformsKept: boolean; typedRosters: boolean }> {
+  const [o, uniformsKept, courtPlayers] = await Promise.all([
     q.query<{ team_warnings: unknown; team_warnings_by: string | null }>(
       "select team_warnings, team_warnings_by from organizations where slug = $1",
       [org],
     ),
     org === "thunder" ? hasFeature(q, org, "uniforms") : Promise.resolve(false),
+    org === "thunder" ? Promise.resolve(true) : hasFeature(q, org, "player-registration"),
   ]);
   return {
     settings: cleanWarnings(o.rows[0]?.team_warnings) ?? DEFAULT_WARNINGS,
     setBy: o.rows[0]?.team_warnings_by ?? null,
     uniformsKept,
+    typedRosters: !courtPlayers,
   };
 }
 
 export async function orgTeamWarnings(q: Pick<Queryable, "query">, org: string, now: Date): Promise<TeamWarnings> {
   const thunder = org === "thunder";
-  const { settings, setBy, uniformsKept } = await teamWarningSettings(q, org);
+  const { settings, setBy, uniformsKept, typedRosters } = await teamWarningSettings(q, org);
   const [teams, players, staff] = thunder
     ? ["teams t", "team_players p on p.team_id = t.id", "team_staff s on s.team_id = t.id"]
     : ["org_teams t", "org_team_players p on p.team_id = t.id", "org_team_coaches s on s.team_id = t.id"];
@@ -93,8 +98,20 @@ export async function orgTeamWarnings(q: Pick<Queryable, "query">, org: string, 
         ).rows.map((t) => ({ id: t.id, name: t.name, detail: `${t.n} player${t.n === 1 ? "" : "s"} missing` }))
       : null;
 
-  const ids = new Set([...(roster ?? []), ...(idle ?? []), ...(uniforms ?? [])].map((t) => t.id));
-  return { settings, setBy, uniformsKept, roster, idle, uniforms, teams: ids.size };
+  const birthdates =
+    settings.birthdates.on && typedRosters && !thunder
+      ? (
+          await q.query<{ id: string; name: string; n: number }>(
+            `select t.id::text, t.name, count(*)::int as n from org_teams t join org_team_players p on p.team_id = t.id
+              where t.org = $1 and t.archived_at is null and p.birthdate is null
+              group by t.id, t.name order by 3 desc, lower(t.name)`,
+            [org],
+          )
+        ).rows.map((t) => ({ id: t.id, name: t.name, detail: `${t.n} player${t.n === 1 ? "" : "s"} missing` }))
+      : null;
+
+  const ids = new Set([...(roster ?? []), ...(idle ?? []), ...(uniforms ?? []), ...(birthdates ?? [])].map((t) => t.id));
+  return { settings, setBy, uniformsKept, typedRosters, roster, idle, uniforms, birthdates, teams: ids.size };
 }
 
 // An organization's Admins (and Owners): which warnings are on, and their numbers.

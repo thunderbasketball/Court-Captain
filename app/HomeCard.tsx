@@ -60,6 +60,17 @@ export default function HomeCard({
     tries.current++;
     load();
   });
+  // Still empty 15 seconds after opening (the server's answer never came): offer Try again instead of "Loading…".
+  const [stuck, setStuck] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!want || open) return;
+    const t = setTimeout(() => setStuck(true), 15_000);
+    return () => {
+      clearTimeout(t);
+      setStuck(false);
+    };
+  }, [want, open, attempt]);
   // A fresh page from the server: follow the address (a link, Back), never an answer that's out of date (a card closed
   // while it was loading stays closed).
   const [seen, setSeen] = useState(open);
@@ -101,7 +112,28 @@ export default function HomeCard({
         </summary>
         {/* The part's own title is the card's, so its big heading is kept for screen readers only. */}
         <div className="border-t border-zinc-100 p-3 sm:p-4 dark:border-white/5 [&_h1]:sr-only">
-          {want && (open ? children : <p className="text-sm text-zinc-500">Loading…</p>)}
+          {want &&
+            (open ? (
+              children
+            ) : stuck ? (
+              // Asked 3 times and still empty: let them ask again, never "Loading…" forever.
+              <p className="text-sm text-zinc-500">
+                This didn&apos;t load.{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    tries.current = 0;
+                    setAttempt((n) => n + 1);
+                    load();
+                  }}
+                  className="font-medium text-thunder-blue hover:underline dark:text-blue-400"
+                >
+                  Try again
+                </button>
+              </p>
+            ) : (
+              <p className="text-sm text-zinc-500">Loading…</p>
+            ))}
         </div>
       </details>
       {action && <div className="absolute top-2 right-11">{action}</div>}

@@ -17,6 +17,11 @@ export type UniformRow = {
   size: string | null;
   updatedBy: string | null;
   updatedAt: Date | null;
+  orderNo: string | null; // on this vendor order (not cancelled), as they are now
+  locked: boolean; // they have their uniform: shown, not changed, until unlocked
+  unlockedBy: string | null;
+  lastOrderNo: string | null; // the newest vendor order they went in at all (Needs a uniform then asks for a new one)
+  reorderBy: string | null; // ticked Needs a uniform after an order: a new one goes in the next order
 };
 
 // A player is missing something until they have a number, and a size if they ordered a uniform.

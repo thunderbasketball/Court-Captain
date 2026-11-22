@@ -4,7 +4,11 @@ import { cookies } from "next/headers";
 import { deps, setSessionCookie } from "@/lib/auth/server";
 import { CONTEXT_COOKIE } from "@/lib/contexts";
 import { featureRefusal } from "@/lib/features-server";
+import { stripeApi } from "@/lib/stripe/client";
 import * as signup from "@/lib/team-signup";
+import { after } from "next/server";
+import { actionBase } from "../../stripe/deps";
+import { sendInvoice } from "../../stripe/invoice-mail";
 
 // Register a team (no login yet: the Head Coach proves their email with a code). Every check is in lib/team-signup.
 type ClientStep = Exclude<signup.TeamStep, { step: "loggedIn" }> | { step: "loggedIn"; next: string };
@@ -16,8 +20,9 @@ async function run(fn: () => Promise<Awaited<ReturnType<typeof signup.teamSignup
     const s = await fn();
     if (s.step !== "loggedIn") return s;
     await setSessionCookie(s.token, s.expiresAt);
-    // Next: the team's own CourtSolo account (its Teams page shows where it's registered).
-    const next = "slug" in s && s.slug ? `/switch?org=${s.slug}` : "/";
+    // Next: Stripe Checkout when its teams are paid for now; else its organization (its Teams page shows where it's
+    // registered).
+    const next = "pay" in s && s.pay ? s.pay : "slug" in s && s.slug ? `/switch?org=${s.slug}` : "/";
     return { step: "loggedIn", next };
   } catch (e) {
     console.error("Team registration step failed:", e);
@@ -41,7 +46,13 @@ export async function startTeamSignup(input: signup.TeamSignupInput) {
   return run(() => signup.teamSignupStart(deps, input));
 }
 export async function completeTeamSignup(cell: string, code: string) {
-  return run(() => signup.teamSignupComplete(deps, cell, code));
+  const base = await actionBase();
+  return run(async () => {
+    const s = await signup.teamSignupComplete(deps, cell, code, { stripe: stripeApi(), base });
+    // Registered now (nothing to pay by card): its invoice to its new Owner.
+    if (s.step === "loggedIn" && !s.pay) after(() => sendInvoice(s.programId, s.slug, base));
+    return s;
+  });
 }
 
 // A returning coach's choice (their CourtSolo team, their organization, or switching to CourtOrg): logged in, in that

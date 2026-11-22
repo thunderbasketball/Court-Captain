@@ -35,6 +35,8 @@ import { PROGRAM_LOGO_SQL, leagueEntry, parseChoice, saveChoice } from "./scenic
 import { parseGrade } from "./scenic-teams";
 import { cleanPlaceName } from "./scenic-partners";
 import { withTx, type Queryable } from "./sql";
+import type { StripeApi } from "./stripe/connect";
+import { insertPayment, openCheckout, owed, payee, type PayTeam } from "./stripe/registration";
 import { easternDate } from "./time";
 
 export const STAFF_ROLES = [
@@ -353,12 +355,15 @@ type Payload = {
 };
 
 // Step 3: the code. Makes the login (or confirms the email of the one there), the organization, its teams and their
-// registrations; logs them in.
+// registrations; logs them in. When the League takes cards and the teams cost something (`pay`: Stripe and this site's
+// address), the teams are registered once it's paid: `pay` in the answer is Stripe Checkout's address (one payment for
+// all the teams). If Checkout can't open, they're logged in with their teams made but not registered (Register ALL Teams).
 export async function teamSignupComplete(
   deps: Deps,
   cellInput: unknown,
   code: unknown,
-): Promise<TeamStep | { step: "loggedIn"; token: string; expiresAt: Date; programId: string; slug: string }> {
+  pay?: { stripe: StripeApi | null; base: string },
+): Promise<TeamStep | { step: "loggedIn"; token: string; expiresAt: Date; programId: string; slug: string; pay?: string }> {
   const cell = typeof cellInput === "string" ? normalizeCell(cellInput) : null;
   if (!cell) return err("Enter your 10-digit cell number.");
   // The code is checked (and a wrong try counted) on its own; the rest goes in all at once or not at all.
@@ -369,16 +374,28 @@ export async function teamSignupComplete(
   if (!c.ok) return c.step as TeamStep; // a wrong or expired code
   const p = c.row.payload as unknown as Payload;
   if (!p?.org || !Array.isArray(p.teams)) return err("That registration is from before an update. Start again.");
+  let done;
   try {
-    return await withTx(deps.pool, (q) => registerAll(deps, q, cell, p, c.row.email));
+    done = await withTx(deps.pool, (q) => registerAll(deps, q, cell, p, c.row.email, pay?.stripe ?? null));
   } catch (e) {
     if (e instanceof Stop) return err(`${e.message} Start again.`);
     throw e;
   }
+  const { paymentId, ...s } = done;
+  if (!paymentId || !pay?.stripe) return s;
+  try {
+    const home = `/org/${encodeURIComponent(s.slug)}`;
+    const url = await openCheckout({ pool: deps.pool, stripe: pay.stripe, now: deps.now }, paymentId, pay.base, `${home}?open=register&paid=cancelled`);
+    return { ...s, pay: url };
+  } catch (e) {
+    console.error("Stripe Checkout didn't open for a new registration:", e);
+    return s; // logged in; their teams wait in Register ALL Teams
+  }
 }
 
-async function registerAll(deps: Deps, q: PoolClient, cell: string, p: Payload, email: string) {
+async function registerAll(deps: Deps, q: PoolClient, cell: string, p: Payload, email: string, stripe: StripeApi | null) {
   const now = deps.now();
+  const to = await payee(q, stripe); // the League takes cards: register once it's paid
   await lockCell(q, cell);
   // One new organization name at a time.
   await q.query("select pg_advisory_xact_lock(hashtext('org-names'))");
@@ -403,6 +420,7 @@ async function registerAll(deps: Deps, q: PoolClient, cell: string, p: Payload, 
     on: ["court-club"],
   });
   const partner = await partnerFor(q, slug, who);
+  const toPay: PayTeam[] = [];
   const person = async (x: { first: string; last: string; cell: string; email: string | null }) => {
     const m = await matchOrCreateUser(q, x, now);
     if ("error" in m) throw new Stop(m.error);
@@ -414,12 +432,31 @@ async function registerAll(deps: Deps, q: PoolClient, cell: string, p: Payload, 
     for (const s of t.staff) staff.push({ ...(await person(s)), role: s.role as never });
     const team = await addSignupTeam(q, slug, t, staff, who, now);
     const copy = await copyOf(q, team.id, partner, who, now);
-    const placed = await saveChoice(q, p.programId, copy, t.choice ?? undefined, who, now);
-    if ("error" in placed) throw new Stop(`${p.teams.length > 1 ? `Team ${i + 1}: ` : ""}${placed.error}`);
+    const label = p.teams.length > 1 ? `Team ${i + 1}: ` : "";
+    if (to) {
+      // What it costs (its registration tried, then undone): registered once it's paid.
+      await q.query("savepoint owe");
+      const cost = await owed(q, p.programId, copy, t.choice ?? undefined, who, now);
+      await q.query("rollback to savepoint owe");
+      if ("error" in cost) throw new Stop(`${label}${cost.error}`);
+      toPay.push({ teamId: copy, orgTeamId: team.id, choice: t.choice ?? undefined, cents: cost.cents });
+    } else {
+      const placed = await saveChoice(q, p.programId, copy, t.choice ?? undefined, who, now);
+      if ("error" in placed) throw new Stop(`${label}${placed.error}`);
+    }
   }
+  let paymentId: string | null = null;
+  if (to && toPay.some((t) => t.cents > 0))
+    paymentId = await insertPayment(q, to, { programId: p.programId, teamOrg: slug, teams: toPay, startedBy: who, now });
+  else
+    for (const [i, t] of toPay.entries()) {
+      // Nothing to pay after all: registered now.
+      const placed = await saveChoice(q, p.programId, t.teamId, t.choice, who, now);
+      if ("error" in placed) throw new Stop(`${p.teams.length > 1 ? `Team ${i + 1}: ` : ""}${placed.error}`);
+    }
   const s = await startSession(deps, q, coachId);
   if (s.step !== "loggedIn") throw new Stop("Couldn't log in.");
-  return { ...s, programId: p.programId, slug };
+  return { ...s, programId: p.programId, slug, paymentId };
 }
 
 // The person registering's login: a new one with their PIN and verified email, or the one there with this email now verified.
@@ -487,6 +524,6 @@ export async function teamSignupGo(
     if (!r.ok) return err(r.message);
     slug = r.slug;
   }
-  const next = t.to === "register" ? `/org/${slug}?open=teams&view=register#teams` : `/org/${slug}?open=teams#teams`;
+  const next = t.to === "register" ? `/org/${slug}?open=register#register` : `/org/${slug}?open=teams#teams`;
   return { step: "loggedIn", token: s.token, expiresAt: s.expiresAt, slug, next };
 }

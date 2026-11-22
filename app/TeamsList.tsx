@@ -33,7 +33,7 @@ export default function TeamsList<T extends { level: string; gender: string }>(p
     chatKey?: string | null; // Chat with coaches
     alert?: AudienceInput | null; // Alert coaches
   } | null;
-  add?: { add: ReactNode; import: ReactNode } | null; // + Add a team, Import teams
+  add?: { add: ReactNode; import: ReactNode; names?: ReactNode } | null; // + Add a team, Import teams, Edit team names
   warnings?: { org: string; base: string } | null;
   empty?: string | null;
   teams: T[];
@@ -41,7 +41,6 @@ export default function TeamsList<T extends { level: string; gender: string }>(p
   grade: (t: T) => string;
   warn: (t: T) => boolean;
   gradeAction?: (teams: T[]) => ReactNode;
-  register?: { count: number; body: ReactNode } | null;
   row: (t: T) => ReactNode;
   imports?: { list: ImportRow[]; who: boolean; undo: (id: string) => Undo; note: string } | null;
 }) {
@@ -76,11 +75,12 @@ export default function TeamsList<T extends { level: string; gender: string }>(p
                 {
                   key: "add",
                   icon: <PlusIcon />,
-                  label: "Add or import teams",
+                  label: "Add, import or rename teams",
                   className: PLUS_BTN,
                   items: [
                     { key: "add", label: "＋ Add a team", panel: p.add.add },
                     { key: "import", label: "⇪ Import teams", panel: p.add.import },
+                    ...(p.add.names ? [{ key: "names", label: "✎ Edit team names", panel: p.add.names }] : []),
                   ],
                 },
               ]
@@ -96,8 +96,8 @@ export default function TeamsList<T extends { level: string; gender: string }>(p
         </div>
       )}
       {!p.teams.length && p.empty && <p className="text-sm text-zinc-500">{p.empty}</p>}
-      {(p.teams.length > 0 || p.register) && (
-        <TeamsByLevel teams={p.teams} view={p.view} register={p.register} grade={p.grade} warn={p.warn} gradeAction={p.gradeAction} row={p.row} />
+      {p.teams.length > 0 && (
+        <TeamsByLevel teams={p.teams} view={p.view} grade={p.grade} warn={p.warn} gradeAction={p.gradeAction} row={p.row} />
       )}
       {p.imports && p.imports.list.length > 0 && (
         <div className="mt-4">

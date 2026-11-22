@@ -8,7 +8,7 @@ import { BellIcon, NotifyPanel } from "./NotifyButton";
 import type { AudienceInput } from "@/lib/announcements";
 
 // What a team still needs, flashing red until it's done.
-export function MustBeEntered({ what }: { what: "COACH INFO" | "COACH CELL" | "COACH EMAIL" | "ROSTER" }) {
+export function MustBeEntered({ what }: { what: "COACH INFO" | "COACH CELL" | "COACH EMAIL" | "ROSTER" | "PLAYER BIRTHDATES" }) {
   return <span className="block animate-pulse text-sm font-semibold text-red-600 dark:text-red-400">{what} MUST BE ENTERED</span>;
 }
 
@@ -38,10 +38,12 @@ export default function TeamRow({
   actions,
   issue,
   page,
+  registrations,
 }: {
   // ↗ the team's page opened right under the row (built on the server only while open); left out: ↗ goes to its page
   page?: { id: string; content: ReactNode | null };
   issue?: string | null; // a roster problem ("1 Too old"): the name turns red with a badge saying it
+  registrations?: { program: string; paid: boolean }[]; // its current registrations, under its name
   href: string;
   name: string;
   altName: string | null;
@@ -139,15 +141,23 @@ export default function TeamRow({
             >
               {name.split(" ")[0]}
             </span>
-            <span
-              className={`truncate font-semibold ${
-                issue || teamNeeds({ hasCoach, waitingCoach, needsEmail: !!needsEmail, players: players ?? 0 })
-                  ? "animate-pulse text-red-600 dark:text-red-400"
-                  : ""
-              }`}
-            >
-              {name}
-              {altName && !inName(name, altName) && <span className="font-normal text-zinc-500"> · {altName}</span>}
+            <span className="min-w-0">
+              <span
+                className={`block truncate font-semibold ${
+                  issue || teamNeeds({ hasCoach, waitingCoach, needsEmail: !!needsEmail, players: players ?? 0 })
+                    ? "animate-pulse text-red-600 dark:text-red-400"
+                    : ""
+                }`}
+              >
+                {name}
+                {altName && !inName(name, altName) && <span className="font-normal text-zinc-500"> · {altName}</span>}
+              </span>
+              {/* Its current registrations ("✓ Winter (26/27) · Paid"). */}
+              {registrations && registrations.length > 0 && (
+                <span className="block truncate text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                  ✓ {registrations.map((r) => `${r.program}${r.paid ? " · Paid" : ""}`).join(", ")}
+                </span>
+              )}
             </span>
             {issue && <Chip tone="red">{issue}</Chip>}
           </>
@@ -260,9 +270,9 @@ export function GradeGroups<T>({
 }
 
 // Every Teams page (Thunder and each organization), no tabs: a card per level that opens when tapped (REC, COMP, then
-// Pre-K), each holding a card per gender (Boys, Girls; Pre-K is Coed) with its teams by grade, then a **Register** card
-// with the programs open for registration (when the organization registers teams into a League). With only one level
-// (all COMP, or all REC) there's no level card: the gender cards are the page's cards. ?view=comp-girls (or register)
+// Pre-K), each holding a card per gender (Boys, Girls; Pre-K is Coed) with its teams by grade (Register ALL Teams is its
+// own card on Home, below Teams). With only one level
+// (all COMP, or all REC) there's no level card: the gender cards are the page's cards. ?view=comp-girls
 // opens that card. A level or gender with a team that has a problem shows ⚠ N.
 export const TEAM_GROUPS = [
   { key: "rec-boys", label: "REC – Boys", level: "REC", gender: "Boys" },
@@ -321,16 +331,14 @@ export function TeamsByLevel<T extends { level: string; gender: string }>({
   grade,
   row,
   warn,
-  register,
   gradeAction,
 }: {
   teams: T[];
-  view: unknown; // ?view=: a group key ("comp-girls") or "register" opens that card
+  view: unknown; // ?view=: a group key ("comp-girls") opens that card
   grade: (t: T) => string; // e.g. "1st Grade"
   row: (t: T) => ReactNode;
   warn?: (t: T) => boolean;
   gradeAction?: (teams: T[]) => ReactNode; // a button on each grade card's title line (Roster players)
-  register?: { count: number; body: ReactNode } | null; // the Register card, when it registers teams into a League
 }) {
   const v = typeof view === "string" ? view : "";
   const bad = (list: T[]) => (warn ? list.filter(warn).length : 0);
@@ -394,18 +402,6 @@ export function TeamsByLevel<T extends { level: string; gender: string }>({
             </details>
           );
         })}
-      {register && (
-        <details className={`${card} group overflow-hidden`} open={v === "register"}>
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 select-none [&::-webkit-details-marker]:hidden">
-            <span className="text-lg font-semibold">Register</span>
-            <span className="flex items-center gap-2">
-              {countPill(register.count)}
-              <Chevron />
-            </span>
-          </summary>
-          <div className="border-t border-zinc-100 p-3 dark:border-white/5">{register.body}</div>
-        </details>
-      )}
     </div>
   );
 }

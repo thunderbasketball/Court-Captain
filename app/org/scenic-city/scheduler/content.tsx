@@ -1,6 +1,7 @@
 import type { SessionUser } from "@/lib/auth/service";
 import { Suspense, cache } from "react";
 import SubCard from "../../../SubCard";
+import RemovalRequests from "./RemovalRequests";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
@@ -42,7 +43,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const VIEWS = [
   { key: "teams", label: "Teams" },
   { key: "matchups", label: "Matchups" },
-  { key: "grid", label: "Grid" },
+  { key: "grid", label: "Scheduling" },
   { key: "bindings", label: "Bindings" },
 ] as const;
 type View = (typeof VIEWS)[number]["key"];
@@ -52,9 +53,11 @@ type View = (typeof VIEWS)[number]["key"];
 export async function SchedulerContent({
   searchParams = Promise.resolve({}),
   embedded = false,
+  programId,
 }: {
   searchParams?: PageProps<"/org/scenic-city/scheduler">["searchParams"];
   embedded?: boolean; // inside a Home card: no header or page frame, and never sends you away
+  programId?: string; // only this program (its Scheduler card under Programs): no title or program tabs
 } = {}) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
@@ -80,7 +83,7 @@ export async function SchedulerContent({
       s.days.flatMap((d) => d.programs.map((p) => [p.programId, { id: p.programId, name: p.programName }] as const)),
     ).values(),
   ];
-  const program = programs.find((p) => p.id === q.program) ?? programs[0];
+  const program = programId ? programs.find((p) => p.id === programId) : (programs.find((p) => p.id === q.program) ?? programs[0]);
   const days = s.days
     .map((d) => {
       const mine = d.programs.filter((p) => p.programId === program?.id);
@@ -104,9 +107,11 @@ export async function SchedulerContent({
       {!embedded && <AppHeader user={user} context={scenic.key} tab="scheduler" />}
       <div className="flex flex-1 flex-col">
         <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 py-6">
-          <PageTitle title="Scheduler" subtitle="Each Game Day across every League: its teams, matchups and grid." />
+          {!programId && <PageTitle title="Scheduler" subtitle="Each Game Day across every League: its teams, matchups and grid." />}
           {program && (
             <div>
+              {!programId && (
+                <>
               {/* Each program is its own tab (the soonest League first). */}
               <nav aria-label="Program" className="flex gap-1 overflow-x-auto border-b border-zinc-200 dark:border-white/10">
                 {programs.map((p) => (
@@ -124,7 +129,9 @@ export async function SchedulerContent({
                   </Link>
                 ))}
               </nav>
-              <div className="mt-3 flex items-center justify-between gap-3">
+                </>
+              )}
+              <div className={`${programId ? "" : "mt-3 "}flex items-center justify-between gap-3`}>
                 <div className="flex flex-wrap items-center gap-2">
                   {publishing.can && (
                     // Publish schedule: the League's games on the public League page (Directors of Programs or Scheduling).
@@ -142,6 +149,12 @@ export async function SchedulerContent({
                 )}
               </div>
             </div>
+          )}
+          {/* Teams asking to come off this League's schedule (Directors of Scheduling; flashes while any wait). */}
+          {program && (
+            <Suspense fallback={null}>
+              <RemovalRequests programId={program.id} />
+            </Suspense>
           )}
           {!day ? (
             <p className={`${card} px-4 py-3 text-sm text-zinc-500`}>
@@ -188,7 +201,7 @@ export async function SchedulerContent({
                       <SubCard title="Matchups" count={d.games || undefined} open={here && view === "matchups"}>
                         <Matchups day={d} coaches={coaches} who={who} />
                       </SubCard>
-                      <SubCard title="Grid" open={here && view === "grid"}>
+                      <SubCard title="Scheduling" open={here && view === "grid"}>
                         <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>
                           <DayGridCard user={user} day={d} coaches={coaches} />
                         </Suspense>

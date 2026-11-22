@@ -204,7 +204,12 @@ export function DeleteTeam({ id, name }: { id: string; name: string }) {
         disabled={busy}
         onClick={async () => {
           if (
-            !(await confirm({ title: `Delete ${name}?`, message: "Are you sure? This can't be undone.", confirmLabel: "Delete" }))
+            !(await confirm({
+              title: `Delete ${name}?`,
+              message: "Are you sure? This can't be undone.",
+              confirmLabel: "Delete",
+              typeToConfirm: name, // the team's name must be typed
+            }))
           )
             return;
           start(async () => {

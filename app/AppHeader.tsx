@@ -77,7 +77,13 @@ export default async function AppHeader({
   // The CourtCaptain page (admins) has the platform's own brand and no organization tools.
   const platform = context === "platform";
   // The organization this page belongs to: Scenic City's chips, a registered organization's chip ("org:<slug>"), or Thunder.
-  const org = context?.startsWith("scenic:") ? "scenic-city" : context?.startsWith("org:") ? context.slice(4) : "thunder";
+  const org = context?.startsWith("scenic:")
+    ? "scenic-city"
+    : context?.startsWith("org:")
+      ? context.slice(4)
+      : context?.startsWith("orgteam:")
+        ? context.split(":")[1]
+        : "thunder";
   const thunder = !platform && org === "thunder" && user.hasThunderRole;
   const [orgs, here, { contexts }, features, unread, myEvents, popups, chatUnread, articles, chats, featureRows] = await Promise.all([
     listOrgs(db),

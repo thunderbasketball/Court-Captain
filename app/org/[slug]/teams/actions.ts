@@ -25,6 +25,10 @@ export async function addTeam(org: string, input: teams.OrgTeamInput) {
 export async function editTeam(org: string, id: string, input: { gender: unknown; grades: unknown; level: unknown }) {
   return guarded((u) => teams.updateOrgTeam(deps(), u, org, id, input));
 }
+// Many teams' Alternate names at once (Teams card → Edit team names; checked in lib/org-teams).
+export async function setAltNames(org: string, list: { id: string; alt: string }[]) {
+  return guarded((u) => teams.setOrgTeamAltNames(deps(), u, org, list));
+}
 export async function setAltName(org: string, id: string, alt: string) {
   return guarded((u) => teams.setOrgTeamAltName(deps(), u, org, id, alt));
 }
@@ -50,6 +54,10 @@ export async function removeCoach(org: string, teamId: string, coachId: string) 
 // Rosters (checked again in lib/org-rosters).
 export async function addPlayer(org: string, teamId: string, input: rosters.PlayerInput) {
   return guarded((u) => rosters.addOrgPlayer(deps(), u, org, teamId, input));
+}
+// Fill in (or fix) a player's birthdate on the roster (checked in lib/org-rosters).
+export async function setPlayerBirthdate(org: string, teamId: string, playerId: string, birthdate: string) {
+  return guarded((u) => rosters.setOrgPlayerBirthdate(deps(), u, org, teamId, playerId, birthdate));
 }
 export async function removePlayer(org: string, teamId: string, playerId: string) {
   return guarded((u) => rosters.removeOrgPlayer(deps(), u, org, teamId, playerId));

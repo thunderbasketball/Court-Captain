@@ -6,9 +6,9 @@ import type { SessionUser } from "./auth/service";
 import { hasFeature } from "./features";
 import { hasArea } from "./org-admin";
 import { partnerFor, type OrgProgram } from "./org-leagues";
-import { orgShort } from "./org-registry";
+import { orgName, orgShort } from "./org-registry";
 import { lastBatches } from "./register-batches";
-import { previewTx, programRegStatus, registerBatch, type BatchResult } from "./scenic-programs";
+import { previewTx, programRegStatus, registerBatch, type BatchPay, type BatchResult } from "./scenic-programs";
 import { easternDate } from "./time";
 
 type Deps = { pool: Pool; now: () => Date };
@@ -44,10 +44,10 @@ async function thunderCopy(q: PoolClient, teamId: string, partnerId: string, byN
 export async function thunderPrograms(
   deps: Deps,
   viewer: SessionUser,
-): Promise<{ league: string; programs: OrgProgram[] } | null> {
+): Promise<{ league: string; leagueName: string; programs: OrgProgram[] } | null> {
   if (!hasArea(viewer, "teams") || !(await hasFeature(deps.pool, LEAGUE, "programs"))) return null;
   const today = easternDate(deps.now());
-  const r = await deps.pool.query<Omit<OrgProgram, "status" | "lastBatch"> & { regOpens: string }>(
+  const r = await deps.pool.query<Omit<OrgProgram, "status" | "lastBatch">>(
     `select p.id::text, p.kind, p.name, p.starts_on::text as "startsOn", p.ends_on::text as "endsOn",
             p.reg_opens::text as "regOpens", p.reg_closes::text as "regCloses", p.fee_cents as "feeCents",
             count(r.team_id)::int as registered, (count(t.id) - count(r.team_id))::int as unregistered
@@ -62,9 +62,10 @@ export async function thunderPrograms(
   const last = await lastBatches(deps.pool, "thunder");
   return {
     league: await orgShort(deps.pool, LEAGUE),
-    programs: r.rows.map(({ regOpens, ...p }) => ({
+    leagueName: await orgName(deps.pool, LEAGUE),
+    programs: r.rows.map((p) => ({
       ...p,
-      status: regOpen(today, regOpens, p.regCloses) as OrgProgram["status"],
+      status: regOpen(today, p.regOpens, p.regCloses) as OrgProgram["status"],
       lastBatch: last.get(p.id) ?? null,
     })),
   };
@@ -78,6 +79,7 @@ export async function registerAllThunderTeams(
   programId: unknown,
   preview = false,
   only?: unknown, // the teams left checked in the confirmation
+  pay?: BatchPay | null, // the League takes cards: one payment for all, registered once it's paid
 ): Promise<Result<BatchResult>> {
   if (!hasArea(viewer, "teams")) return { ok: false, message: "Only a Director of Teams can register teams." };
   if (!isId(programId)) return { ok: false, message: "Pick a program." };
@@ -98,7 +100,7 @@ export async function registerAllThunderTeams(
       const now = deps.now();
       const r = await registerBatch(
         q,
-        { programId, org: "thunder", viewer, now, preview, only },
+        { programId, org: "thunder", viewer, now, preview, only, pay },
         teams.rows.map((t) => ({ id: t.id, name: t.name, teamId: () => thunderCopy(q, t.id, partnerId, by(viewer), now) })),
       );
       return { ok: true as const, ...r };

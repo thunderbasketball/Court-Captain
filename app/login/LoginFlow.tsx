@@ -145,6 +145,13 @@ export default function LoginFlow({ join, next = "/" }: { join?: string; next?: 
               autoFocus
             />
           </Field>
+          {/* 10 digits starting with 1 might still be +1 and a number, so it doesn't go on by itself; a phone's number pad
+              has no Enter key, so this sends it. */}
+          {!busy && /^1\d{9}$/.test(cell.replace(/\D/g, "")) && (
+            <button type="submit" className={primary}>
+              Continue
+            </button>
+          )}
           {busy && <p className="text-center text-sm text-zinc-500">Checking…</p>}
         </Form>
       );

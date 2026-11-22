@@ -58,6 +58,35 @@ describe("userContexts", () => {
     expect(c.at(-2)).toMatchObject({ key: "scenic:Partner", href: "/org/scenic-city", role: "Partner" });
   });
 
+  it("a registered organization's team staff get a chip per team (its page); a Coach role adds no Home chip then", async () => {
+    await db.pool.query("insert into organizations (slug, name, short_name, kind) values ('east-ridge', 'East Ridge', 'ER', 'Organization')");
+    await db.pool.query("insert into org_role_types (org, role) values ('east-ridge', 'Admin'), ('east-ridge', 'Coach')");
+    const t = await db.pool.query<{ id: string }>(
+      `insert into org_teams (org, name, gender, grade_low, grade, level, created_by)
+       values ('east-ridge', '5B Ace', 'Boys', 5, 5, 'REC', 'x') returning id::text`,
+    );
+    await db.pool.query("insert into org_team_coaches (team_id, coach_id, role, added_by) values ($1, '5550001', 'HeadCoach', 'x')", [
+      t.rows[0].id,
+    ]);
+    await grant(db.pool, "5550001 east-ridge Coach");
+    const er = (await userContexts(db.pool, base)).filter((x) => x.org === "east-ridge");
+    expect(er).toEqual([
+      expect.objectContaining({
+        key: `orgteam:east-ridge:${t.rows[0].id}`,
+        label: "5B Ace · Head Coach",
+        href: `/org/east-ridge/teams/${t.rows[0].id}`,
+      }),
+    ]);
+    await grant(db.pool, "5550001 east-ridge Admin"); // an Admin keeps the Home chip too
+    expect((await userContexts(db.pool, base)).filter((x) => x.org === "east-ridge").map((x) => x.label)).toEqual([
+      "Admin",
+      "5B Ace · Head Coach",
+    ]);
+    await db.pool.query("delete from org_roles where org = 'east-ridge'");
+    await db.pool.query("delete from org_role_types where org = 'east-ridge'");
+    await db.pool.query("delete from organizations where slug = 'east-ridge'");
+  });
+
   it("remembers the last context only while the person still holds it", async () => {
     const c = await userContexts(db.pool, { ...base, isDirector: true });
     expect(pickContext(c, c[2].key)).toBe(c[2]);

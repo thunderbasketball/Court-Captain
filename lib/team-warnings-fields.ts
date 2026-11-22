@@ -3,8 +3,14 @@ export type WarningSettings = {
   roster: { on: boolean; min: number };
   idle: { on: boolean; days: number };
   uniforms: { on: boolean };
+  birthdates: { on: boolean }; // typed-in rosters: players without a birthdate
 };
-export const DEFAULT_WARNINGS: WarningSettings = { roster: { on: true, min: 8 }, idle: { on: true, days: 14 }, uniforms: { on: true } };
+export const DEFAULT_WARNINGS: WarningSettings = {
+  roster: { on: true, min: 8 },
+  idle: { on: true, days: 14 },
+  uniforms: { on: true },
+  birthdates: { on: true },
+};
 export const ROSTER_MIN = [1, 30] as const;
 export const IDLE_DAYS = [1, 90] as const;
 
@@ -22,5 +28,7 @@ export function cleanWarnings(v: unknown): WarningSettings | null {
     roster: { on: roster.on === true, min: roster.min },
     idle: { on: idle.on === true, days: idle.days },
     uniforms: { on: uniforms.on === true },
+    // Settings saved before it existed: on.
+    birthdates: { on: r.birthdates === undefined ? true : obj(r.birthdates).on === true },
   };
 }

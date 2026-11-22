@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { requireFeature } from "@/lib/features-server";
@@ -7,6 +8,12 @@ import { SIZES, jerseyName, listUniformOrders, type UniformOrder } from "@/lib/u
 import AppHeader from "../../../AppHeader";
 import { GroupCard, PageTitle } from "../../../ui";
 import { hasArea } from "@/lib/org-admin";
+import { pastOrders, vendorView, type VendorRow } from "@/lib/uniform-vendor";
+import SubCard from "../../../SubCard";
+import HowUniformsWork from "./HowUniformsWork";
+import { TZ } from "@/lib/time";
+import { CancelOrder, SendToVendor, VendorSettings } from "./VendorPanel";
+import { UniformSearch, type UniformHit } from "./UniformSearch";
 
 import { PageFrame } from "../../../ui";
 
@@ -28,7 +35,34 @@ export async function UniformsContent({
     redirect("/");
   }
 
-  const rows = await listUniformOrders({ pool: db, now: () => new Date() }, user);
+  const [rows, vendor, past, gaps] = await Promise.all([
+    listUniformOrders({ pool: db, now: () => new Date() }, user),
+    vendorView({ pool: db }, user),
+    pastOrders({ pool: db }, user),
+    // Why the card is red: any rostered player missing a number (everyone needs one, even with an old uniform), or a size
+    // when they ordered (lib/director-alerts.ts), by team.
+    db.query<{ id: string; name: string; numbers: number; sizes: number }>(
+      `select t.id::text, t.name,
+              count(*) filter (where u.number is null)::int as numbers,
+              count(*) filter (where (coalesce(g.uniform_needed, false) or u.needs_uniform_at is not null) and u.size is null)::int as sizes
+         from team_players p join teams t on t.id = p.team_id
+         left join registrations g on g.registrant_id = p.registrant_id
+         left join team_uniforms u on u.team_id = p.team_id and u.registrant_id = p.registrant_id
+        where u.number is null or ((coalesce(g.uniform_needed, false) or u.needs_uniform_at is not null) and u.size is null)
+        group by t.id, t.name, t.grade_sort order by t.grade_sort, lower(t.name)`,
+    ),
+  ]);
+  // The newest order each player went in, as sent (a player changed since then goes in the next order).
+  const sentIn = new Map<string, { orderNo: string; number: string | null; size: string | null }>();
+  for (const o of (past ?? []).filter((o) => !o.cancelled))
+    for (const p of o.players)
+      if (!sentIn.has(`${p.teamId}-${p.registrantId}`))
+        sentIn.set(`${p.teamId}-${p.registrantId}`, { orderNo: o.orderNo, number: p.number, size: p.size });
+  const orderLabel = (r: { teamId: string; registrantId: string; number: string | null; size: string | null }) => {
+    const o = sentIn.get(`${r.teamId}-${r.registrantId}`);
+    if (!o) return "Not sent yet";
+    return o.number === r.number && o.size === r.size ? `Order #${o.orderNo}` : `Changed since order #${o.orderNo} · goes in the next order`;
+  };
   const teams = new Map<string, UniformOrder[]>();
   for (const r of rows) teams.set(r.teamId, [...(teams.get(r.teamId) ?? []), r]);
   const bySize = SIZES.map((s) => [s, rows.filter((r) => r.size === s).length] as const).filter(([, n]) => n > 0);
@@ -39,6 +73,124 @@ export async function UniformsContent({
       {!embedded && <AppHeader user={user} tab="uniforms" context="director" />}
       <PageFrame embedded={embedded} className="mx-auto w-full max-w-md flex-1 px-4 py-6">
         <PageTitle title="Uniforms" subtitle={`${rows.length} ordered by rostered players`} />
+        {gaps.rows.length > 0 && (
+          <div className="mb-4 space-y-1 rounded-xl bg-red-50 p-3 text-sm text-red-800 ring-1 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/30">
+            <p className="font-semibold">Still needed (why this card is red):</p>
+            <ul className="space-y-0.5">
+              {gaps.rows.map((g) => (
+                <li key={g.id}>
+                  <Link href={`/org/thunder/teams/${g.id}`} className="font-medium underline">
+                    {g.name}
+                  </Link>
+                  {": "}
+                  {[
+                    g.numbers ? `${g.numbers} player${g.numbers === 1 ? "" : "s"} with no number` : null,
+                    g.sizes ? `${g.sizes} with no size` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(", ")}
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs">Every player needs a number, even one who didn&apos;t order a new uniform. Set them on the team&apos;s Uniforms.</p>
+          </div>
+        )}
+        {vendor && (
+          <>
+            {/* The gear (top right of the card) opens the vendor's email and Cc here; the 🔍 the search. */}
+            <VendorSettings email={vendor.email} cc={vendor.cc} setBy={vendor.setBy} />
+            <UniformSearch
+              hits={[
+                ...rows.map(
+                  (r): UniformHit => ({
+                    key: `c-${r.teamId}-${r.registrantId}`,
+                    name: jerseyName(r.lastName),
+                    team: r.team,
+                    number: r.number,
+                    size: r.size,
+                    where: `Current · ${orderLabel(r)}`,
+                  }),
+                ),
+                ...(past ?? []).flatMap((o) =>
+                  o.players.map(
+                    (p): UniformHit => ({
+                      key: `o-${o.orderNo}-${p.teamId}-${p.registrantId}`,
+                      name: p.name,
+                      team: p.team,
+                      number: p.number,
+                      size: p.size,
+                      where: `Order #${o.orderNo}${o.cancelled ? " (cancelled)" : ""}`,
+                    }),
+                  ),
+                ),
+              ]}
+            />
+            <section className="mb-4 space-y-2 rounded-xl p-3 text-sm ring-1 ring-zinc-950/10 dark:ring-white/10">
+              <p className="font-semibold">
+                Uniform vendor{vendor.email ? <span className="font-normal text-zinc-500"> · {vendor.email}</span> : null}
+                {vendor.cc.length > 0 && <span className="font-normal text-zinc-500"> · Cc {vendor.cc.length}</span>}
+              </p>
+              <p className="text-zinc-600 dark:text-zinc-300">
+                {vendor.ready.length} new to send · {vendor.sentPlayers} already sent
+                {vendor.held.length > 0 && <span className="text-amber-700 dark:text-amber-400"> · {vendor.held.length} held back</span>}
+              </p>
+              {vendor.held.length > 0 && (
+                <ul className="space-y-0.5 text-xs text-amber-700 dark:text-amber-400">
+                  {vendor.held.map((h) => (
+                    <li key={`${h.teamId}-${h.registrantId}`}>
+                      {h.team} · {h.name}: {h.missing}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {vendor.last && (
+                <p className="text-xs text-zinc-500">
+                  Last order #{vendor.last.orderNo}: {vendor.last.players} player{vendor.last.players === 1 ? "" : "s"}
+                  {vendor.last.everyone ? " (everyone)" : ""} to {vendor.last.to}, sent by {vendor.last.sentBy} on{" "}
+                  {vendor.last.sentAt.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: TZ })}
+                </p>
+              )}
+              <SendToVendor ready={vendor.ready.length} hasVendor={!!vendor.email} />
+            </section>
+            <div className="mb-4">
+              <HowUniformsWork />
+            </div>
+            {past && past.length > 0 && (
+              <div className="mb-4">
+                <SubCard title="Past orders" count={past.length}>
+                  <div className="space-y-2">
+                    {past.map((o) => (
+                      <SubCard
+                        key={o.orderNo}
+                        title={`#${o.orderNo}`}
+                        count={`${o.players.length} player${o.players.length === 1 ? "" : "s"}${o.cancelled ? " · Cancelled" : ""}`}
+                      >
+                        <p className="mb-2 text-xs text-zinc-500">
+                          Sent by {o.sentBy} on{" "}
+                          {o.sentAt.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", timeZone: TZ })} to {o.to}
+                          {o.cc.length ? `, Cc ${o.cc.join(", ")}` : ""}
+                          {o.everyone ? " · everyone" : ""}
+                        </p>
+                        {o.cancelled && (
+                          <p className="mb-2 text-xs font-medium text-red-600 dark:text-red-400">
+                            Cancelled by {o.cancelled.by} on{" "}
+                            {o.cancelled.at.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: TZ })}
+                          </p>
+                        )}
+                        {o.canCancel && (
+                          <div className="mb-3">
+                            <CancelOrder orderNo={o.orderNo} to={o.to} />
+                          </div>
+                        )}
+                        <OrderRows players={o.players} />
+                      </SubCard>
+                    ))}
+                  </div>
+                </SubCard>
+              </div>
+            )}
+          </>
+        )}
         {rows.length > 0 && (
           <p className="mb-4 flex flex-wrap gap-x-3 gap-y-1 text-sm tabular-nums text-zinc-600 dark:text-zinc-300">
             {bySize.map(([s, n]) => (
@@ -61,11 +213,16 @@ export async function UniformsContent({
             <GroupCard key={teamId} title={list[0].team} count={list.length}>
               {list.map((r) => (
                 <li key={r.registrantId} className="grid grid-cols-[1fr_3rem_3rem] items-center gap-2 px-4 py-2 text-sm">
-                  <span className="truncate font-semibold tracking-wide">
+                  <span className="min-w-0 truncate font-semibold tracking-wide">
                     {jerseyName(r.lastName)}
                     {r.late && (
                       <span title="Added after registration" className="ml-1 font-normal text-amber-600 dark:text-amber-400">
                         ✱
+                      </span>
+                    )}
+                    {vendor && (
+                      <span className="block text-xs font-normal tracking-normal text-zinc-500">
+                        {orderLabel(r)}
                       </span>
                     )}
                   </span>
@@ -78,5 +235,32 @@ export async function UniformsContent({
         </div>
       </PageFrame>
     </>
+  );
+}
+
+// One past order's players as sent: GIRLS then BOYS, each team's players by jersey number.
+function OrderRows({ players }: { players: VendorRow[] }) {
+  return (
+    <div className="space-y-3 text-sm">
+      {["Girls", "Boys"].map((g) => {
+        const list = players.filter((p) => p.gender === g);
+        if (!list.length) return null;
+        return (
+          <div key={g}>
+            <p className="mb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">{g}</p>
+            <ul className="divide-y divide-zinc-100 rounded-lg ring-1 ring-zinc-950/10 dark:divide-white/5 dark:ring-white/10">
+              {list.map((p) => (
+                <li key={`${p.teamId}-${p.registrantId}`} className="grid grid-cols-[6rem_1fr_3rem_3rem] items-center gap-2 px-3 py-1.5">
+                  <span className="truncate text-zinc-500">{p.team}</span>
+                  <span className="truncate font-semibold tracking-wide">{p.name}</span>
+                  <span className="text-right tabular-nums">#{p.number}</span>
+                  <span className="text-right">{p.size}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })}
+    </div>
   );
 }

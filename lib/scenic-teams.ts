@@ -11,6 +11,7 @@ import { normalizeCell } from "./phone";
 import { cleanPlaceName } from "./scenic-partners";
 import { withTx, type Queryable } from "./sql";
 import { matchOrCreateUser } from "./user-match";
+import { scheduledRefusal } from "./team-guards";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -399,6 +400,8 @@ export async function deleteScenicTeam(deps: Deps, viewer: SessionUser, id: unkn
       if (!t.rows[0]) throw new TeamError("That team no longer exists.");
       if (t.rows[0].org_team_id) throw new TeamError("This team is managed by its organization.");
       if (!(await canEdit(q, viewer, t.rows[0]))) throw new TeamError("You can't change this team.");
+      const refused = await scheduledRefusal(q, [id], deps.now()); // on a schedule: the Scheduler first
+      if (refused) throw new TeamError(refused);
       await q.query("delete from scenic_teams where id = $1", [id]);
       await dropScenicCoachIfIdle(q, t.rows[0].coach_id, by(viewer));
       await removeEmptyClub(q, t.rows[0].partner_id); // its club's last team: the club goes too

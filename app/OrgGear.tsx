@@ -21,6 +21,9 @@ import SyncSwitch from "./warnings/SyncSwitch";
 import ChatSettingsForm from "./warnings/ChatSettingsForm";
 import { chatEmailSetting } from "@/lib/chat";
 import WarningsForm from "./warnings/WarningsForm";
+import PaymentsCard, { paymentsLabel } from "./PaymentsCard";
+import { paymentStatus } from "@/lib/stripe/connect";
+import { stripeApi } from "@/lib/stripe/client";
 
 // The gear after an organization's last tab, for its Admins only (checked here on the server): its name (Owners), login link, every
 // feature (what it has, since when, and what it can add: buying upgrades in the app is coming soon), its color and logo.
@@ -46,6 +49,8 @@ export default async function OrgGear({ org, coachId, user }: { org: string; coa
     hasFeature(db, org, "chat"),
   ]);
   const chatSetting = chatOn ? await chatEmailSetting(db, org) : null;
+  // Payments: Owners connect the organization's own Stripe account (a Director viewing as someone never does).
+  const pay = owner && user && !user.actingBy ? await paymentStatus({ pool: db, stripe: stripeApi(), now: () => now }, user, org) : null;
   // Delete organization: its Owners, once it has no teams (Thunder and Scenic City never).
   const deletable = owner && !(BUILT_IN as readonly string[]).includes(org);
   const teamCount = deletable
@@ -75,6 +80,7 @@ export default async function OrgGear({ org, coachId, user }: { org: string; coa
       name={o.name}
       short={o.short}
       canRename={owner}
+      payments={pay ? { label: paymentsLabel(pay), card: <PaymentsCard org={org} status={pay} /> } : undefined}
       deleteCard={deletable ? <OrgDelete org={org} name={o.name} teams={teamCount} /> : undefined}
       featureSettings={
         (
@@ -114,7 +120,7 @@ export default async function OrgGear({ org, coachId, user }: { org: string; coa
                   <WarningsForm
                     org={org}
                     settings={w.settings}
-                    parts={w.uniformsKept ? ["roster", "idle", "uniforms"] : ["roster", "idle"]}
+                    parts={["roster", "idle", ...(w.uniformsKept ? (["uniforms"] as const) : []), ...(w.typedRosters ? (["birthdates"] as const) : [])]}
                     setBy={w.setBy}
                   />
                 </div>

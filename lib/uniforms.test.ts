@@ -4,12 +4,14 @@ import { addPlayers } from "./rosters";
 import { createTestDb } from "./testing/db";
 import {
   duplicateNumbers,
+  canUnlockUniforms,
   isMissing,
   listUniformOrders,
   listUniforms,
   markUniformAdded,
   saveUniform,
   setNeedsUniform,
+  setUniformLock,
   uniformRequests,
   uniformsMissing,
 } from "./uniforms";
@@ -91,12 +93,12 @@ describe("uniforms", () => {
 
   it("a duplicate number is allowed but reported", async () => {
     await saveUniform(deps(), parent, team, "r1", { number: "5" });
-    expect(await saveUniform(deps(), parent, team, "r2", { number: "5" })).toMatchObject({ ok: true, duplicates: ["5"] });
+    expect(await saveUniform(deps(), parent, team, "r3", { number: "5" })).toMatchObject({ ok: true, duplicates: ["5"] });
     expect(duplicateNumbers((await listUniforms(deps(), parent, team))!)).toEqual(new Set(["5"]));
-    expect(await saveUniform(deps(), parent, team, "r2", { number: "6" })).toMatchObject({ ok: true, duplicates: [] });
-    expect(await saveUniform(deps(), parent, team, "r2", { number: "05" })).toMatchObject({ ok: true, duplicates: ["5"] }); // 05 is #5
-    expect(await saveUniform(deps(), parent, team, "r2", { number: "00" })).toMatchObject({ ok: true, duplicates: [] });
-    await saveUniform(deps(), parent, team, "r3", { number: "0" });
+    expect(await saveUniform(deps(), parent, team, "r3", { number: "6" })).toMatchObject({ ok: true, duplicates: [] });
+    expect(await saveUniform(deps(), parent, team, "r3", { number: "05" })).toMatchObject({ ok: true, duplicates: ["5"] }); // 05 is #5
+    expect(await saveUniform(deps(), parent, team, "r3", { number: "00" })).toMatchObject({ ok: true, duplicates: [] });
+    await saveUniform(deps(), parent, team, "r2", { number: "0" });
     expect(duplicateNumbers((await listUniforms(deps(), parent, team))!)).toEqual(new Set()); // 0 and 00 differ
   });
 
@@ -173,5 +175,71 @@ describe("uniforms", () => {
     );
     expect((await listUniformOrders(deps(), director)).map((o) => [o.lastName, o.late])).toContainEqual(["Young", true]);
     expect((await listUniformOrders(deps(), director)).map((o) => [o.lastName, o.late])).toContainEqual(["Zed", false]);
+  });
+  it("a player who has their uniform is locked until a coach, Admin, Director of Uniforms or Owner unlocks it", async () => {
+    await saveUniform(deps(), parent, team, "r1", { number: "9", size: "YM" });
+    await saveUniform(deps(), parent, team, "r2", { number: "12" }); // Bea didn't order one: a number means she has hers
+    const send = await db.pool.query<{ id: string }>(
+      `insert into uniform_vendor_sends (org, order_no, sent_to, players, everyone, sent_by, sent_at)
+       values ('thunder', '20261020', 'v@x.com', 1, false, 'Earl X', '2026-10-20T15:00:00Z') returning id::text`,
+    );
+    await db.pool.query(
+      `insert into uniform_vendor_sent (send_id, team_id, registrant_id, team, gender, name, number, size)
+       values ($1, $2, 'r1', '4G A', 'Girls', 'ZED', '9', 'YM')`,
+      [send.rows[0].id, team],
+    );
+    // A family who didn't order one can still be ticked Needs a uniform (lost or outgrown) though her number is locked.
+    expect(await setNeedsUniform(deps(), parent, team, "r2", true)).toMatchObject({ ok: true });
+    expect(await setNeedsUniform(deps(), parent, team, "r2", false)).toMatchObject({ ok: true });
+    const row = async (id: string) => (await listUniforms(deps(), parent, team))!.find((r) => r.registrantId === id)!;
+    expect(await row("r1")).toMatchObject({ orderNo: "20261020", locked: true });
+    expect(await row("r2")).toMatchObject({ orderNo: null, locked: true });
+    expect(await row("r3")).toMatchObject({ locked: false }); // ordered, not sent yet
+    for (const who of [parent, director]) {
+      expect(await saveUniform(deps(), who, team, "r1", { number: "10" })).toMatchObject({ ok: false });
+      expect(await saveUniform(deps(), who, team, "r2", { number: "13" })).toMatchObject({ ok: false });
+    }
+    // A Team Parent can't unlock; a team coach can.
+    expect(await setUniformLock(deps(), parent, team, "r1", true)).toMatchObject({ ok: false });
+    expect(await canUnlockUniforms(db.pool, parent, team)).toBe(false);
+    await db.pool.query(`insert into team_staff (team_id, coach_id, role, added_by) values ($1, '5550002', 'AsstCoach', 'x')`, [team]);
+    expect(await canUnlockUniforms(db.pool, stranger, team)).toBe(true);
+    expect(await setUniformLock(deps(), stranger, team, "r1", true)).toMatchObject({ ok: true, by: "Amy X", locked: false });
+    expect(await row("r1")).toMatchObject({ locked: false, unlockedBy: "Amy X" });
+    // Changed after the order: off that order (it goes in the next one).
+    expect(await saveUniform(deps(), parent, team, "r1", { number: "10" })).toMatchObject({ ok: true });
+    expect(await row("r1")).toMatchObject({ orderNo: null, locked: false });
+    // Lock again (any of the staff), and the director unlocks Bea.
+    expect(await setUniformLock(deps(), parent, team, "r1", false)).toMatchObject({ ok: true, locked: false }); // not on an order now
+    expect(await setUniformLock(deps(), director, team, "r2", true)).toMatchObject({ ok: true, locked: false });
+    expect(await saveUniform(deps(), parent, team, "r2", { number: "13" })).toMatchObject({ ok: true });
+    // Cancelling the order unlocks too.
+    await saveUniform(deps(), parent, team, "r1", { number: "9" });
+    expect(await row("r1")).toMatchObject({ orderNo: "20261020", locked: true });
+    await db.pool.query("update uniform_vendor_sends set cancelled_by = 'Earl X', cancelled_at = now() where id = $1", [
+      send.rows[0].id,
+    ]);
+    expect(await row("r1")).toMatchObject({ orderNo: null, locked: false });
+  });
+  it("Needs a uniform for a player already ordered: a new one goes in the next order", async () => {
+    await saveUniform(deps(), parent, team, "r1", { number: "9", size: "YM" });
+    const send = await db.pool.query<{ id: string }>(
+      `insert into uniform_vendor_sends (org, order_no, sent_to, players, everyone, sent_by, sent_at)
+       values ('thunder', '20261020', 'v@x.com', 1, false, 'Earl X', '2026-10-20T15:00:00Z') returning id::text`,
+    );
+    await db.pool.query(
+      `insert into uniform_vendor_sent (send_id, team_id, registrant_id, team, gender, name, number, size)
+       values ($1, $2, 'r1', '4G A', 'Girls', 'ZED', '9', 'YM')`,
+      [send.rows[0].id, team],
+    );
+    const ava = async () => (await listUniforms(deps(), parent, team))!.find((r) => r.registrantId === "r1")!;
+    expect(await ava()).toMatchObject({ orderNo: "20261020", lastOrderNo: "20261020", reorderBy: null, locked: true });
+    expect(await setNeedsUniform(deps(), parent, team, "r1", true)).toEqual({ ok: true, by: "Tess X" });
+    expect(await ava()).toMatchObject({ orderNo: null, reorderBy: "Tess X", locked: false, size: "YM" });
+    expect(await saveUniform(deps(), parent, team, "r1", { size: "YL" })).toMatchObject({ ok: true });
+    // Unticked: back on the order as it was once the size matches again.
+    expect(await setNeedsUniform(deps(), parent, team, "r1", false)).toMatchObject({ ok: true });
+    await saveUniform(deps(), director, team, "r1", { size: "YM" });
+    expect(await ava()).toMatchObject({ orderNo: "20261020", reorderBy: null, locked: true });
   });
 });

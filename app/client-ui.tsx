@@ -51,7 +51,15 @@ export function Toast({ message }: { message: string }) {
   );
 }
 
-type ConfirmOptions = { title: string; message: ReactNode; confirmLabel: string; tone?: "danger" | "warning" };
+// confirmLabel null: nothing to confirm (it explains why), just Close. `typeToConfirm`: the confirm button stays off
+// until this (e.g. the team's name) is typed (any capitals, spaces trimmed).
+type ConfirmOptions = {
+  title: string;
+  message: ReactNode;
+  confirmLabel: string | null;
+  tone?: "danger" | "warning";
+  typeToConfirm?: string;
+};
 
 // An in-app "are you sure?" box in place of the browser's confirm().
 // Usage: const [confirm, confirmDialog] = useConfirm(); ... if (await confirm({...})) ...; render {confirmDialog}.
@@ -59,10 +67,14 @@ export function useConfirm(): [(o: ConfirmOptions) => Promise<boolean>, ReactNod
   const ref = useRef<HTMLDialogElement>(null);
   const resolve = useRef<((ok: boolean) => void) | null>(null);
   const [opts, setOpts] = useState<ConfirmOptions | null>(null);
+  const [typed, setTyped] = useState("");
+  const same = (a: string, b: string) => a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
+  const blocked = !!opts?.typeToConfirm && !same(typed, opts.typeToConfirm);
 
   const ask = (o: ConfirmOptions) =>
     new Promise<boolean>((res) => {
       resolve.current = res;
+      setTyped("");
       setOpts(o);
       requestAnimationFrame(() => ref.current?.showModal());
     });
@@ -99,6 +111,21 @@ export function useConfirm(): [(o: ConfirmOptions) => Promise<boolean>, ReactNod
           </span>
           <h2 className="mt-4 text-lg font-semibold">{opts.title}</h2>
           <div className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{opts.message}</div>
+          {opts.typeToConfirm && (
+            <label className="mt-4 block text-left text-sm">
+              <span className="text-zinc-600 dark:text-zinc-400">
+                Type <strong className="text-zinc-900 dark:text-white">{opts.typeToConfirm}</strong> to confirm
+              </span>
+              <input
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                autoComplete="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 dark:border-white/15 dark:bg-zinc-900"
+              />
+            </label>
+          )}
           <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row">
             <button
               type="button"
@@ -106,17 +133,20 @@ export function useConfirm(): [(o: ConfirmOptions) => Promise<boolean>, ReactNod
               onClick={() => answer(false)}
               className="flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-zinc-700 ring-1 ring-zinc-950/10 hover:bg-zinc-50 dark:text-zinc-200 dark:ring-white/15 dark:hover:bg-zinc-800"
             >
-              Cancel
+              {opts.confirmLabel ? "Cancel" : "Close"}
             </button>
-            <button
-              type="button"
-              onClick={() => answer(true)}
-              className={`flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-sm ${
-                danger ? "bg-red-600 hover:bg-red-700" : "bg-amber-600 hover:bg-amber-700"
-              }`}
-            >
-              {opts.confirmLabel}
-            </button>
+            {opts.confirmLabel && (
+              <button
+                type="button"
+                disabled={blocked}
+                onClick={() => !blocked && answer(true)}
+                className={`flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-sm disabled:opacity-40 ${
+                  danger ? "bg-red-600 hover:bg-red-700" : "bg-amber-600 hover:bg-amber-700"
+                }`}
+              >
+                {opts.confirmLabel}
+              </button>
+            )}
           </div>
         </div>
       )}

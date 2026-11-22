@@ -17,6 +17,7 @@ import { LEVELS, gradeLabel, gradeRange, teamsICanManage, type Level } from "./s
 import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
 import { scheduledGames, type ScheduledGame } from "./scenic-games";
+import { isScheduled, SCHEDULED_REFUSAL } from "./team-guards";
 
 export { REG_OPTIONS, type ProgramOption, type RegOptionKind } from "./program-options";
 
@@ -1122,8 +1123,22 @@ export async function registerAllScenicTeams(
 
 // ---- Register all: a preview first, then the registrations as one batch that can be undone ----
 
-export type BatchTeam = { id: string; name: string; division: string; dates: string[]; bracket: boolean }; // id: the team picked
-export type BatchResult = { registered: string[]; skipped: string[]; teams: BatchTeam[]; batchId: string | null };
+// id: the team picked; cents: what it costs (ALL Season, or the program's fee)
+export type BatchTeam = { id: string; name: string; division: string; dates: string[]; bracket: boolean; cents?: number };
+export type BatchResult = {
+  registered: string[];
+  skipped: string[];
+  teams: BatchTeam[];
+  batchId: string | null;
+  payer?: "org" | "team" | null; // paid by card first (who pays the card fee); null: registers at once
+  paymentId?: string; // paid by card: the payment to open Checkout for (the teams register once it's paid)
+};
+
+// Register all paid by card: who pays the card fee, and how the payment is recorded (lib/stripe/registration).
+export type BatchPay = {
+  feePayer: "org" | "team";
+  record: (q: PoolClient, teams: { teamId: string; orgTeamId: string | null; choice: unknown; cents: number }[]) => Promise<string>;
+};
 
 // A Register all that can't go ahead (returned as its message).
 export class BatchError extends Error {}
@@ -1141,7 +1156,7 @@ class PreviewDone extends Error {
 // confirmation shows exactly what Register all will do.
 export async function registerBatch(
   q: PoolClient,
-  b: { programId: string; org: string; viewer: SessionUser; now: Date; preview: boolean; only?: unknown },
+  b: { programId: string; org: string; viewer: SessionUser; now: Date; preview: boolean; only?: unknown; pay?: BatchPay | null },
   all: { id: string; name: string; teamId: () => Promise<string> }[],
 ): Promise<BatchResult> {
   let teams = all;
@@ -1155,9 +1170,16 @@ export async function registerBatch(
   const skipped: string[] = [];
   const out: BatchTeam[] = [];
   const ids: string[] = [];
-  for (const t of teams) {
-    const id = await t.teamId();
-    const placed = await saveChoice(q, b.programId, id, { allSeason: true, days: [] }, by(b.viewer), b.now);
+  const toPay: { teamId: string; orgTeamId: string | null; choice: unknown; cents: number }[] = [];
+  const prog = (await q.query<{ kind: string; fee_cents: number | null }>("select kind, fee_cents from scenic_programs where id = $1", [b.programId])).rows[0];
+  const allSeason = { allSeason: true, days: [] };
+  // Each team's copy in the League first (kept), then its registration (undone if it's paid by card first).
+  const copies = [];
+  for (const t of teams) copies.push({ ...t, copy: await t.teamId() });
+  if (b.pay) await q.query("savepoint batch_pay");
+  for (const t of copies) {
+    const id = t.copy;
+    const placed = await saveChoice(q, b.programId, id, allSeason, by(b.viewer), b.now);
     if ("error" in placed) {
       skipped.push(`${t.name}: ${placed.error}`);
       continue;
@@ -1165,11 +1187,26 @@ export async function registerBatch(
     registered.push(`${t.name}: ${placed.division}`);
     ids.push(id);
     const e = placed.entry;
-    out.push({ id: t.id, name: t.name, division: placed.division ?? "", dates: e ? Object.keys(e.perDate).sort() : [], bracket: !!e?.bracket });
+    const cents = prog?.kind === "League" ? (e?.feeCents ?? 0) : (prog?.fee_cents ?? 0);
+    toPay.push({ teamId: id, orgTeamId: t.id, choice: allSeason, cents });
+    out.push({
+      id: t.id,
+      name: t.name,
+      division: placed.division ?? "",
+      dates: e ? Object.keys(e.perDate).sort() : [],
+      bracket: !!e?.bracket,
+      cents,
+    });
   }
-  const result: BatchResult = { registered, skipped, teams: out, batchId: null };
+  const paying = !!b.pay && toPay.some((t) => t.cents > 0);
+  const result: BatchResult = { registered, skipped, teams: out, batchId: null, payer: paying ? b.pay!.feePayer : null };
   if (b.preview) throw new PreviewDone(result);
   if (!ids.length) return result;
+  if (paying) {
+    // Paid by card first: nothing registered now; one payment for all, and they register once Stripe says it's paid.
+    await q.query("rollback to savepoint batch_pay");
+    return { ...result, paymentId: await b.pay!.record(q, toPay) };
+  }
   const batch = await q.query<{ id: string }>(
     `insert into scenic_register_batches (program_id, org, teams, done_by, done_by_id, done_at)
      values ($1, $2, $3, $4, $5, $6) returning id::text`,
@@ -1320,8 +1357,142 @@ export function parseChoice(v: unknown): Choice | null {
   return { allSeason: c.allSeason === true, days };
 }
 
-// A League's options and Game Days (regular season, not Bracket Days), soonest first.
-async function leagueTerms(q: Pick<Queryable, "query">, programId: string) {
+// ---- An organization's own terms in a League (its ALL Season price, Pay later) ----
+
+// The organization a League team belongs to: an organization's team, Thunder's, or none (Scenic City's own, outside clubs).
+export async function teamOrgOf(q: Pick<Queryable, "query">, teamId: string): Promise<string | null> {
+  const r = await q.query<{ org: string | null }>(
+    `select coalesce(o.org, case when st.thunder_team_id is not null then 'thunder' end) as org
+       from scenic_teams st left join org_teams o on o.id = st.org_team_id where st.id = $1`,
+    [teamId],
+  );
+  return r.rows[0]?.org ?? null;
+}
+
+export type PriceGroup = { id: string; name: string; allSeasonCents: number | null; payLater: boolean; setBy: string; setAt: Date; orgs: string[] };
+
+// A program's named price groups (by name) with their organizations (by slug), and every organization's tag.
+export async function programPriceGroups(q: Pick<Queryable, "query">, programId: string): Promise<PriceGroup[]> {
+  const r = await q.query<PriceGroup>(
+    `select g.id::text, g.name, g.all_season_cents as "allSeasonCents", g.pay_later as "payLater", g.set_by as "setBy", g.set_at as "setAt",
+            array(select t.org from scenic_program_org_terms t where t.group_id = g.id order by t.org) as orgs
+       from scenic_price_groups g where g.program_id = $1 order by lower(g.name)`,
+    [programId],
+  );
+  return r.rows;
+}
+
+// Whether this organization's teams register in the program without paying by card (Owners mark them Paid).
+export async function payLater(q: Pick<Queryable, "query">, programId: string, org: string | null): Promise<boolean> {
+  if (!org) return false;
+  const r = await q.query(
+    `select 1 from scenic_program_org_terms t join scenic_price_groups g on g.id = t.group_id
+      where t.program_id = $1 and t.org = $2 and g.pay_later`,
+    [programId, org],
+  );
+  return !!r.rowCount;
+}
+
+// The organizations that can be tagged (any that registers teams: not Scenic City itself, not officials groups).
+export async function termsOrgChoices(q: Pick<Queryable, "query">): Promise<{ slug: string; name: string }[]> {
+  const r = await q.query<{ slug: string; name: string }>(
+    `select slug, name from organizations where slug <> $1 and kind <> 'Officials' order by lower(name)`,
+    [ORG],
+  );
+  return r.rows;
+}
+
+// Directors of Programs only, on a League that still exists (locked while changing it).
+async function priceGroupGate(q: Pick<Queryable, "query">, viewer: SessionUser, programId: string) {
+  if (!(await isProgramsDirector(q as Queryable, viewer))) throw new ProgramError("Only a Director of Programs can set prices.");
+  const p = await q.query<{ kind: string }>("select kind from scenic_programs where id = $1 for update", [programId]);
+  if (!p.rows[0]) throw new ProgramError("That program no longer exists.");
+  if (p.rows[0].kind !== "League") throw new ProgramError("Price groups are for Leagues.");
+}
+
+// Add a price group (`id` null) or change one: its name (the tag), ALL Season price (blank: the League's) and Pay later.
+export async function savePriceGroup(
+  deps: Deps,
+  viewer: SessionUser,
+  programId: unknown,
+  id: unknown,
+  input: { name: unknown; allSeason: unknown; payLater: unknown },
+): Promise<Result<{ id: string }>> {
+  if (!isId(programId) || (id !== null && !isId(id))) return { ok: false, message: "Pick a price group." };
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      await priceGroupGate(q, viewer, programId);
+      const name = cleanPlaceName(input.name);
+      if (!name || name.length > 40) throw new ProgramError("Name the group: letters, numbers and simple punctuation, up to 40 characters.");
+      const price = cents(input.allSeason);
+      const later = input.payLater === true;
+      const taken = await q.query(
+        "select 1 from scenic_price_groups where program_id = $1 and lower(name) = lower($2) and id <> coalesce($3::bigint, 0)",
+        [programId, name, id],
+      );
+      if (taken.rowCount) throw new ProgramError("There's already a group with that name.");
+      const r = id
+        ? await q.query<{ id: string }>(
+            `update scenic_price_groups set name = $3, all_season_cents = $4, pay_later = $5, set_by = $6, set_at = $7
+              where id = $1 and program_id = $2 returning id::text`,
+            [id, programId, name, price, later, by(viewer), deps.now()],
+          )
+        : await q.query<{ id: string }>(
+            `insert into scenic_price_groups (program_id, name, all_season_cents, pay_later, set_by, set_at)
+             values ($1, $2, $3, $4, $5, $6) returning id::text`,
+            [programId, name, price, later, by(viewer), deps.now()],
+          );
+      if (!r.rows[0]) throw new ProgramError("That price group no longer exists.");
+      return { id: r.rows[0].id };
+    }),
+  );
+}
+
+// Delete a price group: its organizations go back to the standard price.
+export async function deletePriceGroup(deps: Deps, viewer: SessionUser, programId: unknown, id: unknown): Promise<Result> {
+  if (!isId(programId) || !isId(id)) return { ok: false, message: "Pick a price group." };
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      await priceGroupGate(q, viewer, programId);
+      await q.query("delete from scenic_price_groups where id = $1 and program_id = $2", [id, programId]);
+      return {};
+    }),
+  );
+}
+
+// Tag organizations with a price group (dropped into it), or untag them (`groupId` null: the standard price).
+export async function tagOrgs(deps: Deps, viewer: SessionUser, programId: unknown, orgs: unknown, groupId: unknown): Promise<Result> {
+  if (!isId(programId) || (groupId !== null && !isId(groupId))) return { ok: false, message: "Pick a price group." };
+  if (!Array.isArray(orgs) || !orgs.length || orgs.length > 500 || !orgs.every((o) => typeof o === "string" && o))
+    return { ok: false, message: "Pick an organization." };
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      await priceGroupGate(q, viewer, programId);
+      if (groupId === null) {
+        await q.query("delete from scenic_program_org_terms where program_id = $1 and org = any($2::text[])", [programId, orgs]);
+        return {};
+      }
+      const g = await q.query("select 1 from scenic_price_groups where id = $1 and program_id = $2", [groupId, programId]);
+      if (!g.rowCount) throw new ProgramError("That price group no longer exists.");
+      const ok = await q.query<{ n: number }>(
+        "select count(*)::int as n from organizations where slug = any($1::text[]) and slug <> $2 and kind <> 'Officials'",
+        [orgs, ORG],
+      );
+      if (ok.rows[0].n !== new Set(orgs).size) throw new ProgramError("Pick an organization.");
+      await q.query(
+        `insert into scenic_program_org_terms (program_id, org, group_id, set_by, set_at)
+         select $1, o, $3, $4, $5 from unnest($2::text[]) o
+         on conflict (program_id, org) do update set group_id = $3, set_by = $4, set_at = $5`,
+        [programId, orgs, groupId, by(viewer), deps.now()],
+      );
+      return {};
+    }),
+  );
+}
+
+// A League's options and Game Days (regular season, not Bracket Days), soonest first. `org`: an organization with its own
+// ALL Season price sees (and pays) that instead.
+async function leagueTerms(q: Pick<Queryable, "query">, programId: string, org: string | null = null) {
   const [o, d] = await Promise.all([
     q.query<ProgramOption>(
       `select kind, fee_cents as "feeCents", closes_on::text as "closesOn", closes_days_before as "closesDaysBefore"
@@ -1334,7 +1505,17 @@ async function leagueTerms(q: Pick<Queryable, "query">, programId: string) {
       [programId],
     ),
   ]);
-  return { options: o.rows, gameDates: d.rows.map((r) => r.day) };
+  let options = o.rows;
+  if (org) {
+    const t = await q.query<{ cents: number | null }>(
+      `select g.all_season_cents as cents from scenic_program_org_terms t join scenic_price_groups g on g.id = t.group_id
+        where t.program_id = $1 and t.org = $2`,
+      [programId, org],
+    );
+    const own = t.rows[0]?.cents;
+    if (own !== null && own !== undefined) options = options.map((x) => (x.kind === "all_season" ? { ...x, feeCents: own } : x));
+  }
+  return { options, gameDates: d.rows.map((r) => r.day) };
 }
 
 // Each registered team's choice in a program (teams not registered are missing).
@@ -1379,7 +1560,7 @@ export async function saveChoice(
   if (!add) return { error: "Pick ALL Season or at least one date." };
   const today = easternDate(now);
   if (add.days.some((d) => d.date < today)) return { error: "Past Game Days can't be picked." };
-  const terms = await leagueTerms(q, programId);
+  const terms = await leagueTerms(q, programId, await teamOrgOf(q, teamId)); // its organization's own price, if any
   const had = registered ?? { allSeason: false, days: [] };
   const plan = planChoice(terms.options, terms.gameDates, had, add);
   if ("error" in plan) return plan;
@@ -1410,8 +1591,9 @@ export async function leagueEntry(
   q: Pick<Queryable, "query">,
   programId: string,
   teamId: string | null,
+  org?: string | null, // the team's organization (its own price), when it has no League copy yet
 ): Promise<{ options: ProgramOption[]; gameDates: string[]; entry: Entry | null }> {
-  const terms = await leagueTerms(q, programId);
+  const terms = await leagueTerms(q, programId, org ?? (teamId ? await teamOrgOf(q, teamId) : null));
   const c = teamId ? ((await choices(q, programId)).get(teamId) ?? null) : null;
   return { ...terms, entry: c ? entryOf(c, terms) : null };
 }
@@ -1441,8 +1623,11 @@ export async function withdrawTeam(deps: Deps, viewer: SessionUser, programId: u
         if (!(await teamsICanManage(q, viewer)).some((x) => x.id === teamId))
           throw new ProgramError("You can only withdraw teams you manage.");
       }
-      const r = await q.query("delete from scenic_registrations where program_id = $1 and team_id = $2", [programId, teamId]);
-      if (!r.rowCount) throw new ProgramError("That team isn't registered.");
+      const reg = await q.query("select 1 from scenic_registrations where program_id = $1 and team_id = $2 for update", [programId, teamId]);
+      if (!reg.rowCount) throw new ProgramError("That team isn't registered.");
+      // On the schedule: removed through the Scheduler (TBD in its games), never by withdrawing.
+      if (await isScheduled(q, programId, teamId)) throw new ProgramError(SCHEDULED_REFUSAL);
+      await q.query("delete from scenic_registrations where program_id = $1 and team_id = $2", [programId, teamId]);
       return {};
     }),
   );

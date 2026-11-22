@@ -9,11 +9,21 @@ import { EmailButtons } from "./Contacts";
 import ChatPanel from "./ChatPanel";
 import { Chip, CollapseCard, EmailLink, JerseyNumber, PersonRow, PhoneLink, card } from "./ui";
 import RosterPlayerRow from "./org/thunder/teams/RosterPlayerRow";
+import { VerifiedCheck } from "./Contacts";
 
 const roleTone = { HeadCoach: "green", AsstCoach: "amber", Manager: "blue", TeamParent: "zinc" } as const;
 const roleNames: Record<string, string> = { HeadCoach: "Head Coach", AsstCoach: "Assistant Coach", Manager: "Manager", TeamParent: "Team Parent" };
 
-export type TeamStaffRow = { coachId: string; first: string; last: string; role: string; cell: string | null; email: string | null; addedBy: string | null };
+export type TeamStaffRow = {
+  coachId: string;
+  first: string;
+  last: string;
+  role: string;
+  cell: string | null;
+  email: string | null;
+  addedBy: string | null;
+  verified?: boolean; // email verified: a green ✓ by the name
+};
 export type TeamRosterRow = {
   key: string;
   number?: string | null; // uniform number, in a black box
@@ -71,7 +81,8 @@ export default function TeamPage(p: {
   };
   games: ReactNode; // the Games card's inside
   gamesCount: number;
-  programs?: { title: string; count: number; body: ReactNode } | null; // its League programs
+  programs?: { title: string; count: number; body: ReactNode } | null; // Current Registrations (under Register Team)
+  register?: { title: string; count: number; body: ReactNode } | null; // Register Team: programs it can still enter (under its name)
   uniforms?: { count: number; alert: boolean; body: ReactNode } | null;
   practices?: { count: number; action?: ReactNode; body: ReactNode } | null;
   playbook?: { count: number; action?: ReactNode; body: ReactNode } | null; // CourtPlaybook: its coaches' plays
@@ -116,6 +127,28 @@ export default function TeamPage(p: {
         </div>
         {p.edit}
       </section>
+
+      {p.register && (
+        <CollapseCard
+          title={p.register.title}
+          open={p.opened === "register"}
+          badge={
+            p.register.count > 0 && (
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">
+                {p.register.count} open
+              </span>
+            )
+          }
+        >
+          {p.register.body}
+        </CollapseCard>
+      )}
+
+      {p.programs && (
+        <CollapseCard title={p.programs.title} count={p.programs.count} open={p.opened === "programs"}>
+          {p.programs.body}
+        </CollapseCard>
+      )}
 
       {p.next7}
 
@@ -173,6 +206,7 @@ export default function TeamPage(p: {
               collapsed
               chips={
                 <>
+                  {s.verified && <VerifiedCheck />}
                   <Chip tone={roleTone[s.role as keyof typeof roleTone] ?? "zinc"}>{roleNames[s.role] ?? s.role}</Chip>
                   {p.staff.viewAs && s.coachId !== p.staff.me && <ViewAsButton coachId={s.coachId} name={`${s.first} ${s.last}`} />}
                 </>
@@ -264,12 +298,6 @@ export default function TeamPage(p: {
       <CollapseCard title="Games" count={p.gamesCount} open={p.opened === "games"}>
         <div className="px-4 pb-4">{p.games}</div>
       </CollapseCard>
-
-      {p.programs && (
-        <CollapseCard title={p.programs.title} count={p.programs.count} open={p.opened === "programs"}>
-          {p.programs.body}
-        </CollapseCard>
-      )}
 
       {p.uniforms && (
         <CollapseCard title="Uniforms" count={p.uniforms.count} open={p.opened === "uniforms"} alert={p.uniforms.alert}>

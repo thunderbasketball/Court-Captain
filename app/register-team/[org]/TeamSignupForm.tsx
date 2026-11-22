@@ -432,7 +432,8 @@ export function TeamSignupForm({
       >
         <p className="text-sm">
           We emailed a 6-digit code to <strong>{maskedEmail}</strong>. Enter it to finish registering {orgFullName}&apos;s{" "}
-          {teams.length === 1 ? "team" : `${teams.length} teams`} in {program?.name}.
+          {teams.length === 1 ? "team" : `${teams.length} teams`} in {program?.name}. When the League takes card payments,
+          you&apos;ll pay next on Stripe&apos;s secure page, and {teams.length === 1 ? "the team is" : "the teams are"} registered once it&apos;s paid.
         </p>
         <Field label="Code">
           <input

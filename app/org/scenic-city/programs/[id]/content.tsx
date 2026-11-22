@@ -4,7 +4,7 @@ import { currentUser, devBypass } from "@/lib/auth/server";
 import { currentScenic } from "@/lib/contexts-server";
 import { db } from "@/lib/db";
 import { isOrgOwner, seesWho } from "@/lib/org-admin";
-import { REG_OPTIONS, entryLine, money } from "@/lib/program-options";
+import { entryLine } from "@/lib/program-options";
 import { requireFeature } from "@/lib/features-server";
 import { formatCell } from "@/lib/phone";
 import { getProgram, listPrograms, recLimit, teamsByDate } from "@/lib/scenic-programs";
@@ -23,12 +23,16 @@ import {
   ProgramGearIcon,
   ProgramSettings,
   RegisterTeam,
+  RegistrationGearIcon,
+  RegistrationSettings,
   TeamOffButton,
   RemoveDivision,
   RemovePool,
   TeamMenu,
 } from "../ProgramTools";
 import ProgramDates from "../ProgramDates";
+import RequestDays from "../RequestDays";
+import { requestDays } from "@/lib/schedule-requests";
 import { RegisterAllButton } from "../../../../leagues/LeagueButtons";
 import { RegBadge } from "../RegBadge";
 import { PickAll, PickBox, PickTeams } from "./PickTeams";
@@ -36,6 +40,11 @@ import { PickAll, PickBox, PickTeams } from "./PickTeams";
 import { PageFrame } from "../../../../ui";
 import { hasFeature } from "@/lib/features";
 import DirectionsLink from "../../../../DirectionsLink";
+import SubCard from "../../../../SubCard";
+import RegistrationsCard from "../../../../RegistrationsCard";
+import CardPayments from "../../../../CardPayments";
+import OrgPrices from "../OrgPrices";
+import { programPriceGroups, termsOrgChoices } from "@/lib/scenic-programs";
 
 // One program: its dates and fee, registering your teams, and each division's teams (by name).
 // Directors of Programs (on the Director chip) edit it, mark Paid, and withdraw any team.
@@ -74,12 +83,16 @@ export async function ProgramContent({
         .filter((o) => o.id !== p.id && o.divisions > 0)
         .map((o) => ({ id: o.id, name: o.name, divisions: o.divisions }))
     : [];
-  const games = p.kind === "League" ? await programSchedule(db, p.id) : []; // the Schedule card
+  const [games, requestOn] = await Promise.all([
+    p.kind === "League" ? programSchedule(db, p.id) : [], // the Schedule card
+    p.kind === "League" ? requestDays(db, p.id) : {}, // Game Days taking schedule requests
+  ]);
   const fee = p.feeCents === null ? null : `$${(p.feeCents / 100).toFixed(2)}`;
   // Paid / Unpaid (when the program charges): unpaid shows behind the team to Directors of Programs; only Scenic City's
   // Owners mark it, in each team's ⋯ menu (checked again on the server).
   const charges = manage && (!!fee || p.options.length > 0);
-  const marksPaid = charges && (await isOrgOwner(db, user.coachId, "scenic-city"));
+  const owner = await isOrgOwner(db, user.coachId, "scenic-city"); // the Registrations card's list
+  const marksPaid = charges && owner;
   const unpaid = (t: { paid: boolean; removedBy: string | null }) => charges && !t.paid && !t.removedBy;
   const shown = manage ? p.divisionList : p.divisionList.filter((d) => d.teams);
   // A League's Game Days with their teams, then the Brackets (lib: teamsByDate, shared with the Scheduler).
@@ -114,15 +127,46 @@ export async function ProgramContent({
     })),
   )];
   const nextDate = byDate.find((d) => d.date >= p.today)?.key;
+  // Game & Bracket Days: under the gear for Directors of Programs; a card of its own for others once it has dates.
+  const datesLine = (
+    <>
+      {p.gameDates.length} game date{p.gameDates.length === 1 ? "" : "s"}
+      {p.bracketDates.length > 0 && ` · ${p.bracketDates.length} bracket day${p.bracketDates.length === 1 ? "" : "s"}`}
+      {p.gameDates.length > 0 && ` · next ${dayLabel(p.gameDates.find((d) => d >= p.today) ?? p.gameDates.at(-1)!)}`}
+    </>
+  );
+  const datesBody = (
+    <>
+    <ProgramDates
+      programId={p.id}
+      today={p.today}
+      starts={p.startsOn}
+      ends={p.endsOn}
+      dates={p.gameDates}
+      brackets={p.bracketDates}
+      editable={manage}
+    />
+    {p.kind === "League" && (
+      <RequestDays
+        programId={p.id}
+        days={p.gameDates.filter((d) => d >= p.today)}
+        on={requestOn}
+        editable={manage || schedule}
+      />
+    )}
+    </>
+  );
 
   return (
     <>
       {!embedded && <AppHeader user={user} context={scenic.key} tab="programs" />}
       <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 py-6">
         {!embedded && <ProgramsNav current={p.id} />}
-        <section className={`${card} p-4`}>
-          {/* Inside its Home card the card's title already shows the logo, name and badge: just the gear here. */}
-          <div className={`flex items-start gap-3 ${embedded ? "justify-end" : "justify-between"}`}>
+        {(!embedded || manage) && (
+        <section className={embedded ? "" : `${card} p-4`}>
+          {/* Inside its Home card the card's title shows the logo, name, badge and the gear (by its arrow). */}
+          {!embedded && (
+          <div className="flex items-start justify-between gap-3">
             {!embedded && (
             <div className="flex min-w-0 items-center gap-3">
               <ProgramLogo src={p.logo} className="size-14" />
@@ -138,78 +182,33 @@ export async function ProgramContent({
               {manage && <ProgramGearIcon program={p} />}
             </div>
           </div>
+          )}
           {manage && (
             <ProgramSettings
               program={p}
               logo={p.logo}
               teams={p.teams}
-              grades={p.divisionList.length ? gradeRows : null}
-              rec={{ ...rec!, by: who ? rec!.by : null }}
-              gradeRules={await programGradeRules(db, p.id)}
-              today={p.today}
               rules={
                 (await db.query<{ name: string }>("select rules_name as name from scenic_programs where id = $1 and rules is not null", [p.id]))
                   .rows[0] ?? null
               }
-            />
+            >
+              <SubCard title="Game & Bracket Days">
+                <p className="mb-2 text-xs text-zinc-500">{datesLine}</p>
+                {datesBody}
+              </SubCard>
+              {/* Who made the program (and last changed it), at the bottom of its settings. */}
+              {who && (
+                <p className="px-1 pt-1 text-xs text-zinc-400">
+                  Program created by {p.createdBy}
+                  {p.updatedBy !== p.createdBy && ` · last changed by ${p.updatedBy}`}
+                </p>
+              )}
+            </ProgramSettings>
           )}
-          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-            <dt className="text-zinc-500">Season</dt>
-            <dd>
-              {dayLabel(p.startsOn)} – {dayLabel(p.endsOn)}
-            </dd>
-            <dt className="text-zinc-500">Registration</dt>
-            <dd>
-              {dayLabel(p.regOpens)} – {dayLabel(p.regCloses)}
-            </dd>
-            {p.kind === "League" && p.options.length > 0 ? (
-              <>
-                <dt className="text-zinc-500">Options</dt>
-                <dd>
-                  <ul>
-                    {p.options.map((o) => {
-                      const def = REG_OPTIONS.find((x) => x.key === o.kind)!;
-                      return (
-                        <li key={o.kind}>
-                          {p.name} ({def.name})
-                          <span className="text-zinc-500">
-                            {o.feeCents !== null ? ` · ${money(o.feeCents)} ${def.perDate ? "per date" : "per team"}` : ""}
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                  <span className="text-xs text-zinc-500">Paid outside the app for now</span>
-                </dd>
-              </>
-            ) : (
-              fee && (
-                <>
-                  <dt className="text-zinc-500">Fee</dt>
-                  <dd>{fee} per team (paid outside the app for now)</dd>
-                </>
-              )
-            )}
-            {p.recLimited && (
-              <>
-                <dt className="text-zinc-500">REC</dt>
-                <dd className="text-amber-700 dark:text-amber-300">Invited organizations only</dd>
-              </>
-            )}
-            <dt className="text-zinc-500">Teams</dt>
-            <dd>
-              {p.teams} in {p.divisionList.length} division{p.divisionList.length === 1 ? "" : "s"}
-            </dd>
-          </dl>
-          {who && (
-            <p className="mt-2 text-xs text-zinc-400">
-              Created by {p.createdBy}
-              {p.updatedBy !== p.createdBy && ` · last changed by ${p.updatedBy}`}
-            </p>
-          )}
-          {(manage || scheduler) && (
+          {scheduler && !embedded && (
             <div className="mt-3 flex items-center gap-2">
-              {scheduler && (
+              {(
                 <Link
                   href={`/org/scenic-city/scheduler?program=${p.id}`}
                   className="rounded-full px-3 py-1 text-xs font-medium text-scenic-navy ring-1 ring-scenic-navy/30 hover:bg-zinc-50 dark:text-zinc-200 dark:ring-white/20 dark:hover:bg-white/5"
@@ -217,32 +216,18 @@ export async function ProgramContent({
                   Scheduler
                 </Link>
               )}
-              {manage && <AddDivision programId={p.id} others={others} />}
             </div>
           )}
         </section>
+        )}
 
-        {(manage || p.gameDates.length + p.bracketDates.length > 0) && (
-          <details className={`${card} group overflow-hidden`} open={manage && !p.gameDates.length}>
+        {!manage && p.gameDates.length + p.bracketDates.length > 0 && (
+          <details className={`${card} group overflow-hidden`}>
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
               <h2 className="font-semibold">Game &amp; Bracket Days</h2>
-              <span className="text-sm text-zinc-500">
-                {p.gameDates.length} game date{p.gameDates.length === 1 ? "" : "s"}
-                {p.bracketDates.length > 0 && ` · ${p.bracketDates.length} bracket day${p.bracketDates.length === 1 ? "" : "s"}`}
-                {p.gameDates.length > 0 && ` · next ${dayLabel(p.gameDates.find((d) => d >= p.today) ?? p.gameDates.at(-1)!)}`}
-              </span>
+              <span className="text-sm text-zinc-500">{datesLine}</span>
             </summary>
-            <div className="border-t border-zinc-100 p-4 dark:border-white/5">
-              <ProgramDates
-                programId={p.id}
-                today={p.today}
-                starts={p.startsOn}
-                ends={p.endsOn}
-                dates={p.gameDates}
-                brackets={p.bracketDates}
-                editable={manage}
-              />
-            </div>
+            <div className="border-t border-zinc-100 p-4 dark:border-white/5">{datesBody}</div>
           </details>
         )}
 
@@ -277,6 +262,14 @@ export async function ProgramContent({
           </section>
         )}
 
+        {/* Divisions: Add division (Directors of Programs), then Boys and Girls with their teams. */}
+        <div className="mt-4">
+        <SubCard title="Divisions" count={shown.length}>
+        {manage && (
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            <AddDivision programId={p.id} others={others} />
+          </div>
+        )}
         <PickTeams programId={p.id} canRemove={schedule} canWithdraw={manage}>
           {(["Coed", "Boys", "Girls"] as const).map((gender) => {
             const mine = shown.filter((d) => d.gender === gender);
@@ -434,31 +427,48 @@ export async function ProgramContent({
             );
           })}
         </PickTeams>
-        {!shown.length && <p className="text-zinc-500">{manage ? "No divisions yet." : "No teams registered yet."}</p>}
+        {!shown.length && <p className="text-sm text-zinc-500">{manage ? "No divisions yet." : "No teams registered yet."}</p>}
+        </SubCard>
+        </div>
 
         {byDate.length > 0 && (
-          <section className={`${card} overflow-hidden`}>
-            <h2 className="px-4 pt-4 font-semibold">Teams by date</h2>
+          <div className="mt-4">
+          <CollapseCard title="Teams by Event" count={byDate.length}>
             <p className="px-4 pb-2 text-xs text-zinc-500">
               Each Game Day&apos;s teams with games guaranteed (1GG/2GG), then the teams in the Brackets.
             </p>
-            <div className="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-white/5 dark:border-white/5">
+            <div className="space-y-2 px-3 pb-3">
               {byDate.map((d) => (
-                <details key={d.key} className="group" open={d.key === nextDate}>
-                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-2.5 [&::-webkit-details-marker]:hidden">
+                <details
+                  key={d.key}
+                  className={`group overflow-hidden rounded-xl ring-1 ${
+                    d.bracket ? "bg-violet-50/50 ring-violet-600/20 dark:bg-violet-500/5" : "bg-white ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10"
+                  }`}
+                  open={d.key === nextDate}
+                >
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
                     <span className={`text-sm font-semibold ${d.bracket ? "text-violet-800 dark:text-violet-300" : ""}`}>
                       {d.title}
                       {d.bracket && (
                         <span className="block text-xs font-normal text-zinc-500">One event: teams play until they lose</span>
                       )}
                     </span>
-                    <span className="shrink-0 text-xs text-zinc-500">
-                      {d.playing} team{d.playing === 1 ? "" : "s"}
-                      {d.games > 0 && ` · ${d.games} game${d.games === 1 ? "" : "s"} guaranteed`}
+                    <span className="flex shrink-0 items-center gap-2 text-xs text-zinc-500">
+                      <span>
+                        {d.playing} team{d.playing === 1 ? "" : "s"}
+                        {d.games > 0 && ` · ${d.games} game${d.games === 1 ? "" : "s"} guaranteed`}
+                      </span>
+                      <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden className="size-4 text-zinc-400 transition-transform group-open:rotate-180">
+                        <path
+                          fillRule="evenodd"
+                          d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z"
+                          clipRule="evenodd"
+                        />
+                      </svg>
                     </span>
                   </summary>
                   {d.teams.length ? (
-                    <ul className="space-y-1 px-4 pb-3 text-sm">
+                    <ul className="space-y-1 border-t border-zinc-100 px-4 py-3 text-sm dark:border-white/5">
                       {d.teams.map((t) => (
                         <li key={t.teamId} className="flex items-center justify-between gap-3">
                           <span className={`min-w-0 ${t.removedBy || t.out ? "text-zinc-400 line-through" : ""}`}>
@@ -491,12 +501,13 @@ export async function ProgramContent({
                       ))}
                     </ul>
                   ) : (
-                    <p className="px-4 pb-3 text-sm text-zinc-500">No teams yet.</p>
+                    <p className="border-t border-zinc-100 px-4 py-3 text-sm text-zinc-500 dark:border-white/5">No teams yet.</p>
                   )}
                 </details>
               ))}
             </div>
-          </section>
+          </CollapseCard>
+          </div>
         )}
         {/* Its games by day (any time, past programs too; the public page shows them once published). */}
         {p.kind === "League" && (
@@ -530,6 +541,40 @@ export async function ProgramContent({
                 <p className="px-4 pb-4 text-sm text-zinc-500">No games yet.</p>
               )}
             </CollapseCard>
+          </div>
+        )}
+        {/* Registrations: the teams registered (Owners), and the gear for how they register (Directors of Programs). */}
+        {(owner || manage) && (
+          <div className="mt-4">
+            <SubCard title="Registrations" action={manage ? <RegistrationGearIcon program={p} /> : undefined} actionWhenOpen>
+              {manage && (
+                <RegistrationSettings
+                  program={p}
+                  grades={p.divisionList.length ? gradeRows : null}
+                  rec={{ ...rec!, by: who ? rec!.by : null }}
+                  gradeRules={await programGradeRules(db, p.id)}
+                  today={p.today}
+                  orgPrices={
+                    p.kind === "League" && (
+                      <OrgPrices
+                        programId={p.id}
+                        standardCents={p.options.find((o) => o.kind === "all_season")?.feeCents ?? null}
+                        groups={await programPriceGroups(db, p.id)}
+                        choices={await termsOrgChoices(db)}
+                      />
+                    )
+                  }
+                />
+              )}
+              {owner ? (
+                <div className="space-y-3">
+                  <RegistrationsCard user={user} org="scenic-city" kind="teams" programId={p.id} />
+                  <CardPayments user={user} programId={p.id} />
+                </div>
+              ) : (
+                <p className="text-sm text-zinc-500">Only Scenic City&apos;s Owners see the list of registered teams.</p>
+              )}
+            </SubCard>
           </div>
         )}
       </PageFrame>

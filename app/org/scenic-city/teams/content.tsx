@@ -26,6 +26,8 @@ import { addClubTeam, importClubTeams, previewClubImport, undoClubImport } from 
 
 import { PageFrame } from "../../../ui";
 import { hasFeature } from "@/lib/features";
+import { homeCardHref } from "@/lib/home-card-href";
+import TeamViews from "./TeamViews";
 
 const SUBTITLE: Record<string, string> = {
   Director: "Every team in Scenic City",
@@ -88,7 +90,8 @@ export async function ScenicTeamsContent({
     const x = new URLSearchParams();
     if (v === "org") x.set("view", "org");
     x.set("program", p);
-    return `/org/scenic-city/teams?${x}`;
+    // On Home, straight to Home with the card open (no stop at the old address).
+    return embedded ? homeCardHref("/org/scenic-city", "teams", Object.fromEntries(x)) : `/org/scenic-city/teams?${x}`;
   };
   const teams = [...data.teams].sort(byTeam);
   // Each team's League games (opponent, time and gym once scheduled), on its card.
@@ -116,7 +119,7 @@ export async function ScenicTeamsContent({
 
   // By division: a heading per gender, a card per division. By organization: a card per organization, with
   // "Boys · K–1st" lines inside.
-  const groups =
+  const groupsFor = (view: "division" | "org") =>
     view === "division"
       ? ["Coed", "Boys", "Girls"].flatMap((g) =>
           [...new Set(teams.filter((t) => t.gender === g).map(divisionOf))].map((d) => ({
@@ -187,6 +190,33 @@ export async function ScenicTeamsContent({
         </div>
       )}
     </li>
+  );
+
+  const groupList = (view: "division" | "org") => (
+    <div className="grid gap-4">
+      {groupsFor(view).map((g) => (
+            <GroupCard
+              key={g.title}
+              title={g.title}
+              count={g.teams.length}
+              gender={g.gender}
+              // A team still missing something (coach cell or email, or a registered team's roster): flash it to drill down.
+              alert={g.teams.some((t) => t.waitingCoach || (!!t.coachId && !t.coachEmail) || t.players === 0)}
+            >
+              {view === "division"
+                ? g.teams.map(row)
+                : [...new Set(g.teams.map((t) => `${t.gender} · ${divisionOf(t)}`))].flatMap((sub) => [
+                    <li
+                      key={`h-${sub}`}
+                      className="bg-zinc-50 px-4 py-1.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase dark:bg-white/5"
+                    >
+                      {sub}
+                    </li>,
+                    ...g.teams.filter((t) => `${t.gender} · ${divisionOf(t)}` === sub).map(row),
+                  ])}
+            </GroupCard>
+          ))}
+        </div>
   );
 
   return (
@@ -272,28 +302,6 @@ export async function ScenicTeamsContent({
             ),
           )}
         </nav>
-        <nav aria-label="Team views" className="mb-4 flex gap-2">
-          {(
-            [
-              ["division", "By division"],
-              ["org", "By organization"],
-            ] as const
-          ).map(([k, label]) => (
-            <Link
-              key={k}
-              href={qs(k, program)}
-              aria-current={view === k ? "page" : undefined}
-              className={`rounded-full px-3 py-1.5 text-sm font-medium ${
-                view === k
-                  ? "bg-scenic-navy text-white dark:bg-white dark:text-zinc-900"
-                  : "text-zinc-600 ring-1 ring-zinc-950/10 hover:bg-zinc-50 dark:text-zinc-300 dark:ring-white/15"
-              }`}
-            >
-              {label}
-            </Link>
-          ))}
-        </nav>
-
         {!teams.length && (
           <p className="text-zinc-500">
             {program === "none"
@@ -302,30 +310,7 @@ export async function ScenicTeamsContent({
             {director && program === "none" && " Tap “+ Add” (or Import) for an outside club's teams."}
           </p>
         )}
-        <div className="grid gap-4">
-          {groups.map((g) => (
-            <GroupCard
-              key={g.title}
-              title={g.title}
-              count={g.teams.length}
-              gender={g.gender}
-              // A team still missing something (coach cell or email, or a registered team's roster): flash it to drill down.
-              alert={g.teams.some((t) => t.waitingCoach || (!!t.coachId && !t.coachEmail) || t.players === 0)}
-            >
-              {view === "division"
-                ? g.teams.map(row)
-                : [...new Set(g.teams.map((t) => `${t.gender} · ${divisionOf(t)}`))].flatMap((sub) => [
-                    <li
-                      key={`h-${sub}`}
-                      className="bg-zinc-50 px-4 py-1.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase dark:bg-white/5"
-                    >
-                      {sub}
-                    </li>,
-                    ...g.teams.filter((t) => `${t.gender} · ${divisionOf(t)}` === sub).map(row),
-                  ])}
-            </GroupCard>
-          ))}
-        </div>
+        <TeamViews initial={view} division={groupList("division")} org={groupList("org")} />
 
         {imports && imports.length > 0 && (
           <div className="mt-4">

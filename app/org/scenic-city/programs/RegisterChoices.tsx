@@ -187,7 +187,6 @@ export default function RegisterChoices({
             <p className="mt-1 font-semibold">
               Fee: {money(plan.newFeeCents)}
               {entry && <span className="font-normal text-zinc-500"> (total {money(plan.result.feeCents)})</span>}
-              <span className="font-normal text-zinc-500"> · paid later</span>
             </p>
           </div>
         ))}

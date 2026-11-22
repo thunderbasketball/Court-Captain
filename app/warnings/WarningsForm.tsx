@@ -10,7 +10,7 @@ import { changeTeamWarnings } from "./actions";
 const num =
   "w-16 rounded-md bg-white px-2 py-1 text-center text-sm tabular-nums ring-1 ring-zinc-950/15 disabled:opacity-50 dark:bg-zinc-800 dark:ring-white/15";
 
-export type WarningPart = "roster" | "idle" | "uniforms";
+export type WarningPart = "roster" | "idle" | "uniforms" | "birthdates";
 
 // The organization gear's Warnings card (its Admins), in the card of the feature that brings them (`parts`): a tick in
 // front of each warning turns it on, with its number. Saving keeps the ones not shown as they are.
@@ -39,6 +39,7 @@ export default function WarningsForm({
       roster: { on: s.roster.on, min: Number(min) },
       idle: { on: s.idle.on, days: Number(days) },
       uniforms: { on: s.uniforms.on },
+      birthdates: { on: s.birthdates.on },
     });
     setBusy(false);
     setMsg(r.ok ? { ok: true, text: "Saved ✓" } : { ok: false, text: r.message });
@@ -108,6 +109,17 @@ export default function WarningsForm({
             onChange={(e) => setS({ ...s, uniforms: { on: e.target.checked } })}
           />
           Uniform information missing (number or size)
+        </label>
+      )}
+      {parts.includes("birthdates") && (
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="size-4"
+            checked={s.birthdates.on}
+            onChange={(e) => setS({ ...s, birthdates: { on: e.target.checked } })}
+          />
+          Player birthdate missing
         </label>
       )}
       {setBy && <p className="text-xs text-zinc-500">Last set by {setBy}.</p>}

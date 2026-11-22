@@ -2,7 +2,7 @@
 
 import { PLUS_BTN, PlusIcon } from "../../../PageMenus";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   addDivision,
@@ -93,7 +93,11 @@ export function ProgramEditor({
   round = false,
   inline,
   embed,
+  part,
 }: {
+  // Only part of an existing program: its type, name and season (the program's gear), or its registration dates and
+  // options with their prices (the Registrations card's gear). The rest is sent back unchanged.
+  part?: "program" | "registration";
   program?: ProgramFields;
   round?: boolean;
   inline?: () => void;
@@ -154,9 +158,13 @@ export function ProgramEditor({
           {!embed && (
           <>
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">{program ? `Edit ${program.name}` : "New program"}</h2>
+            <h2 className="text-lg font-semibold">
+              {part === "registration" ? "Fees" : program ? `Edit ${program.name}` : "New program"}
+            </h2>
             <CloseButton onClick={close} />
           </div>
+          {part !== "registration" && (
+          <>
           <div>
             <span className={fieldLabel}>Type</span>
             <div className="flex gap-2">
@@ -180,7 +188,11 @@ export function ProgramEditor({
           </label>
           </>
           )}
+          </>
+          )}
           <div className="grid grid-cols-2 gap-3">
+            {part !== "registration" && (
+            <>
             <label className="block">
               <span className={fieldLabel}>Starts</span>
               <input type="date" className={inputCls} value={f.startsOn} onChange={set("startsOn")} required />
@@ -189,6 +201,10 @@ export function ProgramEditor({
               <span className={fieldLabel}>Ends</span>
               <input type="date" className={inputCls} value={f.endsOn} onChange={set("endsOn")} required />
             </label>
+            </>
+            )}
+            {part !== "program" && (
+            <>
             <label className="block">
               <span className={fieldLabel}>Registration opens</span>
               <input type="date" className={inputCls} value={f.regOpens} onChange={set("regOpens")} required />
@@ -197,8 +213,10 @@ export function ProgramEditor({
               <span className={fieldLabel}>Registration closes</span>
               <input type="date" className={inputCls} value={f.regCloses} onChange={set("regCloses")} required />
             </label>
+            </>
+            )}
           </div>
-          {(embed?.kind ?? f.kind) === "League" ? (
+          {part === "program" ? null : (embed?.kind ?? f.kind) === "League" ? (
             <fieldset>
               <legend className={fieldLabel}>Registration Options</legend>
               <p className="-mt-1 mb-2 text-xs text-zinc-500">
@@ -1234,28 +1252,22 @@ export function ProgramSettings({
   program,
   logo,
   teams,
-  grades,
-  rec,
-  gradeRules,
-  today,
   rules = null,
+  children,
 }: {
+  children?: ReactNode; // more setup cards from the page (Divisions, Game & Bracket Days)
   rules?: { name: string } | null; // a League's rules PDF
-  gradeRules: GradeRules; // its age control date, oldest age and age exception
-  today: string;
   program: ProgramFields;
   logo: string | null;
   teams: number;
-  grades: GradeRow[] | null; // null: no divisions yet
-  rec: RecLimitView;
 }) {
   const id = programSettingsPanel(program.id);
   const note = (t: string) => <p className="mb-2 text-xs text-zinc-500">{t}</p>;
   return (
     <CardPanel id={id} className="mt-3 space-y-2 border-t border-zinc-100 pt-3 dark:border-white/5">
       <SubCard title="Edit">
-        {note("Type, name, dates, registration and options")}
-        <ProgramEditor program={program} inline={() => closeCardPanel(id)} />
+        {note("Type, name and season dates")}
+        <ProgramEditor program={program} part="program" inline={() => closeCardPanel(id)} />
       </SubCard>
       <SubCard title={logo ? "Logo" : "Logo (none yet)"}>
         <ProgramLogoEditor id={program.id} logo={logo} />
@@ -1266,6 +1278,59 @@ export function ProgramSettings({
           <ProgramRulesEditor id={program.id} rules={rules} />
         </SubCard>
       )}
+      {children}
+      {/* Delete only with no teams registered (the server refuses it too). */}
+      {teams === 0 && (
+        <div className="flex items-start justify-between gap-3 px-1 pt-1">
+          <span className="text-sm text-zinc-600 dark:text-zinc-300">Delete the program</span>
+          <DeleteProgram id={program.id} name={program.name} teams={0} />
+        </div>
+      )}
+    </CardPanel>
+  );
+}
+
+
+// Directors of Programs: the Registrations card's gear (top right of it, inside the program) opens how teams register
+// right at the top of that card: Registration (dates, options and their prices), Grades accepted, Grade requirements and
+// REC open to. Tap the gear again to close.
+export const registrationSettingsPanel = (id: string) => `registration-settings-${id}`;
+export function RegistrationGearIcon({ program }: { program: { id: string; name: string } }) {
+  return (
+    <PanelIcon
+      id={registrationSettingsPanel(program.id)}
+      label={`${program.name} registration settings`}
+      className="shrink-0 rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+    >
+      <GearIcon className="size-5" />
+    </PanelIcon>
+  );
+}
+
+export function RegistrationSettings({
+  program,
+  grades,
+  rec,
+  gradeRules,
+  today,
+  orgPrices,
+}: {
+  program: ProgramFields;
+  grades: GradeRow[] | null; // null: no divisions yet
+  rec: RecLimitView;
+  gradeRules: GradeRules; // its age control date, oldest age and age exception
+  today: string;
+  orgPrices?: ReactNode; // a League: organizations' own ALL Season prices and Pay later (OrgPrices)
+}) {
+  const id = registrationSettingsPanel(program.id);
+  const note = (t: string) => <p className="mb-2 text-xs text-zinc-500">{t}</p>;
+  return (
+    <CardPanel id={id} className="mb-3 space-y-2 border-b border-zinc-100 pb-3 dark:border-white/5">
+      <SubCard title="Fees">
+        {note("Options, prices and registration dates")}
+        <ProgramEditor program={program} part="registration" inline={() => closeCardPanel(id)} />
+      </SubCard>
+      {orgPrices}
       <SubCard title="Grades accepted">
         {grades ? (
           <>
@@ -1284,17 +1349,9 @@ export function ProgramSettings({
         {note(rec.limited ? `${rec.partners.length} invited organization${rec.partners.length === 1 ? "" : "s"}` : "Everyone")}
         <RecLimitEditor programId={program.id} rec={rec} onSaved={() => closeCardPanel(id)} />
       </SubCard>
-      {/* Delete only with no teams registered (the server refuses it too). */}
-      {teams === 0 && (
-        <div className="flex items-start justify-between gap-3 px-1 pt-1">
-          <span className="text-sm text-zinc-600 dark:text-zinc-300">Delete the program</span>
-          <DeleteProgram id={program.id} name={program.name} teams={0} />
-        </div>
-      )}
     </CardPanel>
   );
 }
-
 
 // One line for the gear: the grades on per row that has any ("Boys REC K–9 · Boys COMP 2–9 …").
 function gradesSummary(rows: GradeRow[]) {

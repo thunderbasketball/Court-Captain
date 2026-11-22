@@ -30,6 +30,7 @@ import {
 } from "./team-names";
 import { matchOrCreateUser } from "./user-match";
 import { REC_CLOSED, recAllowed } from "./rec-orgs";
+import { scheduledRefusal } from "./team-guards";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -56,7 +57,7 @@ const usable = async (q: Pick<Queryable, "query">, org: unknown): Promise<OrgSlu
 export const canManageTeams = (q: Pick<Queryable, "query">, viewer: SessionUser, org: OrgSlug) =>
   orgHasArea(q, viewer.coachId, org, "teams");
 
-export type OrgTeamCoach = { id: string; name: string; cell: string; email: string | null; role: CoachRole; addedBy: string };
+export type OrgTeamCoach = { id: string; name: string; cell: string; email: string | null; role: CoachRole; addedBy: string; verified: boolean };
 export type OrgTeam = {
   id: string;
   name: string;
@@ -91,7 +92,8 @@ async function teams(q: Pick<Queryable, "query">, org: string, onlyFor: string |
             case when t.coach_first is null then null else json_build_object('first', t.coach_first, 'last', t.coach_last) end as waiting,
             (select count(*)::int from org_team_players p where p.team_id = t.id) as players,
             coalesce((select json_agg(json_build_object('id', c.coach_id, 'name', u.first_name || ' ' || u.last_name, 'cell', u.cell,
-                                                        'email', u.email, 'role', c.role, 'addedBy', c.added_by)
+                                                        'email', u.email, 'role', c.role, 'addedBy', c.added_by,
+                                                        'verified', (u.verified_email is not null and lower(trim(u.verified_email)) = lower(trim(coalesce(u.email, '')))))
                                       order by c.role desc, u.last_name, u.first_name)
                       from org_team_coaches c join users u on u.coach_id = c.coach_id where c.team_id = t.id), '[]') as coaches
      from org_teams t
@@ -470,6 +472,34 @@ export async function setOrgTeamAltName(
   });
 }
 
+// Change many teams' Alternate names at once (the Teams card's Edit team names): each `alt` blank removes it. All in one
+// transaction (all or none); each team is renamed by the rule. Returns the new names.
+export async function setOrgTeamAltNames(
+  deps: Deps,
+  viewer: SessionUser,
+  org: unknown,
+  list: unknown,
+): Promise<Result<{ names: Record<string, string> }>> {
+  return run(async () => {
+    if (!Array.isArray(list) || !list.length || list.length > 300) throw new TeamError("Change at least one name.");
+    const rows = (list as { id?: unknown; alt?: unknown }[]).map((x) => {
+      if (!isId(x?.id)) throw new TeamError("That team no longer exists.");
+      return { id: x.id, alt: cleanAlt(x.alt) };
+    });
+    const o = await mustManage(deps.pool, viewer, org);
+    return withTx(deps.pool, async (q) => {
+      await lockTeams(q, o);
+      const names: Record<string, string> = {};
+      for (const r of rows) {
+        const u = await q.query("update org_teams set alt_name = $3 where id = $1 and org = $2 and archived_at is null", [r.id, o, r.alt]);
+        if (!u.rowCount) throw new TeamError("A team in the list no longer exists. Reload and try again.");
+        names[r.id] = await renameOrgTeam(q, o, r.id);
+      }
+      return { names };
+    });
+  });
+}
+
 // ---- A Head Coach named without a cell yet ----
 
 // Fix the waiting coach's name, or remove them (null: "TBD" again). Only while the team has no Head Coach; adding their
@@ -533,6 +563,10 @@ export async function deleteOrgTeam(deps: Deps, viewer: SessionUser, org: unknow
         [id, o],
       );
       await lockTeams(q, o);
+      // On an event's schedule: removed through the Scheduler first (only registered: deleting withdraws it).
+      const copies = await q.query<{ id: string }>("select id::text from scenic_teams where org_team_id = $1", [id]);
+      const refused = await scheduledRefusal(q, copies.rows.map((c) => c.id), deps.now());
+      if (refused) throw new TeamError(refused);
       const d = await q.query<{ name: string }>("delete from org_teams where id = $1 and org = $2 returning name", [id, o]);
       if (!d.rowCount) throw new TeamError("That team no longer exists.");
       await settleOrgName(q, o, baseName(d.rows[0].name));

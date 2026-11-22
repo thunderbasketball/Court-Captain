@@ -10,6 +10,9 @@ import { shortDate, type Choice, type ChoiceResult, type ProgramOption } from "@
 import type { BatchResult, BatchTeam } from "@/lib/scenic-programs";
 import type { LastBatch } from "@/lib/register-batches";
 import TeamsIncluded from "../TeamsIncluded";
+import { cardFee } from "@/lib/stripe/card-fee";
+
+const money = (c: number) => `$${(c / 100).toFixed(2)}`;
 
 const btn = "shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold disabled:opacity-50";
 
@@ -22,20 +25,22 @@ export function RegisterAllButton({
   program,
   count,
   allSeason = true,
+  compact = false,
 }: {
   org: string;
   programId: string;
   program: string;
   count: number;
   allSeason?: boolean;
+  compact?: boolean; // just "Register ALL", beside the program's line (Home's Register ALL Teams)
 }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [done, setDone] = useState<(BatchResult & { at: number }) | null>(null);
   return (
-    <div className="w-full space-y-2 sm:w-auto">
+    <div className={compact && !msg && !done ? "shrink-0" : "w-full space-y-2 sm:w-auto"}>
       <PopUp
-        label={`Register all unregistered (${count})${allSeason ? " · ALL Season" : ""}`}
-        title={`Register all in ${program}`}
+        label={compact ? "Register ALL" : `Register ALL unregistered (${count})${allSeason ? " · ALL Season" : ""}`}
+        title={`Register ALL in ${program}`}
         className={`${btn} bg-thunder-blue text-white`}
       >
         {(close) => (
@@ -103,8 +108,8 @@ function RegisterAllPreview({
   const [err, setErr] = useState<string | null>(null);
   const [left, setLeft] = useState<Set<string>>(new Set()); // unchecked: left out
   const [open, setOpen] = useState<Set<string>>(new Set()); // grade groups expanded (all collapsed at first)
-  const call = (preview: boolean, only?: string[]) =>
-    org === "scenic-city" ? registerAllScenicTeams(programId, preview, only) : registerAll(org, programId, preview, only);
+  const call = (preview: boolean, only?: string[], mode?: "card" | "later") =>
+    org === "scenic-city" ? registerAllScenicTeams(programId, preview, only) : registerAll(org, programId, preview, only, mode);
   useEffect(() => {
     let live = true;
     call(true).then((r) => {
@@ -120,6 +125,9 @@ function RegisterAllPreview({
   if (err) return <p className="text-sm text-red-600 dark:text-red-400">{err}</p>;
   if (!plan) return <p className="text-sm text-zinc-500">Checking your teams…</p>;
   const picked = plan.teams.filter((t) => !left.has(t.id));
+  const sub = picked.reduce((n, t) => n + (t.cents ?? 0), 0);
+  const payLaterOk = "payLaterOk" in plan && plan.payLaterOk === true; // a Pay later organization may also pay later
+  const payTotal = sub + (plan.payer === "team" ? cardFee(sub) : 0);
   const flip = (id: string) =>
     setLeft((s) => {
       const n = new Set(s);
@@ -253,19 +261,37 @@ function RegisterAllPreview({
           ))}
         </div>
       )}
+      {/* Paid by card first: the checked teams' total (with the card fee when it's added for the team). */}
+      {plan.payer && picked.length > 0 && (
+        <p className="rounded-xl bg-indigo-50 px-3 py-2 text-sm text-indigo-900 dark:bg-indigo-500/10 dark:text-indigo-200">
+          {payLaterOk ? "Pay " : "You'll pay "}
+          <strong>{money(payTotal)}</strong> by card {payLaterOk ? "now" : "next"}
+          {plan.payer === "team" && sub > 0 ? ` (${money(sub)} + card processing)` : ""}. The teams are registered once it&apos;s
+          paid.
+          {payLaterOk && ` Or Pay later: they register now and the invoice (${money(sub)}) is emailed.`}
+        </p>
+      )}
+      {/* No card payment now (Pay later, or the League isn't taking cards): the fees, and an invoice is emailed. */}
+      {!plan.payer && picked.length > 0 && sub > 0 && (
+        <p className="rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">
+          Fees: <strong>{money(sub)}</strong> ({picked.length} team{picked.length === 1 ? "" : "s"}). The teams register now and you&apos;ll get an
+          invoice by email to pay later (also under Open invoices on your Home).
+        </p>
+      )}
       {err && <p className="text-sm text-red-600 dark:text-red-400">{err}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={close} className="rounded-full px-3.5 py-1.5 text-sm font-medium text-zinc-600 ring-1 ring-zinc-950/10 dark:text-zinc-300 dark:ring-white/15">
           Cancel
         </button>
-        {plan.teams.length > 0 && (
+        {plan.teams.length > 0 && payLaterOk && plan.payer && (
+          // A Pay later organization: register now and pay later (its invoice says PAY LATER).
           <button
             type="button"
             disabled={busy || !picked.length}
-            className="rounded-full bg-thunder-blue px-3.5 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+            className="rounded-full px-3.5 py-1.5 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/40 disabled:opacity-50"
             onClick={() =>
               start(async () => {
-                const r = await call(false, picked.map((t) => t.id));
+                const r = await call(false, picked.map((t) => t.id), "later");
                 if (!r.ok) return setErr(r.message);
                 close();
                 done(r);
@@ -273,7 +299,29 @@ function RegisterAllPreview({
               })
             }
           >
-            {busy ? "Registering…" : `Register ${picked.length}`}
+            Register {picked.length} · Pay later
+          </button>
+        )}
+        {plan.teams.length > 0 && (
+          <button
+            type="button"
+            disabled={busy || !picked.length}
+            className="rounded-full bg-thunder-blue px-3.5 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+            onClick={() =>
+              start(async () => {
+                const r = await call(false, picked.map((t) => t.id), payLaterOk ? "card" : undefined);
+                if (!r.ok) return setErr(r.message);
+                if ("pay" in r && typeof r.pay === "string") {
+                  window.location.href = r.pay; // to Stripe Checkout; back here once paid (or cancelled)
+                  return;
+                }
+                close();
+                done(r);
+                router.refresh();
+              })
+            }
+          >
+            {busy ? (plan.payer ? "Opening payment…" : "Registering…") : plan.payer ? `Register ${picked.length} · Pay${payLaterOk ? " now" : ""}` : `Register ${picked.length}`}
           </button>
         )}
       </div>
@@ -337,7 +385,7 @@ export function UndoRegisterAll({
         onClick={async () => {
           if (
             !(await confirm({
-              title: "Undo Register all?",
+              title: "Undo Register ALL?",
               message: `The ${teams} team${teams === 1 ? "" : "s"} it registered come out of ${program}. Teams marked paid stay.`,
               confirmLabel: "Undo",
             }))
@@ -374,7 +422,7 @@ export function LastRegisterAll({ batch, program, canUndo }: { batch: LastBatch;
         names={batch.names}
         summary={
           <>
-            Register all: {batch.teams} team{batch.teams === 1 ? "" : "s"} · {at(batch.at)} by {batch.by}
+            Register ALL: {batch.teams} team{batch.teams === 1 ? "" : "s"} · {at(batch.at)} by {batch.by}
             {batch.names.length < batch.teams && ` · ${batch.names.length} still registered`}
           </>
         }
@@ -436,6 +484,7 @@ export function ProgramButton({
           onClick={() =>
             start(async () => {
               const r = await registerTeam(org, teamId, programId);
+              if (r.ok && r.pay) return void (window.location.href = r.pay); // to Stripe to pay; registered once paid
               setMsg(r.ok ? `Registered: ${r.division}.` : r.message);
               if (r.ok) router.refresh();
             })
@@ -472,6 +521,10 @@ export function RegisterLeagueButton({
 }) {
   const router = useRouter();
   const [msg, setMsg] = useState<string | null>(null);
+  // A Pay later organization is asked after picking: pay now by card, or register now and pay later.
+  const [asked, setAsked] = useState<{ choice: Choice; cents: number; card: number } | null>(null);
+  const [busy, start] = useTransition();
+  const [err, setErr] = useState<string | null>(null);
   return (
     <>
       <PopUp
@@ -479,22 +532,75 @@ export function RegisterLeagueButton({
         title={entry ? `Add to ${program}` : `Register for ${program}`}
         className={`${btn} ${entry ? "text-thunder-blue ring-1 ring-thunder-blue/40" : "bg-thunder-blue text-white"}`}
       >
-        {(close) => (
-          <RegisterChoices
-            options={options}
-            gameDates={gameDates}
-            today={today}
-            entry={entry}
-            save={async (choice) => {
-              const r = await registerTeam(org, teamId, programId, choice);
-              if (!r.ok) return r;
-              close();
-              setMsg(r.division ? `Registered: ${r.division}.` : "Registration updated.");
-              router.refresh();
-              return { ok: true as const };
-            }}
-          />
-        )}
+        {(close) =>
+          asked ? (
+            <div className="space-y-3">
+              <p className="text-sm">
+                Fee: <strong>{money(asked.cents)}</strong>
+                {asked.card > 0 && <span className="text-zinc-500"> (+ {money(asked.card)} card processing when paid by card)</span>}
+              </p>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  start(async () => {
+                    const r = await registerTeam(org, teamId, programId, asked.choice, "card");
+                    if (!r.ok) return setErr(r.message);
+                    if (r.pay) window.location.href = r.pay; // to Stripe; registered once paid (invoice: PAID)
+                  })
+                }
+                className="w-full rounded-full bg-[#635bff] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                Pay {money(asked.cents + asked.card)} now by card
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  start(async () => {
+                    const r = await registerTeam(org, teamId, programId, asked.choice, "later");
+                    if (!r.ok) return setErr(r.message);
+                    close();
+                    setAsked(null);
+                    setMsg("Registered. The invoice (Pay later) is emailed, and it's under Open invoices on your Home.");
+                    router.refresh();
+                  })
+                }
+                className="w-full rounded-full px-4 py-2.5 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/40 disabled:opacity-50"
+              >
+                Pay later (register now, invoice emailed)
+              </button>
+              <button type="button" onClick={() => setAsked(null)} className="w-full text-sm text-zinc-500">
+                ← Back to the options
+              </button>
+              {err && <p className="text-sm text-red-600 dark:text-red-400">{err}</p>}
+            </div>
+          ) : (
+            <RegisterChoices
+              options={options}
+              gameDates={gameDates}
+              today={today}
+              entry={entry}
+              save={async (choice) => {
+                const r = await registerTeam(org, teamId, programId, choice);
+                if (!r.ok) return r;
+                if (r.choose) {
+                  setErr(null);
+                  setAsked({ choice, ...r.choose }); // Pay later organization: pay now or later?
+                  return { ok: true as const };
+                }
+                if (r.pay) {
+                  window.location.href = r.pay; // to Stripe to pay; registered once paid
+                  return { ok: true as const };
+                }
+                close();
+                setMsg(r.division ? `Registered: ${r.division}.` : "Registration updated.");
+                router.refresh();
+                return { ok: true as const };
+              }}
+            />
+          )
+        }
       </PopUp>
       {msg && <Toast key={msg} message={msg} />}
     </>

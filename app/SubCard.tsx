@@ -19,8 +19,10 @@ export default function SubCard({
   warn = false,
   open = false,
   action,
+  actionWhenOpen = false,
   children,
 }: {
+  actionWhenOpen?: boolean; // show `action` (e.g. a gear) only while the card is open
   title: string;
   count?: ReactNode;
   alert?: boolean;
@@ -43,7 +45,7 @@ export default function SubCard({
       >
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-2.5 select-none [&::-webkit-details-marker]:hidden">
           <span
-            className={`min-w-0 font-semibold ${action ? "pr-14" : ""} ${alert ? "animate-pulse text-red-600 dark:text-red-400" : warn ? "text-amber-800 dark:text-amber-300" : ""}`}
+            className={`min-w-0 font-semibold ${action && !actionWhenOpen ? "pr-14" : ""} ${alert ? "animate-pulse text-red-600 dark:text-red-400" : warn ? "text-amber-800 dark:text-amber-300" : ""}`}
           >
             {title}
             {count !== undefined && count !== null && <span className={`font-normal ${warn ? "text-amber-700 dark:text-amber-400" : "text-zinc-500"}`}> ({count})</span>}
@@ -52,7 +54,9 @@ export default function SubCard({
         </summary>
         <div className="border-t border-zinc-100 p-3 dark:border-white/5">{children}</div>
       </details>
-      {action && <div className="absolute top-1.5 right-11">{action}</div>}
+      {action && (
+        <div className={`absolute top-1.5 right-11 ${actionWhenOpen ? "hidden [div:has(>details[open])>&]:block" : ""}`}>{action}</div>
+      )}
     </div>
   );
 }

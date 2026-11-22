@@ -29,6 +29,7 @@ import {
 import { listGameDays } from "./scenic-partners";
 import { createDayMatchups, createMatchups, saveMatchups } from "./scenic-matchups";
 import { placeGame, setGameLength } from "./scenic-grid";
+import { requestDays, saveRequest, setRequestDay, setSitOut, teamRequests } from "./schedule-requests";
 import { bindTeams, listBindings, unbind } from "./scenic-bindings";
 import { listCourts, setCourtDivisions } from "./scenic-courts";
 import { scheduledGames } from "./scenic-games";
@@ -832,6 +833,109 @@ describe("Scenic City programs", () => {
       message: "Cy Coach already coaches a game then (one coach, one game at a time).",
     });
     expect(await placeGame(deps(), fay, gameOf(g1), { court: courts[1], starts: "09:55" })).toEqual({ ok: true });
+  });
+
+  it("Schedule requests: a League turns them on by day; a team's coach blocks up to 2 blocks; the Grid never places a game then", async () => {
+    const id = await newLeague();
+    await saveProgramDates(deps(), dee, id, { add: ["2027-01-09", "2027-01-16"], addBrackets: [], remove: [] });
+    await div(id, "Boys", 3, 4, ["COMP"]);
+    const make = async (who: SessionUser, forWhom: string, name: string, first: string, cell: string) => {
+      const t = (
+        (await createScenicTeam(deps(), who, {
+          for: forWhom,
+          name,
+          gender: "Boys",
+          level: "COMP",
+          grade: "4",
+          coachFirst: first,
+          coachLast: "Coach",
+          coachCell: cell,
+        })) as { id: string }
+      ).id;
+      expect(await registerTeam(deps(), who, id, t, ALL)).toMatchObject({ ok: true });
+      return t;
+    };
+    const b1 = await make(pat, baylor, "Baylor 4B", "Cy", "4235550003");
+    await make(sam, "solo", "Sam 4B", "Ann", "4235550005");
+    const cy = person((await db.pool.query<{ id: string }>("select coach_id as id from users where cell = '4235550003'")).rows[0].id, "Cy");
+
+    // Every date the team plays, then the Brackets (never time requests); none take requests until the League turns a
+    // day on (Directors of Programs or Scheduling only).
+    const list = async () => ((await teamRequests(deps(), cy, b1)) ?? []).map((d) => [d.day, d.requests, d.off]);
+    expect(await list()).toEqual([
+      ["2027-01-09", false, null],
+      ["2027-01-16", false, null],
+      ["brackets", false, null],
+    ]);
+    expect(await teamRequests(deps(), sam, b1)).toBeNull(); // not the team's coach
+    expect(await setRequestDay(deps(), pat, id, "2027-01-09", true)).toMatchObject({ ok: false });
+    expect(await setRequestDay(deps(), dee, id, "2027-01-09", true)).toEqual({ ok: true });
+    expect(await requestDays(db.pool, id)).toEqual({ "2027-01-09": "Dee X" });
+    const days = (await teamRequests(deps(), cy, b1))!;
+    expect([days[0].day, days[0].requests, days[0].closes, days[0].open, days[0].blocks]).toEqual([
+      "2027-01-09",
+      true,
+      "2027-01-03", // COMP: the Sunday before
+      true,
+      [],
+    ]);
+
+    // Sit out a date or the Brackets (its coaches); the League's own take-outs only the League restores.
+    expect(await setSitOut(deps(), sam, b1, id, "2027-01-16", true)).toMatchObject({ ok: false });
+    expect(await setSitOut(deps(), cy, b1, id, "2027-01-16", true)).toEqual({ ok: true });
+    expect(await setSitOut(deps(), cy, b1, id, "brackets", true)).toEqual({ ok: true });
+    expect(await list()).toEqual([
+      ["2027-01-09", true, null],
+      ["2027-01-16", false, "team"],
+      ["brackets", false, "team"],
+    ]);
+    expect(await setSitOut(deps(), cy, b1, id, "brackets", false)).toEqual({ ok: true });
+    expect(await setSitOut(deps(), cy, b1, id, "2027-02-06", true)).toMatchObject({ ok: false }); // not one of its dates
+    await db.pool.query("update scenic_team_off set by_team = false where team_id = $1 and off = '2027-01-16'", [b1]);
+    expect(await setSitOut(deps(), cy, b1, id, "2027-01-16", false)).toMatchObject({ ok: false, message: /League/ });
+
+    // Up to 2 of the 4 blocks; only the team's coaches.
+    expect(await saveRequest(deps(), cy, b1, id, "2027-01-09", ["09", "12", "15"])).toMatchObject({ ok: false });
+    expect(await saveRequest(deps(), cy, b1, id, "2027-01-09", ["bad"])).toMatchObject({ ok: false });
+    expect(await saveRequest(deps(), sam, b1, id, "2027-01-09", ["09"])).toMatchObject({ ok: false });
+    expect(await saveRequest(deps(), cy, b1, id, "2027-01-16", ["09"])).toMatchObject({ ok: false }); // that day takes none
+    expect(await saveRequest(deps(), cy, b1, id, "2027-01-09", ["12", "09"])).toEqual({ ok: true, setBy: "Cy X" });
+    expect((await teamRequests(deps(), cy, b1))![0]).toMatchObject({ blocks: ["09", "12"], setBy: "Cy X" });
+
+    // The Grid: never in a blocked block (the whole game must fit the open ones).
+    await db.pool.query(
+      "insert into director_areas (coach_id, org, area, granted_by) values ('5550004', 'scenic-city', 'scheduling', 'test')",
+    );
+    expect(await createDayMatchups(deps(), fay, "2027-01-09")).toMatchObject({ ok: true, created: 1 });
+    const game = (await db.pool.query<{ id: string }>("select id::text from scenic_matchups where day = '2027-01-09'")).rows[0].id;
+    const gym = await db.pool.query<{ id: string }>(
+      "insert into partner_gyms (partner_id, name, created_by) values ($1, 'Main Gym', 't') returning id::text",
+      [baylor],
+    );
+    const court = (
+      await db.pool.query<{ id: string }>("insert into partner_courts (gym_id, name, created_by) values ($1, 'Court 1', 't') returning id::text", [
+        gym.rows[0].id,
+      ])
+    ).rows[0].id;
+    await db.pool.query(
+      `insert into court_hours (court_id, game_day_id, starts, ends, set_by)
+       select $1, g.id, '09:00', '18:00', 't' from game_days g where g.day = '2027-01-09'`,
+      [court],
+    );
+    expect(await placeGame(deps(), fay, game, { court, starts: "09:00" })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("Baylor 4B asked not to play 9 AM–12 PM"),
+    });
+    expect(await placeGame(deps(), fay, game, { court, starts: "11:45" })).toMatchObject({ ok: false }); // runs into 12–3
+    expect(await placeGame(deps(), fay, game, { court, starts: "15:25" })).toEqual({ ok: true });
+
+    // Closed after the Sunday before: no changes.
+    now = new Date("2027-01-04T15:00:00Z");
+    expect((await teamRequests(deps(), cy, b1))![0].open).toBe(false);
+    expect(await saveRequest(deps(), cy, b1, id, "2027-01-09", [])).toMatchObject({ ok: false, message: /closed/ });
+    // Turning the day off: the request no longer counts.
+    expect(await setRequestDay(deps(), dee, id, "2027-01-09", false)).toEqual({ ok: true });
+    expect(await placeGame(deps(), fay, game, { court, starts: "09:00" })).toEqual({ ok: true });
   });
 
   it("Bindings by hand: Schedulers bind teams with a reason; bound teams go together and never play at once; Unbind", async () => {

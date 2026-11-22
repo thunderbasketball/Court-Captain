@@ -7,10 +7,13 @@ import { Alert, Toast, useConfirm } from "../../../client-ui";
 import { fieldLabel, inputCls, pillCls, primaryBtn } from "../../../ui";
 import { addCoach, editTeam, removeCoach, removeTeam, setAltName } from "./actions";
 import { GRADES, LEVELS, PREK, gradeSort, type Gender } from "@/lib/team-names";
+import type { DeleteBlock } from "@/lib/schedule-removal";
+import { DeleteBlockedNote } from "../../../ScheduleRemoval";
 
 
 // Delete a team (asks first). Its coaches come off it.
-export function DeleteTeamButton({ org, id, name }: { org: string; id: string; name: string }) {
+// `block`: on an event's schedule, the pop-up says what to do (no Delete); only registered, it says deleting withdraws it.
+export function DeleteTeamButton({ org, id, name, block }: { org: string; id: string; name: string; block?: DeleteBlock | null }) {
   const router = useRouter();
   const [confirm, dialog] = useConfirm();
   const [msg, setMsg] = useState<string | null>(null);
@@ -22,11 +25,16 @@ export function DeleteTeamButton({ org, id, name }: { org: string; id: string; n
         disabled={busy}
         className="shrink-0 rounded-full px-3 py-2 text-sm font-medium text-red-600 ring-1 ring-red-600/30 hover:bg-red-50 dark:hover:bg-red-500/10"
         onClick={async () => {
+          if (block?.why === "scheduled") {
+            await confirm({ title: `${name} can't be deleted yet`, message: <DeleteBlockedNote block={block} />, confirmLabel: null, tone: "warning" });
+            return;
+          }
           if (
             !(await confirm({
               title: `Delete ${name}?`,
-              message: "Are you sure? Its coaches come off the team.",
+              message: `Are you sure? Its coaches come off the team.${block ? ` It's registered in ${block.program}; deleting it withdraws it.` : ""}`,
               confirmLabel: "Delete",
+              typeToConfirm: name, // the team's name must be typed
             }))
           )
             return;

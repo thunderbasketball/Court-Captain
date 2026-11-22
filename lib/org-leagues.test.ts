@@ -17,6 +17,7 @@ import { undoRegisterAll } from "./register-batches";
 import { deleteOrganization } from "./org-delete";
 import { listScenicTeams, updateScenicTeam } from "./scenic-teams";
 import { createTestDb, grant } from "./testing/db";
+import { SCHEDULED_REFUSAL } from "./team-guards";
 
 const person = (coachId: string, firstName: string): SessionUser => ({
   coachId,
@@ -120,6 +121,15 @@ describe("an organization's teams in Scenic City programs", () => {
     // Not registered anywhere now: not on Scenic City's Teams (its copy stays, unlisted).
     expect((await listScenicTeams(deps(), dee, "Director"))!.teams).toEqual([]);
     expect(await registerOrgTeam(deps(), jo, org, tid, pid, ALL)).toMatchObject({ ok: true });
+    // On the schedule (in a matchup): it can't withdraw; it requests removal instead.
+    await db.pool.query(
+      `insert into scenic_matchups (program_id, division_id, day, team_a, created_by)
+       select r.program_id, d.id, '2027-01-09', r.team_id, 't' from scenic_registrations r
+         join scenic_divisions d on d.program_id = r.program_id where r.program_id = $1 limit 1`,
+      [pid],
+    );
+    expect(await withdrawOrgTeam(deps(), jo, org, tid, pid)).toEqual({ ok: false, message: SCHEDULED_REFUSAL });
+    await db.pool.query("delete from scenic_matchups");
     now = new Date("2026-12-20T15:00:00Z");
     expect(await withdrawOrgTeam(deps(), jo, org, tid, pid)).toMatchObject({ ok: false });
     expect(await registerOrgTeam(deps(), jo, org, tid, pid, ALL)).toMatchObject({ ok: false });
@@ -135,7 +145,19 @@ describe("an organization's teams in Scenic City programs", () => {
     now = new Date("2026-12-20T15:00:00Z");
     expect((await listScenicTeams(deps(), dee, "Director"))!.teams).toHaveLength(1);
 
-    // Deleting the team takes it out of Scenic City too.
+    // On the schedule: it can't be deleted (it asks the Scheduler first).
+    await db.pool.query(
+      `insert into scenic_matchups (program_id, division_id, day, team_a, created_by)
+       select r.program_id, d.id, '2027-01-09', r.team_id, 't' from scenic_registrations r
+         join scenic_divisions d on d.program_id = r.program_id where r.program_id = $1 limit 1`,
+      [pid],
+    );
+    expect(await deleteOrgTeam(deps(), jo, org, tid)).toEqual({
+      ok: false,
+      message: "It's on the schedule for Winter League 2027. Request removal from the schedule (the Scheduler puts TBD in its games), then delete it.",
+    });
+    await db.pool.query("delete from scenic_matchups");
+    // Only registered: deleting withdraws it, and takes it out of Scenic City too.
     expect(await deleteOrgTeam(deps(), jo, org, tid)).toEqual({ ok: true });
     expect((await listScenicTeams(deps(), dee, "Director"))!.teams).toEqual([]);
   });

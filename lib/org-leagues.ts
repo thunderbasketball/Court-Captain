@@ -18,6 +18,7 @@ import {
   recOpenSql,
   registerBatch,
   saveChoice,
+  type BatchPay,
   type BatchResult,
   type Entry,
   type ProgramOption,
@@ -26,6 +27,7 @@ import {
 import { gradeLabel, gradeRange } from "./scenic-teams";
 import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
+import { isScheduled, SCHEDULED_REFUSAL } from "./team-guards";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -82,6 +84,7 @@ export type OrgProgram = {
   name: string;
   startsOn: string;
   endsOn: string;
+  regOpens: string;
   regCloses: string;
   feeCents: number | null;
   status: RegStatus;
@@ -94,11 +97,11 @@ export async function orgPrograms(
   deps: Deps,
   viewer: SessionUser,
   org: unknown,
-): Promise<{ league: string; programs: OrgProgram[] } | null> {
+): Promise<{ league: string; leagueName: string; programs: OrgProgram[] } | null> {
   const o = await teamsManagerOf(deps.pool, viewer, org);
   if (!o || !(await hasFeature(deps.pool, LEAGUE, "programs"))) return null;
   const today = easternDate(deps.now());
-  const r = await deps.pool.query<Omit<OrgProgram, "status" | "lastBatch"> & { regOpens: string }>(
+  const r = await deps.pool.query<Omit<OrgProgram, "status" | "lastBatch">>(
     `select p.id::text, p.kind, p.name, p.starts_on::text as "startsOn", p.ends_on::text as "endsOn",
             p.reg_opens::text as "regOpens", p.reg_closes::text as "regCloses", p.fee_cents as "feeCents",
             count(r.team_id)::int as registered, (count(t.id) - count(r.team_id))::int as unregistered
@@ -113,9 +116,10 @@ export async function orgPrograms(
   const last = await lastBatches(deps.pool, o);
   return {
     league: await orgShort(deps.pool, LEAGUE),
-    programs: r.rows.map(({ regOpens, ...p }) => ({
+    leagueName: await orgName(deps.pool, LEAGUE),
+    programs: r.rows.map((p) => ({
       ...p,
-      status: regOpen(today, regOpens, p.regCloses),
+      status: regOpen(today, p.regOpens, p.regCloses),
       lastBatch: last.get(p.id) ?? null,
     })),
   };
@@ -210,7 +214,7 @@ export async function teamPrograms(
     .rows[0]?.id;
   const terms = new Map(
     await Promise.all(
-      r.rows.map(async (p) => [p.id, p.kind === "League" ? await leagueEntry(deps.pool, p.id, copy ?? null) : null] as const),
+      r.rows.map(async (p) => [p.id, p.kind === "League" ? await leagueEntry(deps.pool, p.id, copy ?? null, org) : null] as const),
     ),
   );
   return {
@@ -281,6 +285,7 @@ export async function registerAllOrgTeams(
   programId: unknown,
   preview = false,
   only?: unknown, // the teams left checked in the confirmation
+  pay?: BatchPay | null, // the League takes cards: one payment for all, registered once it's paid
 ): Promise<Result<BatchResult>> {
   if (!isId(programId)) return { ok: false, message: "Pick a program." };
   const o = await teamsManagerOf(deps.pool, viewer, org);
@@ -302,7 +307,7 @@ export async function registerAllOrgTeams(
       const now = deps.now();
       const r = await registerBatch(
         q,
-        { programId, org: o, viewer, now, preview, only },
+        { programId, org: o, viewer, now, preview, only, pay },
         teams.rows.map((t) => ({ id: t.id, name: t.name, teamId: () => copyOf(q, t.id, partnerId, by(viewer), now) })),
       );
       return { ok: true as const, ...r };
@@ -379,11 +384,16 @@ export async function withdrawOrgTeam(
     if (!status) return { ok: false as const, message: "That program no longer exists." };
     if (status !== "open")
       return { ok: false as const, message: `Registration is closed. Ask a ${await orgShort(q, LEAGUE)} Director of Programs.` };
-    const r = await q.query(
-      `delete from scenic_registrations r using scenic_teams st, org_teams t
-       where r.program_id = $1 and r.team_id = st.id and st.org_team_id = t.id and t.id = $2 and t.org = $3`,
+    const reg = await q.query<{ team_id: string }>(
+      `select r.team_id::text from scenic_registrations r join scenic_teams st on st.id = r.team_id
+         join org_teams t on t.id = st.org_team_id
+        where r.program_id = $1 and t.id = $2 and t.org = $3 for update of r`,
       [programId, orgTeamId, o],
     );
-    return r.rowCount ? { ok: true as const } : { ok: false as const, message: "That team isn't registered." };
+    if (!reg.rowCount) return { ok: false as const, message: "That team isn't registered." };
+    // On the schedule: it requests removal instead (the Scheduler puts TBD in its games).
+    if (await isScheduled(q, programId, reg.rows[0].team_id)) return { ok: false as const, message: SCHEDULED_REFUSAL };
+    await q.query("delete from scenic_registrations where program_id = $1 and team_id = $2", [programId, reg.rows[0].team_id]);
+    return { ok: true as const };
   });
 }

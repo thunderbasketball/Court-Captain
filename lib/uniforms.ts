@@ -8,7 +8,7 @@ import type { SessionUser } from "./auth/service";
 import { canSeeRoster } from "./rosters";
 import { withTx } from "./sql";
 import { SIZES, type UniformRow } from "./uniform-fields";
-import { hasArea } from "./org-admin";
+import { hasArea, isOrgOwner, isThunderAdmin } from "./org-admin";
 
 export { SIZES, duplicateNumbers, isMissing, jerseyName, type UniformRow } from "./uniform-fields";
 
@@ -17,6 +17,87 @@ type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
 
 const isId = (v: unknown): v is string => typeof v === "string" && /^\d{1,18}$/.test(v);
 const isRegistrant = (v: unknown): v is string => typeof v === "string" && /^[\w-]{1,40}$/.test(v);
+
+// The newest vendor order (not cancelled) this player is on with the number and size they have now, for a query with
+// team_players p and team_uniforms u. A player changed after an order isn't on it any more (they go in the next one).
+const ORDER_OF = `select o.order_no, o.sent_at from uniform_vendor_sent s join uniform_vendor_sends o on o.id = s.send_id
+  where s.team_id = p.team_id and s.registrant_id = p.registrant_id and o.cancelled_at is null
+    and s.number = u.number and s.size = u.size and (u.reorder_at is null or o.sent_at > u.reorder_at)
+  order by o.sent_at desc, o.id desc limit 1`;
+
+// The newest vendor order (not cancelled) this player went in at all, as lo: Needs a uniform then means a new one.
+const LAST_ORDER = `select o.order_no, o.sent_at from uniform_vendor_sent s join uniform_vendor_sends o on o.id = s.send_id
+  where s.team_id = p.team_id and s.registrant_id = p.registrant_id and o.cancelled_at is null
+  order by o.sent_at desc, o.id desc limit 1`;
+
+// Locked: they have their uniform (on a vendor order, or a number with no new uniform ordered), unless unlocked since
+// (an unlock lasts until Lock, or for an ordered player until their next order). Needs p, g, u and o (ORDER_OF).
+const LOCKED = `((o.order_no is not null
+    or (not (coalesce(g.uniform_needed, false) or u.needs_uniform_at is not null) and u.number is not null))
+  and not (u.unlocked_at is not null and (o.sent_at is null or u.unlocked_at > o.sent_at)))`;
+
+const LOCKED_MESSAGE = "Locked: they have their uniform. A team coach, Admin, Director of Uniforms or Owner can unlock it.";
+
+async function lockState(q: Pick<Pool, "query">, teamId: string, registrantId: string) {
+  const r = await q.query<{
+    registered: boolean;
+    added: string | null;
+    locked: boolean;
+    order_no: string | null;
+    last_order_no: string | null;
+    reorder_pending: boolean;
+  }>(
+    `select coalesce(g.uniform_needed, false) as registered, u.order_added_by as added, ${LOCKED} as locked, o.order_no,
+            lo.order_no as last_order_no, coalesce(u.reorder_at > lo.sent_at, false) as reorder_pending
+     from team_players p
+     left join registrations g on g.registrant_id = p.registrant_id
+     left join team_uniforms u on u.team_id = p.team_id and u.registrant_id = p.registrant_id
+     left join lateral (${ORDER_OF}) o on true
+     left join lateral (${LAST_ORDER}) lo on true
+     where p.team_id = $1 and p.registrant_id = $2`,
+    [teamId, registrantId],
+  );
+  return r.rows[0] ?? null;
+}
+
+// Who can unlock a player's uniform info: the team's Head or Assistant Coach, a Thunder Admin, a Director of Uniforms
+// or an Owner.
+export async function canUnlockUniforms(q: Pick<Pool, "query">, viewer: SessionUser, teamId: string): Promise<boolean> {
+  if (hasArea(viewer, "uniforms") || isThunderAdmin(viewer)) return true;
+  if (!isId(teamId)) return false;
+  const r = await q.query(
+    "select 1 from team_staff where team_id = $1 and coach_id = $2 and role in ('HeadCoach', 'AsstCoach')",
+    [teamId, viewer.coachId],
+  );
+  return r.rows.length > 0 || (await isOrgOwner(q, viewer.coachId, "thunder"));
+}
+
+// Unlock (unlock: true) a player's uniform info so it can be changed, or Lock it again. Who did it recorded.
+export async function setUniformLock(
+  deps: Deps,
+  viewer: SessionUser,
+  teamId: unknown,
+  registrantId: unknown,
+  unlock: unknown,
+): Promise<Result<{ by: string; locked: boolean }>> {
+  if (!isId(teamId) || !isRegistrant(registrantId)) return { ok: false, message: "That player isn't on this team." };
+  return withTx(deps.pool, async (q) => {
+    if (!(await canSeeRoster(q, viewer, teamId)))
+      return { ok: false as const, message: "Only this team's staff can set uniforms." };
+    if (unlock === true && !(await canUnlockUniforms(q, viewer, teamId)))
+      return { ok: false as const, message: "Only a team coach, Admin, Director of Uniforms or Owner can unlock it." };
+    await q.query("select pg_advisory_xact_lock(hashtext('uniform:' || $1))", [teamId]);
+    if (!(await lockState(q, teamId, registrantId))) return { ok: false as const, message: "That player isn't on this team." };
+    const by = `${viewer.firstName} ${viewer.lastName}`;
+    await q.query(
+      `insert into team_uniforms (team_id, registrant_id, updated_by, updated_at, unlocked_by, unlocked_at)
+       values ($1, $2, $3, $4, $5, $6)
+       on conflict (team_id, registrant_id) do update set unlocked_by = excluded.unlocked_by, unlocked_at = excluded.unlocked_at`,
+      [teamId, registrantId, by, deps.now(), unlock === true ? by : null, unlock === true ? deps.now() : null],
+    );
+    return { ok: true as const, by, locked: !!(await lockState(q, teamId, registrantId))?.locked };
+  });
+}
 
 // The team's rostered players, by last name. Null when the viewer can't see this team.
 export async function listUniforms(deps: Deps, viewer: SessionUser, teamId: string): Promise<UniformRow[] | null> {
@@ -28,10 +109,14 @@ export async function listUniforms(deps: Deps, viewer: SessionUser, teamId: stri
              or (coalesce(g.uniform_needed, false) and upper(trim(coalesce(g.raw->>'Uniform Needed?', ''))) = 'NO')) as late,
             coalesce(g.uniform_needed, false) as registered, u.needs_uniform_by as "neededBy", u.order_added_by as "addedBy",
             g.uniform_size as "askedSize", g.uniform_number as "askedNumber",
-            u.number, u.size, u.updated_by as "updatedBy", u.updated_at as "updatedAt"
+            u.number, u.size, u.updated_by as "updatedBy", u.updated_at as "updatedAt", o.order_no as "orderNo",
+            coalesce(${LOCKED}, false) as locked, u.unlocked_by as "unlockedBy",
+            lo.order_no as "lastOrderNo", case when u.reorder_at > lo.sent_at then u.reorder_by end as "reorderBy"
      from team_players p
      left join registrations g on g.registrant_id = p.registrant_id
      left join team_uniforms u on u.team_id = p.team_id and u.registrant_id = p.registrant_id
+     left join lateral (${ORDER_OF}) o on true
+     left join lateral (${LAST_ORDER}) lo on true
      where p.team_id = $1
      order by lower(p.last_name), lower(p.first_name)`,
     [teamId],
@@ -81,8 +166,9 @@ export async function saveUniform(
     if (!(await canSeeRoster(q, viewer, teamId)))
       return { ok: false as const, message: "Only this team's staff can set uniforms." };
     await q.query("select pg_advisory_xact_lock(hashtext('uniform:' || $1))", [teamId]);
-    const on = await q.query("select 1 from team_players where team_id = $1 and registrant_id = $2", [teamId, registrantId]);
-    if (!on.rows[0]) return { ok: false as const, message: "That player isn't on this team." };
+    const on = await lockState(q, teamId, registrantId);
+    if (!on) return { ok: false as const, message: "That player isn't on this team." };
+    if (on.locked) return { ok: false as const, message: LOCKED_MESSAGE };
     const by = `${viewer.firstName} ${viewer.lastName}`;
     const at = deps.now();
     await q.query(
@@ -143,16 +229,26 @@ export async function setNeedsUniform(
     if (!(await canSeeRoster(q, viewer, teamId)))
       return { ok: false as const, message: "Only this team's staff can set uniforms." };
     await q.query("select pg_advisory_xact_lock(hashtext('uniform:' || $1))", [teamId]);
-    const p = await q.query<{ registered: boolean; added: string | null }>(
-      `select coalesce(g.uniform_needed, false) as registered, u.order_added_by as added
-       from team_players p
-       left join registrations g on g.registrant_id = p.registrant_id
-       left join team_uniforms u on u.team_id = p.team_id and u.registrant_id = p.registrant_id
-       where p.team_id = $1 and p.registrant_id = $2`,
-      [teamId, registrantId],
-    );
+    const p = { rows: [await lockState(q, teamId, registrantId)] };
     if (!p.rows[0]) return { ok: false as const, message: "That player isn't on this team." };
+    // Already on a vendor order: Needs a uniform means a new one (outgrown, lost), in the next order. The size stays
+    // as it was until changed; their number is the coach's.
+    if (p.rows[0].last_order_no) {
+      const by = `${viewer.firstName} ${viewer.lastName}`;
+      await q.query(
+        `insert into team_uniforms (team_id, registrant_id, updated_by, updated_at, reorder_by, reorder_at)
+         values ($1, $2, $3, $4, $5, $6)
+         on conflict (team_id, registrant_id) do update set
+           reorder_by = case when $7 then case when $8 then team_uniforms.reorder_by else excluded.reorder_by end end,
+           reorder_at = case when $7 then case when $8 then team_uniforms.reorder_at else excluded.reorder_at end end,
+           updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+        [teamId, registrantId, by, deps.now(), on === true ? by : null, on === true ? deps.now() : null, on === true, p.rows[0].reorder_pending],
+      );
+      return { ok: true as const, by };
+    }
     if (p.rows[0].registered) return { ok: false as const, message: "Their family already ordered a uniform." };
+    // Sent to the vendor: locked. A player who didn't order one can still be ticked (lost or outgrown) though their number is.
+    if (p.rows[0].locked && p.rows[0].order_no) return { ok: false as const, message: LOCKED_MESSAGE };
     if (on !== true && p.rows[0].added && !hasArea(viewer, "uniforms"))
       return {
         ok: false as const,

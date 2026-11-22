@@ -30,7 +30,16 @@ export function RoleDot({ role }: { role: Role }) {
   );
 }
 
-type Person = Pick<Contact, "role" | "email"> & { first: string | null; last: string | null; cell: string | null };
+type Person = Pick<Contact, "role" | "email"> & { first: string | null; last: string | null; cell: string | null; verified?: boolean };
+
+// A green ✓ beside a name: their email is verified (confirmed with a code when they logged in).
+export function VerifiedCheck() {
+  return (
+    <span title="Email verified" aria-label="Email verified" className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-[10px] leading-none font-bold text-white">
+      ✓
+    </span>
+  );
+}
 
 // A role circle and the person's name; tapping the name opens their details right there, on a line of their own (no
 // pop-up): cell, email, and Chat / Call / Text / Email. `about` is the line under their name (team, or the player they
@@ -64,13 +73,15 @@ export function ContactChip({
       >
         <RoleDot role={person.role} />
         <span className="underline decoration-zinc-300 underline-offset-2">{name}</span>
+        {person.verified && <VerifiedCheck />}
       </button>
       {open && (
         <div className="basis-full space-y-2 rounded-xl bg-zinc-50 px-3 py-2.5 text-sm dark:bg-white/5">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="font-semibold">
-                {name} <span className="font-normal text-zinc-500">· {ROLE_BADGE[person.role].label} · {about}</span>
+                {name} {person.verified && <VerifiedCheck />}{" "}
+                <span className="font-normal text-zinc-500">· {ROLE_BADGE[person.role].label} · {about}</span>
               </p>
               {cell ? <p>{pretty(cell)}</p> : <p className="text-zinc-400">No cell on file</p>}
               {person.email ? <p className="break-all">{person.email}</p> : <p className="text-zinc-400">No email on file</p>}

@@ -38,12 +38,13 @@ export type TeamRegistration = {
 export async function teamRegistrations(
   deps: Deps,
   viewer: SessionUser,
+  programId?: string, // one program's (its card under Programs)
 ): Promise<{ programs: { id: string; name: string }[]; rows: TeamRegistration[] } | null> {
   if (!(await isOrgOwner(deps.pool, viewer.coachId, "scenic-city"))) return null;
   const list = await listPrograms(deps, viewer);
   if (!list) return null;
   const since = easternDate(new Date(deps.now().getTime() - 30 * 86_400_000));
-  const current = list.programs.filter((p) => p.endsOn >= since);
+  const current = list.programs.filter((p) => (programId ? p.id === programId : p.endsOn >= since));
   const details = (await Promise.all(current.map((p) => getProgram(deps, viewer, p.id)))).filter((p) => !!p);
   const rows: TeamRegistration[] = [];
   for (const p of details)

@@ -14,6 +14,8 @@ import { gradesFor, kindLabel, whoLine } from "@/lib/program-kinds";
 import { GearIcon } from "./OrgSettings";
 import { PLUS_BTN } from "./PageMenus";
 import { ProgramContent } from "./org/scenic-city/programs/[id]/content";
+import { SchedulerContent } from "./org/scenic-city/scheduler/content";
+import SubCard from "./SubCard";
 import NewProgramPanel from "./programs/NewProgramPanel";
 import NewSession from "./programs/NewSession";
 import { listEventTypes, staffChoices } from "@/lib/events";
@@ -22,6 +24,7 @@ import { hasArea } from "@/lib/org-admin";
 import ProgramForm from "./programs/ProgramForm";
 import { addsScrimmages, scrimmageChoices, scrimmagesOn, upcomingScrimmages, type Scrimmage, type ScrimmageChoices } from "@/lib/scrimmages";
 import { NewScrimmageForm, ScrimmageItem } from "./scrimmages/ScrimmageForms";
+import { ProgramGearIcon } from "./org/scenic-city/programs/ProgramTools";
 
 const date = (d: string) =>
   new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" });
@@ -231,7 +234,17 @@ function forSeason(choices: ScrimmageChoices, settings: Program["settings"]): Sc
 // is a card (logo, kind, name, where it stands, dates, how many registered) that opens right there. A player program
 // shows its dates and Sessions, with a gear (top right) to change it; a team program opens all of it (its own gear,
 // divisions, teams, schedule), loading in the background.
-export default async function ProgramsCard({ org, user }: { org: string; user: SessionUser }) {
+// Inside each Scenic City League, under its own details (its Registrations card comes with them): Scheduler
+// (Directors of Scheduling), holding only that program's.
+export default async function ProgramsCard({
+  org,
+  user,
+  scheduler = false,
+}: {
+  org: string;
+  user: SessionUser;
+  scheduler?: boolean;
+}) {
   const now = new Date();
   const [programs, players, teamsOn, teamsDirector] = await Promise.all([
     orgPrograms(db, org, now),
@@ -239,6 +252,16 @@ export default async function ProgramsCard({ org, user }: { org: string; user: S
     hasFeature(db, org, "programs"),
     isProgramsDirector(db, user),
   ]);
+  // Each League's teams asking to come off its schedule: its Scheduler card flashes while any wait.
+  const removals = scheduler
+    ? new Map(
+        (
+          await db.query<{ program_id: string; n: number }>(
+            "select program_id::text, count(*)::int as n from scenic_schedule_removals where decision is null group by 1",
+          )
+        ).rows.map((r) => [r.program_id, r.n]),
+      )
+    : new Map<string, number>();
   // Team programs are made in Scenic City for now (its Directors of Programs); every organization later (step 5).
   const teams = teamsOn && org === "scenic-city" && teamsDirector;
   const sources = players ? await seasonSources(db, now) : [];
@@ -289,11 +312,13 @@ export default async function ProgramsCard({ org, user }: { org: string; user: S
         const who = p.takes === "players" ? "player" : "team";
         const gearId = `program-gear-${p.takes}-${p.id}`;
         const f = fields.get(p.id);
+        // A Scenic City League's gear (Directors of Programs): on its title line by the arrow while it's open.
+        const leagueGear = p.takes === "teams" && org === "scenic-city" && teamsDirector;
         return (
           <div key={`${p.takes}-${p.id}`} className="relative">
             <details className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10">
               <summary className="flex cursor-pointer list-none items-start gap-2 p-4 select-none [&::-webkit-details-marker]:hidden">
-                <div className={`min-w-0 flex-1 ${f ? "pr-10" : ""}`}>
+                <div className={`min-w-0 flex-1 ${f || leagueGear ? "pr-10" : ""}`}>
                   <div className="flex min-w-0 items-center gap-3">
                     {p.logo && (
                       // eslint-disable-next-line @next/next/no-img-element -- the program's own logo, served by the app
@@ -365,9 +390,18 @@ export default async function ProgramsCard({ org, user }: { org: string; user: S
                     />
                   </>
                 ) : org === "scenic-city" ? (
-                  <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>
-                    <ProgramContent params={Promise.resolve({ id: p.id })} embedded />
-                  </Suspense>
+                  <div className="space-y-3">
+                    <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>
+                      <ProgramContent params={Promise.resolve({ id: p.id })} embedded />
+                    </Suspense>
+                    {scheduler && (
+                      <SubCard title="Scheduler" alert={(removals.get(p.id) ?? 0) > 0}>
+                        <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>
+                          <SchedulerContent embedded programId={p.id} />
+                        </Suspense>
+                      </SubCard>
+                    )}
+                  </div>
                 ) : (
                   <p className="text-sm text-zinc-500">
                     {date(p.regOpens)} – {p.regCloses ? date(p.regCloses) : "open"} registration
@@ -380,6 +414,11 @@ export default async function ProgramsCard({ org, user }: { org: string; user: S
                 <PanelIcon id={gearId} label={`${p.name} settings`} className={iconBtn}>
                   <GearIcon className="size-5" />
                 </PanelIcon>
+              </div>
+            )}
+            {leagueGear && (
+              <div className="absolute top-3 right-11 hidden [div:has(>details[open])>&]:block">
+                <ProgramGearIcon program={{ id: p.id, name: p.name }} />
               </div>
             )}
           </div>

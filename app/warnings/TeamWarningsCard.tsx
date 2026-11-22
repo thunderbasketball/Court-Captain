@@ -28,6 +28,7 @@ export default async function TeamWarningsCard({ org, base }: { org: string; bas
     w.roster && { key: "roster", title: `Roster under ${s.roster.min} players`, teams: w.roster },
     w.idle && { key: "idle", title: `Not on the app in ${s.idle.days} days`, teams: w.idle },
     w.uniforms && { key: "uniforms", title: "Uniform information missing", teams: w.uniforms },
+    w.birthdates && { key: "birthdates", title: "Birthdate missing", teams: w.birthdates },
   ].filter((p): p is { key: string; title: string; teams: WarnedTeam[] } => !!p);
   return (
     <SubCard

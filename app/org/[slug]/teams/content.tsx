@@ -3,7 +3,6 @@ import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import { isOrgAdmin, seesWho } from "@/lib/org-admin";
 import { ViewAsButton } from "../../../ViewAsButton";
-import { orgPrograms } from "@/lib/org-leagues";
 import { listOrgCoaches, listOrgTeams, listTeamImports } from "@/lib/org-teams";
 import { orgInfo } from "@/lib/org-registry";
 import AppHeader from "../../../AppHeader";
@@ -18,8 +17,8 @@ import { ContactChip, GroupTextButton } from "../../../Contacts";
 import { sendsAlerts } from "@/lib/announcements";
 import { dmKey, orgKey } from "@/lib/chat";
 import { hasFeature } from "@/lib/features";
-import RegisterPrograms from "../../../RegisterPrograms";
 import { AddTeamPanel } from "../../../AddTeam";
+import { EditNamesPanel } from "./EditNamesPanel";
 import { ImportTeamsPanel } from "../../../TeamImport";
 import { addTeam, importTeams, previewImport, undoImport } from "./actions";
 import { OrgTeamView } from "./[id]/view";
@@ -27,6 +26,7 @@ import { followRename } from "@/lib/org-rename";
 import { recAllowed } from "@/lib/rec-orgs";
 
 import { PageFrame } from "../../../ui";
+import { currentRegistrations } from "@/lib/current-registrations";
 
 // A registered organization's teams (Team Management): Boys then Girls, by grade. Admins and Directors of Teams see all
 // and add teams; a coach sees their own.
@@ -52,9 +52,6 @@ export async function OrgTeamsContent({
   // Who can be a Head Coach here: the organization's coaches (or a new person typed in).
   const coaches = list.canManage ? await listOrgCoaches({ pool: db, now: () => new Date() }, user, slug) : null;
   const imports = list.canManage ? ((await listTeamImports({ pool: db, now: () => new Date() }, user, slug)) ?? []) : [];
-  const progs = await orgPrograms({ pool: db, now: () => new Date() }, user, slug);
-  // Cards: REC and COMP (Boys and Girls in each, by grade; youngest first), then Register (league programs).
-  const register = !!progs && progs.programs.length > 0 && list.canManage;
   const sp = await searchParams;
   const view = sp.view;
   // Teams whose page is open right in their row (↗; `?team=<id>,…`): only those are built.
@@ -75,6 +72,7 @@ export async function OrgTeamsContent({
   ).rows;
   const games = await scheduledGames(db, copies.map((c) => c.id));
   const schedules: Record<string, ScheduledGame[]> = Object.fromEntries(copies.map((c) => [c.team, (games[c.id] ?? []).filter((g) => g.published)]));
+  const regs = await currentRegistrations(db, "org", ids, new Date()); // "✓ Winter (26/27) · Paid" under each name
   const [own, scrims, rosterRows] = await Promise.all([
     upcomingOwnForTeams({ pool: db, now: () => new Date() }, slug, ids),
     teamScrimmages({ pool: db, now: () => new Date() }, slug, ids),
@@ -129,6 +127,9 @@ export async function OrgTeamsContent({
                     />
                   ),
                   import: <ImportTeamsPanel preview={previewImport.bind(null, slug)} add={importTeams.bind(null, slug)} example={IMPORT_EXAMPLE} help={IMPORT_HELP} />,
+                  names: list.teams.length > 0 && (
+                    <EditNamesPanel org={slug} orgName={o.short || o.name} teams={list.teams.map((t) => ({ id: t.id, name: t.name, alt: t.altName }))} />
+                  ),
                 }
               : null
           }
@@ -136,7 +137,6 @@ export async function OrgTeamsContent({
           empty={solo ? null : "No teams yet. Tap “+” to add or import some."}
           teams={list.teams}
           view={view}
-          register={register && progs ? { count: progs.programs.length, body: <RegisterPrograms org={slug} progs={progs} bare /> } : null}
           grade={(t) => {
             const top = t.grade.split("/").at(-1);
             return t.grade === "Pre-K" ? "Pre-K" : top === "K" || top === "0th" ? "Kindergarten" : `${top} Grade`;
@@ -158,6 +158,7 @@ export async function OrgTeamsContent({
               altName={t.altName}
               gender={t.gender}
               level={t.level}
+              registrations={regs[t.id]}
               sub={t.grade === "Pre-K" ? "Pre-K (ages 3–4)" : t.grade.includes("/") ? `${t.grade} grade` : ""}
               hasCoach={t.coaches.some((c) => c.role === "HeadCoach")}
               waitingCoach={t.waitingCoach && `${t.waitingCoach.first} ${t.waitingCoach.last}`}
@@ -180,7 +181,7 @@ export async function OrgTeamsContent({
                 return (
                   <ContactChip
                     key={c.id}
-                    person={{ role: c.role, email: c.email, first, last: rest.join(" "), cell: c.cell }}
+                    person={{ role: c.role, email: c.email, first, last: rest.join(" "), cell: c.cell, verified: c.verified }}
                     about={t.name}
                     chatKey={chatter && c.id !== user.coachId ? dmKey(user.coachId, c.id, slug) : undefined}
                     extra={admin && c.id !== user.coachId && <ViewAsButton coachId={c.id} name={c.name} />}

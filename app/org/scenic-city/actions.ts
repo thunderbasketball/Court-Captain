@@ -10,6 +10,7 @@ import * as programs from "@/lib/scenic-programs";
 import * as teams from "@/lib/scenic-teams";
 import * as clubs from "@/lib/scenic-club-teams";
 import * as matchups from "@/lib/scenic-matchups";
+import * as removals from "@/lib/schedule-removal";
 import * as grid from "@/lib/scenic-grid";
 import * as courts from "@/lib/scenic-courts";
 import * as bindings from "@/lib/scenic-bindings";
@@ -237,4 +238,22 @@ export async function bindTeams(teamIds: string[], reason: string) {
 }
 export async function unbindTeams(id: string) {
   return guarded((u) => bindings.unbind(deps, u, id), "programs");
+}
+
+// A team's request to come off an event's schedule: Approve (TBD in its games, then withdrawn) or Decline. Directors of
+// Scheduling only (checked in lib/schedule-removal).
+export async function decideScheduleRemoval(id: string, approve: boolean) {
+  return guarded((u) => removals.decideRemoval(deps, u, id, approve === true));
+}
+
+// A League's named price groups (Directors of Programs; checked in lib/scenic-programs): add or change one (`id` null:
+// new), delete one (its organizations back to the standard price), or tag organizations with one (`groupId` null: none).
+export async function savePriceGroup(programId: string, id: string | null, input: { name: string; allSeason: string; payLater: boolean }) {
+  return guarded((u) => programs.savePriceGroup(deps, u, programId, id, input), "programs");
+}
+export async function deletePriceGroup(programId: string, id: string) {
+  return guarded((u) => programs.deletePriceGroup(deps, u, programId, id), "programs");
+}
+export async function tagOrgs(programId: string, orgs: string[], groupId: string | null) {
+  return guarded((u) => programs.tagOrgs(deps, u, programId, orgs, groupId), "programs");
 }

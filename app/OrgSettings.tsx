@@ -28,7 +28,9 @@ export default function OrgSettings({
   warnings,
   featureSettings,
   deleteCard,
+  payments,
 }: {
+  payments?: { label: string; card: ReactNode }; // Owners: the organization's Stripe account
   deleteCard?: ReactNode; // Owners (not Thunder or Scenic City): Delete organization
   featureSettings?: ReactNode; // a card per feature with settings (CourtClub, Chat), when it has any
   warnings: ReactNode; // Warning Configurations' inside: a card per feature it has (passed in)
@@ -106,6 +108,11 @@ export default function OrgSettings({
           <SubCard title="Features & Upgrades" count={`${featuresOn} on`}>
             {features}
           </SubCard>
+          {payments && (
+            <SubCard title="Payments" count={payments.label}>
+              {payments.card}
+            </SubCard>
+          )}
           {featureSettings && <SubCard title="Feature Settings">{featureSettings}</SubCard>}
           <SubCard title="Warning Configurations">{warnings}</SubCard>
           {deleteCard && <SubCard title="Delete organization">{deleteCard}</SubCard>}
