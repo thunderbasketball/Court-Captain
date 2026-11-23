@@ -161,7 +161,9 @@ function Rows({
                   </dd>
                 </>
               )}
-              {payments[`${r.programId}-${r.teamId}`] && <CardPaid p={payments[`${r.programId}-${r.teamId}`]} canRefund={canRefund} />}
+              {payments[`${r.programId}-${r.teamId}`] && (
+                <CardPaid p={payments[`${r.programId}-${r.teamId}`]} canRefund={canRefund} team={{ id: r.teamId, name: r.team }} />
+              )}
               <dt className="text-zinc-500">Registered</dt>
               <dd>
                 {when(r.registeredAt)} by {r.registeredBy}
@@ -232,7 +234,7 @@ const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: 
 
 // The team's card payment: what was charged (with the card fee when added), refunds, and Refund (any amount up to
 // what's left; the server checks it's the League's Owner). One payment for several teams says so.
-function CardPaid({ p, canRefund }: { p: TeamCardPayment; canRefund: boolean }) {
+function CardPaid({ p, canRefund, team }: { p: TeamCardPayment; canRefund: boolean; team: { id: string; name: string } }) {
   const left = p.paidCents - p.refundedCents;
   return (
     <>
@@ -247,7 +249,7 @@ function CardPaid({ p, canRefund }: { p: TeamCardPayment; canRefund: boolean }) 
             Refunded {dollars(f.cents)} by {f.by} on {day(f.at)}
           </span>
         ))}
-        {left > 0 && canRefund && <RefundForm paymentId={p.id} left={left} who={p.who} />}
+        {left > 0 && canRefund && <RefundForm paymentId={p.id} left={left} who={p.who} team={team} />}
       </dd>
     </>
   );

@@ -19,12 +19,12 @@ export async function setStripeFeePayer(org: string, payer: "org" | "team") {
 }
 
 // Refund part (or all) of a team's card payment (the League's Owners; checked in lib/stripe/refunds).
-export async function refundCardPayment(paymentId: string, cents: number) {
+export async function refundCardPayment(paymentId: string, cents: number, withdrawTeamId?: string | null) {
   const user = await currentUser();
   if (!user) return { ok: false as const, message: "Please log in again." };
   if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
   try {
-    return await refundPayment(stripeDeps(), user, paymentId, cents);
+    return await refundPayment(stripeDeps(), user, paymentId, cents, withdrawTeamId);
   } catch (e) {
     console.error("Refund failed:", e);
     return { ok: false as const, message: "Stripe couldn't make that refund just now. Nothing was refunded; try again in a minute." };

@@ -287,6 +287,38 @@ describe("paying to register", () => {
     expect(await deleteOrgTeam(deps, jo, org, tid)).toEqual({ ok: true });
     expect(await cardPayments(db.pool, dee, pid, false)).toMatchObject([{ id, teams: [{ name: "ER 4B East Ridge TBD", state: "deleted" }] }]);
   });
+  it("refund and cancel the registration together; a team on the schedule can't be (nothing refunded)", async () => {
+    const s = fakeStripe();
+    const deps = { pool: db.pool, stripe: s.api, now: () => now };
+    await db.pool.query(
+      "insert into org_stripe (org, livemode, account_id, connected_by, charges_enabled) values ('scenic-city', false, 'acct_league', 'Dee X', true)",
+    );
+    await grant(db.pool, "9913694 scenic-city Owner");
+    const tid = await team();
+    const r = (await registerOrPay(deps, jo, org, tid, pid, ALL, BASE)) as { pay: string };
+    const cs = r.pay.split("/").at(-1)!;
+    const id = cs.slice("cs_test_".length);
+    s.paid.add(cs);
+    await confirmPayment(deps, id, cs);
+    const copy = (await db.pool.query<{ id: string }>("select team_id::text as id from registration_payment_teams where payment_id = $1", [id])).rows[0].id;
+
+    // On the schedule: refused, nothing refunded, still registered.
+    await db.pool.query(
+      `insert into scenic_matchups (program_id, division_id, day, team_a, team_b, home_side, created_by)
+       select $1, d.id, '2027-01-09', $2, null, 'a', 't' from scenic_divisions d where d.program_id = $1 limit 1`,
+      [pid, copy],
+    );
+    expect(await refundPayment(deps, dee, id, 15000, copy)).toMatchObject({ ok: false, message: expect.stringMatching(/on the schedule.*Nothing was refunded/) });
+    expect(s.refunds).toEqual([]);
+    expect(await regOf(tid)).toMatchObject({ paid: true });
+
+    // Off the schedule: refunded and withdrawn together; its payment then shows as Withdrawn.
+    await db.pool.query("delete from scenic_matchups");
+    expect(await refundPayment(deps, dee, id, 15000, copy)).toEqual({ ok: true, left: 0, withdrawn: true });
+    expect(s.refunds).toHaveLength(1);
+    expect(await regOf(tid)).toBeNull();
+    expect(await cardPayments(db.pool, dee, pid, false)).toMatchObject([{ id, refundedCents: 15000, teams: [{ state: "withdrawn" }] }]);
+  });
   it("an organization's own ALL Season price is what it's charged; Pay later registers it without paying by card", async () => {
     const s = fakeStripe();
     const deps = { pool: db.pool, stripe: s.api, now: () => now };

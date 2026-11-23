@@ -6,6 +6,7 @@ import type { Pool } from "pg";
 import type { SessionUser } from "../auth/service";
 import { isOrgOwner } from "../org-admin";
 import { withTx, type Queryable } from "../sql";
+import { isScheduled } from "../team-guards";
 import type { StripeApi } from "./connect";
 
 type Deps = { pool: Pool; stripe: StripeApi | null; now: () => Date };
@@ -75,9 +76,18 @@ export async function cardPayments(q: Pick<Queryable, "query">, viewer: SessionU
   });
 }
 
-// Refund part (or all) of a card payment: any amount up to what's left. Owners of the League only.
-export async function refundPayment(deps: Deps, viewer: SessionUser, paymentId: unknown, cents: unknown): Promise<Result<{ left: number }>> {
+// Refund part (or all) of a card payment: any amount up to what's left. Owners of the League only. `withdraw`: also
+// cancel that team's registration (one of the payment's teams), together with the refund: a team on the schedule
+// can't be (the Scheduler removes it first), and then nothing is refunded.
+export async function refundPayment(
+  deps: Deps,
+  viewer: SessionUser,
+  paymentId: unknown,
+  cents: unknown,
+  withdraw?: unknown,
+): Promise<Result<{ left: number; withdrawn?: boolean }>> {
   if (!isId(paymentId)) return { ok: false, message: "That payment wasn't found." };
+  if (withdraw !== undefined && withdraw !== null && !isId(withdraw)) return { ok: false, message: "That team wasn't found." };
   if (typeof cents !== "number" || !Number.isInteger(cents) || cents <= 0) return { ok: false, message: "Enter an amount to refund." };
   if (!(await isOrgOwner(deps.pool, viewer.coachId, LEAGUE))) return { ok: false, message: "Only Scenic City's Owners can refund." };
   const stripe = deps.stripe;
@@ -96,6 +106,19 @@ export async function refundPayment(deps: Deps, viewer: SessionUser, paymentId: 
     const left = p.paid - done;
     if (left <= 0) return { ok: false as const, message: "It's already refunded in full." };
     if (cents > left) return { ok: false as const, message: `At most $${(left / 100).toFixed(2)} is left to refund.` };
+    if (withdraw) {
+      const reg = await q.query(
+        `select 1 from scenic_registrations r join registration_payment_teams x on x.team_id = r.team_id and x.payment_id = $1
+          where r.program_id = $2 and r.team_id = $3 for update of r`,
+        [paymentId, p.program_id, withdraw],
+      );
+      if (!reg.rowCount) return { ok: false as const, message: "That team isn't registered anymore. Nothing was refunded." };
+      if (await isScheduled(q, p.program_id, withdraw))
+        return {
+          ok: false as const,
+          message: "That team is on the schedule, so its registration can't be cancelled here. The Scheduler removes it first (TBD in its games). Nothing was refunded.",
+        };
+    }
     // The same refund (this payment, this much, after this much) is never made twice, even on a double tap.
     const refundId = await stripe.refund({ account: p.account_id, sessionId: p.session_id, cents, key: `cc-refund-${paymentId}-${done}-${cents}` });
     await q.query(
@@ -110,6 +133,10 @@ export async function refundPayment(deps: Deps, viewer: SessionUser, paymentId: 
           where x.payment_id = $1 and r.program_id = $2 and r.team_id = x.team_id and r.paid and r.paid_set_by = 'Card (Stripe)'`,
         [paymentId, p.program_id, `Refunded by ${by(viewer)}`, deps.now()],
       );
+    if (withdraw) {
+      await q.query("delete from scenic_registrations where program_id = $1 and team_id = $2", [p.program_id, withdraw]);
+      return { ok: true as const, left: left - cents, withdrawn: true };
+    }
     return { ok: true as const, left: left - cents };
   });
 }

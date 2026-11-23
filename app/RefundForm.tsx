@@ -8,9 +8,21 @@ import { Toast } from "./client-ui";
 const money = (c: number) => `$${(c / 100).toFixed(2)}`;
 
 // Refund opens right here (no pop-up): the amount, full by default, then a second tap to confirm.
-export default function RefundForm({ paymentId, left, who }: { paymentId: string; left: number; who: string }) {
+// `team`: refunding from a team's registration card, with "Also cancel its registration" (done together on the server).
+export default function RefundForm({
+  paymentId,
+  left,
+  who,
+  team,
+}: {
+  paymentId: string;
+  left: number;
+  who: string;
+  team?: { id: string; name: string };
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [cancel, setCancel] = useState(false);
   const [amount, setAmount] = useState((left / 100).toFixed(2));
   const [sure, setSure] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -39,6 +51,23 @@ export default function RefundForm({ paymentId, left, who }: { paymentId: string
         <span className="text-xs text-zinc-500">of {money(left)} left</span>
       </label>
       {!valid && amount && <p className="text-xs text-red-600 dark:text-red-400">Enter an amount up to {money(left)}.</p>}
+      {team && (
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={cancel}
+            onChange={(e) => {
+              setCancel(e.target.checked);
+              setSure(false);
+            }}
+            className="mt-0.5 size-4 accent-red-600"
+          />
+          <span>
+            Also cancel the registration
+            <span className="block text-xs text-zinc-500">{team.name} is taken out of this event.</span>
+          </span>
+        </label>
+      )}
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -46,9 +75,11 @@ export default function RefundForm({ paymentId, left, who }: { paymentId: string
           onClick={() => {
             if (!sure) return setSure(true);
             start(async () => {
-              const r = await refundCardPayment(paymentId, cents);
+              const r = await refundCardPayment(paymentId, cents, cancel && team ? team.id : null);
               if (!r.ok) return setMsg(r.message);
-              setMsg(`Refunded ${money(cents)}. Stripe returns it to the card in 5–10 days.`);
+              setMsg(
+                `Refunded ${money(cents)}${"withdrawn" in r && r.withdrawn ? " and cancelled the registration" : ""}. Stripe returns it to the card in 5–10 days.`,
+              );
               setOpen(false);
               setSure(false);
               router.refresh();
@@ -56,7 +87,11 @@ export default function RefundForm({ paymentId, left, who }: { paymentId: string
           }}
           className={`rounded-full px-3.5 py-1.5 text-sm font-semibold text-white disabled:opacity-50 ${sure ? "bg-red-600" : "bg-thunder-blue"}`}
         >
-          {busy ? "Refunding…" : sure ? `Yes, refund ${money(cents)} to ${who}` : `Refund ${valid ? money(cents) : ""}`}
+          {busy
+            ? "Refunding…"
+            : sure
+              ? `Yes, refund ${money(cents)} to ${who}${cancel ? " and cancel" : ""}`
+              : `Refund ${valid ? money(cents) : ""}${cancel ? " & cancel" : ""}`}
         </button>
         <button
           type="button"
