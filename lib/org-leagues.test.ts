@@ -12,10 +12,11 @@ import {
 } from "./org-leagues";
 import { createOrganization } from "./org-signup";
 import { addOrgTeamCoach, createOrgTeam, deleteOrgTeam } from "./org-teams";
-import { addDivision, getProgram, saveProgram, saveProgramDates, setPaid, setTeamOff } from "./scenic-programs";
+import { addDivision, getProgram, savePriceGroup, saveProgram, saveProgramDates, setPaid, setTeamOff, tagOrgs } from "./scenic-programs";
 import { undoRegisterAll } from "./register-batches";
 import { deleteOrganization } from "./org-delete";
 import { listScenicTeams, updateScenicTeam } from "./scenic-teams";
+import { addLeagueDates } from "./league-dates";
 import { createTestDb, grant } from "./testing/db";
 import { SCHEDULED_REFUSAL } from "./team-guards";
 
@@ -372,8 +373,18 @@ describe("an organization's teams in Scenic City programs", () => {
       addBrackets: ["2027-02-27"],
       remove: [],
     });
-    await addDivision(deps(), dee, pid, { gender: "Boys", from: 2, to: 3, levels: ["REC"] });
-    const tid = ((await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: ["2"], level: "REC" })) as { id: string }).id;
+    await addDivision(deps(), dee, pid, { gender: "Boys", from: 2, to: 3, levels: ["COMP", "REC"] });
+    const tid = ((await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: ["2"], level: "COMP" })) as { id: string }).id;
+    // Its Head Coach (not a Director): adds dates and a 2nd Game once the team is registered, never the first registration.
+    await db.pool.query("insert into users (coach_id, first_name, last_name, cell) values ('5550777', 'Kim', 'X', '4235550777') on conflict do nothing");
+    await db.pool.query("insert into org_team_coaches (team_id, coach_id, role, added_by) values ($1, '5550777', 'HeadCoach', 't')", [tid]);
+    const kim = person("5550777", "Kim");
+    expect(await registerOrgTeam(deps(), kim, org, tid, pid, { allSeason: false, days: [{ date: "2026-12-05", kind: "single_1" }] })).toEqual({
+      ok: false,
+      message: "Your Director registers the team first; then you can add dates.",
+    });
+    expect(await teamPrograms(deps(), kim, org, tid)).toMatchObject({ canRegister: false, canAddDates: true });
+    expect(await teamPrograms(deps(), person("5550002", "Sam"), org, tid)).toMatchObject({ canRegister: false, canAddDates: false });
 
     expect(await registerOrgTeam(deps(), jo, org, tid, pid)).toMatchObject({ ok: false }); // must pick something
     expect(
@@ -387,10 +398,11 @@ describe("an organization's teams in Scenic City programs", () => {
     });
     expect(first).toMatchObject({
       ok: true,
-      division: "Boys 2nd–3rd · 2nd REC · Pool A",
+      division: "Boys 2nd–3rd · 2nd COMP · Pool A",
       entry: { perDate: { "2026-12-05": 2 }, bracket: false, feeCents: 6000 },
     });
-    const later = await registerOrgTeam(deps(), jo, org, tid, pid, {
+    // Now registered: its coach adds a date with its 2nd Game.
+    const later = await registerOrgTeam(deps(), kim, org, tid, pid, {
       allSeason: false,
       days: [
         { date: "2026-12-12", kind: "single_1" },
@@ -404,8 +416,55 @@ describe("an organization's teams in Scenic City programs", () => {
     });
     const shown = (await teamPrograms(deps(), jo, org, tid))!.programs[0];
     expect(shown.entry).toMatchObject({ perDate: { "2026-12-05": 2, "2026-12-12": 2 }, bracket: true });
-    const team = (await getProgram(deps(), dee, pid))!.divisionList[0].groups[0].pools[0].teams[0];
+    const team = (await getProgram(deps(), dee, pid))!.divisionList[0].groups.flatMap((g) => g.pools.flatMap((p) => p.teams))[0];
     expect(team).toMatchObject({ name: "2B East Ridge TBD", entry: { bracket: true, feeCents: 11500 } });
+
+    // From its League team page (lib/league-dates): its coach, its organization's and Scenic City's directors add dates
+    // or a 2nd Game; strangers can't. Nothing is added unpaid: with no card payments, it's refused (Stripe: see
+    // lib/stripe/registration.test.ts) unless its organization pays later (a Pay later price group), and then a Paid
+    // registration whose fee goes up turns Unpaid.
+    const copy = (await db.pool.query<{ id: string }>("select id::text from scenic_teams where org_team_id = $1", [tid])).rows[0].id;
+    expect(await addLeagueDates(deps(), person("5550002", "Sam"), pid, copy, { allSeason: false, days: [] })).toMatchObject({ ok: false });
+    await db.pool.query("update scenic_registrations set paid = true where program_id = $1 and team_id = $2", [pid, copy]);
+    expect(await addLeagueDates(deps(), kim, pid, copy, { allSeason: false, days: [{ date: "2026-12-05", kind: "single_2nd" }] })).toMatchObject({
+      ok: false, // Dec 5 already has 2 games
+    });
+    const jan9 = { allSeason: false, days: [{ date: "2027-01-09", kind: "single_1" }] };
+    expect(await addLeagueDates(deps(), dee, pid, copy, jan9)).toEqual({
+      ok: false,
+      message: "Card payments aren't available right now, so nothing was added. Try again later.",
+    });
+    const g = (await savePriceGroup(deps(), dee, pid, null, { name: "Later", allSeason: "", payLater: true })) as { id: string };
+    expect(await tagOrgs(deps(), dee, pid, [org], g.id)).toEqual({ ok: true });
+    expect(await addLeagueDates(deps(), dee, pid, copy, jan9)).toMatchObject({
+      ok: true,
+      unpaid: true,
+      entry: { perDate: { "2026-12-05": 2, "2026-12-12": 2, "2027-01-09": 1 }, feeCents: 15000 },
+    });
+    expect(await addLeagueDates(deps(), kim, pid, copy, { allSeason: false, days: [{ date: "2027-01-09", kind: "single_2nd" }] })).toMatchObject({
+      ok: true,
+      unpaid: false, // it was already Unpaid
+      entry: { perDate: { "2027-01-09": 2 }, feeCents: 17000 },
+    });
+
+    // A REC team: no 2nd Game for anyone (not offered, refused on the server); its coaches don't add dates (its directors do).
+    const rec = ((await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: ["3"], level: "REC" })) as { id: string }).id;
+    await db.pool.query("insert into org_team_coaches (team_id, coach_id, role, added_by) values ($1, '5550777', 'HeadCoach', 't')", [rec]);
+    expect(await registerOrgTeam(deps(), jo, org, rec, pid, { allSeason: false, days: [{ date: "2026-12-05", kind: "single_1" }] })).toMatchObject({ ok: true });
+    const recShown = (await teamPrograms(deps(), kim, org, rec))!;
+    expect(recShown).toMatchObject({ canRegister: false, canAddDates: false });
+    expect(recShown.programs[0].options.map((o) => o.kind)).not.toContain("single_2nd");
+    expect(await registerOrgTeam(deps(), jo, org, rec, pid, { allSeason: false, days: [{ date: "2026-12-05", kind: "single_2nd" }] })).toEqual({
+      ok: false,
+      message: "REC teams don't add a 2nd Game.",
+    });
+    expect(await registerOrgTeam(deps(), kim, org, rec, pid, { allSeason: false, days: [{ date: "2026-12-12", kind: "single_1" }] })).toMatchObject({ ok: false });
+    const recCopy = (await db.pool.query<{ id: string }>("select id::text from scenic_teams where org_team_id = $1", [rec])).rows[0].id;
+    expect(await addLeagueDates(deps(), kim, pid, recCopy, { allSeason: false, days: [{ date: "2026-12-12", kind: "single_1" }] })).toEqual({
+      ok: false,
+      message: "A REC team's dates are added by its Director, Admin or Owner.",
+    });
+    expect(await addLeagueDates(deps(), jo, pid, recCopy, { allSeason: false, days: [{ date: "2026-12-12", kind: "single_1" }] })).toMatchObject({ ok: true });
 
     // The team withdraws from a date and re-enters it; a date Scenic City took it out of only Scenic City restores.
     const dayOff = (what: string, out: boolean) => setOrgTeamDayOff(deps(), jo, org, tid, pid, what, out);

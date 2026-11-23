@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { closeLabel, closedReason, optionLastDay, planChoice, type Choice, type ProgramOption } from "./program-options";
+import { addLabel, addable, closeLabel, closedReason, optionLastDay, planChoice, type Choice, type ProgramOption } from "./program-options";
 
 const offered: ProgramOption[] = [
   { kind: "all_season", feeCents: 30000 },
@@ -69,5 +69,27 @@ describe("League registration choices", () => {
     expect(closeLabel(opts[1])).toBe("closes 3 days before each date");
     expect(closeLabel({ kind: "all_season", feeCents: 1, closesDaysBefore: 1 })).toBe("closes 1 day before the first Game Day");
     expect(closeLabel(opts[2])).toBe("");
+  });
+});
+
+describe("what a registered team can still add (the Add button's words)", () => {
+  const opts = [
+    { kind: "all_season" as const, feeCents: 25000, closesOn: "2026-11-28" },
+    { kind: "single_1" as const, feeCents: 4000, closesDaysBefore: 6 },
+    { kind: "single_2" as const, feeCents: 7500, closesDaysBefore: 6 },
+    { kind: "single_2nd" as const, feeCents: 3500, closesDaysBefore: 6 },
+  ];
+  const dates = ["2026-12-05", "2026-12-12"];
+  const today = "2026-11-23";
+  it("ALL Season (ALL Season closed): only a 2nd Game; on single days with one left: both; REC (no 2nd Game option) and full: none", () => {
+    expect(addLabel(addable(opts, dates, { allSeason: true, days: [] }, today))).toBe("Add a 2nd Game");
+    expect(addLabel(addable(opts, dates, { allSeason: false, days: [{ date: "2026-12-05", kind: "single_1" }] }, today))).toBe(
+      "Add dates or a 2nd Game",
+    );
+    const rec = opts.filter((o) => o.kind !== "single_2nd");
+    expect(addLabel(addable(rec, dates, { allSeason: false, days: [{ date: "2026-12-05", kind: "single_1" }] }, today))).toBe("Add dates");
+    expect(addLabel(addable(rec, dates, { allSeason: true, days: [] }, today))).toBeNull();
+    // Everything closed (the day before the last Game Day's 6-day close): nothing.
+    expect(addLabel(addable(opts, dates, { allSeason: true, days: [] }, "2026-12-07"))).toBeNull();
   });
 });

@@ -154,6 +154,38 @@ export type TeamProgram = {
   entry: Entry | null;
 };
 
+// Who may register a team, or add to its registration: the organization's Admins and Directors of Teams (any of its
+// teams, first registration too), or the team's own Head or Assistant Coach (adding dates or a 2nd Game to a
+// registration it already has; a COMP team only: a REC team's dates are its directors'). Read from the roles each time;
+// null for anyone else.
+export async function teamRegistrar(
+  q: Pick<Queryable, "query">,
+  viewer: SessionUser,
+  org: unknown,
+  orgTeamId: unknown,
+): Promise<{ org: OrgSlug; manager: boolean } | null> {
+  const manager = await teamsManagerOf(q, viewer, org);
+  if (manager) return { org: manager, manager: true };
+  if (typeof org !== "string" || !isId(orgTeamId)) return null;
+  const r = await q.query<{ org: string }>(
+    `select t.org from org_teams t join org_team_coaches c on c.team_id = t.id
+      where t.id = $1 and t.org = $2 and t.archived_at is null and c.coach_id = $3 and c.role in ('HeadCoach', 'AsstCoach')
+        and t.level <> 'REC'`, // a REC team's dates are added by its directors only
+    [orgTeamId, org, viewer.coachId],
+  );
+  return r.rows[0] ? { org: r.rows[0].org as OrgSlug, manager: false } : null;
+}
+
+// A coach adds only to a registration the team already has (the first one is the Directors').
+async function alreadyIn(q: Pick<Queryable, "query">, orgTeamId: string, programId: string): Promise<boolean> {
+  const r = await q.query(
+    `select 1 from scenic_teams st join scenic_registrations r on r.team_id = st.id
+      where st.org_team_id = $1 and r.program_id = $2 and r.removed_at is null`,
+    [orgTeamId, programId],
+  );
+  return !!r.rowCount;
+}
+
 // For the team's page: the league's programs this team can register for (registration open, upcoming) or is in.
 // Coaches see it; managers register.
 export async function teamPrograms(
@@ -161,9 +193,10 @@ export async function teamPrograms(
   viewer: SessionUser,
   org: OrgSlug,
   orgTeamId: string,
-): Promise<{ league: string; canRegister: boolean; programs: TeamProgram[] } | null> {
+): Promise<{ league: string; canRegister: boolean; canAddDates: boolean; programs: TeamProgram[] } | null> {
   if (!(await hasFeature(deps.pool, LEAGUE, "programs"))) return null;
-  const [manager, league] = await Promise.all([teamsManagerOf(deps.pool, viewer, org), orgShort(deps.pool, LEAGUE)]);
+  const [registrar, league] = await Promise.all([teamRegistrar(deps.pool, viewer, org, orgTeamId), orgShort(deps.pool, LEAGUE)]);
+  const manager = registrar?.manager;
   const r = await deps.pool.query<{
     id: string;
     kind: string;
@@ -212,14 +245,16 @@ export async function teamPrograms(
   const today = easternDate(deps.now());
   const copy = (await deps.pool.query<{ id: string }>("select id::text from scenic_teams where org_team_id = $1", [orgTeamId]))
     .rows[0]?.id;
+  const level = (await deps.pool.query<{ level: string }>("select level from org_teams where id = $1", [orgTeamId])).rows[0]?.level;
   const terms = new Map(
     await Promise.all(
-      r.rows.map(async (p) => [p.id, p.kind === "League" ? await leagueEntry(deps.pool, p.id, copy ?? null, org) : null] as const),
+      r.rows.map(async (p) => [p.id, p.kind === "League" ? await leagueEntry(deps.pool, p.id, copy ?? null, org, level) : null] as const),
     ),
   );
   return {
     league,
     canRegister: !!manager,
+    canAddDates: !!registrar, // its coaches too: Add dates (and a 2nd Game) once it's registered
     programs: r.rows.map((p) => ({
       options: terms.get(p.id)?.options ?? [],
       gameDates: terms.get(p.id)?.gameDates ?? [],
@@ -258,9 +293,12 @@ export async function registerOrgTeam(
   choice?: unknown, // a League: what it registers for (adds to an earlier registration)
 ): Promise<Result<{ division: string | null; entry: Entry | null }>> {
   if (!isId(orgTeamId) || !isId(programId)) return { ok: false, message: "Pick a team and a program." };
-  const o = await teamsManagerOf(deps.pool, viewer, org);
-  if (!o) return { ok: false, message: "Only an Admin or Director of Teams can register teams." };
+  const who = await teamRegistrar(deps.pool, viewer, org, orgTeamId);
+  if (!who) return { ok: false, message: "Only an Admin, a Director of Teams or the team's coach can register teams." };
+  const o = who.org;
   return withTx(deps.pool, async (q) => {
+    if (!who.manager && !(await alreadyIn(q, orgTeamId, programId)))
+      return { ok: false as const, message: "Your Director registers the team first; then you can add dates." };
     const status = await programRegStatus(q, programId, deps.now());
     if (!status) return { ok: false as const, message: "That program no longer exists." };
     if (status !== "open") return { ok: false as const, message: "Registration isn't open for this program." };

@@ -13,7 +13,8 @@ import ScheduleRequests from "../../../../ScheduleRequests";
 import TeamPage, { type TeamStaffRow } from "../../../../TeamPage";
 import { leagueRoster, mayManageLeagueTeam } from "@/lib/league-roster";
 import { leagueStaff } from "@/lib/scenic-team-page";
-import { AddLeaguePlayer, AddLeagueStaff, RemoveLeaguePlayer, RemoveLeagueStaff } from "./LeagueTeamTools";
+import { AddLeagueDates, AddLeaguePlayer, AddLeagueStaff, RemoveLeaguePlayer, RemoveLeagueStaff } from "./LeagueTeamTools";
+import { leagueEntry } from "@/lib/scenic-programs";
 import { Chip } from "../../../../ui";
 
 const day = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
@@ -41,6 +42,15 @@ export async function LeagueTeamView({ id, opened = "", embedded = false, edit }
     leagueStaff(db, [id]), // its whole staff, from where it's kept (Thunder's, its organization's, or here)
   ]);
   const today = easternDate(new Date());
+  // Add dates / 2nd Game: the same people as Schedule requests (its coaches, its organization's and Scenic City's
+  // Owners, Admins and Directors of Teams, the Scheduler), on each League it's in and not taken out of.
+  const terms = requests
+    ? new Map(
+        await Promise.all(
+          page.programs.filter((p) => p.kind === "League" && !p.out).map(async (p) => [p.id, await leagueEntry(db, p.id, id)] as const),
+        ),
+      )
+    : null;
   const published = games.filter((g) => g.published);
   const t = page.team;
   const schedule = requests && requests.length ? requests : null;
@@ -142,6 +152,17 @@ export async function LeagueTeamView({ id, opened = "", embedded = false, edit }
                           </p>
                         )}
                         <LeagueGames games={games.filter((g) => g.programId === p.id)} today={today} />
+                        {terms?.get(p.id)?.entry && !user.actingBy && (
+                          <AddLeagueDates
+                            programId={p.id}
+                            teamId={t.id}
+                            options={terms.get(p.id)!.options}
+                            gameDates={terms.get(p.id)!.gameDates}
+                            today={today}
+                            entry={terms.get(p.id)!.entry}
+                            paid={p.paid}
+                          />
+                        )}
                       </div>
                     ))}
                     {schedule && <ScheduleRequests teamId={t.id} days={schedule} />}

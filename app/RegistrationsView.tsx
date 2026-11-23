@@ -131,6 +131,8 @@ function Rows({
                 {r.feeCents !== null && r.feeCents > 0 && (
                   <Chip tone={r.paid ? "green" : "amber"}>{r.paid ? "Paid" : "Unpaid"}</Chip>
                 )}
+                {/* Unpaid: Mark paid right on the line, without opening it (Mark unpaid stays inside). */}
+                {r.feeCents !== null && r.feeCents > 0 && !r.paid && <PaidButton r={r} onMarked={onMarked} inline />}
                 <span aria-hidden className="text-xs text-zinc-400 transition group-open:rotate-90">
                   ▶
                 </span>
@@ -197,34 +199,46 @@ function Rows({
 }
 
 // Mark paid / Mark unpaid on one registration (the server checks it's a Director of Programs, and records who).
-function PaidButton({ r, onMarked }: { r: TeamRegistration; onMarked: (r: TeamRegistration, paid: boolean) => void }) {
+// `inline`: on the closed line (a tap there doesn't open the row; an error shows as the button's tooltip).
+function PaidButton({
+  r,
+  onMarked,
+  inline = false,
+}: {
+  r: TeamRegistration;
+  onMarked: (r: TeamRegistration, paid: boolean) => void;
+  inline?: boolean;
+}) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const next = !r.paid;
   return (
-    <span className="block">
+    <span className={inline ? "contents" : "block"}>
       <button
         type="button"
         disabled={busy}
-        onClick={() =>
+        title={inline && error ? error : undefined}
+        onClick={(e) => {
+          e.preventDefault(); // inside the row's closed line: don't open it
+          e.stopPropagation();
           start(async () => {
             setError(null);
             const res = await setPaid(r.programId, r.teamId, next);
             if (!res.ok) return setError(res.message);
             onMarked(r, next);
             router.refresh();
-          })
-        }
-        className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 disabled:opacity-50 ${
+          });
+        }}
+        className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 disabled:opacity-50 ${inline && error ? "ring-red-500 " : ""}${
           next
             ? "bg-emerald-600 text-white ring-emerald-600 hover:bg-emerald-700"
             : "text-zinc-600 ring-zinc-950/15 hover:bg-zinc-50 dark:text-zinc-300 dark:ring-white/20 dark:hover:bg-white/5"
         }`}
       >
-        {busy ? "Saving…" : next ? "Mark paid" : "Mark unpaid"}
+        {busy ? "Saving…" : inline && error ? "Didn't save · retry" : next ? "Mark paid" : "Mark unpaid"}
       </button>
-      {error && <span className="mt-1 block text-xs text-red-600 dark:text-red-400">{error}</span>}
+      {error && !inline && <span className="mt-1 block text-xs text-red-600 dark:text-red-400">{error}</span>}
     </span>
   );
 }

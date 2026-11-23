@@ -193,7 +193,8 @@ export async function OrgTeamView({
           <p className="text-zinc-500">Registration open until {day(p.regCloses)}</p>
         )}
       </div>
-      {progs?.canRegister && p.status === "open" && (p.registered || p.fits) && (
+      {/* Directors and Admins register and withdraw; the team's coaches add dates (and a 2nd Game) once it's registered. */}
+      {(progs?.canRegister || (progs?.canAddDates && p.registered && p.kind === "League")) && p.status === "open" && (p.registered || p.fits) && (
         <div className="flex shrink-0 gap-2">
           {p.kind === "League" && (
             <RegisterLeagueButton
@@ -205,9 +206,10 @@ export async function OrgTeamView({
               gameDates={p.gameDates}
               today={today}
               entry={p.entry}
+              paid={p.registered ? p.registered.paid : undefined}
             />
           )}
-          {(p.registered || p.kind !== "League") && !(p.registered && onSchedule?.programId === p.id) && (
+          {progs?.canRegister && (p.registered || p.kind !== "League") && !(p.registered && onSchedule?.programId === p.id) && (
             <ProgramButton
               org={slug}
               teamId={t.id}

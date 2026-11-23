@@ -204,11 +204,23 @@ async function registerWeeks(q: PoolClient, now: Date, teamId: string, u: Use, t
   ).rows[0];
   const days = had?.all_season ? [] : [...u.days].filter((d) => d >= today && !had?.days.includes(d)).sort();
   if (!days.length) return;
+  // Signed up for every Game Day of the League (and nothing registered here yet): ALL Season, its 2GG weeks as a 2nd Game.
+  const gameDays = (
+    await q.query<{ day: string }>(
+      `select to_char(g.day, 'YYYY-MM-DD') as day from program_game_days pg join game_days g on g.id = pg.game_day_id
+        where pg.program_id = $1 and pg.kind = 'game'`,
+      [u.program.id],
+    )
+  ).rows.map((x) => x.day);
+  const every = !had && gameDays.length > 0 && gameDays.every((d) => u.days.has(d));
+  const choice = every
+    ? { allSeason: true, days: days.filter((d) => twoGames.has(d)).map((date) => ({ date, kind: "single_2nd" })) }
+    : { allSeason: false, days: days.map((date) => ({ date, kind: twoGames.has(date) ? "single_2" : "single_1" })) };
   const r = await saveChoice(
     q,
     u.program.id,
     teamId,
-    { allSeason: false, days: days.map((date) => ({ date, kind: twoGames.has(date) ? "single_2" : "single_1" })) },
+    choice,
     who,
     now,
     false, // registered in FastBreak: options' own closes don't apply

@@ -29,11 +29,12 @@ const deps = () => ({ pool: db, now: () => new Date() });
 // Register (or Add dates): when the League takes card payments and it costs something, `pay` is Stripe Checkout's address
 // (the team is registered once Stripe says it's paid); otherwise it registers at once.
 // `mode` (a Pay later organization, after it's asked): "card" pays now, "later" registers now unpaid.
-export async function registerTeam(org: string, teamId: string, programId: string, choice?: unknown, mode?: "card" | "later") {
+// `inPage`: Stripe's form opens in the page (`payInPage`) instead of Stripe's own page.
+export async function registerTeam(org: string, teamId: string, programId: string, choice?: unknown, mode?: "card" | "later", inPage = false) {
   const base = await actionBase();
   return guarded(async (u) => {
-    const r = await registerOrPay(stripeDeps(), u, org, teamId, programId, choice, base, mode);
-    if (r.ok && !r.pay && !r.choose) after(() => sendInvoice(programId, org, base)); // registered now: its invoice (PAID or PAY LATER)
+    const r = await registerOrPay(stripeDeps(), u, org, teamId, programId, choice, base, mode, inPage === true);
+    if (r.ok && !r.pay && !r.payInPage && !r.choose) after(() => sendInvoice(programId, org, base)); // registered now: its invoice (PAID or PAY LATER)
     return r;
   });
 }

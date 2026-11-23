@@ -20,6 +20,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "1.10.0",
+    "@stripe/react-stripe-js": "7.0.1",
+    "@stripe/stripe-js": "10.2.1",
     "next": "16.4.6",
     "nodemailer": "^10.2.1",
     "pg": "^8.23.1",

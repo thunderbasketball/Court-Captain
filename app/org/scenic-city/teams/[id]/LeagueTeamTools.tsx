@@ -3,7 +3,10 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Toast } from "../../../../client-ui";
-import { addPlayerToLeagueTeam, removeLeagueTeamStaff, removePlayerFromLeagueTeam, saveLeagueTeamStaff } from "./actions";
+import { addLabel, addable, type Choice, type ChoiceResult, type ProgramOption } from "@/lib/program-options";
+import RegisterChoices from "../../programs/RegisterChoices";
+import StripeInPage, { payInPage } from "../../../../StripeInPage";
+import { addDatesToLeagueTeam, addPlayerToLeagueTeam, removeLeagueTeamStaff, removePlayerFromLeagueTeam, saveLeagueTeamStaff } from "./actions";
 
 const field =
   "w-full min-w-0 rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-white/15 dark:bg-zinc-900";
@@ -184,5 +187,86 @@ export function RemoveLeagueStaff({ teamId, role, name }: { teamId: string; role
       </button>
       {error && <span className="text-xs text-red-600">{error}</span>}
     </span>
+  );
+}
+
+// Add dates: opens right here (no pop-up) to add Game Days the team isn't in, or the ★ 2nd Game on a date it plays
+// (COMP teams). With a fee and the League taking cards: to Stripe, added once paid. Checked again on the server.
+export function AddLeagueDates({
+  programId,
+  teamId,
+  options,
+  gameDates,
+  today,
+  entry,
+  paid,
+}: {
+  programId: string;
+  teamId: string;
+  paid: boolean;
+  options: ProgramOption[];
+  gameDates: string[];
+  today: string;
+  entry: (Choice & ChoiceResult) | null;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [paying, setPaying] = useState<{ clientSecret: string; account: string } | null>(null);
+  // Its words follow what's left to add (more dates, a 2nd Game, or both); nothing left: no button.
+  const label = addLabel(addable(options, gameDates, entry ? { allSeason: entry.allSeason, days: entry.days } : { allSeason: false, days: [] }, today));
+  if (!label && !open) return msg ? <Toast key={msg} message={msg} /> : null;
+  return (
+    <div className="pt-1">
+      {!open ? (
+        <button type="button" onClick={() => setOpen(true)} className="rounded-full px-3.5 py-1.5 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/40">
+          + {label}
+        </button>
+      ) : (
+        <div className="space-y-2 rounded-xl p-3 ring-1 ring-zinc-950/10 dark:ring-white/10">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold">{label ?? "Add dates"}</p>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setPaying(null);
+              }}
+              className="text-sm text-zinc-500"
+            >
+              Close
+            </button>
+          </div>
+          {paying && <StripeInPage pay={paying} onCancel={() => setPaying(null)} />}
+          <div className={paying ? "hidden" : ""}>
+          <RegisterChoices
+            options={options}
+            gameDates={gameDates}
+            today={today}
+            entry={entry}
+            paid={paid}
+            saveLabel="Add to registration"
+            save={async (choice) => {
+              const r = await addDatesToLeagueTeam(programId, teamId, choice, payInPage);
+              if (!r.ok) return r;
+              if (r.payInPage) {
+                setPaying(r.payInPage); // Stripe's form opens right here; added once it's paid
+                return { ok: true as const };
+              }
+              if (r.pay) {
+                window.location.href = r.pay; // to Stripe; added once it's paid
+                return { ok: true as const };
+              }
+              setOpen(false);
+              setMsg("unpaid" in r && r.unpaid ? "Added. The fee went up, so it shows Unpaid until it's paid." : "Added to the registration.");
+              router.refresh();
+              return { ok: true as const };
+            }}
+          />
+          </div>
+        </div>
+      )}
+      {msg && <Toast key={msg} message={msg} />}
+    </div>
   );
 }

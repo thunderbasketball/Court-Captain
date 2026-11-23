@@ -36,10 +36,12 @@ export function stripeApi(): StripeApi | null {
           use_case: { type: "account_onboarding", account_onboarding: { refresh_url: refreshUrl, return_url: returnUrl } },
         })
       ).url,
-    createCheckout: async ({ account, lines, successUrl, cancelUrl, ref }) => {
+    createCheckout: async ({ account, lines, successUrl, cancelUrl, ref, embedded }) => {
       const c = await s.checkout.sessions.create(
         {
           mode: "payment",
+          // In the page (Stripe's form opens right under the summary): back to successUrl when paid, no cancel page.
+          ...(embedded ? { ui_mode: "embedded_page" as const, return_url: successUrl } : { success_url: successUrl, cancel_url: cancelUrl }),
           // Cards only, which on Checkout brings Apple Pay and Google Pay (when on in CourtCaptain's Stripe → Settings →
           // Connect → Payment methods); no buy-now-pay-later, bank or other methods. Link rides along with cards (and
           // brings its own bank and Klarna options), so it's turned off here.
@@ -49,15 +51,13 @@ export function stripeApi(): StripeApi | null {
             quantity: 1,
             price_data: { currency: "usd", unit_amount: l.cents, product_data: { name: l.name.slice(0, 250) } },
           })),
-          success_url: successUrl,
-          cancel_url: cancelUrl,
           client_reference_id: ref,
           metadata: { courtcaptain_payment: ref },
           payment_intent_data: { metadata: { courtcaptain_payment: ref } },
         },
-        { stripeAccount: account, idempotencyKey: `cc-reg-${ref}` },
+        { stripeAccount: account, idempotencyKey: `cc-reg-${ref}${embedded ? "-in-page" : ""}` },
       );
-      return { id: c.id, url: c.url! };
+      return { id: c.id, url: c.url ?? "", clientSecret: c.client_secret ?? undefined };
     },
     checkoutPaid: async ({ account, id }) =>
       (await s.checkout.sessions.retrieve(id, {}, { stripeAccount: account })).payment_status === "paid",

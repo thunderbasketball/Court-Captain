@@ -133,3 +133,22 @@ export { shortDate };
 
 // Shown on a program's card (Programs, the login page's events, the public League page) when REC is limited.
 export const REC_LIMITED = "REC: invited organizations only";
+
+// What a registered team can still add (Add dates / a 2nd Game): more Game Days (or ALL Season), and a 2nd Game on a
+// date it already plays. Each checked like the picker and the server: the options' rules, then each one's own close.
+// Neither: nothing to add (the button isn't shown).
+export function addable(options: ProgramOption[], gameDates: string[], had: Choice, today: string): { dates: boolean; second: boolean } {
+  const fits = (add: Choice) => !("error" in planChoice(options, gameDates, had, add)) && !closedReason(options, gameDates, had, add, today);
+  const upcoming = gameDates.filter((d) => d >= today);
+  const has = (k: string) => options.some((o) => o.kind === k);
+  const dates =
+    (!had.allSeason && has("all_season") && fits({ allSeason: true, days: [] })) ||
+    upcoming.some((date) => (["single_1", "single_2"] as const).some((kind) => has(kind) && fits({ allSeason: false, days: [{ date, kind }] })));
+  const second = has("single_2nd") && upcoming.some((date) => fits({ allSeason: false, days: [{ date, kind: "single_2nd" }] }));
+  return { dates, second };
+}
+
+// The Add button's words for what's addable (null: nothing to add, no button).
+export function addLabel(a: { dates: boolean; second: boolean }): string | null {
+  return a.dates && a.second ? "Add dates or a 2nd Game" : a.dates ? "Add dates" : a.second ? "Add a 2nd Game" : null;
+}

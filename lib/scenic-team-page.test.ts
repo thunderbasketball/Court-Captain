@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
 import { leagueStaff, leagueTeamPage, myLeagueTeams } from "./scenic-team-page";
+import { teamRequests } from "./schedule-requests";
 import { createTestDb, grant } from "./testing/db";
 
 const person = (coachId: string, firstName: string): SessionUser =>
@@ -102,5 +103,37 @@ describe("a League team's page", () => {
       ["HeadCoach", "Ethan"],
       ["Manager", "Sam"],
     ]);
+  }, 120_000);
+
+  it("Schedule requests: also the team's organization's Owners, Admins and Directors of Teams, and Scenic City's", async () => {
+    await db.pool.query("insert into organizations (slug, name, short_name, kind) values ('chatt', 'City of Chattanooga', 'Chatt', 'Organization') on conflict do nothing");
+    await db.pool.query("insert into org_role_types (org, role) values ('chatt', 'Admin'), ('chatt', 'Director') on conflict do nothing");
+    await db.pool.query(
+      `insert into users (coach_id, first_name, last_name, cell) values ('5550301', 'Ada', 'X', '4235550301'), ('5550302', 'Bo', 'X', '4235550302'),
+         ('5550303', 'Cal', 'X', '4235550303'), ('5550304', 'Di', 'X', '4235550304')`,
+    );
+    await grant(db.pool, "5550301 chatt Admin", "5550302 chatt Director", "5550303 chatt Director", "5550304 scenic-city Admin");
+    await db.pool.query("insert into director_areas (coach_id, org, area, granted_by) values ('5550302', 'chatt', 'teams', 'test')");
+    const ot = (
+      await db.pool.query<{ id: string }>(
+        "insert into org_teams (org, name, gender, grade_low, grade, level, created_by) values ('chatt', '1B Chatt Lee', 'Boys', 1, 1, 'REC', 'x') returning id::text",
+      )
+    ).rows[0].id;
+    await db.pool.query(
+      "insert into partners (name, kind, hosts_games, registers_teams, approved, created_by, org_slug) values ('City of Chattanooga', 'Organization', false, true, true, 't', 'chatt')",
+    );
+    const copy = (
+      await db.pool.query<{ id: string }>(
+        `insert into scenic_teams (name, gender, grade_low, grade, level, org_team_id, partner_id, created_by, updated_by)
+         select '1B Chatt Lee', 'Boys', 1, 1, 'REC', $1, id, 't', 't' from partners where org_slug = 'chatt' returning id::text`,
+        [ot],
+      )
+    ).rows[0].id;
+    const deps = { pool: db.pool, now: () => new Date("2026-11-23T17:00:00Z") };
+    expect(await teamRequests(deps, person("5550301", "Ada"), copy)).not.toBeNull(); // its organization's Admin
+    expect(await teamRequests(deps, person("5550302", "Bo"), copy)).not.toBeNull(); // its Director of Teams
+    expect(await teamRequests(deps, person("5550303", "Cal"), copy)).toBeNull(); // a Director without Teams
+    expect(await teamRequests(deps, person("5550304", "Di"), copy)).not.toBeNull(); // Scenic City's Admin
+    expect(await teamRequests(deps, sam, copy)).toBeNull();
   }, 120_000);
 });

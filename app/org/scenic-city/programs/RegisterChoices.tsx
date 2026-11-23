@@ -33,6 +33,7 @@ export default function RegisterChoices({
   save,
   saveLabel,
   onChange,
+  paid,
 }: {
   options: ProgramOption[];
   gameDates: string[];
@@ -40,6 +41,7 @@ export default function RegisterChoices({
   entry: (Choice & ChoiceResult) | null;
   save?: (choice: Choice) => Promise<{ ok: true } | { ok: false; message: string }>;
   saveLabel?: string; // the button (default Register, or Add to registration)
+  paid?: boolean; // adding: whether what it already has is paid (shown beside it)
   onChange?: (choice: Choice) => void;
 }) {
   const had: Choice = entry ? { allSeason: entry.allSeason, days: entry.days } : { allSeason: false, days: [] };
@@ -184,10 +186,25 @@ export default function RegisterChoices({
                 </span>
               )}
             </p>
-            <p className="mt-1 font-semibold">
-              Fee: {money(plan.newFeeCents)}
-              {entry && <span className="font-normal text-zinc-500"> (total {money(plan.result.feeCents)})</span>}
-            </p>
+            {entry ? (
+              <>
+                {/* Adding: what it already has (and whether that's paid) apart from what this addition costs now. */}
+                <p className="mt-1 text-zinc-600 dark:text-zinc-300">
+                  Already registered: {entry.allSeason ? "ALL Season" : entryLine(entry)} · {money(entry.feeCents)}
+                  {paid !== undefined && (
+                    <span className={paid ? "font-medium text-emerald-700 dark:text-emerald-400" : "font-medium text-amber-700 dark:text-amber-400"}>
+                      {paid ? " · Paid" : " · Unpaid"}
+                    </span>
+                  )}
+                </p>
+                <p className="mt-1 font-semibold">
+                  To pay now: {money(plan.newFeeCents)}
+                  <span className="font-normal text-zinc-500"> (new total {money(plan.result.feeCents)})</span>
+                </p>
+              </>
+            ) : (
+              <p className="mt-1 font-semibold">Fee: {money(plan.newFeeCents)}</p>
+            )}
           </div>
         ))}
       {error && <Alert tone="red">{error}</Alert>}

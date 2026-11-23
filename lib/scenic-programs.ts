@@ -251,8 +251,10 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
       paid_set_by: string | null;
       removed_by: string | null;
       off: Record<string, string>;
+      team_org: string | null;
     }>(
-      `select r.pool_id::text, t.id::text as team_id, t.name, t.grade_low, t.grade, t.level, p.name as partner, coalesce(og.abbr, p.abbr) as partner_abbr, og.kind = 'Team' as solo_account, t.partner_id::text,
+      `select r.pool_id::text, t.id::text as team_id,
+              coalesce((select ot.org from org_teams ot where ot.id = t.org_team_id), case when t.thunder_team_id is not null then 'thunder' end) as team_org, t.name, t.grade_low, t.grade, t.level, p.name as partner, coalesce(og.abbr, p.abbr) as partner_abbr, og.kind = 'Team' as solo_account, t.partner_id::text,
               o.first_name || ' ' || o.last_name as owner, c.first_name || ' ' || c.last_name as coach, c.cell as coach_cell,
               coalesce(c.verified_email, c.email) as coach_email,
               ${TEAM_COACHES} as coaches,
@@ -277,6 +279,12 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
   const [terms, picked] = league
     ? await Promise.all([leagueTerms(deps.pool, id), choices(deps.pool, id)])
     : [null, new Map<string, Choice>()];
+  // Each organization's own prices (its price group), so a team's fee here matches what it's charged and its invoice.
+  const orgTerms = new Map<string, Awaited<ReturnType<typeof leagueTerms>>>();
+  if (league)
+    for (const o of new Set(regs.rows.flatMap((r) => (r.team_org ? [r.team_org] : []))))
+      orgTerms.set(o, await leagueTerms(deps.pool, id, o));
+  const termsOf = (r: (typeof regs.rows)[number]) => (r.team_org && orgTerms.get(r.team_org)) || terms;
   const team = (r: (typeof regs.rows)[number]): RegisteredTeam => ({
     teamId: r.team_id,
     name: r.name,
@@ -295,7 +303,7 @@ export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): 
     paid: r.paid,
     paidSetBy: r.paid_set_by,
     canWithdraw: manage || (status === "open" && mineIds.has(r.team_id)),
-    entry: terms && picked.has(r.team_id) ? entryOf(picked.get(r.team_id)!, terms) : null,
+    entry: terms && picked.has(r.team_id) ? entryOf(picked.get(r.team_id)!, termsOf(r)!) : null,
     removedBy: r.removed_by,
     off: r.off,
   });
@@ -1565,6 +1573,11 @@ export async function saveChoice(
   }
   const add = parseChoice(choice);
   if (!add) return { error: "Pick ALL Season or at least one date." };
+  // REC teams play one game a date: no 2nd Game.
+  if (add.days.some((d) => d.kind === "single_2nd")) {
+    const lv = await q.query<{ level: string }>("select level from scenic_teams where id = $1", [teamId]);
+    if (lv.rows[0]?.level === "REC") return { error: "REC teams don't add a 2nd Game." };
+  }
   const today = easternDate(now);
   if (add.days.some((d) => d.date < today)) return { error: "Past Game Days can't be picked." };
   const terms = await leagueTerms(q, programId, await teamOrgOf(q, teamId)); // its organization's own price, if any
@@ -1599,10 +1612,13 @@ export async function leagueEntry(
   programId: string,
   teamId: string | null,
   org?: string | null, // the team's organization (its own price), when it has no League copy yet
+  level?: string | null, // the team's level, when it has no League copy yet (REC: no 2nd Game offered)
 ): Promise<{ options: ProgramOption[]; gameDates: string[]; entry: Entry | null }> {
   const terms = await leagueTerms(q, programId, org ?? (teamId ? await teamOrgOf(q, teamId) : null));
   const c = teamId ? ((await choices(q, programId)).get(teamId) ?? null) : null;
-  return { ...terms, entry: c ? entryOf(c, terms) : null };
+  const lv = level ?? (teamId ? (await q.query<{ level: string }>("select level from scenic_teams where id = $1", [teamId])).rows[0]?.level : null);
+  const options = lv === "REC" ? terms.options.filter((o) => o.kind !== "single_2nd") : terms.options;
+  return { ...terms, options, entry: c ? entryOf(c, terms) : null };
 }
 
 // A program's registration status today (locks it so registering and closing don't cross), or null if it's gone.

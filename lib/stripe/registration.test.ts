@@ -3,7 +3,8 @@ import type { SessionUser } from "../auth/service";
 import { registerAllOrgTeams, teamPrograms } from "../org-leagues";
 import { createOrganization } from "../org-signup";
 import { createOrgTeam } from "../org-teams";
-import { addDivision, deletePriceGroup, saveProgram, savePriceGroup, tagOrgs } from "../scenic-programs";
+import { addDivision, deletePriceGroup, getProgram, leagueEntry, saveProgram, saveProgramDates, savePriceGroup, tagOrgs } from "../scenic-programs";
+import { addLeagueDates } from "../league-dates";
 import { createTestDb, grant } from "../testing/db";
 import type { StripeApi } from "./connect";
 import { cardFee, confirmPayment, insertPayment, openCheckout, payee, registerOrPay } from "./registration";
@@ -40,7 +41,7 @@ function fakeStripe() {
     createCheckout: async (p) => {
       const id = `cs_test_${p.ref}`;
       checkouts.push({ id, account: p.account, lines: p.lines, successUrl: p.successUrl, cancelUrl: p.cancelUrl });
-      return { id, url: `https://checkout.stripe.test/${id}` };
+      return p.embedded ? { id, url: "", clientSecret: `${id}_secret` } : { id, url: `https://checkout.stripe.test/${id}` };
     },
     checkoutPaid: async ({ id }) => paid.has(id),
     refund: async (r) => {
@@ -105,6 +106,54 @@ describe("paying to register", () => {
     }
     expect(cardFee(25000)).toBe(778);
     expect(cardFee(0)).toBe(0);
+  });
+
+  it("Add dates from a League team page: to Stripe when it costs something, added only once paid; REC: no 2nd Game", async () => {
+    const s = fakeStripe();
+    const deps = { pool: db.pool, stripe: s.api, now: () => now };
+    await db.pool.query(
+      "insert into org_stripe (org, livemode, account_id, connected_by, charges_enabled) values ('scenic-city', false, 'acct_league', 'Dee X', true)",
+    );
+    const lp = (
+      (await saveProgram(deps, dee, null, {
+        kind: "League",
+        name: "Spring League",
+        startsOn: "2027-03-01",
+        endsOn: "2027-05-30",
+        regOpens: "2026-11-01",
+        regCloses: "2027-03-31",
+        fee: "",
+        options: [
+          { kind: "single_1", fee: "35" },
+          { kind: "single_2nd", fee: "20" },
+        ],
+      })) as { id: string }
+    ).id;
+    await saveProgramDates(deps, dee, lp, { add: ["2027-03-06", "2027-03-13"], addBrackets: [], remove: [] });
+    await addDivision(deps, dee, lp, { gender: "Boys", from: 3, to: 4, levels: ["REC"] });
+    const tid = await team();
+    // Registered for Mar 6 with nothing to pay by card yet (Stripe off for this first step).
+    expect(await registerOrPay({ ...deps, stripe: null }, jo, org, tid, lp, { allSeason: false, days: [{ date: "2027-03-06", kind: "single_1" }] }, BASE)).toMatchObject({ ok: true });
+    const copy = (await db.pool.query<{ id: string }>("select id::text from scenic_teams where org_team_id = $1", [tid])).rows[0].id;
+    const add13 = { allSeason: false, days: [{ date: "2027-03-13", kind: "single_1" }] };
+    // In the page: Stripe's form (its client secret, on the League's account), nothing added yet either.
+    const inPage = await addLeagueDates(deps, jo, lp, copy, add13, BASE, true);
+    expect(inPage).toMatchObject({ ok: true, payInPage: { clientSecret: expect.stringMatching(/_secret$/), account: "acct_league" } });
+    const r = await addLeagueDates(deps, jo, lp, copy, add13, BASE);
+    expect(r).toMatchObject({ ok: true, pay: expect.stringContaining("https://checkout.stripe.test/") });
+    expect(s.checkouts.at(-1)).toMatchObject({ lines: [{ name: "Spring League: 4B East Ridge TBD", cents: 3500 }] });
+    const id = String((r as { pay: string }).pay.split("cs_test_")[1]);
+    const dates = async () => Object.keys((await leagueEntry(db.pool, lp, copy)).entry!.perDate);
+    expect(await dates()).toEqual(["2027-03-06"]); // not added until it's paid
+    s.paid.add(`cs_test_${id}`);
+    expect(await confirmPayment(deps, id, `cs_test_${id}`)).toMatchObject({ ok: true, registered: true, message: "Paid: registration updated." });
+    expect(await dates()).toEqual(["2027-03-06", "2027-03-13"]);
+    // REC: no 2nd Game, not offered and refused.
+    expect((await leagueEntry(db.pool, lp, copy)).options.map((o) => o.kind)).toEqual(["single_1"]);
+    expect(await addLeagueDates(deps, jo, lp, copy, { allSeason: false, days: [{ date: "2027-03-06", kind: "single_2nd" }] }, BASE)).toEqual({
+      ok: false,
+      message: "REC teams don't add a 2nd Game.",
+    });
   });
 
   it("no Stripe ready: registers at once (paid outside the app)", async () => {
@@ -382,6 +431,9 @@ describe("paying to register", () => {
       dueCents: 12000,
       lines: [{ team: "4B East Ridge TBD", what: "ALL Season", cents: 12000, paid: false }],
     });
+    // The League's Registrations show its group's price too (not the standard $150).
+    const shown = (await getProgram(deps, dee, pid))!.divisionList[0].groups.flatMap((x) => x.pools.flatMap((p) => p.teams));
+    expect(shown[0]).toMatchObject({ entry: { feeCents: 12000 } });
     // Only its managers and the League's Owners see it.
     expect(await invoiceFor(db.pool, dee, pid, org)).toBeNull();
     expect(await invoiceFor(db.pool, jo, pid, org)).toMatchObject({ dueCents: 12000 });

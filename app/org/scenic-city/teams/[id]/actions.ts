@@ -2,6 +2,8 @@
 
 import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
 import { db } from "@/lib/db";
+import { addLeagueDates } from "@/lib/league-dates";
+import { actionBase, stripeDeps } from "../../../../stripe/deps";
 import { addLeaguePlayer, removeLeaguePlayer, removeLeagueStaff, saveLeagueStaff } from "@/lib/league-roster";
 
 const deps = { pool: db, now: () => new Date() };
@@ -30,4 +32,12 @@ export async function saveLeagueTeamStaff(teamId: string, input: { role: string;
 }
 export async function removeLeagueTeamStaff(teamId: string, role: string) {
   return guarded((u) => removeLeagueStaff(deps, u, String(teamId), String(role)));
+}
+
+// Add dates (and a 2nd Game) to a registration the team already has; who may is checked in lib/league-dates.
+// When it costs something and the League takes cards, `pay` is Stripe Checkout's address: added once Stripe says it's paid.
+// `inPage`: Stripe's form opens in the page (`payInPage`) instead of Stripe's own page.
+export async function addDatesToLeagueTeam(programId: string, teamId: string, choice: unknown, inPage = false) {
+  const base = await actionBase();
+  return guarded((u) => addLeagueDates(stripeDeps(), u, String(programId), String(teamId), choice, base, inPage === true));
 }

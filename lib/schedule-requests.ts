@@ -83,14 +83,35 @@ export async function setRequestDay(deps: Deps, viewer: SessionUser, programId: 
   return { ok: true };
 }
 
-// The team's Head or Assistant Coach (any coach the Scheduler links to it), or a Scenic City Director of Scheduling.
-async function mayRequest(q: Pick<Queryable, "query">, viewer: SessionUser, teamId: string): Promise<boolean> {
-  const r = await q.query<{ ok: boolean }>(
+// The team's Head or Assistant Coach (any coach the Scheduler links to it); the Owners, Admins and Directors of Teams of
+// the organization it belongs to (an organization's team: that organization; Thunder's: Thunder) and of Scenic City (the
+// League); or a Scenic City Director of Scheduling. Read straight from the roles (it runs inside transactions too).
+export async function mayRequest(q: Pick<Queryable, "query">, viewer: SessionUser, teamId: string): Promise<boolean> {
+  const w = await whoForTeam(q, viewer, teamId);
+  return w.coach || w.director;
+}
+
+// Whether the viewer is one of the team's coaches, and whether they're one of its directors (its organization's or
+// Scenic City's Owners, Admins and Directors of Teams, or the Scheduler). Read straight from the roles.
+export async function whoForTeam(
+  q: Pick<Queryable, "query">,
+  viewer: SessionUser,
+  teamId: string,
+): Promise<{ coach: boolean; director: boolean; level: string | null }> {
+  const r = await q.query<{ coach: boolean; director: boolean; level: string | null }>(
     `select exists(select 1 from scenic_teams t cross join lateral json_array_elements(${TEAM_COACHES}) x(c)
-                    where t.id = $1 and x.c->>'key' = 'u:' || $2) as ok`,
+                    where t.id = $1 and x.c->>'key' = 'u:' || $2) as coach,
+            exists(select 1 from scenic_teams t left join org_teams ot on ot.id = t.org_team_id
+                    cross join lateral (values (coalesce(ot.org, case when t.thunder_team_id is not null then 'thunder' end)), ('scenic-city')) o(org)
+                    where t.id = $1 and o.org is not null
+                      and (acts_as($2, o.org, 'Admin')
+                           or (has_role($2, o.org, 'Director')
+                               and exists(select 1 from active_director_areas a where a.coach_id = $2 and a.org = o.org and a.area = 'teams')))) as director,
+            (select level from scenic_teams where id = $1) as level`,
     [teamId, viewer.coachId],
   );
-  return r.rows[0].ok || (await isScheduler(q, viewer));
+  const x = r.rows[0];
+  return { coach: x.coach, director: x.director || (await isScheduler(q, viewer)), level: x.level };
 }
 
 export type RequestDay = {

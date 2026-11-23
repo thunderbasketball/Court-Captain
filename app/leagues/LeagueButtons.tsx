@@ -6,7 +6,8 @@ import { registerAll, registerTeam, setDayOff, undoRegisterAll, withdrawTeam } f
 import { registerAllScenicTeams } from "../org/scenic-city/actions";
 import { PopUp, Toast, useConfirm } from "../client-ui";
 import RegisterChoices from "../org/scenic-city/programs/RegisterChoices";
-import { shortDate, type Choice, type ChoiceResult, type ProgramOption } from "@/lib/program-options";
+import StripeInPage, { payInPage } from "../StripeInPage";
+import { addLabel, addable, shortDate, type Choice, type ChoiceResult, type ProgramOption } from "@/lib/program-options";
 import type { BatchResult, BatchTeam } from "@/lib/scenic-programs";
 import type { LastBatch } from "@/lib/register-batches";
 import TeamsIncluded from "../TeamsIncluded";
@@ -517,6 +518,7 @@ export function RegisterLeagueButton({
   gameDates,
   today,
   entry,
+  paid,
 }: {
   org: string;
   teamId: string;
@@ -526,6 +528,7 @@ export function RegisterLeagueButton({
   gameDates: string[];
   today: string;
   entry: (Choice & ChoiceResult) | null;
+  paid?: boolean; // what it already has is paid (shown when adding)
 }) {
   const router = useRouter();
   const [msg, setMsg] = useState<string | null>(null);
@@ -533,15 +536,22 @@ export function RegisterLeagueButton({
   const [asked, setAsked] = useState<{ choice: Choice; cents: number; card: number } | null>(null);
   const [busy, start] = useTransition();
   const [err, setErr] = useState<string | null>(null);
+  const [paying, setPaying] = useState<{ clientSecret: string; account: string } | null>(null);
+  // Registered: its words follow what's left to add (more dates, a 2nd Game, or both); nothing left: no button.
+  const label = entry ? addLabel(addable(options, gameDates, { allSeason: entry.allSeason, days: entry.days }, today)) : "Register";
+  if (!label) return msg ? <Toast key={msg} message={msg} /> : null;
   return (
     <>
       <PopUp
-        label={entry ? "Add dates" : "Register"}
-        title={entry ? `Add to ${program}` : `Register for ${program}`}
+        label={label}
+        title={entry ? `${label}: ${program}` : `Register for ${program}`}
         className={`${btn} ${entry ? "text-thunder-blue ring-1 ring-thunder-blue/40" : "bg-thunder-blue text-white"}`}
       >
         {(close) =>
-          asked ? (
+          paying ? (
+            // Stripe's form right here; registered (or added) once it's paid. Cancel: back to the picks, nothing added.
+            <StripeInPage pay={paying} onCancel={() => setPaying(null)} />
+          ) : asked ? (
             <div className="space-y-3">
               <StepGuide name="register-team" step={2} total={2} title="Pay">
                 Pay now: Stripe&apos;s secure card page opens (card, Apple Pay or Google Pay). Pay later: your team is registered
@@ -556,8 +566,9 @@ export function RegisterLeagueButton({
                 disabled={busy}
                 onClick={() =>
                   start(async () => {
-                    const r = await registerTeam(org, teamId, programId, asked.choice, "card");
+                    const r = await registerTeam(org, teamId, programId, asked.choice, "card", payInPage);
                     if (!r.ok) return setErr(r.message);
+                    if (r.payInPage) return setPaying(r.payInPage);
                     if (r.pay) window.location.href = r.pay; // to Stripe; registered once paid (invoice: PAID)
                   })
                 }
@@ -598,9 +609,14 @@ export function RegisterLeagueButton({
               gameDates={gameDates}
               today={today}
               entry={entry}
+              paid={paid}
               save={async (choice) => {
-                const r = await registerTeam(org, teamId, programId, choice);
+                const r = await registerTeam(org, teamId, programId, choice, undefined, payInPage);
                 if (!r.ok) return r;
+                if (r.payInPage) {
+                  setPaying(r.payInPage); // Stripe's form opens right here
+                  return { ok: true as const };
+                }
                 if (r.choose) {
                   setErr(null);
                   setAsked({ choice, ...r.choose }); // Pay later organization: pay now or later?

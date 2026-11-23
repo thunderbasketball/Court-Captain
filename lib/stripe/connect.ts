@@ -23,7 +23,8 @@ export type StripeApi = {
     successUrl: string; // Stripe fills in {CHECKOUT_SESSION_ID}
     cancelUrl: string;
     ref: string; // our payment's id, kept on Stripe's side too
-  }): Promise<{ id: string; url: string }>;
+    embedded?: boolean; // Stripe's form in our page (its clientSecret), not Stripe's own page (its url)
+  }): Promise<{ id: string; url: string; clientSecret?: string }>;
   checkoutPaid(p: { account: string; id: string }): Promise<boolean>;
   // Refunds part (or all) of a Checkout's payment on the organization's account; `key`: the same refund isn't made twice.
   refund(p: { account: string; sessionId: string; cents: number; key: string }): Promise<string>;
