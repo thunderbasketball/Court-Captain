@@ -36,7 +36,7 @@ import { BookPracticesButton, BookPracticesPanel } from "../../../../BookPractic
 import { deleteBlock } from "@/lib/schedule-removal";
 import { RequestRemovalButton } from "../../../../ScheduleRemoval";
 
-// One team of a registered organization, laid out like Thunder's team page: the team card, Next 7 days, then cards that
+// One team of a registered organization, laid out like Thunder's team page: the team card, Next 10 days, then cards that
 // open when tapped (Staff, Players, Games, its League programs, and Practices with CourtFacility), with their icons on
 // the title line. ?tab=staff|roster|games|register|programs|practices opens that card. Admins and Directors of Teams change
 // them; its coaches see them.
@@ -77,9 +77,9 @@ export async function OrgTeamView({
     // Its League games (opponent, time and gym once scheduled): matchups are made for its copy in the League.
     copyOf.then(async (copy) => (copy ? ((await scheduledGames(db, [copy]))[copy] ?? []) : [])),
     hasFeature(db, slug, "team-chat"),
-    upcomingOwnPractices(deps, ref, 12), // its own-gym practices (a place the team found itself), also for Next 7 days
+    upcomingOwnPractices(deps, ref, 12), // its own-gym practices (a place the team found itself), also for Next 10 days
     canChangeOwnPractices(db, user, ref),
-    // Its scrimmages (another of the organization's teams, an outside team, or TBD), on Next 7 days and Games.
+    // Its scrimmages (another of the organization's teams, an outside team, or TBD), on Next 10 days and Games.
     teamScrimmages(deps, slug, [t.id]),
     // Its playbook (CourtPlaybook): its coaches and the Directors of Teams; null for anyone else.
     listPlays(deps, user, ref),

@@ -52,9 +52,10 @@ describe("typed-in rosters: birthdates", () => {
       added: ["Liam Jones", "Noah Lee"],
     });
     const roster = (await listOrgRoster(deps(), jo, org, tid))!.players;
+    // By jersey number (Noah #7), then those without one by last name.
     expect(roster.map((p) => [p.first, p.birthdate, p.birthdateBy])).toEqual([
-      ["Liam", "2015-09-21", "Jo X"],
       ["Noah", null, null],
+      ["Liam", "2015-09-21", "Jo X"],
       ["Ava", "2016-05-03", "Jo X"],
     ]);
     const w = await orgTeamWarnings(db.pool, org, now);

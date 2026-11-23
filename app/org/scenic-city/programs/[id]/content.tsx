@@ -32,7 +32,7 @@ import {
 } from "../ProgramTools";
 import ProgramDates from "../ProgramDates";
 import RequestDays from "../RequestDays";
-import { requestDays } from "@/lib/schedule-requests";
+import { requestDays, requestSettings } from "@/lib/schedule-requests";
 import { RegisterAllButton } from "../../../../leagues/LeagueButtons";
 import { RegBadge } from "../RegBadge";
 import { PickAll, PickBox, PickTeams } from "./PickTeams";
@@ -83,9 +83,10 @@ export async function ProgramContent({
         .filter((o) => o.id !== p.id && o.divisions > 0)
         .map((o) => ({ id: o.id, name: o.name, divisions: o.divisions }))
     : [];
-  const [games, requestOn] = await Promise.all([
+  const [games, requestOn, requestSet] = await Promise.all([
     p.kind === "League" ? programSchedule(db, p.id) : [], // the Schedule card
     p.kind === "League" ? requestDays(db, p.id) : {}, // Game Days taking schedule requests
+    requestSettings(db, p.id), // their blocks and limit
   ]);
   const fee = p.feeCents === null ? null : `$${(p.feeCents / 100).toFixed(2)}`;
   // Paid / Unpaid (when the program charges): unpaid shows behind the team to Directors of Programs; only Scenic City's
@@ -152,6 +153,7 @@ export async function ProgramContent({
         days={p.gameDates.filter((d) => d >= p.today)}
         on={requestOn}
         editable={manage || schedule}
+        settings={requestSet}
       />
     )}
     </>

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { BLOCKS, MAX_BLOCKED, RULES_NOTE } from "@/lib/schedule-request-blocks";
+import { RULES_NOTE } from "@/lib/schedule-request-blocks";
 import type { RequestDay } from "@/lib/schedule-requests";
 import { Toast } from "./client-ui";
 import SubCard from "./SubCard";
@@ -14,8 +14,8 @@ const short = (iso: string) =>
   new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
 // Schedule (top of a team's Games card; its Head and Assistant Coaches and the Scheduler): every upcoming date the team
-// plays in its League, then the Brackets. Each date has Sit out; Game Days that take requests also have the 4 time
-// blocks, up to 2 checked as times the team can't play. The Brackets take no time requests. Each tap saves at once; every
+// plays in its League, then the Brackets. Each date has Sit out; Game Days that take requests also have the League's time
+// blocks, up to its limit checked as times the team can't play. The Brackets take no time requests. Each tap saves at once; every
 // rule is checked again on the server.
 export default function ScheduleRequests({ teamId, days: initial }: { teamId: string; days: RequestDay[] }) {
   const router = useRouter();
@@ -23,13 +23,14 @@ export default function ScheduleRequests({ teamId, days: initial }: { teamId: st
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const anyRequests = days.some((d) => d.requests);
+  const limit = days.find((d) => d.requests)?.max ?? 2; // the League's limit (each row checks its own)
   const open = days.filter((d) => d.requests && d.open && !d.off).length;
   const same = (d: RequestDay) => (x: RequestDay) => x.programId === d.programId && x.day === d.day;
 
   async function toggle(d: RequestDay, key: string) {
     const blocks = d.blocks.includes(key) ? d.blocks.filter((b) => b !== key) : [...d.blocks, key];
-    if (blocks.length > MAX_BLOCKED)
-      return setError(`Check up to ${MAX_BLOCKED} of the 4 times; the team must be free for the others.`);
+    if (blocks.length > d.max)
+      return setError(`Check up to ${d.max} of the ${d.options.length} times; the team must be free for the others.`);
     setDays((list) => list.map((x) => (same(d)(x) ? { ...x, blocks } : x)));
     const r = await saveScheduleRequest(teamId, d.programId, d.day, blocks);
     if (!r.ok) {
@@ -56,7 +57,7 @@ export default function ScheduleRequests({ teamId, days: initial }: { teamId: st
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
           {anyRequests && (
             <>
-              Check up to {MAX_BLOCKED} times the team <span className="font-semibold">can&apos;t</span> play; it must be
+              Check up to {limit} time{limit === 1 ? "" : "s"} the team <span className="font-semibold">can&apos;t</span> play; it must be
               available for the others.{" "}
             </>
           )}
@@ -105,7 +106,7 @@ export default function ScheduleRequests({ teamId, days: initial }: { teamId: st
                 {d.requests && !out && (
                   <>
                     <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
-                      {BLOCKS.map((b) => {
+                      {d.options.map((b) => {
                         const off = d.blocks.includes(b.key);
                         return (
                           <label

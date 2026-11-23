@@ -29,7 +29,15 @@ import {
 import { listGameDays } from "./scenic-partners";
 import { createDayMatchups, createMatchups, saveMatchups } from "./scenic-matchups";
 import { placeGame, setGameLength } from "./scenic-grid";
-import { requestDays, saveRequest, setRequestDay, setSitOut, teamRequests } from "./schedule-requests";
+import {
+  requestDays,
+  requestSettings,
+  saveRequest,
+  saveRequestSettings,
+  setRequestDay,
+  setSitOut,
+  teamRequests,
+} from "./schedule-requests";
 import { bindTeams, listBindings, unbind } from "./scenic-bindings";
 import { listCourts, setCourtDivisions } from "./scenic-courts";
 import { scheduledGames } from "./scenic-games";
@@ -936,6 +944,43 @@ describe("Scenic City programs", () => {
     // Turning the day off: the request no longer counts.
     expect(await setRequestDay(deps(), dee, id, "2027-01-09", false)).toEqual({ ok: true });
     expect(await placeGame(deps(), fay, game, { court, starts: "09:00" })).toEqual({ ok: true });
+  });
+
+  it("Schedule request settings: a League sets its own blocks and limit; requests follow them", async () => {
+    const id = await newLeague();
+    await saveProgramDates(deps(), dee, id, { add: ["2027-01-09"], addBrackets: [], remove: [] });
+    await div(id, "Boys", 3, 4, ["COMP"]);
+    const t = (
+      (await createScenicTeam(deps(), pat, {
+        for: baylor,
+        name: "Baylor 4B",
+        gender: "Boys",
+        level: "COMP",
+        grade: "4",
+        coachFirst: "Cy",
+        coachLast: "Coach",
+        coachCell: "4235550003",
+      })) as { id: string }
+    ).id;
+    expect(await registerTeam(deps(), pat, id, t, ALL)).toMatchObject({ ok: true });
+    const cy = person((await db.pool.query<{ id: string }>("select coach_id as id from users where cell = '4235550003'")).rows[0].id, "Cy");
+    await setRequestDay(deps(), dee, id, "2027-01-09", true);
+    expect(await saveRequest(deps(), cy, t, id, "2027-01-09", ["09", "12"])).toMatchObject({ ok: true }); // the standard 4, up to 2
+
+    // Directors of Programs or Scheduling only; checked on the server.
+    const three = { blocks: [{ start: "08:00", end: "11:00" }, { start: "11:00", end: "14:00" }, { start: "14:00", end: "17:00" }], max: 1 };
+    expect(await saveRequestSettings(deps(), pat, id, three)).toMatchObject({ ok: false });
+    expect(await saveRequestSettings(deps(), dee, id, { ...three, max: 3 })).toMatchObject({ ok: false });
+    expect(await saveRequestSettings(deps(), dee, id, three)).toEqual({ ok: true });
+    expect(await requestSettings(db.pool, id)).toMatchObject({ max: 1, setBy: "Dee X", blocks: [{ key: "08", label: "8–11 AM" }, { key: "11" }, { key: "14" }] });
+
+    // The team now sees the League's blocks; its old blocks that no longer exist don't count; up to the new limit.
+    const [d] = (await teamRequests(deps(), cy, t))!;
+    expect([d.options.map((b) => b.label), d.max, d.blocks]).toEqual([["8–11 AM", "11 AM–2 PM", "2–5 PM"], 1, []]);
+    expect(await saveRequest(deps(), cy, t, id, "2027-01-09", ["09"])).toMatchObject({ ok: false, message: "Pick from the time blocks." });
+    expect(await saveRequest(deps(), cy, t, id, "2027-01-09", ["08", "11"])).toMatchObject({ ok: false, message: /up to 1 of the 3/ });
+    expect(await saveRequest(deps(), cy, t, id, "2027-01-09", ["11"])).toMatchObject({ ok: true });
+    expect((await teamRequests(deps(), cy, t))![0].blocks).toEqual(["11"]);
   });
 
   it("Bindings by hand: Schedulers bind teams with a reason; bound teams go together and never play at once; Unbind", async () => {

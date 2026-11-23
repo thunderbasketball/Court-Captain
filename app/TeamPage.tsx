@@ -34,7 +34,7 @@ export type TeamRosterRow = {
   more: ReactNode; // opened by a tap: parents, who added them, Remove
 };
 
-// Every organization's team page (SPEC.md section 14), one layout for all: the team's card, Next 7 days, then cards
+// Every organization's team page (SPEC.md section 14), one layout for all: the team's card, Next 10 days, then cards
 // that open when tapped, in one order: Staff · Roster · Games · its League programs · Uniforms · Practices · Playbook. Each card
 // shows only when the organization has that feature and the person has the role for it; the buttons on their title
 // lines are the same everywhere (💬 Text, 🗨️ Chat, ✉️ Email, add). Each address reads its team's data and passes it in.

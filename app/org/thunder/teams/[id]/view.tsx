@@ -115,10 +115,10 @@ export async function ThunderTeamView({
     copyOf.then(async (copy) => (copy ? ((await scheduledGames(db, [copy]))[copy] ?? []) : [])),
     // Its own-gym practices (a place the team found itself: any time and length, no limits), with the booked ones.
     upcomingOwnPractices(deps, ref, 12),
-    // Its scrimmages (another Thunder team, an outside team, or TBD), on Next 7 days and Games.
+    // Its scrimmages (another Thunder team, an outside team, or TBD), on Next 10 days and Games.
     teamScrimmages(deps, "thunder", [team.id]),
     canChangeOwnPractices(db, user, ref),
-    // Staff whose own children are on the team answer ✓ / ✗ for them in Next 7 days (as their parent).
+    // Staff whose own children are on the team answer ✓ / ✗ for them in Next 10 days (as their parent).
     myPlayers(db, user, ref), // shown while viewing as them too (view only)
     Promise.all([hasFeature(db, "thunder", "uniforms"), hasFeature(db, "thunder", "chat")]),
     uniformsMissing(deps, team.id), // Uniforms: its title flashes red while anything is missing

@@ -8,9 +8,49 @@ import type { SessionUser } from "./auth/service";
 import { TEAM_COACHES, isProgramsDirector, isScheduler, leagueEntry } from "./scenic-programs";
 import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
-import { BLOCKS, MAX_BLOCKED, RULES_NOTE, blockedBy, closesOn } from "./schedule-request-blocks";
+import {
+  DEFAULT_SETTINGS,
+  RULES_NOTE,
+  blockedBy,
+  closesOn,
+  parseSettings,
+  type Block,
+  type RequestSettings,
+} from "./schedule-request-blocks";
 
 export { BLOCKS, MAX_BLOCKED, RULES_NOTE, blockedBy, closesOn, type BlockKey } from "./schedule-request-blocks";
+
+// A League's blocks and limit from its row (null: the standard 4 blocks, up to 2).
+const settingsOf = (row: { blocks: Block[]; max: number; by?: string | null } | null): RequestSettings =>
+  row ? { blocks: row.blocks, max: row.max, setBy: row.by ?? null } : DEFAULT_SETTINGS;
+const SETTINGS_SQL = (program: string) =>
+  `(select json_build_object('blocks', s.blocks, 'max', s.max_blocked, 'by', s.set_by)
+      from scenic_request_settings s where s.program_id = ${program})`;
+
+// The League's schedule request blocks and limit (its Schedule requests gear).
+export async function requestSettings(q: Pick<Queryable, "query">, programId: string): Promise<RequestSettings> {
+  const r = await q.query<{ s: { blocks: Block[]; max: number; by: string } | null }>(`select ${SETTINGS_SQL("$1")} as s`, [programId]);
+  return settingsOf(r.rows[0]?.s ?? null);
+}
+
+// Set the League's blocks and how many a team can check. Directors of Programs or Scheduling; who did it recorded.
+// Requests already made keep only blocks that still exist (a removed block no longer counts).
+export async function saveRequestSettings(deps: Deps, viewer: SessionUser, programId: unknown, input: unknown): Promise<Result> {
+  if (!isId(programId)) return { ok: false, message: "Pick a League." };
+  if (!(await isProgramsDirector(deps.pool, viewer)) && !(await isScheduler(deps.pool, viewer)))
+    return { ok: false, message: "Only a Director of Programs or Scheduling can change this." };
+  const s = parseSettings(input);
+  if (!s.ok) return s;
+  const p = await deps.pool.query("select 1 from scenic_programs where id = $1 and kind = 'League'", [programId]);
+  if (!p.rowCount) return { ok: false, message: "That League no longer exists." };
+  await deps.pool.query(
+    `insert into scenic_request_settings (program_id, blocks, max_blocked, set_by, set_at) values ($1, $2, $3, $4, $5)
+     on conflict (program_id) do update set blocks = excluded.blocks, max_blocked = excluded.max_blocked,
+       set_by = excluded.set_by, set_at = excluded.set_at`,
+    [programId, JSON.stringify(s.blocks), s.max, by(viewer), deps.now()],
+  );
+  return { ok: true };
+}
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -62,7 +102,9 @@ export type RequestDay = {
   requests: boolean; // the League takes time requests that day (never during the Brackets)
   closes: string; // the last day to change time requests
   open: boolean; // time requests still open
-  blocks: string[];
+  blocks: string[]; // the blocks checked (can't play)
+  options: Block[]; // the League's blocks
+  max: number; // how many can be checked
   setBy: string | null;
   off: "team" | "league" | null; // sitting out: the team chose it, or the League took it out
   offBy: string | null;
@@ -83,8 +125,9 @@ export async function teamRequests(deps: Deps, viewer: SessionUser, teamId: stri
     bracket_days: string[];
     requests: Record<string, { blocks: string[]; by: string }>;
     offs: Record<string, { team: boolean; by: string }>;
+    settings: { blocks: Block[]; max: number; by: string } | null;
   }>(
-    `select p.id::text as program_id, p.name as program, t.level,
+    `select p.id::text as program_id, p.name as program, t.level, ${SETTINGS_SQL("p.id")} as settings,
             (select min(g.day)::text from program_game_days d join game_days g on g.id = d.game_day_id
               where d.program_id = p.id and d.kind = 'game') as first_day,
             array(select g.day::text from program_game_days d join game_days g on g.id = d.game_day_id
@@ -107,6 +150,8 @@ export async function teamRequests(deps: Deps, viewer: SessionUser, teamId: stri
     const { entry } = await leagueEntry(deps.pool, x.program_id, teamId);
     if (!entry) continue;
     const offOf = (k: string) => (x.offs[k] ? (x.offs[k].team ? ("team" as const) : ("league" as const)) : null);
+    const { blocks: options, max } = settingsOf(x.settings);
+    const keys = new Set(options.map((b) => b.key));
     for (const day of Object.keys(entry.perDate).sort()) {
       if (day < today) continue;
       const closes = closesOn(x.level, day, x.first_day ?? day);
@@ -120,7 +165,9 @@ export async function teamRequests(deps: Deps, viewer: SessionUser, teamId: stri
         requests: x.req_days.includes(day),
         closes,
         open: today <= closes,
-        blocks: req?.blocks ?? [],
+        blocks: (req?.blocks ?? []).filter((k) => keys.has(k)), // a block the League removed no longer counts
+        options,
+        max,
         setBy: req?.by ?? null,
         off: offOf(day),
         offBy: x.offs[day]?.by ?? null,
@@ -138,6 +185,8 @@ export async function teamRequests(deps: Deps, viewer: SessionUser, teamId: stri
         closes: x.bracket_days[0] ?? "",
         open: false,
         blocks: [],
+        options,
+        max,
         setBy: null,
         off: offOf("brackets"),
         offBy: x.offs.brackets?.by ?? null,
@@ -183,7 +232,8 @@ export async function setSitOut(
   });
 }
 
-// Save the team's blocked blocks for one Game Day (an empty list: free all day). Up to 2; only while requests are open.
+// Save the team's blocked blocks for one Game Day (an empty list: free all day). From the League's blocks, up to its
+// limit; only while requests are open.
 export async function saveRequest(
   deps: Deps,
   viewer: SessionUser,
@@ -193,11 +243,7 @@ export async function saveRequest(
   blocks: unknown,
 ): Promise<Result<{ setBy: string }>> {
   if (!isId(teamId) || !isId(programId) || !isDate(day)) return { ok: false, message: "Pick a Game Day." };
-  if (!Array.isArray(blocks) || blocks.some((b) => !BLOCKS.some((x) => x.key === b)))
-    return { ok: false, message: "Pick from the time blocks." };
-  const list = BLOCKS.map((b) => b.key).filter((k) => blocks.includes(k));
-  if (list.length > MAX_BLOCKED)
-    return { ok: false, message: `Block up to ${MAX_BLOCKED} of the 4 time blocks; the team must be free for the others.` };
+  if (!Array.isArray(blocks) || blocks.some((b) => typeof b !== "string")) return { ok: false, message: "Pick from the time blocks." };
   return withTx(deps.pool, async (q) => {
     if (!(await mayRequest(q, viewer, teamId)))
       return { ok: false as const, message: "Only the team's Head or Assistant Coach can make schedule requests." };
@@ -207,6 +253,13 @@ export async function saveRequest(
     if (!d || !d.requests) return { ok: false as const, message: "That Game Day doesn't take schedule requests for this team." };
     if (d.off) return { ok: false as const, message: "The team is sitting out that day." };
     if (!d.open) return { ok: false as const, message: `Requests for that day closed ${d.closes}. ${RULES_NOTE}` };
+    if (blocks.some((b) => !d.options.some((x) => x.key === b))) return { ok: false as const, message: "Pick from the time blocks." };
+    const list = d.options.map((b) => b.key).filter((k) => blocks.includes(k));
+    if (list.length > d.max)
+      return {
+        ok: false as const,
+        message: `Block up to ${d.max} of the ${d.options.length} time blocks; the team must be free for the others.`,
+      };
     if (!list.length)
       await q.query("delete from scenic_schedule_requests where program_id = $1 and team_id = $2 and day = $3", [
         programId,
@@ -233,15 +286,16 @@ export async function requestClash(
 ): Promise<{ team: string; blocks: string[] } | null> {
   const ids = teamIds.filter((x): x is string => !!x);
   if (!ids.length) return null;
-  const r = await q.query<{ name: string; blocks: string[] }>(
-    `select t.name, q.blocks from scenic_schedule_requests q join scenic_teams t on t.id = q.team_id
+  const r = await q.query<{ name: string; blocks: string[]; settings: { blocks: Block[]; max: number } | null }>(
+    `select t.name, q.blocks, ${SETTINGS_SQL("q.program_id")} as settings
+       from scenic_schedule_requests q join scenic_teams t on t.id = q.team_id
       join program_game_days d on d.program_id = q.program_id and d.requests_at is not null
       join game_days g on g.id = d.game_day_id and g.day = q.day
       where q.day = $1::date and q.team_id = any($2::bigint[])`,
     [day, ids],
   );
   for (const x of r.rows) {
-    const hit = blockedBy(x.blocks, start, minutes);
+    const hit = blockedBy(x.blocks, start, minutes, settingsOf(x.settings).blocks);
     if (hit.length) return { team: x.name, blocks: hit };
   }
   return null;

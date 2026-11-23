@@ -25,8 +25,57 @@ export function closesOn(level: string, day: string, firstDay: string): string {
   return addDays(day, -(dow === 0 ? 7 : dow));
 }
 
-// Blocked blocks a game overlaps (start and length in minutes from midnight).
-export function blockedBy(blocks: string[], start: number, minutes: number): string[] {
-  return BLOCKS.filter((b) => blocks.includes(b.key) && start < b.end && b.start < start + minutes).map((b) => b.label);
+// Blocked blocks a game overlaps (start and length in minutes from midnight), from the League's blocks.
+export function blockedBy(blocks: string[], start: number, minutes: number, defs: readonly Block[] = BLOCKS): string[] {
+  return defs.filter((b) => blocks.includes(b.key) && start < b.end && b.start < start + minutes).map((b) => b.label);
+}
+
+// A League's own blocks and limit (its Schedule requests gear); without them, the 4 blocks above and up to 2.
+export type Block = { key: string; label: string; start: number; end: number };
+export type RequestSettings = { blocks: Block[]; max: number; setBy: string | null };
+export const DEFAULT_SETTINGS: RequestSettings = { blocks: BLOCKS.map((b) => ({ ...b })), max: MAX_BLOCKED, setBy: null };
+export const MAX_BLOCKS = 8;
+
+const two = (n: number) => String(n).padStart(2, "0");
+// A block's key: its start, "09" on the hour (as the first blocks were), else "0930".
+export const blockKey = (start: number) => (start % 60 ? `${two(Math.floor(start / 60))}${two(start % 60)}` : two(start / 60));
+// "9 AM", "12:30 PM": a time from minutes after midnight.
+const clock = (m: number) => {
+  const h = Math.floor(m / 60) % 24;
+  return `${h % 12 || 12}${m % 60 ? `:${two(m % 60)}` : ""}`;
+};
+const half = (m: number) => (Math.floor(m / 60) % 24 < 12 ? "AM" : "PM");
+// "9 AM–12 PM", "12–3 PM" (AM/PM once when both match).
+export const blockLabel = (start: number, end: number) =>
+  half(start) === half(end) ? `${clock(start)}–${clock(end)} ${half(end)}` : `${clock(start)} ${half(start)}–${clock(end)} ${half(end)}`;
+export const hhmm = (m: number) => `${two(Math.floor(m / 60))}:${two(m % 60)}`;
+const minutesOf = (v: unknown) => {
+  const t = typeof v === "string" ? /^(\d{1,2}):(\d{2})$/.exec(v.trim()) : null;
+  if (!t || Number(t[1]) > 24 || Number(t[2]) > 59) return null;
+  const m = Number(t[1]) * 60 + Number(t[2]);
+  return m <= 24 * 60 ? m : null;
+};
+
+// Checks a League's settings ({ blocks: [{ start: "09:00", end: "12:00" }], max }): 2 to 8 blocks, each ending after it
+// starts, none overlapping (sorted by start); up to `max` checked, fewer than the blocks so a team is free for one.
+export function parseSettings(input: unknown): { ok: true; blocks: Block[]; max: number } | { ok: false; message: string } {
+  const x = (input ?? {}) as { blocks?: unknown; max?: unknown };
+  if (!Array.isArray(x.blocks) || x.blocks.length < 2 || x.blocks.length > MAX_BLOCKS)
+    return { ok: false, message: `Set 2 to ${MAX_BLOCKS} time blocks.` };
+  const blocks: Block[] = [];
+  for (const b of x.blocks as { start?: unknown; end?: unknown }[]) {
+    const start = minutesOf(b?.start);
+    const end = minutesOf(b?.end);
+    if (start === null || end === null) return { ok: false, message: "Each block needs a start and end time." };
+    if (end <= start) return { ok: false, message: `A block must end after it starts (${hhmm(start)}).` };
+    blocks.push({ key: blockKey(start), label: blockLabel(start, end), start, end });
+  }
+  blocks.sort((a, b) => a.start - b.start);
+  for (let i = 1; i < blocks.length; i++)
+    if (blocks[i].start < blocks[i - 1].end) return { ok: false, message: `${blocks[i - 1].label} and ${blocks[i].label} overlap.` };
+  const max = Number(x.max);
+  if (!Number.isInteger(max) || max < 1 || max >= blocks.length)
+    return { ok: false, message: `Teams can check 1 to ${blocks.length - 1} blocks (they must be free for at least one).` };
+  return { ok: true, blocks, max };
 }
 

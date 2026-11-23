@@ -2,7 +2,7 @@
 
 import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
 import { db } from "@/lib/db";
-import { saveRequest, setRequestDay, setSitOut } from "@/lib/schedule-requests";
+import { saveRequest, saveRequestSettings, setRequestDay, setSitOut } from "@/lib/schedule-requests";
 
 const deps = { pool: db, now: () => new Date() };
 
@@ -27,6 +27,11 @@ export async function saveScheduleRequest(teamId: string, programId: string, day
 // A League's Game Day takes schedule requests (on) or not.
 export async function setScheduleRequestDay(programId: string, day: string, on: boolean) {
   return guarded((u) => setRequestDay(deps, u, String(programId), String(day), on === true));
+}
+
+// A League's time blocks and how many a team can check (Directors of Programs or Scheduling).
+export async function saveScheduleRequestSettings(programId: string, input: { blocks: { start: string; end: string }[]; max: number }) {
+  return guarded((u) => saveRequestSettings(deps, u, String(programId), input));
 }
 
 // The team sits out one of its dates or the Brackets (out), or plays it again.

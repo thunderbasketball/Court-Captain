@@ -9,8 +9,10 @@ import { EventLine } from "./EventAttendance";
 import { scheduleItems } from "./LeagueGames";
 import { card } from "./ui";
 
-// The team page's "Next 7 days", just above Staff (Thunder's teams and every organization's): its published games,
-// scrimmages, booked practices and own-gym practices from now through the next 7 days, by date and time. The team's staff (and the
+const DAYS = 10; // how far ahead the card looks (was 7)
+
+// The team page's "Next 10 days", just above Staff (Thunder's teams and every organization's): its published games,
+// scrimmages, booked practices and own-gym practices from now through the next 10 days, by date and time. The team's staff (and the
 // Directors) open each one for attendance; a viewer whose own children are on the team answers ✓ / ✗ for them right on
 // the line, until the event starts.
 export default function NextSevenDays({
@@ -35,8 +37,8 @@ export default function NextSevenDays({
   rsvps: Record<string, Record<string, Rsvp>>; // their answers, by "<kind><id>"
 }) {
   const today = easternDate(now);
-  const lastDay = easternDate(new Date(now.getTime() + 6 * 86_400_000));
-  const until = new Date(now.getTime() + 7 * 86_400_000);
+  const lastDay = easternDate(new Date(now.getTime() + (DAYS - 1) * 86_400_000));
+  const until = new Date(now.getTime() + DAYS * 86_400_000);
   const items = scheduleItems(
     games.filter((g) => g.date >= today && g.date <= lastDay),
     practices.filter((p) => p.startsAt < until),
@@ -51,7 +53,7 @@ export default function NextSevenDays({
   };
   return (
     <section className={`${card} p-4`}>
-      <h2 className="mb-1 font-semibold">Next 7 days</h2>
+      <h2 className="mb-1 font-semibold">Next {DAYS} days</h2>
       {items.length > 0 && (staff || mine.length > 0) && (
         <p className="mb-2 text-xs text-zinc-500">
           {mine.length > 0 && `✓ / ✗ whether ${mine.map((p) => p.firstName).join(" and ")} will be there. `}
@@ -59,7 +61,7 @@ export default function NextSevenDays({
         </p>
       )}
       {!items.length ? (
-        <p className="text-sm text-zinc-500">No games, scrimmages or practices in the next 7 days.</p>
+        <p className="text-sm text-zinc-500">No games, scrimmages or practices in the next {DAYS} days.</p>
       ) : (
         <ul className="divide-y divide-zinc-100 rounded-xl bg-zinc-50 px-3 text-sm dark:divide-white/5 dark:bg-white/5">
           {items.map((x) => {

@@ -89,7 +89,8 @@ export async function listOrgRoster(
   const r = await deps.pool.query<OrgPlayer>(
     `select id::text, first_name as first, last_name as last, grade, jersey, to_char(birthdate, 'YYYY-MM-DD') as birthdate,
             birthdate_by as "birthdateBy", added_by as "addedBy"
-     from org_team_players where team_id = $1 order by lower(last_name), lower(first_name)`,
+     from org_team_players where team_id = $1
+     order by jersey::int nulls last, lower(last_name), lower(first_name)`, // by jersey number (none last), then name
     [teamId],
   );
   return { players: r.rows, canManage: t.manage };

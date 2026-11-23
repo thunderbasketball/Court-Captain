@@ -83,7 +83,7 @@ export function RsvpButtons({
   );
 }
 
-// One event in Next 7 days. The team's staff tap it to open its roster right here: a green ✓ (here) or red ✗ (absent)
+// One event in Next 10 days. The team's staff tap it to open its roster right here: a green ✓ (here) or red ✗ (absent)
 // by each player (tap the lit one again to clear), open from 15 minutes before the start until 24 hours after; each
 // parent's answer shows by the name. A staff member who is also a parent answers for their own player on the line.
 export function EventLine({
