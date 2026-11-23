@@ -41,7 +41,7 @@ export async function FacilitiesContent({
   return (
     <>
       {!embedded && <AppHeader user={user} tab="facilities" context="director" />}
-      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 space-y-5 px-4 py-6">
+      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 space-y-5 px-4 py-6 lg:max-w-6xl">
         {!embedded && (
           <PageTitle title="Facilities" subtitle="Gyms, availability by date, blackouts, and hosting other organizations' games" />
         )}

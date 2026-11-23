@@ -35,7 +35,7 @@ async function OrgGymsTab({ params }: { params: PageProps<"/org/[slug]/facilitie
   return (
     <>
       <AppHeader user={user} context={`org:${slug}`} tab="org-facilities" />
-      <main className="mx-auto w-full max-w-3xl flex-1 space-y-5 px-4 py-6">
+      <main className="mx-auto w-full max-w-3xl flex-1 space-y-5 px-4 py-6 lg:max-w-6xl">
         <PageTitle title="Facilities" subtitle="Gyms, availability by date, and hosting other organizations' games" />
         <FacilitiesNav current="gyms" links={orgFacilityLinks(slug)} />
         <section className={`${card} p-4`}>

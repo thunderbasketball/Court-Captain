@@ -36,7 +36,7 @@ import { parseGrade } from "./scenic-teams";
 import { cleanPlaceName } from "./scenic-partners";
 import { withTx, type Queryable } from "./sql";
 import type { StripeApi } from "./stripe/connect";
-import { insertPayment, openCheckout, owed, payee, type PayTeam } from "./stripe/registration";
+import { insertPayment, openCheckout, openCheckoutInPage, owed, payee, type InPage, type PayTeam } from "./stripe/registration";
 import { easternDate } from "./time";
 
 export const STAFF_ROLES = [
@@ -362,8 +362,10 @@ export async function teamSignupComplete(
   deps: Deps,
   cellInput: unknown,
   code: unknown,
-  pay?: { stripe: StripeApi | null; base: string },
-): Promise<TeamStep | { step: "loggedIn"; token: string; expiresAt: Date; programId: string; slug: string; pay?: string }> {
+  pay?: { stripe: StripeApi | null; base: string; inPage?: boolean },
+): Promise<
+  TeamStep | { step: "loggedIn"; token: string; expiresAt: Date; programId: string; slug: string; pay?: string; payInPage?: InPage }
+> {
   const cell = typeof cellInput === "string" ? normalizeCell(cellInput) : null;
   if (!cell) return err("Enter your 10-digit cell number.");
   // The code is checked (and a wrong try counted) on its own; the rest goes in all at once or not at all.
@@ -385,6 +387,8 @@ export async function teamSignupComplete(
   if (!paymentId || !pay?.stripe) return s;
   try {
     const home = `/org/${encodeURIComponent(s.slug)}`;
+    // Stripe's form in the page (the Register form shows it; Cancel goes to its Home, teams waiting in Register ALL).
+    if (pay.inPage) return { ...s, payInPage: await openCheckoutInPage({ pool: deps.pool, stripe: pay.stripe, now: deps.now }, paymentId, pay.base) };
     const url = await openCheckout({ pool: deps.pool, stripe: pay.stripe, now: deps.now }, paymentId, pay.base, `${home}?open=register&paid=cancelled`);
     return { ...s, pay: url };
   } catch (e) {

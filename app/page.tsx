@@ -27,7 +27,7 @@ async function HomeContent() {
   return (
     <>
       <AppHeader user={user} />
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
         {user.hasThunderRole ? (
           <Notice tone="green">You&apos;re not on a team yet. The Director will add you.</Notice>
         ) : user.requestPending ? (

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
@@ -51,9 +52,11 @@ import { programPriceGroups, termsOrgChoices } from "@/lib/scenic-programs";
 export async function ProgramContent({
   params,
   embedded = false,
+  after,
 }: {
   params: PageProps<"/org/scenic-city/programs/[id]">["params"];
   embedded?: boolean; // inside a Home card: no header or page frame, and never sends you away
+  after?: ReactNode; // more cards at the end (the Home card's Scheduler), before who made the program
 }) {
   const user = await currentUser();
   if (!user) redirect(devBypass ? "/dev-login" : "/login");
@@ -137,7 +140,6 @@ export async function ProgramContent({
     </>
   );
   const datesBody = (
-    <>
     <ProgramDates
       programId={p.id}
       today={p.today}
@@ -147,22 +149,22 @@ export async function ProgramContent({
       brackets={p.bracketDates}
       editable={manage}
     />
-    {p.kind === "League" && (
-      <RequestDays
-        programId={p.id}
-        days={p.gameDates.filter((d) => d >= p.today)}
-        on={requestOn}
-        editable={manage || schedule}
-        settings={requestSet}
-      />
-    )}
-    </>
+  );
+  // Schedule Requests: a card of its own, right after Game & Bracket Days (a League with upcoming Game Days).
+  const requestsCard = p.kind === "League" && (
+    <RequestDays
+      programId={p.id}
+      days={p.gameDates.filter((d) => d >= p.today)}
+      on={requestOn}
+      editable={manage || schedule}
+      settings={requestSet}
+    />
   );
 
   return (
     <>
       {!embedded && <AppHeader user={user} context={scenic.key} tab="programs" />}
-      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 py-6">
+      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 py-6 lg:max-w-6xl">
         {!embedded && <ProgramsNav current={p.id} />}
         {(!embedded || manage) && (
         <section className={embedded ? "" : `${card} p-4`}>
@@ -199,13 +201,7 @@ export async function ProgramContent({
                 <p className="mb-2 text-xs text-zinc-500">{datesLine}</p>
                 {datesBody}
               </SubCard>
-              {/* Who made the program (and last changed it), at the bottom of its settings. */}
-              {who && (
-                <p className="px-1 pt-1 text-xs text-zinc-400">
-                  Program created by {p.createdBy}
-                  {p.updatedBy !== p.createdBy && ` · last changed by ${p.updatedBy}`}
-                </p>
-              )}
+              {requestsCard}
             </ProgramSettings>
           )}
           {scheduler && !embedded && (
@@ -232,6 +228,7 @@ export async function ProgramContent({
             <div className="border-t border-zinc-100 p-4 dark:border-white/5">{datesBody}</div>
           </details>
         )}
+        {!manage && requestsCard}
 
         {(p.canRegister.length > 0 || p.cantRegister.length > 0) && (
           <section className={`${card} space-y-2 p-4`}>
@@ -578,6 +575,14 @@ export async function ProgramContent({
               )}
             </SubCard>
           </div>
+        )}
+        {after}
+        {/* Who made the program (and last changed it), at the very bottom (Owners and Admins). */}
+        {who && (
+          <p className="px-1 text-xs text-zinc-400">
+            Program created by {p.createdBy}
+            {p.updatedBy !== p.createdBy && ` · last changed by ${p.updatedBy}`}
+          </p>
         )}
       </PageFrame>
     </>

@@ -13,7 +13,7 @@ import { leagueEntry, payLater } from "./scenic-programs";
 import { gradeLabel, gradeRange } from "./scenic-teams";
 import type { Queryable } from "./sql";
 import type { StripeApi } from "./stripe/connect";
-import { insertPayment, openCheckout, payee } from "./stripe/registration";
+import { insertPayment, openCheckout, openCheckoutInPage, payee, type InPage } from "./stripe/registration";
 
 const LEAGUE = "scenic-city";
 const isId = (v: unknown): v is string => typeof v === "string" && /^\d{1,18}$/.test(v);
@@ -156,7 +156,8 @@ export async function payInvoice(
   programId: unknown,
   org: unknown,
   base: string,
-): Promise<{ ok: true; pay: string } | { ok: false; message: string }> {
+  inPage = false, // Stripe's form opens in the page (`payInPage`)
+): Promise<{ ok: true; pay: string; payInPage?: undefined } | { ok: true; payInPage: InPage; pay?: undefined } | { ok: false; message: string }> {
   if (!isId(programId) || typeof org !== "string") return { ok: false, message: "That invoice wasn't found." };
   if (!(await teamsManagerOf(deps.pool, viewer, org))) return { ok: false, message: "Only whoever manages the teams can pay." };
   const to = await payee(deps.pool, deps.stripe);
@@ -177,6 +178,7 @@ export async function payInvoice(
     now: deps.now(),
   });
   await deps.pool.query("update registration_payments set kind = 'invoice' where id = $1", [id]);
+  if (inPage) return { ok: true, payInPage: await openCheckoutInPage(deps, id, base) };
   const page = `/invoice/${encodeURIComponent(org)}/${programId}`;
   return { ok: true, pay: await openCheckout(deps, id, base, `${page}?paid=cancelled`) };
 }

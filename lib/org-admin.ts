@@ -33,6 +33,8 @@ export const AREAS = [
   { key: "scheduling", name: "Scheduling", covers: "Game days: who plays when", features: ["programs"] },
   { key: "officials", name: "Officials Assigner", covers: "Assigns officials to games", features: ["officials"] },
   { key: "support", name: "Support", covers: "Answer Support chats", features: [] },
+  // Scores: the League games played at the organization's gyms (a host), or every game of its Leagues (the League).
+  { key: "scores", name: "Scores", covers: "Enter scores for games at your gyms", features: ["programs", "hosting-available", "practice"] },
 ] as const satisfies readonly { key: string; name: string; covers: string; features: readonly Feature[] }[];
 
 export type Area = (typeof AREAS)[number]["key"];

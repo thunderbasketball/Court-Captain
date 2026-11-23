@@ -7,7 +7,7 @@ import * as thunderLeagues from "@/lib/thunder-leagues";
 import * as batches from "@/lib/register-batches";
 import { requestRemoval } from "@/lib/schedule-removal";
 import { payLater, type BatchPay } from "@/lib/scenic-programs";
-import { insertPayment, openCheckout, payee, registerOrPay } from "@/lib/stripe/registration";
+import { insertPayment, openCheckout, openCheckoutInPage, payee, registerOrPay } from "@/lib/stripe/registration";
 import { after } from "next/server";
 import { actionBase, stripeDeps } from "../stripe/deps";
 import { sendInvoice } from "../stripe/invoice-mail";
@@ -43,7 +43,8 @@ export async function registerTeam(org: string, teamId: string, programId: strin
 // When the League takes card payments and the teams cost something, `pay` is Stripe Checkout's address: one payment for
 // all of them, registered once Stripe says it's paid (lib/stripe/registration).
 // `mode` (a Pay later organization): "later" registers now unpaid; otherwise (or "card") pays by card when the League takes it.
-export async function registerAll(org: string, programId: string, preview?: boolean, only?: string[], mode?: "card" | "later") {
+// `inPage`: Stripe's form opens in the page (`payInPage`) instead of Stripe's own page.
+export async function registerAll(org: string, programId: string, preview?: boolean, only?: string[], mode?: "card" | "later", inPage = false) {
   // Thunder's teams are its own kind; every other organization's are organization teams.
   const p = preview === true;
   const sd = stripeDeps();
@@ -65,6 +66,7 @@ export async function registerAll(org: string, programId: string, preview?: bool
     // Its confirmation offers Pay later beside paying now when the organization may (and cards are taken).
     if (r.ok && p) return { ...r, payLaterOk: later && !!to };
     if (!r.ok || !r.paymentId) return r;
+    if (inPage === true) return { ...r, payInPage: await openCheckoutInPage(sd, r.paymentId, base) };
     const cancel = `/org/${encodeURIComponent(org)}?open=register&paid=cancelled`;
     return { ...r, pay: await openCheckout(sd, r.paymentId, base, cancel) };
   });

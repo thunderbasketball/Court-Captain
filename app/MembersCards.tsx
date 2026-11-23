@@ -32,7 +32,8 @@ export default function MembersCards({
     <>
       {heading && <h1 className="mb-4 text-2xl font-semibold tracking-tight">{heading}</h1>}
       {!cards.length && <p className="text-sm text-zinc-500">Nothing here for you yet.</p>}
-      <div className="space-y-3">
+      {/* A phone: one column. A wide screen: closed cards two across, an open one the full width (gaps filled in). */}
+      <div className="grid items-start gap-3 lg:grid-flow-row-dense lg:grid-cols-2">
         {cards.map((c) => (
           <HomeCard
             key={c.key}

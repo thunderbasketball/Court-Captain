@@ -15,12 +15,20 @@ const LEAGUE = "scenic-city";
 const isId = (v: unknown): v is string => typeof v === "string" && /^\d{1,18}$/.test(v);
 const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
 
-export type PaymentTeam = { teamId: string | null; name: string; state: "registered" | "withdrawn" | "deleted" | "waiting" };
+export type PaymentTeam = {
+  teamId: string | null;
+  name: string;
+  state: "registered" | "withdrawn" | "deleted" | "waiting";
+  cents: number; // this team's part of the payment (before the card fee)
+  what: string; // what it paid for: "ALL Season", "Dec 5 · 2nd Game", "Invoice"…
+};
 export type CardPayment = {
   id: string;
   teams: PaymentTeam[];
   org: string | null; // the teams' organization (its name)
   paidCents: number; // what was charged: the fee, plus the card fee when it was added for the team
+  cardFeeCents: number; // the card fee added for the team (0 when the organization pays it)
+  kind: "register" | "invoice"; // registering (or adding), or paying an invoice
   refundedCents: number;
   status: "started" | "registered" | "failed";
   error: string | null; // paid, but not registered: why
@@ -29,6 +37,22 @@ export type CardPayment = {
   refunds: { cents: number; by: string; at: Date }[];
 };
 
+// What a payment's team paid for, from the choice it registered (or added): "ALL Season", "Dec 5, Dec 12 · 1 Game",
+// "Dec 5 · 2nd Game"; a program without options (a Circuit or Tournament): "Registration".
+const DAY = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+const KIND: Record<string, string> = { single_1: "1 Game", single_2: "2 Games", single_2nd: "2nd Game" };
+export function paidFor(choice: unknown): string {
+  const c = (choice && typeof choice === "object" ? choice : null) as { allSeason?: boolean; days?: { date: string; kind: string }[] } | null;
+  if (!c) return "Registration";
+  const parts: string[] = [];
+  if (c.allSeason) parts.push("ALL Season");
+  for (const kind of ["single_1", "single_2", "single_2nd"]) {
+    const ds = (c.days ?? []).filter((d) => d.kind === kind).map((d) => d.date).sort();
+    if (ds.length) parts.push(`${ds.map(DAY).join(", ")} · ${KIND[kind]}`);
+  }
+  return parts.join("; ") || "Registration";
+}
+
 // The program's card payments that went through (and failed ones that were paid), newest first. Null: not an Owner.
 export async function cardPayments(q: Pick<Queryable, "query">, viewer: SessionUser, programId: string, live: boolean): Promise<CardPayment[] | null> {
   if (!(await isOrgOwner(q, viewer.coachId, LEAGUE))) return null;
@@ -36,16 +60,18 @@ export async function cardPayments(q: Pick<Queryable, "query">, viewer: SessionU
     id: string;
     org: string | null;
     paid: number;
+    card_fee: number;
+    kind: "register" | "invoice";
     status: CardPayment["status"];
     error: string | null;
     started_by: string;
     at: Date;
-    teams: { name: string | null; team_id: string | null; registered: boolean }[];
+    teams: { name: string | null; team_id: string | null; registered: boolean; cents: number; choice: unknown }[];
     refunds: { cents: number; by: string; at: string }[];
   }>(
-    `select p.id::text, o.name as org, p.fee_cents + p.card_fee_cents as paid, p.status, p.error, p.started_by,
+    `select p.id::text, o.name as org, p.fee_cents + p.card_fee_cents as paid, p.card_fee_cents as card_fee, p.kind, p.status, p.error, p.started_by,
             coalesce(p.registered_at, p.started_at) as at,
-            coalesce((select json_agg(json_build_object('name', x.team_name, 'team_id', x.team_id,
+            coalesce((select json_agg(json_build_object('name', x.team_name, 'team_id', x.team_id, 'cents', x.fee_cents, 'choice', x.choice,
                         'registered', exists (select 1 from scenic_registrations r where r.program_id = p.program_id and r.team_id = x.team_id))
                         order by lower(x.team_name)) from registration_payment_teams x where x.payment_id = p.id), '[]') as teams,
             coalesce((select json_agg(json_build_object('cents', f.cents, 'by', f.refunded_by, 'at', f.refunded_at) order by f.refunded_at)
@@ -61,6 +87,8 @@ export async function cardPayments(q: Pick<Queryable, "query">, viewer: SessionU
       id: p.id,
       org: p.org,
       paidCents: p.paid,
+      cardFeeCents: p.card_fee,
+      kind: p.kind,
       refundedCents: refunds.reduce((n, f) => n + f.cents, 0),
       status: p.status,
       error: p.error,
@@ -71,6 +99,8 @@ export async function cardPayments(q: Pick<Queryable, "query">, viewer: SessionU
         teamId: t.team_id,
         name: t.name ?? "A team",
         state: !t.team_id ? "deleted" : t.registered ? "registered" : p.status === "registered" ? "withdrawn" : "waiting",
+        cents: t.cents,
+        what: p.kind === "invoice" ? "Invoice balance" : paidFor(t.choice),
       })),
     };
   });
@@ -145,6 +175,10 @@ export async function refundPayment(
 export type TeamCardPayment = {
   id: string;
   paidCents: number;
+  cardFeeCents: number;
+  teamCents: number; // this team's part (before the card fee)
+  what: string; // what this team paid for
+  kind: "register" | "invoice";
   refundedCents: number;
   teams: number; // one payment can cover several teams (Register ALL)
   who: string; // its organization, else who paid
@@ -153,26 +187,32 @@ export type TeamCardPayment = {
   refunds: { cents: number; by: string; at: string }[];
 };
 
-// Each program's card payments by its registered teams (Owners; null otherwise). Payments with no team still registered
+// Each program's card payments by its registered teams, newest first (Owners; null otherwise): a team's first
+// registration and each addition (dates, a 2nd Game) or invoice paid are separate payments. Payments with no team still registered
 // (withdrawn, deleted, or paid but not registered) stay on the Card payments card instead.
 export async function paymentsByTeam(q: Pick<Queryable, "query">, viewer: SessionUser, programIds: string[], live: boolean) {
-  const byTeam: Record<string, TeamCardPayment> = {};
+  const byTeam: Record<string, TeamCardPayment[]> = {};
   for (const programId of programIds) {
     const list = await cardPayments(q, viewer, programId, live);
     if (!list) return null;
     for (const p of list) {
       if (p.status !== "registered") continue;
-      const card: TeamCardPayment = {
-        id: p.id,
-        paidCents: p.paidCents,
-        refundedCents: p.refundedCents,
-        teams: p.teams.length,
-        who: p.org ?? p.startedBy,
-        by: p.startedBy,
-        at: p.at.toISOString(),
-        refunds: p.refunds.map((f) => ({ ...f, at: f.at.toISOString() })),
-      };
-      for (const t of p.teams) if (t.state === "registered" && t.teamId) byTeam[`${programId}-${t.teamId}`] = card;
+      for (const t of p.teams)
+        if (t.state === "registered" && t.teamId)
+          (byTeam[`${programId}-${t.teamId}`] ??= []).push({
+            id: p.id,
+            paidCents: p.paidCents,
+            cardFeeCents: p.cardFeeCents,
+            teamCents: t.cents,
+            what: t.what,
+            kind: p.kind,
+            refundedCents: p.refundedCents,
+            teams: p.teams.length,
+            who: p.org ?? p.startedBy,
+            by: p.startedBy,
+            at: p.at.toISOString(),
+            refunds: p.refunds.map((f) => ({ ...f, at: f.at.toISOString() })),
+          });
     }
   }
   return byTeam;

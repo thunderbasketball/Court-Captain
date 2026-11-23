@@ -45,7 +45,7 @@ export async function OrgFacilitiesContent({
   return (
     <>
       {!embedded && <AppHeader user={user} context={`org:${slug}`} tab="org-facilities" />}
-      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 space-y-5 px-4 py-6">
+      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 space-y-5 px-4 py-6 lg:max-w-6xl">
         {!embedded && <PageTitle title="Facilities" subtitle="Gyms, availability by date, and hosting other organizations' games" />}
         {/* Each part is a card that opens right here (no tabs, no new page), the same as Thunder's. */}
         <div className="space-y-2">

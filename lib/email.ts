@@ -13,13 +13,15 @@ export async function sendEmail(to: string, subject: string, text: string): Prom
 export type Mail = {
   to: string;
   cc?: string[];
+  bcc?: string[]; // blind copies (the season guide's coaches)
   subject: string;
   text: string;
+  html?: string; // the same email with formatting (bold); built from escaped text only
   attachments?: { filename: string; content: string; contentType: string }[]; // text files (a CSV)
 };
 
-// An email with optional copies (Cc) and attached text files (the uniform order's spreadsheet).
-export async function sendMail({ to, cc = [], subject, text, attachments = [] }: Mail): Promise<void> {
+// An email with optional copies (Cc, Bcc), a formatted version (html) and attached text files (the uniform order's spreadsheet).
+export async function sendMail({ to, cc = [], bcc = [], subject, text, html, attachments = [] }: Mail): Promise<void> {
   const gmailUser = process.env.GMAIL_USER?.trim();
   const gmailPass = process.env.GMAIL_APP_PASSWORD;
   if (gmailUser && gmailPass) {
@@ -28,8 +30,10 @@ export async function sendMail({ to, cc = [], subject, text, attachments = [] }:
       from: process.env.EMAIL_FROM || `Thunder Basketball <${gmailUser}>`,
       to,
       ...(cc.length ? { cc } : {}),
+      ...(bcc.length ? { bcc } : {}),
       subject,
       text,
+      ...(html ? { html } : {}),
       attachments: attachments.map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType })),
     });
     return;
@@ -40,7 +44,7 @@ export async function sendMail({ to, cc = [], subject, text, attachments = [] }:
   if (!key || !from) {
     if (process.env.NODE_ENV === "production") throw new Error("Email isn't set up (GMAIL_USER / GMAIL_APP_PASSWORD or RESEND_API_KEY / EMAIL_FROM).");
     console.log(
-      `\n📧 EMAIL (not sent — email not set up)\n   To: ${to}${cc.length ? `\n   Cc: ${cc.join(", ")}` : ""}\n   ${subject}` +
+      `\n📧 EMAIL (not sent — email not set up)\n   To: ${to}${cc.length ? `\n   Cc: ${cc.join(", ")}` : ""}${bcc.length ? `\n   Bcc: ${bcc.length} addresses` : ""}\n   ${subject}` +
         (attachments.length ? `\n   Attached: ${attachments.map((a) => a.filename).join(", ")}` : "") +
         "\n",
     );
@@ -53,12 +57,23 @@ export async function sendMail({ to, cc = [], subject, text, attachments = [] }:
       from,
       to,
       ...(cc.length ? { cc } : {}),
+      ...(bcc.length ? { bcc } : {}),
       subject,
       text,
+      ...(html ? { html } : {}),
       ...(attachments.length
         ? { attachments: attachments.map((a) => ({ filename: a.filename, content: Buffer.from(a.content).toString("base64") })) }
         : {}),
     }),
   });
   if (!res.ok) throw new Error(`Resend ${res.status}: ${await res.text()}`);
+}
+
+// The live site (emails really go to everyone): LIVE_EMAIL=true, or APP_URL is a real https address (not localhost).
+// Anywhere else is test mode: bulk emails (the season guide) go only to whoever sends them, listing who'd get them.
+export function isLiveSite(): boolean {
+  if (process.env.LIVE_EMAIL === "true") return true;
+  if (process.env.LIVE_EMAIL === "false") return false;
+  const url = process.env.APP_URL ?? "";
+  return /^https:\/\//.test(url) && !/localhost|127\.0\.0\.1/.test(url);
 }

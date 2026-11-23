@@ -11,7 +11,10 @@ import { actionBase } from "../../stripe/deps";
 import { sendInvoice } from "../../stripe/invoice-mail";
 
 // Register a team (no login yet: the Head Coach proves their email with a code). Every check is in lib/team-signup.
-type ClientStep = Exclude<signup.TeamStep, { step: "loggedIn" }> | { step: "loggedIn"; next: string };
+// Logged in: where to go next, or (`payInPage`) Stripe's form to show in the page first, with `next` for Cancel.
+type ClientStep =
+  | Exclude<signup.TeamStep, { step: "loggedIn" }>
+  | { step: "loggedIn"; next: string; payInPage?: { clientSecret: string; account: string } };
 
 async function run(fn: () => Promise<Awaited<ReturnType<typeof signup.teamSignupComplete>>>): Promise<ClientStep> {
   if (await featureRefusal("scenic-city", "team-registration"))
@@ -22,6 +25,8 @@ async function run(fn: () => Promise<Awaited<ReturnType<typeof signup.teamSignup
     await setSessionCookie(s.token, s.expiresAt);
     // Next: Stripe Checkout when its teams are paid for now; else its organization (its Teams page shows where it's
     // registered).
+    if ("payInPage" in s && s.payInPage)
+      return { step: "loggedIn", next: `/org/${encodeURIComponent(s.slug)}?open=register&paid=cancelled`, payInPage: s.payInPage };
     const next = "pay" in s && s.pay ? s.pay : "slug" in s && s.slug ? `/switch?org=${s.slug}` : "/";
     return { step: "loggedIn", next };
   } catch (e) {
@@ -45,12 +50,13 @@ export async function resetTeamPin(cell: string, code: string, pin1: string, pin
 export async function startTeamSignup(input: signup.TeamSignupInput) {
   return run(() => signup.teamSignupStart(deps, input));
 }
-export async function completeTeamSignup(cell: string, code: string) {
+// `inPage`: Stripe's form opens in the page instead of Stripe's own page.
+export async function completeTeamSignup(cell: string, code: string, inPage = false) {
   const base = await actionBase();
   return run(async () => {
-    const s = await signup.teamSignupComplete(deps, cell, code, { stripe: stripeApi(), base });
+    const s = await signup.teamSignupComplete(deps, cell, code, { stripe: stripeApi(), base, inPage: inPage === true });
     // Registered now (nothing to pay by card): its invoice to its new Owner.
-    if (s.step === "loggedIn" && !s.pay) after(() => sendInvoice(s.programId, s.slug, base));
+    if (s.step === "loggedIn" && !s.pay && !s.payInPage) after(() => sendInvoice(s.programId, s.slug, base));
     return s;
   });
 }

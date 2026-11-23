@@ -7,6 +7,16 @@ describe("schedule request blocks", () => {
     expect(closesOn("COMP", "2027-01-16", "2027-01-09")).toBe("2027-01-10"); // Sat Jan 16 → Sun Jan 10
     expect(closesOn("COMP", "2027-01-17", "2027-01-09")).toBe("2027-01-10"); // a Sunday Game Day → the Sunday before
   });
+  it("closes, set by the League: COMP n days before each Game Day, REC n days before the first; blank keeps the rule", () => {
+    expect(closesOn("COMP", "2027-01-16", "2027-01-09", { compDays: 3 })).toBe("2027-01-13"); // Sat Jan 16 → Wed Jan 13
+    expect(closesOn("COMP", "2027-01-16", "2027-01-09", { compDays: 0 })).toBe("2027-01-16"); // the day itself
+    expect(closesOn("REC", "2027-01-16", "2027-01-09", { recDays: 7 })).toBe("2027-01-02");
+    expect(closesOn("COMP", "2027-01-16", "2027-01-09", { compDays: null, recDays: 7 })).toBe("2027-01-10"); // still the Sunday before
+    const two = [{ start: "09:00", end: "12:00" }, { start: "12:00", end: "15:00" }];
+    expect(parseSettings({ blocks: two, max: 1, compDays: "4", recDays: "" })).toMatchObject({ ok: true, compDays: 4, recDays: null });
+    expect(parseSettings({ blocks: two, max: 1, compDays: "45" })).toMatchObject({ ok: false });
+    expect(parseSettings({ blocks: two, max: 1, recDays: "=1" })).toMatchObject({ ok: false });
+  });
   it("a game is blocked by any block it overlaps", () => {
     expect(blockedBy(["12"], 11 * 60, 55)).toEqual([]);
     expect(blockedBy(["12"], 11 * 60 + 30, 55)).toEqual(["12–3 PM"]);
@@ -21,6 +31,8 @@ describe("schedule request blocks", () => {
     expect(ok).toEqual({
       ok: true,
       max: 1,
+      compDays: null,
+      recDays: null,
       blocks: [
         { key: "0830", label: "8:30 AM–1 PM", start: 510, end: 780 },
         { key: "13", label: "1–5 PM", start: 780, end: 1020 },

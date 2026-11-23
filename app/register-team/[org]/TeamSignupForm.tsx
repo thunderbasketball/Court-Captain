@@ -21,6 +21,7 @@ import {
 } from "./actions";
 import { Alert } from "../../client-ui";
 import { fieldLabel, inputCls, pillCls, primaryBtn } from "../../ui";
+import StripeInPage, { payInPage } from "../../StripeInPage";
 
 type Choice = { value: string; label: string };
 const ROLES = [
@@ -76,7 +77,7 @@ export function TeamSignupForm({
   today: string;
   preset?: string; // the event picked on the login page
 }) {
-  const [screen, setScreen] = useState<"cell" | "pin" | "reset" | "choose" | "form" | "code">("cell");
+  const [screen, setScreen] = useState<"cell" | "pin" | "reset" | "choose" | "form" | "code" | "pay">("cell");
   const [existing, setExisting] = useState(false);
   // A returning coach's CourtSolo accounts and organizations (what they came to do is asked first).
   type Accounts = NonNullable<Extract<TeamStep, { step: "form" }>["accounts"]>;
@@ -105,6 +106,7 @@ export function TeamSignupForm({
   const [pin1, setPin1] = useState("");
   const [pin2, setPin2] = useState("");
   const [code, setCode] = useState("");
+  const [paying, setPaying] = useState<{ pay: { clientSecret: string; account: string }; cancel: string } | null>(null);
 
   type Res = Awaited<ReturnType<typeof lookupCell>>;
   // Moves to the next screen; returns a message to show, or null.
@@ -124,7 +126,12 @@ export function TeamSignupForm({
     } else if (r.step === "code") {
       setMaskedEmail(r.maskedEmail);
       setScreen("code");
-    } else if (r.step === "loggedIn") window.location.assign(r.next);
+    } else if (r.step === "loggedIn") {
+      if (r.payInPage) {
+        setPaying({ pay: r.payInPage, cancel: r.next }); // Stripe's form right here; Cancel: their Home (teams wait)
+        setScreen("pay");
+      } else window.location.assign(r.next);
+    }
     else if (r.step === "error" || r.step === "done") return r.message;
     return null;
   };
@@ -215,6 +222,15 @@ export function TeamSignupForm({
     </StepGuide>
   );
 
+  // Logged in, teams made: pay right here (Stripe's form). Paid: registered. Cancel: their Home, teams waiting in Register
+  // ALL Teams to register (and pay) later.
+  if (screen === "pay" && paying)
+    return (
+      <div className="space-y-3">
+        <p className="text-sm">Your login and teams are made. Pay now to register them.</p>
+        <StripeInPage pay={paying.pay} onCancel={() => window.location.assign(paying.cancel)} />
+      </div>
+    );
   if (screen === "cell")
     return (
       <form
@@ -439,18 +455,18 @@ export function TeamSignupForm({
         className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
-          go(() => completeTeamSignup(head.cell, code));
+          go(() => completeTeamSignup(head.cell, code, payInPage));
         }}
       >
         {step(
           3,
           "Confirm email",
-          "Open your email and find our 6-digit code (check spam too). Type it below and tap Register. Fees? Stripe's secure card page opens next.",
+          "Open your email and find our 6-digit code (check spam too). Type it below and tap Register. Fees? Stripe's secure card form opens next.",
         )}
         <p className="text-sm">
           We emailed a 6-digit code to <strong>{maskedEmail}</strong> (not in your inbox? check your Spam folder). Enter it to finish registering {orgFullName}&apos;s{" "}
           {teams.length === 1 ? "team" : `${teams.length} teams`} in {program?.name}. When the League takes card payments,
-          you&apos;ll pay next on Stripe&apos;s secure page, and {teams.length === 1 ? "the team is" : "the teams are"} registered once it&apos;s paid.
+          you&apos;ll pay next with Stripe&apos;s secure card form, and {teams.length === 1 ? "the team is" : "the teams are"} registered once it&apos;s paid.
         </p>
         <Field label="Code">
           <input

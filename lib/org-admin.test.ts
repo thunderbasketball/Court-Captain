@@ -68,6 +68,7 @@ describe("Admins and Director areas", () => {
       "practices",
       "events",
       "support",
+      "scores", // Scores: an organization with gyms (practice) or Leagues
     ]);
     expect((await orgAreas(db.pool, "scenic-city")).map((a) => a.key)).toEqual([
       "teams",
@@ -75,6 +76,7 @@ describe("Admins and Director areas", () => {
       "programs",
       "scheduling",
       "support",
+      "scores",
     ]);
   });
 
@@ -89,6 +91,7 @@ describe("Admins and Director areas", () => {
       "practices",
       "events",
       "support",
+      "scores",
     ]);
     expect(await directorAreas(db.pool, bo.coachId, "thunder")).toEqual([]);
     expect(await setDirectorAreas(deps(), ada, "thunder", bo.coachId, ["events", "players", "players"])).toEqual({ ok: true });
@@ -187,6 +190,7 @@ describe("Admins and Director areas", () => {
       "scheduling",
       "officials",
       "support",
+      "scores",
     ]);
     expect((await session("t-bo")).thunderAreas).toEqual([]);
 
@@ -283,7 +287,7 @@ describe("Admins and Director areas", () => {
     const groups = (await directorRoles(db.pool, ada, "thunder"))!;
     expect(groups.map((g) => [g.feature, g.roles.map((r) => r.key)])).toContainEqual(["Every organization", ["support"]]);
     expect(groups.flatMap((g) => g.roles.map((r) => r.key)).sort()).toEqual(
-      ["events", "facilities", "players", "practices", "support", "teams", "uniforms"].sort(),
+      ["events", "facilities", "players", "practices", "scores", "support", "teams", "uniforms"].sort(),
     );
     expect(await directorRoles(db.pool, bo, "thunder")).toBeNull(); // Admins only
     await setDirectorAreas(deps(), ada, "thunder", bo.coachId, ["players", "uniforms"]);

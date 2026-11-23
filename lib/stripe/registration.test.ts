@@ -449,7 +449,7 @@ describe("paying to register", () => {
     if (!r.ok) throw new Error(r.message);
     expect(s.checkouts[0].lines).toEqual([{ name: "Winter League 2027: 4B East Ridge TBD", cents: 12000 }]);
     expect(s.checkouts[0].cancelUrl).toBe(`${BASE}/invoice/${org}/${pid}?paid=cancelled`);
-    const cs = r.pay.split("/").at(-1)!;
+    const cs = r.pay!.split("/").at(-1)!;
     s.paid.add(cs);
     expect(await confirmPayment(deps, cs.slice("cs_test_".length), cs)).toEqual({
       ok: true,

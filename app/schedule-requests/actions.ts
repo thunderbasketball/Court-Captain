@@ -30,7 +30,10 @@ export async function setScheduleRequestDay(programId: string, day: string, on: 
 }
 
 // A League's time blocks and how many a team can check (Directors of Programs or Scheduling).
-export async function saveScheduleRequestSettings(programId: string, input: { blocks: { start: string; end: string }[]; max: number }) {
+export async function saveScheduleRequestSettings(
+  programId: string,
+  input: { blocks: { start: string; end: string }[]; max: number; compDays?: string; recDays?: string },
+) {
   return guarded((u) => saveRequestSettings(deps, u, String(programId), input));
 }
 

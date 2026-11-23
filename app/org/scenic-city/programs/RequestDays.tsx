@@ -8,13 +8,15 @@ import { GearIcon } from "../../../OrgSettings";
 import { iconBtn } from "../../../CardIcons";
 import type { RequestSettings } from "@/lib/schedule-request-blocks";
 import RequestSettingsForm from "./RequestSettings";
+import SubCard from "../../../SubCard";
 
 const label = (iso: string) =>
   new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 
-// Schedule requests by Game Day (the program's Game & Bracket Days): a switch per upcoming Game Day. On, the registered
+// Schedule Requests, the program's own card (after Game & Bracket Days): a switch per upcoming Game Day. On, the registered
 // teams' coaches can block up to the League's limit of its time blocks (in their team's Current Registrations). Directors
-// of Programs or Scheduling switch them, and set the blocks and limit with the gear; everyone else sees which days take them.
+// of Programs or Scheduling switch them, and set the blocks, limit and closes with the gear (top right of the card, while
+// it's open); everyone else sees which days take them.
 export default function RequestDays({
   programId,
   days,
@@ -51,13 +53,17 @@ export default function RequestDays({
     router.refresh();
   }
 
+  const taking = days.filter((d) => on[d]).length;
+  const closes = `Closes: COMP ${
+    settings.compDays === null ? "the Sunday before the day" : `${settings.compDays} day${settings.compDays === 1 ? "" : "s"} before the day`
+  }; REC ${settings.recDays ?? 14} days before the first Game Day.`;
   return (
-    <div className="mt-4 border-t border-zinc-100 pt-3 dark:border-white/5">
-      {error && <Toast key={error} message={error} />}
-      {saved > 0 && <Toast key={saved} message="Schedule request settings saved." />}
-      <div className="flex items-start justify-between gap-3">
-        <h3 className="text-sm font-semibold">Schedule requests</h3>
-        {editable && (
+    <SubCard
+      title="Schedule Requests"
+      count={`${taking} of ${days.length} days`}
+      actionWhenOpen
+      action={
+        editable && (
           <button
             type="button"
             aria-expanded={gear}
@@ -67,8 +73,11 @@ export default function RequestDays({
           >
             <GearIcon className="size-5" />
           </button>
-        )}
-      </div>
+        )
+      }
+    >
+      {error && <Toast key={error} message={error} />}
+      {saved > 0 && <Toast key={saved} message="Schedule request settings saved." />}
       {gear && (
         <RequestSettingsForm
           programId={programId}
@@ -81,8 +90,7 @@ export default function RequestDays({
       )}
       <p className="text-xs text-zinc-500">
         On a day that takes them, each team&apos;s coaches can block up to {settings.max} of{" "}
-        {settings.blocks.map((b) => b.label).join(", ")} (their team&apos;s Current Registrations). Closes: REC 2 weeks
-        before the first Game Day; COMP the Sunday before the day.
+        {settings.blocks.map((b) => b.label).join(", ")} (their team&apos;s Current Registrations). {closes}
       </p>
       <ul className="mt-2 divide-y divide-zinc-100 dark:divide-white/5">
         {days.map((d) => (
@@ -107,6 +115,6 @@ export default function RequestDays({
           </li>
         ))}
       </ul>
-    </div>
+    </SubCard>
   );
 }

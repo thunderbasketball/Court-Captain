@@ -50,7 +50,7 @@ async function Fastbreak() {
   return (
     <>
       <AppHeader user={user} context={scenic.key} tab="scenic-teams" />
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
         <Link href="/org/scenic-city/teams" className="text-sm font-medium text-thunder-blue hover:underline">
           ← Teams
         </Link>

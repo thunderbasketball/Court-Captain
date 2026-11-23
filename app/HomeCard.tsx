@@ -93,7 +93,8 @@ export default function HomeCard({
     if (next) load();
   };
   return (
-    <div className="relative">
+    // On a wide screen the cards sit two across; an open card takes the full width (MembersCards' grid).
+    <div className={`relative ${want ? "lg:col-span-2" : ""}`}>
       <details
         id={id}
         className={`${card} group overflow-hidden`}

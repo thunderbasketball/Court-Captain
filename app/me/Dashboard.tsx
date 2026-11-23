@@ -31,7 +31,7 @@ export default async function Dashboard({ user, coachId }: { user: SessionUser; 
   return (
     <>
       <AppHeader user={user} />
-      <main className="mx-auto w-full max-w-3xl flex-1 space-y-6 px-4 py-6">
+      <main className="mx-auto w-full max-w-3xl flex-1 space-y-6 px-4 py-6 lg:max-w-6xl">
         <PageTitle title={d.name} subtitle={own ? "Your dashboard" : "Their dashboard (as an Admin sees it)"} />
 
         <section className={`${card} space-y-2 p-4 text-sm`}>

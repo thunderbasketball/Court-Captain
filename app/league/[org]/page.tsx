@@ -10,7 +10,7 @@ import { publicLeague, publicLeagues } from "@/lib/public-league";
 import { REC_LIMITED, shortDate } from "@/lib/program-options";
 import { easternDate } from "@/lib/time";
 import OrgLogo from "../../OrgLogo";
-import { ProgramSchedule, ProgramTeams } from "../../PublicProgramViews";
+import { ProgramDivisions, ProgramSchedule } from "../../PublicProgramViews";
 import { TeamSignupForm } from "../../register-team/[org]/TeamSignupForm";
 import { GRADE_CHOICES } from "@/lib/scenic-teams";
 import { openPrograms } from "@/lib/team-signup";
@@ -25,7 +25,7 @@ export async function generateMetadata({ params }: PageProps<"/league/[org]">): 
 
 export default function LeaguePage({ params, searchParams }: PageProps<"/league/[org]">) {
   return (
-    <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+    <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
       <Suspense fallback={<p className="text-center text-zinc-500">Loading…</p>}>
         <League params={params} searchParams={searchParams} />
       </Suspense>
@@ -122,8 +122,9 @@ async function League({
                 </div>
               </SubCard>
             )}
+            {/* Division → REC / COMP → Grade (Standings, then its Schedule by date). */}
             <SubCard title="Teams" count={league.groups.reduce((n, g) => n + g.teams.length, 0)} open={tab === "teams"}>
-              <ProgramTeams org={org} groups={league.groups} wide />
+              <ProgramDivisions org={org} groups={league.groups} schedule={league.schedule} today={today} />
             </SubCard>
             <SubCard title="Schedule" count={league.schedule ? undefined : "not posted yet"} open={tab === "schedule"}>
               <ProgramSchedule days={league.schedule} today={today} />

@@ -85,7 +85,7 @@ export async function EventsContent({
   return (
     <>
       {!embedded && <AppHeader user={user} tab="schedule" context={user.isDirector ? "director" : active?.org === "thunder" ? active.key : undefined} />}
-      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
         <div className="flex items-start justify-between gap-3">
           <PageTitle
             title="Events"

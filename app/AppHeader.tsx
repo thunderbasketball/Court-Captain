@@ -401,7 +401,7 @@ export default async function AppHeader({
             </button>
           </form>
         )}
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
+        <div className="mx-auto flex max-w-3xl lg:max-w-6xl items-center justify-between gap-3 px-4 py-3">
           {/* The organization's logo and name open its main page (what anyone sees: programs, teams, officials). A plain
               link, loaded fresh each time: that page used to send logged-in people straight back in, and the app's link
               preloading could keep that old answer. */}
@@ -429,7 +429,7 @@ export default async function AppHeader({
         </div>
 
         {orgChips.length > 1 && (
-          <nav aria-label="Switch role" className="mx-auto max-w-3xl">
+          <nav aria-label="Switch role" className="mx-auto max-w-3xl lg:max-w-6xl">
             <div className="flex items-center gap-2 overflow-x-auto px-4 pb-3 [scrollbar-width:none]">
               {orgChips.map((c) => {
                 const on = c.key === context;
@@ -456,7 +456,7 @@ export default async function AppHeader({
 
         {/* The row under it: your name (My dashboard) on the left; Check-in, Chat, Alerts, the gear and 🔍 search on
           the right. */}
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 pb-2">
+        <div className="mx-auto flex max-w-3xl lg:max-w-6xl items-center justify-between gap-3 px-4 pb-2">
           <Link href="/me" className="min-w-0 truncate text-sm font-medium text-zinc-600 hover:underline dark:text-zinc-300">
             {user.firstName} {user.lastName}
           </Link>
@@ -479,7 +479,7 @@ export default async function AppHeader({
         {showTabs && (
           <nav
             aria-label={scenicTabs ? "Scenic City" : teamTab ? "Team" : "Director"}
-            className="mx-auto hidden max-w-3xl px-4 pb-3 sm:block"
+            className="mx-auto hidden max-w-3xl px-4 pb-3 sm:block lg:max-w-6xl"
           >
             <div className="flex items-center justify-between gap-2">
               <div className="inline-flex rounded-full bg-zinc-100 p-1 dark:bg-zinc-900">

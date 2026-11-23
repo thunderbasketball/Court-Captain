@@ -63,7 +63,7 @@ export async function ScenicUsersContent({
   return (
     <>
       {!embedded && <AppHeader user={user} context={scenic.key} tab="scenic-members" />}
-      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
         {!embedded && <MembersNav user={user} current="staff" />}
         <div className="flex flex-wrap items-start justify-between gap-3">
           <PageTitle title="Scenic City Users" subtitle="Join requests, then everyone with a Scenic City role, by last name" />

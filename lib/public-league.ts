@@ -8,7 +8,7 @@ import { orgHasArea } from "./org-admin";
 import { PLACE_SQL } from "./scenic-games";
 import { directionsUrl } from "./directions";
 import { PROGRAM_LOGO_SQL } from "./scenic-programs";
-import { gradeLabel } from "./scenic-teams";
+import { gradeLabel, gradeRange } from "./scenic-teams";
 import type { Queryable } from "./sql";
 import { easternDate } from "./time";
 
@@ -53,8 +53,11 @@ export async function publicLeagues(q: Pick<Queryable, "query">, now: Date): Pro
   return (await publicPrograms(q, now)).filter((p) => p.kind === "League");
 }
 
-export type PublicTeam = { id: string; name: string; tag: string }; // tag: an organization's or club's abbreviation, or "Solo"
-export type PublicGroup = { label: string; teams: PublicTeam[] }; // "5th Boys COMP"
+// tag: an organization's or club's abbreviation, or "Solo"; pi, w, l: its Power Index and record in this program.
+export type PublicTeam = { id: string; name: string; tag: string; pi: number; w: number; l: number };
+// A grade at a level ("5th Boys COMP"), inside its division ("Boys 4th–5th"): the public page nests them Division → REC /
+// COMP → Grade.
+export type PublicGroup = { label: string; division: string; level: string; grade: string; teams: PublicTeam[] };
 export type PublicGame = {
   starts: string | null; // "HH:MM" Eastern, once placed
   gym: string | null;
@@ -82,11 +85,17 @@ export async function publicLeague(q: Pick<Queryable, "query">, now: Date, id: u
     grade: number;
     gender: string;
     level: string;
+    low: number;
+    high: number;
     partner: string | null;
     abbr: string | null;
     solo: boolean | null;
+    pi: number;
+    w: number;
+    l: number;
   }>(
-    `select t.id::text, t.name, g.grade, d.gender, g.level, p.name as partner, coalesce(og.abbr, p.abbr) as abbr, og.kind = 'Team' as solo
+    `select t.id::text, t.name, g.grade, d.gender, g.level, d.grade_low as low, d.grade_high as high,
+            coalesce(x.pi, 500) as pi, coalesce(x.wins, 0) as w, coalesce(x.losses, 0) as l, p.name as partner, coalesce(og.abbr, p.abbr) as abbr, og.kind = 'Team' as solo
        from scenic_registrations r
        join scenic_teams t on t.id = r.team_id
        join scenic_pools po on po.id = r.pool_id
@@ -94,16 +103,26 @@ export async function publicLeague(q: Pick<Queryable, "query">, now: Date, id: u
        join scenic_divisions d on d.id = g.division_id
        left join partners p on p.id = t.partner_id
        left join organizations og on og.slug = p.org_slug
+       left join scenic_pi x on x.program_id = r.program_id and x.team_id = t.id
       where r.program_id = $1 and r.removed_by is null and ${NOT_DEV}
-      order by d.grade_low = -1 desc, d.gender, g.grade, g.level desc, lower(t.name)`,
+      order by d.grade_low = -1 desc, d.gender, g.grade, g.level desc, coalesce(x.pi, 500) desc, lower(t.name)`,
     [id],
   );
   const groups: PublicGroup[] = [];
   for (const t of teams.rows) {
     const label = groupLabel(t.grade, t.gender, t.level);
     let g = groups.at(-1);
-    if (g?.label !== label) groups.push((g = { label, teams: [] }));
-    g.teams.push({ id: t.id, name: t.name, tag: t.partner && !t.solo ? (t.abbr ?? clubAbbr(t.partner)) : "Solo" });
+    if (g?.label !== label)
+      groups.push(
+        (g = {
+          label,
+          division: `${t.gender} ${gradeRange(t.low, t.high)}`,
+          level: t.level,
+          grade: `${gradeLabel(t.grade, t.grade)} Grade`,
+          teams: [],
+        }),
+      );
+    g.teams.push({ id: t.id, name: t.name, tag: t.partner && !t.solo ? (t.abbr ?? clubAbbr(t.partner)) : "Solo", pi: t.pi, w: t.w, l: t.l });
   }
   // Only a League has a schedule, once published.
   if (league.kind !== "League" || !league.published) return { ...league, groups, schedule: null };
@@ -197,17 +216,25 @@ export async function followedTeams(q: Pick<Queryable, "query">, now: Date, ids:
     [list],
   );
   const teams = new Map<string, FollowedTeam>(
-    names.rows.map((t) => [t.id, { id: t.id, name: t.name, roster: t.keeps ? [] : null, programs: [] }]),
+    names.rows.map((t) => [t.id, { id: t.id, name: t.name, roster: [], programs: [] }]),
   );
   if (!teams.size) return [];
-  // Rosters: a Thunder team's players, or an organization's team's (typed in or imported).
+  // Rosters, with jersey numbers: a Thunder team's players (their uniform numbers), an organization's team's (typed in
+  // or imported), or a League team's own (FastBreak, a club, Solo). By number (none last), then name.
   const players = await q.query<{ team: string; first: string; last: string; jersey: string | null }>(
-    `select t.id::text as team, p.first_name as first, p.last_name as last, null::text as jersey
-       from scenic_teams t join team_players p on p.team_id = t.thunder_team_id where t.id = any($1::bigint[])
-     union all
-     select t.id::text, p.first_name, p.last_name, p.jersey
-       from scenic_teams t join org_team_players p on p.team_id = t.org_team_id where t.id = any($1::bigint[])
-     order by 1, 2, 3`,
+    `select * from (
+       select t.id::text as team, p.first_name as first, p.last_name as last, u.number as jersey
+         from scenic_teams t join team_players p on p.team_id = t.thunder_team_id
+         left join team_uniforms u on u.team_id = p.team_id and u.registrant_id = p.registrant_id
+        where t.id = any($1::bigint[])
+       union all
+       select t.id::text, p.first_name, p.last_name, p.jersey
+         from scenic_teams t join org_team_players p on p.team_id = t.org_team_id where t.id = any($1::bigint[])
+       union all
+       select t.id::text, p.first_name, p.last_name, p.jersey
+         from scenic_teams t join scenic_team_players p on p.team_id = t.id
+        where t.id = any($1::bigint[]) and t.org_team_id is null and t.thunder_team_id is null
+     ) x order by team, (case when jersey ~ '^[0-9]+$' then jersey::int end) nulls last, lower(last), lower(first)`,
     [[...teams.keys()]],
   );
   for (const p of players.rows)

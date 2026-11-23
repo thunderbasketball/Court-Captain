@@ -10,12 +10,16 @@ const field =
   "w-full min-w-0 rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm tabular-nums dark:border-white/15 dark:bg-zinc-900";
 
 // The League's schedule request settings (its Schedule requests gear; Directors of Programs or Scheduling), opened in
-// place: each time block's start and end (× removes it, + Add block), and how many a team can check. Checked again on
+// place: each time block's start and end (× removes it, + Add block), how many a team can check, and when requests close
+// (COMP: days before each Game Day; REC: days before the first; blank: the standard rule). Checked again on
 // the server; who saved it is recorded.
 export default function RequestSettingsForm({ programId, settings, close }: { programId: string; settings: RequestSettings; close: (saved?: boolean) => void }) {
   const router = useRouter();
   const [rows, setRows] = useState<Row[]>(settings.blocks.map((b, i) => ({ id: i, start: hhmm(b.start), end: hhmm(b.end) })));
   const [max, setMax] = useState(settings.max);
+  // When requests close (blank: the standard rule).
+  const [compDays, setCompDays] = useState(settings.compDays === null ? "" : String(settings.compDays));
+  const [recDays, setRecDays] = useState(settings.recDays === null ? "" : String(settings.recDays));
   const [error, setError] = useState<string | null>(null);
   const [busy, start] = useTransition();
   const set = (id: number, change: Partial<Row>) => setRows((r) => r.map((x) => (x.id === id ? { ...x, ...change } : x)));
@@ -28,7 +32,12 @@ export default function RequestSettingsForm({ programId, settings, close }: { pr
         e.preventDefault();
         start(async () => {
           setError(null);
-          const r = await saveScheduleRequestSettings(programId, { blocks: rows.map(({ start, end }) => ({ start, end })), max });
+          const r = await saveScheduleRequestSettings(programId, {
+            blocks: rows.map(({ start, end }) => ({ start, end })),
+            max,
+            compDays: compDays.trim(),
+            recDays: recDays.trim(),
+          });
           if (!r.ok) return setError(r.message);
           close(true);
           router.refresh();
@@ -79,6 +88,31 @@ export default function RequestSettingsForm({ programId, settings, close }: { pr
           ))}
         </select>
         <span className="text-zinc-500">of {rows.length} (they must be free for the rest)</span>
+      </label>
+      <p className="pt-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Requests close</p>
+      <label className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="w-12 font-medium">COMP</span>
+        <input
+          inputMode="numeric"
+          aria-label="COMP: days before each Game Day"
+          placeholder="Sun"
+          className={`${field} w-16 text-center`}
+          value={compDays}
+          onChange={(e) => setCompDays(e.target.value.replace(/\D/g, "").slice(0, 2))}
+        />
+        <span className="text-zinc-500">days before each Game Day {compDays ? "" : "(blank: the Sunday before)"}</span>
+      </label>
+      <label className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="w-12 font-medium">REC</span>
+        <input
+          inputMode="numeric"
+          aria-label="REC: days before the first Game Day"
+          placeholder="14"
+          className={`${field} w-16 text-center`}
+          value={recDays}
+          onChange={(e) => setRecDays(e.target.value.replace(/\D/g, "").slice(0, 2))}
+        />
+        <span className="text-zinc-500">days before the League&apos;s first Game Day (all dates at once)</span>
       </label>
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
       <div className="flex gap-2">

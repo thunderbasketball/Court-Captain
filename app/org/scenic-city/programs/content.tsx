@@ -69,7 +69,7 @@ export async function ProgramsContent({
   return (
     <>
       {!embedded && <AppHeader user={user} context={scenic.key} tab="programs" />}
-      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
         <ProgramsNav current="all" />
         <div className="flex items-start justify-between gap-3">
           <PageTitle title="Programs" subtitle="Leagues, Circuits and Tournaments" />

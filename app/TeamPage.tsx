@@ -92,7 +92,12 @@ export default function TeamPage(p: {
   const hasHead = p.staff.list.some((s) => s.role === "HeadCoach");
   const staffEmails = [...new Set(p.staff.list.flatMap((s) => (s.email ? [s.email.toLowerCase()] : [])))];
   return (
-    <main className={p.embedded ? "space-y-4 rounded-2xl bg-zinc-50 p-3 dark:bg-white/5" : "mx-auto w-full max-w-xl flex-1 space-y-4 px-4 py-6"}>
+    // A phone: one column. A wide screen: the team, its registrations and Next 10 days on the left; Staff, Roster, Games
+    // and the rest on the right.
+    // (By the room it has, not the screen: opened inside a narrow list it stays one column.)
+    <main className={p.embedded ? "@container rounded-2xl bg-zinc-50 p-3 dark:bg-white/5" : "@container mx-auto w-full max-w-xl flex-1 px-4 py-6 lg:max-w-6xl"}>
+      <div className="space-y-4 @4xl:grid @4xl:grid-cols-2 @4xl:items-start @4xl:gap-4 @4xl:space-y-0">
+      <div className="space-y-4">
       {p.back && (
         <Link href={p.back} className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
           ← Teams
@@ -151,7 +156,9 @@ export default function TeamPage(p: {
       )}
 
       {p.next7}
+      </div>
 
+      <div className="space-y-4">
       <CollapseCard
         title="Staff"
         count={p.staff.list.length}
@@ -317,6 +324,8 @@ export default function TeamPage(p: {
         </CollapseCard>
       )}
       {p.footer}
+      </div>
+      </div>
     </main>
   );
 }

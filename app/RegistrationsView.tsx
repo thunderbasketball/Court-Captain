@@ -26,7 +26,7 @@ type View = (typeof VIEWS)[number]["key"];
 const when = (iso: string) =>
   new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: TZ });
 
-type Pay = { payments: Record<string, TeamCardPayment>; canRefund: boolean };
+type Pay = { payments: Record<string, TeamCardPayment[]>; canRefund: boolean };
 
 export default function RegistrationsView({
   programs,
@@ -163,8 +163,15 @@ function Rows({
                   </dd>
                 </>
               )}
-              {payments[`${r.programId}-${r.teamId}`] && (
-                <CardPaid p={payments[`${r.programId}-${r.teamId}`]} canRefund={canRefund} team={{ id: r.teamId, name: r.team }} />
+              {payments[`${r.programId}-${r.teamId}`]?.length > 0 && (
+                <>
+                  <dt className="text-zinc-500">Payments</dt>
+                  <dd className="space-y-1.5">
+                    {payments[`${r.programId}-${r.teamId}`].map((p) => (
+                      <CardPaid key={p.id} p={p} canRefund={canRefund} team={{ id: r.teamId, name: r.team }} />
+                    ))}
+                  </dd>
+                </>
               )}
               <dt className="text-zinc-500">Registered</dt>
               <dd>
@@ -246,25 +253,62 @@ function PaidButton({
 const dollars = (c: number) => `$${(c / 100).toFixed(2)}`;
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: TZ });
 
-// The team's card payment: what was charged (with the card fee when added), refunds, and Refund (any amount up to
-// what's left; the server checks it's the League's Owner). One payment for several teams says so.
+// One card payment, its own card (closed: amount, date and what it was for; opened: its details and Refund). A team's
+// first registration and each addition (dates, a 2nd Game) or invoice paid are separate payments. Refund: any amount up
+// to what's left (the server checks it's the League's Owner). One payment for several teams says so.
 function CardPaid({ p, canRefund, team }: { p: TeamCardPayment; canRefund: boolean; team: { id: string; name: string } }) {
   const left = p.paidCents - p.refundedCents;
+  const when = new Date(p.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: TZ });
   return (
-    <>
-      <dt className="text-zinc-500">Card</dt>
-      <dd className="space-y-1">
-        <span className="block">
-          {dollars(p.paidCents)} paid by {p.by} on {day(p.at)}
-          {p.teams > 1 && <span className="text-zinc-500"> · one payment for {p.teams} teams</span>}
+    <details className="group/pay rounded-lg ring-1 ring-zinc-950/10 dark:ring-white/10">
+      <summary className="flex cursor-pointer list-none items-start justify-between gap-2 px-2.5 py-1.5 [&::-webkit-details-marker]:hidden">
+        <span className="min-w-0">
+          <span className="font-medium">{dollars(p.teams > 1 ? p.teamCents : p.paidCents)}</span>
+          <span className="text-zinc-500"> · {day(p.at)} · </span>
+          <span>{p.what}</span>
+          {p.refundedCents > 0 && <span className="text-xs font-medium text-amber-700 dark:text-amber-300"> · refunded {dollars(p.refundedCents)}</span>}
         </span>
-        {p.refunds.map((f, i) => (
-          <span key={i} className="block text-xs font-medium text-amber-700 dark:text-amber-300">
-            Refunded {dollars(f.cents)} by {f.by} on {day(f.at)}
-          </span>
-        ))}
-        {left > 0 && canRefund && <RefundForm paymentId={p.id} left={left} who={p.who} team={team} />}
-      </dd>
-    </>
+        <span aria-hidden className="text-xs text-zinc-400 transition group-open/pay:rotate-90">
+          ▶
+        </span>
+      </summary>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 px-2.5 pb-2.5 text-sm">
+        <dt className="text-zinc-500">For</dt>
+        <dd>{p.kind === "invoice" ? `${p.what} (paid on the invoice)` : p.what}</dd>
+        <dt className="text-zinc-500">Charged</dt>
+        <dd>
+          {dollars(p.teamCents)}
+          {p.cardFeeCents > 0 && p.teams === 1 && <span className="text-zinc-500"> + {dollars(p.cardFeeCents)} card processing</span>}
+          {p.teams === 1 ? <span className="font-medium"> = {dollars(p.paidCents)}</span> : null}
+          {p.teams > 1 && (
+            <span className="block text-zinc-500">
+              one payment of {dollars(p.paidCents)} for {p.teams} teams{p.cardFeeCents > 0 ? ` (with ${dollars(p.cardFeeCents)} card processing)` : ""}
+            </span>
+          )}
+        </dd>
+        <dt className="text-zinc-500">Paid</dt>
+        <dd>
+          {when} by {p.by}
+          {p.who !== p.by && <span className="text-zinc-500"> ({p.who})</span>} · Card (Stripe)
+        </dd>
+        {p.refunds.length > 0 && (
+          <>
+            <dt className="text-zinc-500">Refunds</dt>
+            <dd className="space-y-0.5">
+              {p.refunds.map((f, i) => (
+                <span key={i} className="block text-xs font-medium text-amber-700 dark:text-amber-300">
+                  {dollars(f.cents)} by {f.by} on {day(f.at)}
+                </span>
+              ))}
+            </dd>
+          </>
+        )}
+        {left > 0 && canRefund && (
+          <dd className="col-span-2">
+            <RefundForm paymentId={p.id} left={left} who={p.who} team={team} />
+          </dd>
+        )}
+      </dl>
+    </details>
   );
 }

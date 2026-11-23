@@ -29,7 +29,7 @@ async function PracticeCheckIn({ params }: { params: PageProps<"/events/practice
   return (
     <>
       <AppHeader user={user} tab="schedule" context={user.isDirector ? "director" : `team:${practice.teamId}`} />
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
         <Link href="/events" className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
           ← Events
         </Link>

@@ -67,7 +67,7 @@ export async function PartnersContent({
   return (
     <>
       {!embedded && <AppHeader user={user} context={scenic.key} tab="scenic-facilities" />}
-      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
         {!embedded && <FacilitiesNav user={user} current="all" />}
         <div className="flex items-start justify-between gap-3">
           <PageTitle

@@ -110,8 +110,9 @@ function RegisterAllPreview({
   const [err, setErr] = useState<string | null>(null);
   const [left, setLeft] = useState<Set<string>>(new Set()); // unchecked: left out
   const [open, setOpen] = useState<Set<string>>(new Set()); // grade groups expanded (all collapsed at first)
+  const [paying, setPaying] = useState<{ clientSecret: string; account: string } | null>(null);
   const call = (preview: boolean, only?: string[], mode?: "card" | "later") =>
-    org === "scenic-city" ? registerAllScenicTeams(programId, preview, only) : registerAll(org, programId, preview, only, mode);
+    org === "scenic-city" ? registerAllScenicTeams(programId, preview, only) : registerAll(org, programId, preview, only, mode, payInPage);
   useEffect(() => {
     let live = true;
     call(true).then((r) => {
@@ -124,6 +125,8 @@ function RegisterAllPreview({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the pop-up opens
   }, []);
+  // Paying: Stripe's form right here; registered once it's paid. Cancel: back to the teams, nothing registered.
+  if (paying) return <StripeInPage pay={paying} onCancel={() => setPaying(null)} />;
   if (err) return <p className="text-sm text-red-600 dark:text-red-400">{err}</p>;
   if (!plan) return <p className="text-sm text-zinc-500">Checking your teams…</p>;
   const picked = plan.teams.filter((t) => !left.has(t.id));
@@ -320,6 +323,7 @@ function RegisterAllPreview({
               start(async () => {
                 const r = await call(false, picked.map((t) => t.id), payLaterOk ? "card" : undefined);
                 if (!r.ok) return setErr(r.message);
+                if ("payInPage" in r && r.payInPage) return setPaying(r.payInPage as { clientSecret: string; account: string }); // Stripe's form right here
                 if ("pay" in r && typeof r.pay === "string") {
                   window.location.href = r.pay; // to Stripe Checkout; back here once paid (or cancelled)
                   return;
@@ -460,6 +464,14 @@ export function ProgramButton({
   const [busy, start] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
   const [confirm, confirmDialog] = useConfirm();
+  const [paying, setPaying] = useState<{ clientSecret: string; account: string } | null>(null);
+  // Paying: Stripe's form right here (full width under the program); registered once it's paid.
+  if (paying)
+    return (
+      <div className="w-full basis-full">
+        <StripeInPage pay={paying} onCancel={() => setPaying(null)} />
+      </div>
+    );
   return (
     <>
       {registered ? (
@@ -492,7 +504,8 @@ export function ProgramButton({
           className={`${btn} bg-thunder-blue text-white`}
           onClick={() =>
             start(async () => {
-              const r = await registerTeam(org, teamId, programId);
+              const r = await registerTeam(org, teamId, programId, undefined, undefined, payInPage);
+              if (r.ok && r.payInPage) return void setPaying(r.payInPage); // Stripe's form right here
               if (r.ok && r.pay) return void (window.location.href = r.pay); // to Stripe to pay; registered once paid
               setMsg(r.ok ? `Registered: ${r.division}.` : r.message);
               if (r.ok) router.refresh();

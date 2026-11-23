@@ -92,7 +92,7 @@ export async function OrgTeamsContent({
   return (
     <>
       {!embedded && <AppHeader user={user} context={`org:${slug}`} tab="org-teams" />}
-      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
         <TeamsList
           slot={embedded ? "card-slot-teams" : undefined}
           count={list.teams.length}

@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { payOpenInvoice } from "../../actions";
+import StripeInPage, { payInPage } from "../../../StripeInPage";
 
 // The invoice's buttons (not printed): Print / Save as PDF, and Pay by card when something is due.
 export function InvoiceActions({
@@ -19,6 +20,14 @@ export function InvoiceActions({
 }) {
   const [busy, start] = useTransition();
   const [err, setErr] = useState<string | null>(null);
+  const [paying, setPaying] = useState<{ clientSecret: string; account: string } | null>(null);
+  // Paying: Stripe's form right here (Cancel closes it; nothing is paid).
+  if (paying)
+    return (
+      <div className="w-full print:hidden">
+        <StripeInPage pay={paying} onCancel={() => setPaying(null)} />
+      </div>
+    );
   return (
     <div className="flex flex-wrap items-center gap-2 print:hidden">
       {!payOnly && (
@@ -36,9 +45,10 @@ export function InvoiceActions({
           disabled={busy}
           onClick={() =>
             start(async () => {
-              const r = await payOpenInvoice(org, programId);
+              const r = await payOpenInvoice(org, programId, payInPage);
               if (!r.ok) return setErr(r.message);
-              window.location.href = r.pay; // Stripe Checkout; back here once paid
+              if (r.payInPage) return setPaying(r.payInPage); // Stripe's form opens right here
+              if (r.pay) window.location.href = r.pay; // Stripe's own page; back here once paid
             })
           }
           className="rounded-full bg-[#635bff] px-4 py-2 text-sm font-semibold text-white hover:bg-[#5146e5] disabled:opacity-50"

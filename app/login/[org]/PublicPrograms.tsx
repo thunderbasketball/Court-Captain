@@ -4,8 +4,7 @@ import { useState, useTransition } from "react";
 import type { PublicDay, PublicGroup } from "@/lib/public-league";
 import { REC_LIMITED } from "@/lib/program-options";
 import { loadPublicProgram } from "../../league/actions";
-import { ProgramSchedule, ProgramTeams } from "../../PublicProgramViews";
-import { MyTeams } from "../../FollowTeams";
+import { ProgramDivisions } from "../../PublicProgramViews";
 import Link from "next/link";
 
 export type ProgramCard = {
@@ -22,22 +21,14 @@ export type ProgramCard = {
 
 type Loaded = { groups: PublicGroup[]; schedule: PublicDay[] | null; today: string };
 
-const tabCls = (on: boolean) =>
-  `shrink-0 border-b-2 px-3 py-2 text-sm font-semibold ${
-    on
-      ? "border-thunder-orange text-zinc-900 dark:text-white"
-      : "border-transparent text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
-  }`;
 
 // The organization's programs on its login page, no login needed (SPEC.md section 14): open for registration, under
-// way, or ended in the last 30 days. Tap one to open it right here: Teams, and a League's Schedule once published.
+// way, or ended in the last 30 days. Tap one to open it right here: Division → REC / COMP → Grade (Standings, Schedule).
 export default function PublicPrograms({ org, programs }: { org: string; programs: ProgramCard[] }) {
   if (!programs.length) return null;
   return (
     <>
-      {/* The teams this device follows (☆ on a program's Teams). */}
-      <MyTeams org={org} />
-      <section className="mt-4 space-y-2">
+      <section className="mt-4 space-y-2 lg:mt-0">
       <h2 className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Programs</h2>
       <ul className="space-y-2">
         {programs.map((p) => (
@@ -51,7 +42,6 @@ export default function PublicPrograms({ org, programs }: { org: string; program
 
 function Program({ org, p }: { org: string; p: ProgramCard }) {
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<"teams" | "schedule">("teams");
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, start] = useTransition();
@@ -67,7 +57,6 @@ function Program({ org, p }: { org: string; p: ProgramCard }) {
         else setError(r.message);
       });
   };
-  const teamCount = data?.groups.reduce((n, g) => n + g.teams.length, 0);
 
   return (
     <li className="rounded-xl bg-white p-3 ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10">
@@ -112,28 +101,12 @@ function Program({ org, p }: { org: string; p: ProgramCard }) {
       </div>
 
 
+      {/* Opened: its Divisions, each with REC and COMP, each with its Grades (Standings, then Schedule by date). */}
       {open && (
         <div className="mt-3">
-          <div role="tablist" className="mb-3 flex gap-1 border-b border-zinc-200 dark:border-white/10">
-            <button type="button" role="tab" aria-selected={tab === "teams"} onClick={() => setTab("teams")} className={tabCls(tab === "teams")}>
-              Teams{teamCount !== undefined && ` (${teamCount})`}
-            </button>
-            {p.kind === "League" && (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === "schedule"}
-                onClick={() => setTab("schedule")}
-                className={tabCls(tab === "schedule")}
-              >
-                Schedule
-              </button>
-            )}
-          </div>
           {loading && !data && <p className="p-2 text-sm text-zinc-500">Loading…</p>}
           {error && <p className="p-2 text-sm text-red-600">{error}</p>}
-          {data && tab === "teams" && <ProgramTeams org={org} groups={data.groups} />}
-          {data && tab === "schedule" && <ProgramSchedule days={data.schedule} today={data.today} />}
+          {data && <ProgramDivisions org={org} groups={data.groups} schedule={data.schedule} today={data.today} />}
         </div>
       )}
     </li>

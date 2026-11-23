@@ -39,7 +39,7 @@ export async function ScenicCoachesContent({
   return (
     <>
       {!embedded && <AppHeader user={user} context={scenic.key} tab="scenic-members" />}
-      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
         {!embedded && <MembersNav user={user} current="coaches" />}
         <PageTitle title="Coaches" subtitle="The coaches of each program's registered teams" />
         {data.programs.length > 1 && (

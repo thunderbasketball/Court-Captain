@@ -106,7 +106,7 @@ export async function SchedulerContent({
     <>
       {!embedded && <AppHeader user={user} context={scenic.key} tab="scheduler" />}
       <div className="flex flex-1 flex-col">
-        <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 py-6">
+        <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 py-6 lg:max-w-6xl">
           {!programId && <PageTitle title="Scheduler" subtitle="Each Game Day across every League: its teams, matchups and grid." />}
           {program && (
             <div>

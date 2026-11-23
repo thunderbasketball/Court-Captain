@@ -28,6 +28,9 @@ import RegistrationsCard from "./RegistrationsCard";
 import ProgramsCard, { programCount } from "./ProgramsCard";
 import SubCard from "./SubCard";
 import SupportCard from "./SupportCard";
+import ScoresList from "./scores/ScoresList";
+import { easternDate } from "@/lib/time";
+import { scoreGames } from "@/lib/scores";
 import OfficialsCard from "./officials/OfficialsCard";
 import GamesToOfficiateCard from "./officiating/GamesToOfficiateCard";
 // Each part's contents (several still read the data where that organization keeps it today: Thunder's own teams,
@@ -168,6 +171,9 @@ export default async function OrgHome({
     // People asking to join (Admins), as kept for a League.
     admin ? db.query<{ n: number }>("select count(*)::int as n from access_requests where org = $1", [org]).then((r) => r.rows[0].n) : 0,
   ]);
+  // Scores: games at its gyms (or of its own Leagues) up to today, for its Directors of Scores, Owners and Admins.
+  const scoreList = user.actingBy ? null : await scoreGames(db, user, org, now);
+  const scoresLeft = scoreList?.filter((g) => g.homeScore === null && !g.forfeit).length ?? 0;
   const officiatingWait = officiating?.filter((r) => r.status === "pending").length ?? 0;
   const teamAlert =
     org === "thunder"
@@ -402,6 +408,17 @@ export default async function OrgHome({
           },
         ]
       : []),
+    ...(scoreList && (scoreList.length > 0 || has("programs"))
+      ? [
+          {
+            key: "scores",
+            title: "Scores",
+            count: scoresLeft ? `${scoresLeft} to enter` : undefined,
+            alert: scoresLeft > 0,
+            body: <ScoresList games={scoreList} today={easternDate(now)} />,
+          },
+        ]
+      : []),
     { key: "support", title: "Support", alert: (metrics?.waiting.newChats ?? 0) > 0, body: <SupportCard user={user} org={org} /> },
   ];
 
@@ -414,7 +431,7 @@ export default async function OrgHome({
       <Suspense fallback={null}>
         <PaidNotice />
       </Suspense>
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
         <MembersCards cards={cards} open={openCard} heading={null} />
       </main>
     </>

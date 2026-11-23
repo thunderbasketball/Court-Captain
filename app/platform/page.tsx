@@ -49,7 +49,7 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
   return (
     <>
       <AppHeader user={user} context="platform" />
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
         <PageTitle title="CourtCaptain" subtitle={`${data.orgs.length} organizations · ${data.platformAdmins.length} staff`} />
         <MembersCards
           heading={null}

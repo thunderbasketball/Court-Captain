@@ -33,7 +33,7 @@ export async function HostingSitesMembersContent({
   return (
     <>
       {!embedded && <AppHeader user={user} context={scenic.key} tab="scenic-members" />}
-      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
         {!embedded && <MembersNav user={user} current="hosting-sites" />}
         <PageTitle title="Hosting Organizations" subtitle="Who runs each site: Owners and Admins" />
         {!sites.length && <p className="text-sm text-zinc-500">No hosting sites yet.</p>}

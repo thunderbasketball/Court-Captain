@@ -48,7 +48,7 @@ async function Inbox({ searchParams }: { searchParams: PageProps<"/inbox">["sear
   return (
     <>
       <AppHeader user={user} context={here?.key ?? active?.key} />
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
         <div className="flex items-start justify-between gap-3">
           <PageTitle
             title="Announcements"

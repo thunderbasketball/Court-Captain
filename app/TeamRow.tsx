@@ -401,8 +401,11 @@ export function TeamsByLevel<T extends { level: string; gender: string }>({
                   <Chevron />
                 </span>
               </summary>
-              <div className="space-y-2 border-t border-zinc-100 bg-zinc-50/60 p-3 dark:border-white/5 dark:bg-white/[0.02]">
-                {l.groups.map((g) => genderCard(g, false, l.groups.length === 1))}
+              {/* Boys and Girls side by side when there's room (an opened one takes the whole row). */}
+              <div className="@container border-t border-zinc-100 bg-zinc-50/60 p-3 dark:border-white/5 dark:bg-white/[0.02]">
+                <div className="grid items-start gap-2 @4xl:grid-cols-2 @4xl:[&>details[open]]:col-span-2">
+                  {l.groups.map((g) => genderCard(g, false, l.groups.length === 1))}
+                </div>
               </div>
             </details>
           );

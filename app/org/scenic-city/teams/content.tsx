@@ -16,6 +16,7 @@ import { TZ } from "@/lib/time";
 import AppHeader from "../../../AppHeader";
 import { AddTeamPanel } from "../../../AddTeam";
 import PageMenus, { PLUS_BTN, PlusIcon } from "../../../PageMenus";
+import SeasonGuidePanel from "../../../season-guide/SeasonGuidePanel";
 import { ImportTeamsPanel, UndoImportButton } from "../../../TeamImport";
 import { CollapseCard, GroupCard, PageTitle } from "../../../ui";
 import { DeleteTeam, TeamEditor } from "./TeamEditor";
@@ -240,7 +241,7 @@ export async function ScenicTeamsContent({
   return (
     <>
       {!embedded && <AppHeader user={user} context={scenic.key} tab="scenic-teams" />}
-      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
         {/* The same as every Teams page: + (Add a team, Import teams) opens right under the title. */}
         <PageMenus
           slot={embedded ? "card-slot-teams" : undefined}
@@ -267,6 +268,17 @@ export async function ScenicTeamsContent({
                         },
                       ]
                     : []),
+                  // The season guide (Owners, Admins, Directors of Teams; checked on the server): emails the coaches of the
+                  // teams in its current events how to use CourtCaptain, after a preview and a confirm.
+                  {
+                    key: "guide",
+                    icon: <span className="text-sm font-semibold">📧 Season guide</span>,
+                    label: "Email teams the season guide",
+                    className:
+                      "rounded-full px-3 py-1.5 text-zinc-700 ring-1 ring-zinc-950/10 hover:bg-zinc-50 dark:text-zinc-200 dark:ring-white/15",
+                    items: [],
+                    panel: <SeasonGuidePanel org="scenic-city" />,
+                  },
                   {
                     key: "add",
                     icon: <PlusIcon />,

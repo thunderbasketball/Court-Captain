@@ -392,15 +392,20 @@ export default async function ProgramsCard({
                 ) : org === "scenic-city" ? (
                   <div className="space-y-3">
                     <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>
-                      <ProgramContent params={Promise.resolve({ id: p.id })} embedded />
+                      <ProgramContent
+                        params={Promise.resolve({ id: p.id })}
+                        embedded
+                        after={
+                          scheduler && (
+                            <SubCard title="Scheduler" alert={(removals.get(p.id) ?? 0) > 0}>
+                              <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>
+                                <SchedulerContent embedded programId={p.id} />
+                              </Suspense>
+                            </SubCard>
+                          )
+                        }
+                      />
                     </Suspense>
-                    {scheduler && (
-                      <SubCard title="Scheduler" alert={(removals.get(p.id) ?? 0) > 0}>
-                        <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>
-                          <SchedulerContent embedded programId={p.id} />
-                        </Suspense>
-                      </SubCard>
-                    )}
                   </div>
                 ) : (
                   <p className="text-sm text-zinc-500">

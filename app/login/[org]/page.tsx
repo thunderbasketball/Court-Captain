@@ -18,6 +18,9 @@ import OrgTeams from "./OrgTeams";
 import { easternDate } from "@/lib/time";
 import { shortDate } from "@/lib/program-options";
 import PublicPrograms, { type ProgramCard } from "./PublicPrograms";
+import { gamesOfTheWeek } from "@/lib/games-of-week";
+import GamesOfTheWeek from "./GamesOfTheWeek";
+import { MyTeams } from "../../FollowTeams";
 import { recruitingOn } from "@/lib/officials";
 import { ApplyToOfficiate } from "../../officials/ApplyToOfficiate";
 import SubCard from "../../SubCard";
@@ -30,7 +33,8 @@ export async function generateMetadata({ params }: PageProps<"/login/[org]">): P
 
 export default function OrgLoginPage({ params }: PageProps<"/login/[org]">) {
   return (
-    <main className="mx-auto w-full max-w-sm flex-1 px-4 py-10">
+    // A phone: one column. A wide screen: the login side (left) and the programs (right, wide).
+    <main className="mx-auto w-full max-w-sm flex-1 px-4 py-10 lg:max-w-6xl">
       <Suspense fallback={<p className="text-center text-zinc-500">Loading…</p>}>
         <OrgLogin params={params} />
       </Suspense>
@@ -108,7 +112,9 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
   programs.push(...seasons);
   const recruiting = await recruitingOn(db, org);
   return (
-    <>
+    <div className="lg:grid lg:grid-cols-[22rem_minmax(0,1fr)] lg:items-start lg:gap-8">
+      {/* Left on a wide screen: who it is, the login, My teams and Games of the Week. */}
+      <div>
       <div className="mb-7 flex flex-col items-center gap-2 text-center">
         <OrgLogo src={o.bigLogo} name={o.name} color={o.color} className="size-36 rounded-2xl text-5xl" />
         <h1 className="text-xl font-semibold tracking-tight">{o.name}</h1>
@@ -140,6 +146,20 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
         </div>
       )}
       {/* Programs: tap one to see its Teams and (a League's, once published) Schedule; Register while it's open. */}
+      {programs.length > 0 && (
+        <>
+          {/* The teams this device follows (☆ on a program's Standings). */}
+          <MyTeams org={org} />
+          {/* The coming Game Day's best REC and COMP matchups (its Leagues, once a schedule is published). */}
+          {await (async () => {
+            const week = await gamesOfTheWeek(db, now, org);
+            return week ? <GamesOfTheWeek week={week} /> : null;
+          })()}
+        </>
+      )}
+      </div>
+      {/* Right on a wide screen: Programs (Divisions, Standings, schedules), its teams, Parents, Officials. */}
+      <div className="lg:pt-1">
       <PublicPrograms org={org} programs={programs} />
       {/* Its teams in a current event, with their League games; ☆ follows one on this device. Names and games only. */}
       <OrgTeams org={org} teams={await orgPublicTeams(db, now, org)} today={today} />
@@ -161,6 +181,7 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
           ))}
         </section>
       )}
-    </>
+      </div>
+    </div>
   );
 }

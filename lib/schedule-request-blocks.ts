@@ -17,10 +17,17 @@ export const addDays = (date: string, n: number) => {
   return d.toISOString().slice(0, 10);
 };
 
-// The last day requests are taken (through the end of that day, Eastern). REC (and Pre-K): 14 days before the League's
-// first Game Day. COMP: the Sunday before the Game Day.
-export function closesOn(level: string, day: string, firstDay: string): string {
-  if (level !== "COMP") return addDays(firstDay, -14);
+// The last day requests are taken (through the end of that day, Eastern). REC (and Pre-K): `recDays` (14 unless the
+// League set it) before the League's first Game Day. COMP: `compDays` before the Game Day, or (not set) the Sunday before.
+export const REC_DAYS_DEFAULT = 14;
+export function closesOn(
+  level: string,
+  day: string,
+  firstDay: string,
+  close: { compDays?: number | null; recDays?: number | null } = {},
+): string {
+  if (level !== "COMP") return addDays(firstDay, -(close.recDays ?? REC_DAYS_DEFAULT));
+  if (close.compDays != null) return addDays(day, -close.compDays);
   const dow = new Date(`${day}T12:00:00Z`).getUTCDay(); // 0 = Sunday
   return addDays(day, -(dow === 0 ? 7 : dow));
 }
@@ -32,8 +39,15 @@ export function blockedBy(blocks: string[], start: number, minutes: number, defs
 
 // A League's own blocks and limit (its Schedule requests gear); without them, the 4 blocks above and up to 2.
 export type Block = { key: string; label: string; start: number; end: number };
-export type RequestSettings = { blocks: Block[]; max: number; setBy: string | null };
-export const DEFAULT_SETTINGS: RequestSettings = { blocks: BLOCKS.map((b) => ({ ...b })), max: MAX_BLOCKED, setBy: null };
+// compDays / recDays: when requests close (null: the Sunday before each Game Day / 14 days before the first).
+export type RequestSettings = { blocks: Block[]; max: number; setBy: string | null; compDays: number | null; recDays: number | null };
+export const DEFAULT_SETTINGS: RequestSettings = {
+  blocks: BLOCKS.map((b) => ({ ...b })),
+  max: MAX_BLOCKED,
+  setBy: null,
+  compDays: null,
+  recDays: null,
+};
 export const MAX_BLOCKS = 8;
 
 const two = (n: number) => String(n).padStart(2, "0");
@@ -58,8 +72,10 @@ const minutesOf = (v: unknown) => {
 
 // Checks a League's settings ({ blocks: [{ start: "09:00", end: "12:00" }], max }): 2 to 8 blocks, each ending after it
 // starts, none overlapping (sorted by start); up to `max` checked, fewer than the blocks so a team is free for one.
-export function parseSettings(input: unknown): { ok: true; blocks: Block[]; max: number } | { ok: false; message: string } {
-  const x = (input ?? {}) as { blocks?: unknown; max?: unknown };
+export function parseSettings(
+  input: unknown,
+): { ok: true; blocks: Block[]; max: number; compDays: number | null; recDays: number | null } | { ok: false; message: string } {
+  const x = (input ?? {}) as { blocks?: unknown; max?: unknown; compDays?: unknown; recDays?: unknown };
   if (!Array.isArray(x.blocks) || x.blocks.length < 2 || x.blocks.length > MAX_BLOCKS)
     return { ok: false, message: `Set 2 to ${MAX_BLOCKS} time blocks.` };
   const blocks: Block[] = [];
@@ -76,6 +92,14 @@ export function parseSettings(input: unknown): { ok: true; blocks: Block[]; max:
   const max = Number(x.max);
   if (!Number.isInteger(max) || max < 1 || max >= blocks.length)
     return { ok: false, message: `Teams can check 1 to ${blocks.length - 1} blocks (they must be free for at least one).` };
-  return { ok: true, blocks, max };
+  // Close days: blank keeps the standard rule; else a whole number of days.
+  const days = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
+  const compDays = days(x.compDays);
+  const recDays = days(x.recDays);
+  if (compDays !== null && (!Number.isInteger(compDays) || compDays < 0 || compDays > 30))
+    return { ok: false, message: "COMP requests close 0 to 30 days before each Game Day (or leave it blank)." };
+  if (recDays !== null && (!Number.isInteger(recDays) || recDays < 0 || recDays > 60))
+    return { ok: false, message: "REC requests close 0 to 60 days before the first Game Day (or leave it blank)." };
+  return { ok: true, blocks, max, compDays, recDays };
 }
 
