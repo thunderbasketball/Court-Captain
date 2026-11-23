@@ -13,7 +13,7 @@ import { upcomingOwnPractices, type OwnPractice } from "./team-practices";
 import { easternDate } from "./time";
 
 export const CODE_SENT =
-  "If a player is registered with that cell, we emailed a code to the parent's email on the registration. It works for 10 minutes.";
+  "If a player is registered with that cell, we emailed a code to the parent's email on the registration. It works for 10 minutes. Not in the inbox? Check the Spam folder.";
 
 export type FoundTeam = {
   name: string;

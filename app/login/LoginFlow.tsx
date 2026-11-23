@@ -82,7 +82,7 @@ export default function LoginFlow({ join, next = "/", staffOnly }: { join?: stri
         setPin2("");
       }
       if (s.step === "pin") setPin("");
-      if (opts.resent) setNotice("A new code is on its way.");
+      if (opts.resent) setNotice("A new code is on its way. Check your Spam folder too.");
       setScreen(s);
     });
   }
@@ -313,7 +313,7 @@ export default function LoginFlow({ join, next = "/", staffOnly }: { join?: stri
       body = (
         <Form
           title="Check your email"
-          intro={`We sent a code to ${screen.maskedEmail}.`}
+          intro={`We sent a code to ${screen.maskedEmail}. Not in your inbox? Check your Spam folder.`}
           onSubmit={() => go(() => act.completeSignup(cell, code))}
         >
           {codeField}
@@ -349,7 +349,7 @@ export default function LoginFlow({ join, next = "/", staffOnly }: { join?: stri
       body = (
         <Form
           title="Set your PIN"
-          intro={`We sent a code to ${screen.maskedEmail}. Enter it and choose your PIN.`}
+          intro={`We sent a code to ${screen.maskedEmail}. Enter it and choose your PIN. Not in your inbox? Check your Spam folder.`}
           onSubmit={() => go(() => act.completeStarter(cell, code, pin1, pin2))}
         >
           {codeField}
@@ -402,7 +402,7 @@ export default function LoginFlow({ join, next = "/", staffOnly }: { join?: stri
       body = (
         <Form
           title="Check your email"
-          intro={`We sent a code to ${screen.maskedEmail}.`}
+          intro={`We sent a code to ${screen.maskedEmail}. Not in your inbox? Check your Spam folder.`}
           onSubmit={() => go(() => act.completeVerify(cell, pin, code))}
         >
           {codeField}
@@ -416,7 +416,7 @@ export default function LoginFlow({ join, next = "/", staffOnly }: { join?: stri
       body = (
         <Form
           title="Reset your PIN"
-          intro={`We sent a code to ${screen.maskedEmail}. Enter it and choose a new PIN.`}
+          intro={`We sent a code to ${screen.maskedEmail}. Enter it and choose a new PIN. Not in your inbox? Check your Spam folder.`}
           onSubmit={() => go(() => act.completeReset(cell, code, pin1, pin2))}
         >
           {codeField}

@@ -276,14 +276,14 @@ function RegisterAllPreview({
           <strong>{money(payTotal)}</strong> by card {payLaterOk ? "now" : "next"}
           {plan.payer === "team" && sub > 0 ? ` (${money(sub)} + card processing)` : ""}. The teams are registered once it&apos;s
           paid.
-          {payLaterOk && ` Or Pay later: they register now and the invoice (${money(sub)}) is emailed.`}
+          {payLaterOk && ` Or Pay later: they register now and the invoice (${money(sub)}) is emailed (check Spam if you don't see it).`}
         </p>
       )}
       {/* No card payment now (Pay later, or the League isn't taking cards): the fees, and an invoice is emailed. */}
       {!plan.payer && picked.length > 0 && sub > 0 && (
         <p className="rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">
           Fees: <strong>{money(sub)}</strong> ({picked.length} team{picked.length === 1 ? "" : "s"}). The teams register now and you&apos;ll get an
-          invoice by email to pay later (also under Open invoices on your Home).
+          invoice by email to pay later (check Spam if you don&apos;t see it; it&apos;s also under Open invoices on your Home).
         </p>
       )}
       {err && <p className="text-sm text-red-600 dark:text-red-400">{err}</p>}
@@ -545,7 +545,7 @@ export function RegisterLeagueButton({
             <div className="space-y-3">
               <StepGuide name="register-team" step={2} total={2} title="Pay">
                 Pay now: Stripe&apos;s secure card page opens (card, Apple Pay or Google Pay). Pay later: your team is registered
-                now and the invoice is emailed to you.
+                now and the invoice is emailed to you (check Spam if you don&apos;t see it).
               </StepGuide>
               <p className="text-sm">
                 Fee: <strong>{money(asked.cents)}</strong>
@@ -574,7 +574,7 @@ export function RegisterLeagueButton({
                     if (!r.ok) return setErr(r.message);
                     close();
                     setAsked(null);
-                    setMsg("Registered. The invoice (Pay later) is emailed, and it's under Open invoices on your Home.");
+                    setMsg("Registered. The invoice (Pay later) is emailed (check Spam if you don't see it), and it's under Open invoices on your Home.");
                     router.refresh();
                   })
                 }

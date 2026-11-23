@@ -67,7 +67,7 @@ export default function Login() {
     if (s.step === 'pin') setPin('');
     if (opts.resent) {
       haptic.success();
-      setNotice('A new code is on its way.');
+      setNotice('A new code is on its way. Check your Spam folder too.');
     }
     setScreen(s);
   }
@@ -246,7 +246,7 @@ export default function Login() {
 
     case 'signupCode':
       body = (
-        <Panel title="Check your email" intro={`We sent a code to ${screen.maskedEmail}.`}>
+        <Panel title="Check your email" intro={`We sent a code to ${screen.maskedEmail}. Not in your inbox? Check your Spam folder.`}>
           {codeField}
           <Button title="Create account" busy={busy} onPress={() => go('completeSignup', { cell, code })} />
           {resend('startSignup', signupFields)}
@@ -265,7 +265,7 @@ export default function Login() {
 
     case 'starterCode':
       body = (
-        <Panel title="Set your PIN" intro={`We sent a code to ${screen.maskedEmail}. Enter it and choose your PIN.`}>
+        <Panel title="Set your PIN" intro={`We sent a code to ${screen.maskedEmail}. Enter it and choose your PIN. Not in your inbox? Check your Spam folder.`}>
           {codeField}
           {newPinFields}
           <Button title="Set PIN" busy={busy} onPress={() => go('completeStarter', { cell, code, pin1, pin2 })} />
@@ -304,7 +304,7 @@ export default function Login() {
 
     case 'verifyCode':
       body = (
-        <Panel title="Check your email" intro={`We sent a code to ${screen.maskedEmail}.`}>
+        <Panel title="Check your email" intro={`We sent a code to ${screen.maskedEmail}. Not in your inbox? Check your Spam folder.`}>
           {codeField}
           <Button title="Verify and log in" busy={busy} onPress={() => go('completeVerify', { cell, pin, code })} />
           {resend('sendVerifyCode', { cell, pin, email: email || null })}
@@ -314,7 +314,7 @@ export default function Login() {
 
     case 'resetCode':
       body = (
-        <Panel title="Reset your PIN" intro={`We sent a code to ${screen.maskedEmail}. Enter it and choose a new PIN.`}>
+        <Panel title="Reset your PIN" intro={`We sent a code to ${screen.maskedEmail}. Enter it and choose a new PIN. Not in your inbox? Check your Spam folder.`}>
           {codeField}
           {newPinFields}
           <Button title="Save PIN" busy={busy} onPress={() => go('completeReset', { cell, code, pin1, pin2 })} />

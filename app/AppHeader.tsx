@@ -29,6 +29,7 @@ import { directorAlerts } from "@/lib/director-alerts";
 import SupportButton from "./support/SupportButton";
 import { listArticles, supportChats } from "@/lib/support";
 import { LogoutButton } from "./HomeActions";
+import ShareButton from "./ShareButton";
 
 type Tab =
   | "teams"
@@ -405,17 +406,21 @@ export default async function AppHeader({
               link, loaded fresh each time: that page used to send logged-in people straight back in, and the app's link
               preloading could keep that old answer. */}
           <RememberBrand logo={platform || neutral ? null : brand.logo} name={brand.name} />
-          <a href={platform || neutral ? "/" : brand.login} className="flex min-w-0 items-center gap-2">
-            <OrgLogo src={brand.logo} name={brand.name} color={brand.color} className="h-9 w-auto min-w-9 rounded-md" />
-            <span className="min-w-0 leading-tight">
-              <span className="block truncate font-semibold tracking-tight">{brand.name}</span>
-              {!neutral && (
-                <span className="block text-xs font-medium text-thunder-orange">
-                  {platform ? "Platform admin" : "CourtCaptain"}
-                </span>
-              )}
-            </span>
-          </a>
+          <div className="flex min-w-0 items-center gap-1">
+            <a href={platform || neutral ? "/" : brand.login} className="flex min-w-0 items-center gap-2">
+              <OrgLogo src={brand.logo} name={brand.name} color={brand.color} className="h-9 w-auto min-w-9 rounded-md" />
+              <span className="min-w-0 leading-tight">
+                <span className="block truncate font-semibold tracking-tight">{brand.name}</span>
+                {!neutral && (
+                  <span className="block text-xs font-medium text-thunder-orange">
+                    {platform ? "Platform admin" : "CourtCaptain"}
+                  </span>
+                )}
+              </span>
+            </a>
+            {/* Share the organization's login link with its members (anyone logged in): the phone's share sheet, or copied. */}
+            {!platform && !neutral && <ShareButton path={brand.login} title={`${brand.name} on CourtCaptain`} label={`Share ${brand.name}'s login link`} />}
+          </div>
           {/* The top row: logo and name, the organization switcher, Log out. Everything else is on the row below. */}
           <div className="flex shrink-0 items-center gap-3">
             {switchTo.length > 0 && <OrgSwitcher current={platform ? PLATFORM : org} orgs={switchTo} />}
