@@ -58,8 +58,8 @@ describe("Thunder's teams in Scenic City programs", () => {
       skipped: ["6B TBD: This program has no Boys 6th REC."],
     });
     const scenic = (await listScenicTeams(deps(), earl, "Director"))!.teams;
-    expect(scenic.map((t) => `${t.name} ${t.partnerName} ${t.canEdit}`)).toContain("TB 4G Epps Thunder Basketball false");
-    expect(JSON.stringify(await getProgram(deps(), earl, pid))).toContain("TB 4G Epps");
+    expect(scenic.map((t) => `${t.name} ${t.partnerName} ${t.canEdit}`)).toContain("4G Thunder Epps Thunder Basketball false");
+    expect(JSON.stringify(await getProgram(deps(), earl, pid))).toContain("4G Thunder Epps");
     expect((await thunderPrograms(deps(), earl))!.programs).toMatchObject([{ registered: 1, unregistered: 1 }]);
   });
 });

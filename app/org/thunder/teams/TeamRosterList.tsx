@@ -38,7 +38,7 @@ export default function TeamRosterList({
               </span>
               <span className="text-right text-xs text-zinc-400">
                 {gradeLabel(p.grade)}
-                {bornLabel(p.birthdate)}
+                {p.birthdate ? bornLabel(p.birthdate) : <span className="font-medium text-red-600 dark:text-red-400"> · no birthdate</span>}
                 {who && ` · Rostered by ${p.rosteredBy}`}
               </span>
             </>

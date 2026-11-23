@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
-import { followedTeams, publicLeague, publicLeagues, publicPrograms, setSchedulePublished } from "./public-league";
+import { followedTeams, orgPublicTeams, publicLeague, publicLeagues, publicPrograms, setSchedulePublished } from "./public-league";
 import { listPrograms, setProgramLogo } from "./scenic-programs";
 import { createTestDb, grant } from "./testing/db";
 
@@ -141,6 +141,34 @@ describe("public League page (no login)", () => {
     expect(JSON.stringify(withRoster)).not.toMatch(/lyons|Cole/);
     expect(await followedTeams(db.pool, now, "nope")).toEqual([]);
     expect(JSON.stringify(before)).not.toMatch(/4235550|Sam|Lee/);
+  }, 60_000);
+
+  it("an organization's public page: its own teams in a current event, names and games only (no roster or contacts)", async () => {
+    const ot = (
+      await db.pool.query<{ id: string }>(
+        "insert into org_teams (org, name, gender, grade_low, grade, level, created_by) values ('scenic-city', 'Fay 5B', 'Boys', 5, 5, 'COMP', 't') returning id::text",
+      )
+    ).rows[0].id;
+    await db.pool.query(`insert into org_team_players (team_id, first_name, last_name, grade, jersey, added_by) values ($1, 'Ava', 'Lyons', 5, '12', 't')`, [ot]);
+    await db.pool.query("update scenic_teams set org_team_id = $1 where name = 'HH 5B Fay'", [ot]);
+    await db.pool.query(
+      `with o as (insert into org_teams (org, name, gender, grade_low, grade, level, created_by)
+                  values ('scenic-city', 'Benched 5B', 'Boys', 5, 5, 'COMP', 't') returning id)
+       update scenic_teams set org_team_id = (select id from o) where name = 'Benched'`,
+    );
+    const fay = (await db.pool.query<{ id: string }>("select id::text from scenic_teams where name = 'HH 5B Fay'")).rows[0].id;
+
+    // Only its own teams (not Magic), not one taken out of the event (Benched); no schedule until published.
+    expect(await orgPublicTeams(db.pool, now, "scenic-city")).toEqual([
+      { id: fay, name: "HH 5B Fay", programs: [{ id: prog, name: "Winter", group: "5th Boys COMP", games: null }] },
+    ]);
+    await setSchedulePublished(deps(), user("9913694"), prog, true);
+    const [t] = await orgPublicTeams(db.pool, now, "scenic-city");
+    expect(t.programs[0].games).toEqual([{ date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "Magic", home: true }]);
+    expect(JSON.stringify(t)).not.toMatch(/Ava|Lyons|4235550|\bBo\b|roster/);
+    // Once the event has ended, the team isn't listed; another organization sees none of these.
+    expect(await orgPublicTeams(db.pool, new Date("2027-03-02T15:00:00Z"), "scenic-city")).toEqual([]);
+    expect(await orgPublicTeams(db.pool, now, "thunder")).toEqual([]);
   }, 60_000);
 
   it("a program's logo: only a Director of Programs sets it, images only, shown everywhere the program is", async () => {

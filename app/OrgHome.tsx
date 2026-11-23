@@ -60,6 +60,14 @@ import { stripeApi } from "@/lib/stripe/client";
 import { payee } from "@/lib/stripe/registration";
 import PaidNotice from "./PaidNotice";
 import { Suspense } from "react";
+import { eventTeamsCount, myLeagueTeamsCount, unregisteredTeams } from "@/lib/current-registrations";
+import { myLeagueTeams } from "@/lib/scenic-team-page";
+
+// The Teams card's count: "5", or "5 · 1 not registered" while some aren't in any current event.
+async function teamsCount(org: string, now: Date) {
+  const t = await unregisteredTeams(db, org, now);
+  return t.unregistered ? `${t.total} · ${t.unregistered} not registered` : t.total;
+}
 import { orgPrograms } from "@/lib/org-leagues";
 import { thunderPrograms } from "@/lib/thunder-leagues";
 
@@ -99,6 +107,12 @@ export default async function OrgHome({
     const mine = contexts.filter((c) => c.org === org);
     if (mine.length && mine.every((c) => c.key.startsWith("team:") || c.key.startsWith("orgteam:")))
       redirect((mine.find((c) => c.key === active?.key) ?? mine[0]).href);
+  }
+  // A League coach in Scenic City (Coach or Solo only: no Owner, Admin, Director or club contact role): their Home is
+  // their League team's page, like an organization coach's (the League's program details stay for its directors).
+  if (org === "scenic-city" && roles.every((r) => r === "Coach" || r === "Solo" || r === "Request")) {
+    const [first] = await myLeagueTeams(db, user.coachId);
+    if (first) redirect(`/org/scenic-city/teams/${first.id}`);
   }
   const sp = await searchParams;
   const openCard = typeof sp.open === "string" ? sp.open : null;
@@ -247,7 +261,24 @@ export default async function OrgHome({
           },
         ]
       : []),
-    ...(clubTeams || leagueTeams ? [{ key: "teams", title: "Teams", count: metrics?.teams?.total, alert: teamAlert, body: teamsBody }] : []),
+    // Its own teams (Thunder's or the organization's): the count, and how many aren't registered in any current event.
+    ...(clubTeams || leagueTeams
+      ? [
+          {
+            key: "teams",
+            title: "Teams",
+            // The League's teams for its Directors of Teams; a coach's own teams for a coach.
+            count:
+              leagueTeams && teamsArea
+                ? await eventTeamsCount(db, org, now) // an organization that runs events: its events' teams
+                : clubTeams
+                  ? await teamsCount(org, now)
+                  : await myLeagueTeamsCount(db, user.coachId),
+            alert: teamAlert,
+            body: teamsBody,
+          },
+        ]
+      : []),
     // Register ALL Teams: the League's programs its teams register for, many at once (those who manage its teams).
     // Open invoices: League invoices with a balance due (whoever manages its teams), with View and Pay.
     ...(invoices.length

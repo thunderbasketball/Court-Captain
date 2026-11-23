@@ -29,7 +29,7 @@ export async function actAs(coachId: string) {
   redirect(start?.href ?? "/");
 }
 
-// Back to yourself, in the role and organization you started from (its Users page; the CourtCaptain page for its staff).
+// Back to yourself, in the role and organization you started from (its Home; the CourtCaptain page for its staff).
 export async function stopActing() {
   await setActingAs(null);
   const jar = await cookies();
@@ -44,7 +44,7 @@ export async function stopActing() {
       : back?.startsWith("org:") && isOrgSlug(back.slice(4))
         ? `/org/${back.slice(4)}?open=members&sub=staff#members`
         : back?.startsWith("scenic:")
-          ? "/org/scenic-city/users"
+          ? "/org/scenic-city"
           : "/org/thunder?open=members&sub=staff#members",
   );
 }

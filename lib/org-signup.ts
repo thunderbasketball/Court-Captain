@@ -7,6 +7,7 @@ import { FEATURES, READY_FOR_ANY_ORG, featuresChanged, type FeatureKey } from ".
 import { slugFor } from "./org-slug";
 import { renameAllOrgTeams } from "./org-teams";
 import { leagueNameSql } from "./solo-names";
+import { syncThunderCopyNames } from "./thunder-leagues";
 import { withTx } from "./sql";
 
 export { slugFor };
@@ -262,6 +263,31 @@ export function abbrFor(name: string): string {
   return (a.toUpperCase() === a ? a : a[0].toUpperCase() + a.slice(1)).slice(0, 6) || "ORG";
 }
 
+// Admins (and CourtCaptain staff): the Default Alternate name (blank removes it). In leagues and events a team without an
+// Alternate name of its own shows it in the organization's place ("5B Thunder Johnson"); its League names follow now.
+export async function setOrgDefaultAlt(deps: Deps, viewer: SessionUser, org: string, value: unknown): Promise<Result> {
+  const v = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+  if (v && !/^[\p{L}\d][\p{L}\d .'&#,()/-]{0,29}$/u.test(v))
+    return { ok: false, message: "Default Alternate name: up to 30 letters, numbers and simple punctuation." };
+  const admin = await deps.pool.query<{ ok: boolean }>("select acts_as($1, $2, 'Admin') as ok", [viewer.coachId, org]);
+  if (!admin.rows[0].ok) return { ok: false, message: "Only an Admin of this organization can change this." };
+  return withTx(deps.pool, async (q) => {
+    const r = await q.query(
+      "update organizations set default_alt_name = $2, default_alt_by = $3, default_alt_at = $4 where slug = $1",
+      [org, v || null, `${viewer.firstName} ${viewer.lastName}`, deps.now()],
+    );
+    if (!r.rowCount) return { ok: false as const, message: "That organization no longer exists." };
+    if (org === "thunder") await syncThunderCopyNames(q);
+    else
+      await q.query(
+        `update scenic_teams st set name = ${leagueNameSql("o", "t.name")}
+           from org_teams t join organizations o on o.slug = t.org where st.org_team_id = t.id and t.org = $1`,
+        [org],
+      );
+    return { ok: true as const };
+  });
+}
+
 // Admins (and CourtCaptain staff): the Abbreviation, 1–6 letters or numbers.
 export async function setOrgAbbr(deps: Deps, viewer: SessionUser, org: string, abbr: unknown): Promise<Result> {
   const a = typeof abbr === "string" ? abbr.trim() : "";
@@ -271,7 +297,7 @@ export async function setOrgAbbr(deps: Deps, viewer: SessionUser, org: string, a
   await deps.pool.query("update organizations set abbr = $2 where slug = $1", [org, a]);
   // Its REC teams' names in leagues follow (the Abbreviation first; a CourtSolo team's is just its name).
   await deps.pool.query(
-    `update scenic_teams st set name = ${leagueNameSql("o", "t.name", "t.level")}
+    `update scenic_teams st set name = ${leagueNameSql("o", "t.name")}
        from org_teams t join organizations o on o.slug = t.org where st.org_team_id = t.id and t.org = $1`,
     [org],
   );

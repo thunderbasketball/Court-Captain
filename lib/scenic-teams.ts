@@ -102,8 +102,8 @@ export type ScenicTeam = {
   coachCell: string | null;
   coachEmail: string | null;
   waitingCoach: boolean; // named without a cell yet: COACH CELL MUST BE ENTERED
-  // Players on its roster, for a team from an organization on CourtCaptain (a registered team must enter its roster);
-  // null for an outside club's team (its roster isn't kept here).
+  // Players on its roster (every registered team must enter its roster): an organization's or Thunder's there, a League
+  // team's (the FastBreak club's, an outside club's, Solo) on its League team page.
   players: number | null;
   createdBy: string;
   updatedBy: string;
@@ -152,6 +152,7 @@ export async function listScenicTeams(
             coalesce(t.alt_name, ot.alt_name, th.alt_name) as "altName",
             case when t.org_team_id is not null then (select count(*)::int from org_team_players x where x.team_id = t.org_team_id)
                  when t.thunder_team_id is not null then (select count(*)::int from team_players x where x.team_id = t.thunder_team_id)
+                 else (select count(*)::int from scenic_team_players x where x.team_id = t.id) -- a League team kept here
             end as players, dv.grade_low as "divisionLow", dv.grade_high as "divisionHigh"
      from scenic_teams t
      left join org_teams ot on ot.id = t.org_team_id

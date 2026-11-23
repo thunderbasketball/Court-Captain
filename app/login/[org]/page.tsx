@@ -13,7 +13,8 @@ import LoginFlow from "../LoginFlow";
 import { card } from "../../ui";
 import { followRename } from "@/lib/org-rename";
 import { hasFeature } from "@/lib/features";
-import { publicPrograms } from "@/lib/public-league";
+import { orgPublicTeams, publicPrograms } from "@/lib/public-league";
+import OrgTeams from "./OrgTeams";
 import { easternDate } from "@/lib/time";
 import { shortDate } from "@/lib/program-options";
 import PublicPrograms, { type ProgramCard } from "./PublicPrograms";
@@ -140,6 +141,8 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
       )}
       {/* Programs: tap one to see its Teams and (a League's, once published) Schedule; Register while it's open. */}
       <PublicPrograms org={org} programs={programs} />
+      {/* Its teams in a current event, with their League games; ☆ follows one on this device. Names and games only. */}
+      <OrgTeams org={org} teams={await orgPublicTeams(db, now, org)} today={today} />
       {/* A parent: their player's team, practices and games (a code to the email on the registration; no login). */}
       {players && (
         <section className="mt-6 space-y-2">

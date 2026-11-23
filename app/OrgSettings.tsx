@@ -2,7 +2,7 @@
 
 import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { changeOrgAbbr, changeOrgColor, changeOrgLogo, renameOrganization } from "./register/actions";
+import { changeOrgAbbr, changeOrgColor, changeOrgDefaultAlt, changeOrgLogo, renameOrganization } from "./register/actions";
 import { Alert, Toast } from "./client-ui";
 import HeaderDrop from "./HeaderDrop";
 import { slugFor } from "@/lib/org-slug";
@@ -22,6 +22,7 @@ export default function OrgSettings({
   colors,
   login,
   abbr,
+  defaultAlt,
   name,
   short,
   canRename,
@@ -42,6 +43,7 @@ export default function OrgSettings({
   colors: readonly string[];
   login: string;
   abbr: string;
+  defaultAlt: string | null; // the Default Alternate name (in leagues)
   name: string;
   short: string;
   canRename: boolean; // Owners
@@ -82,6 +84,15 @@ export default function OrgSettings({
               abbr={abbr}
               onSaved={() => {
                 setMsg("Abbreviation saved.");
+                router.refresh();
+              }}
+            />
+            <DefaultAltForm
+              org={org}
+              value={defaultAlt ?? ""}
+              short={short}
+              onSaved={() => {
+                setMsg("Default Alternate name saved.");
                 router.refresh();
               }}
             />
@@ -174,7 +185,41 @@ function NameForm({ org, name, short, onSaved }: { org: string; name: string; sh
   );
 }
 
-// The Abbreviation, shown before the organization's team names in leagues ("ER 5B Harris").
+// The Default Alternate name: in leagues and events, a team without an Alternate name of its own shows it in the
+// organization's place ("5B Thunder Johnson"); team names inside the organization stay as they are. Blank: its name.
+function DefaultAltForm({ org, value, short, onSaved }: { org: string; value: string; short: string; onSaved: () => void }) {
+  const [text, setText] = useState(value);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, start] = useTransition();
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          setError(null);
+          const r = await changeOrgDefaultAlt(org, text);
+          if (!r.ok) return setError(r.message);
+          onSaved();
+        });
+      }}
+    >
+      <h3 className="mb-2 text-sm font-semibold">Default Alternate name</h3>
+      <div className="flex gap-2">
+        <input className={`${inputCls} w-48`} maxLength={30} value={text} placeholder={short} onChange={(e) => setText(e.target.value)} />
+        <button type="submit" disabled={busy || text.trim() === value} className={primaryBtn}>
+          Save
+        </button>
+      </div>
+      <p className="mt-1 text-xs text-zinc-500">
+        In leagues and events, teams without an Alternate name of their own show it, like &quot;5B {text.trim() || short} Johnson&quot;.
+        Team names in your organization stay as they are.
+      </p>
+      {error && <Alert tone="red">{error}</Alert>}
+    </form>
+  );
+}
+
+// The Abbreviation: the organization's tag in leagues ("(ER)").
 function AbbrForm({ org, abbr, onSaved }: { org: string; abbr: string; onSaved: () => void }) {
   const [value, setValue] = useState(abbr);
   const [error, setError] = useState<string | null>(null);
@@ -199,7 +244,7 @@ function AbbrForm({ org, abbr, onSaved }: { org: string; abbr: string; onSaved: 
         </button>
       </div>
       <p className="mt-1 text-xs text-zinc-500">
-        Up to 6 letters or numbers. Shown before your team names in leagues, like &quot;{value.trim() || abbr} 5B Harris&quot;.
+        Up to 6 letters or numbers. Your tag beside your teams in leagues, like &quot;({value.trim() || abbr})&quot;.
       </p>
       {error && <Alert tone="red">{error}</Alert>}
     </form>

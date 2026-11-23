@@ -219,7 +219,7 @@ export async function switchSoloToOrg(
   const abbr = abbrFor(String(input.name).trim()); // like a new organization's: "Hixson Hoops" → HH
   await deps.pool.query("update organizations set abbr = $2 where slug = $1", [r.slug, abbr]);
   await deps.pool.query(
-    `update scenic_teams st set name = ${leagueNameSql("o", "t.name", "t.level")}
+    `update scenic_teams st set name = ${leagueNameSql("o", "t.name")}
        from org_teams t join organizations o on o.slug = t.org where st.org_team_id = t.id and t.org = $1`,
     [r.slug],
   );

@@ -57,7 +57,7 @@ export function courtCaptainMatch(fbName: string, orgs: { name: string }[]): str
 
 // ---- Which League (and what) each Fastbreak event is ----
 
-type League = { id: string; name: string; gameDays: string[] };
+export type League = { id: string; name: string; gameDays: string[] };
 type Use = { program: League; day: string };
 
 const short = (d: string) =>

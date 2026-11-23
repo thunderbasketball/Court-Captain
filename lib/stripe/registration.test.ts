@@ -140,7 +140,7 @@ describe("paying to register", () => {
     expect(r).toEqual({ ok: true, pay: `https://checkout.stripe.test/${cs}` });
     expect(s.checkouts[0]).toMatchObject({
       account: "acct_league", // the League's own Stripe account
-      lines: [{ name: "Winter League 2027: ER 4B East Ridge TBD", cents: 15000 }], // the organization pays the card fee
+      lines: [{ name: "Winter League 2027: 4B East Ridge TBD", cents: 15000 }], // the organization pays the card fee
       successUrl: `${BASE}/stripe/paid?p=${id}&session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${BASE}/org/${org}/teams/${tid}?paid=cancelled&tab=register`,
     });
@@ -171,7 +171,7 @@ describe("paying to register", () => {
     const t2 = await team();
     expect(await registerOrPay(deps, jo, org, t2, pid, ALL, BASE)).toMatchObject({ ok: true, pay: expect.any(String) });
     expect(s.checkouts[1].lines).toEqual([
-      { name: "Winter League 2027: ER 4B East Ridge TBD 2", cents: 15000 }, // the second TBD team's name
+      { name: "Winter League 2027: 4B East Ridge TBD 2", cents: 15000 }, // the second TBD team's name
       { name: "Card processing", cents: cardFee(15000) },
     ]);
   });
@@ -270,7 +270,7 @@ describe("paying to register", () => {
     expect(await refundPayment(deps, jo, id, 100)).toMatchObject({ ok: false });
     await grant(db.pool, "9913694 scenic-city Owner");
     expect(await cardPayments(db.pool, dee, pid, false)).toMatchObject([
-      { id, paidCents: 15000, refundedCents: 0, status: "registered", teams: [{ name: "ER 4B East Ridge TBD", state: "registered" }] },
+      { id, paidCents: 15000, refundedCents: 0, status: "registered", teams: [{ name: "4B East Ridge TBD", state: "registered" }] },
     ]);
 
     expect(await refundPayment(deps, dee, id, 20000)).toEqual({ ok: false, message: "At most $150.00 is left to refund." });
@@ -285,7 +285,7 @@ describe("paying to register", () => {
 
     // Deleting the team (not on the schedule) keeps its payment, by name.
     expect(await deleteOrgTeam(deps, jo, org, tid)).toEqual({ ok: true });
-    expect(await cardPayments(db.pool, dee, pid, false)).toMatchObject([{ id, teams: [{ name: "ER 4B East Ridge TBD", state: "deleted" }] }]);
+    expect(await cardPayments(db.pool, dee, pid, false)).toMatchObject([{ id, teams: [{ name: "4B East Ridge TBD", state: "deleted" }] }]);
   });
   it("refund and cancel the registration together; a team on the schedule can't be (nothing refunded)", async () => {
     const s = fakeStripe();
@@ -341,7 +341,7 @@ describe("paying to register", () => {
     const shown = (await teamPrograms(deps, jo, org, t1))!.programs[0].options.find((o) => o.kind === "all_season");
     expect(shown?.feeCents).toBe(10000);
     expect(await registerOrPay(deps, jo, org, t1, pid, ALL, BASE)).toMatchObject({ ok: true, pay: expect.any(String) });
-    expect(s.checkouts[0].lines).toEqual([{ name: "Winter League 2027: ER 4B East Ridge TBD", cents: 10000 }]);
+    expect(s.checkouts[0].lines).toEqual([{ name: "Winter League 2027: 4B East Ridge TBD", cents: 10000 }]);
 
     // The group changed to Pay later (standard price): asked first; Pay later registers at once, no Checkout, not paid.
     expect(await savePriceGroup(deps, dee, pid, g.id, { name: "Invited", allSeason: "", payLater: true })).toEqual({ ok: true, id: g.id });
@@ -380,7 +380,7 @@ describe("paying to register", () => {
       totalCents: 12000,
       paidCents: 0,
       dueCents: 12000,
-      lines: [{ team: "ER 4B East Ridge TBD", what: "ALL Season", cents: 12000, paid: false }],
+      lines: [{ team: "4B East Ridge TBD", what: "ALL Season", cents: 12000, paid: false }],
     });
     // Only its managers and the League's Owners see it.
     expect(await invoiceFor(db.pool, dee, pid, org)).toBeNull();
@@ -395,7 +395,7 @@ describe("paying to register", () => {
     // Pay it by card: one Checkout for the unpaid team; marked Paid once Stripe says so.
     const r = await payInvoice(deps, jo, pid, org, BASE);
     if (!r.ok) throw new Error(r.message);
-    expect(s.checkouts[0].lines).toEqual([{ name: "Winter League 2027: ER 4B East Ridge TBD", cents: 12000 }]);
+    expect(s.checkouts[0].lines).toEqual([{ name: "Winter League 2027: 4B East Ridge TBD", cents: 12000 }]);
     expect(s.checkouts[0].cancelUrl).toBe(`${BASE}/invoice/${org}/${pid}?paid=cancelled`);
     const cs = r.pay.split("/").at(-1)!;
     s.paid.add(cs);

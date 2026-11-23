@@ -338,6 +338,7 @@ export async function setTeamAltName(deps: Deps, viewer: SessionUser, id: string
   return run(async () => {
     const r = await deps.pool.query("update teams set alt_name = $2 where id = $1", [id, cleanAltName(alt)]);
     if (!r.rowCount) throw new UserError("That team no longer exists.");
+    await syncThunderCopy(deps.pool, id); // its name in leagues carries its Alternate name
     return {};
   });
 }

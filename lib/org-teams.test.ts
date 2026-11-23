@@ -388,7 +388,7 @@ Coed,3,REC,,,,`;
     expect(await importOrgPlayers(deps(), cam, org, t.id, "Mia,Lee,4,5")).toMatchObject({ ok: true, added: ["Mia Lee"] });
     expect(await addOrgPlayer(deps(), nat, org, t.id, { first: "Zoe", last: "Kim", grade: "4" })).toMatchObject({ ok: false }); // not its coach
     const r = (await listOrgRoster(deps(), cam, org, t.id))!;
-    expect(r.players.map((p) => p.first)).toEqual(["Mia", "Ava"]);
+    expect(r.players.map((p) => p.first)).toEqual(["Ava", "Mia"]); // by jersey number (#3, #5)
     // With CourtPlayers the roster comes from registrations, set by its Directors: the coach can't change it.
     await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ($1, 'court-players', 'setup', 't')", [org]);
     expect((await listOrgRoster(deps(), cam, org, t.id))!.canManage).toBe(false);

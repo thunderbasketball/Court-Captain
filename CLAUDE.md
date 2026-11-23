@@ -12,6 +12,7 @@ Secrets live only in `.env.local` (never committed, never pasted into chat). The
 - Phone app (iPhone + Android): Expo in `mobile/` (see `mobile/README.md`), its own package.json, lint and tsc; the website's tsc/lint/tests skip it. It calls `app/api/mobile/*`, which use the same `lib/` rules; the session token travels as `Authorization: Bearer` (`phoneUser()` in `lib/auth/server.ts`).
 - `npm run dev` — run locally at http://localhost:3000
 - `npm test` — run tests (Vitest; tests live next to code as `*.test.ts`). Takes ~90 s: only 2 files run at once because Supabase allows 60 connections and its pooler holds idle ones for a while. If tests fail with "too many clients", wait a minute and rerun.
+- Tests use their own Supabase project (`TEST_DATABASE_URL` in `.env.local`, its Session pooler, port 5432), never the live database; without it, database tests are off (`vitest.config.ts`). The live site (Netlify) uses the Transaction pooler (port 6543).
 - `npx tsc --noEmit` and `npm run lint` — type check and lint
 - `npm run db:migrate` — apply new `db/migrations/*.sql` files
 - `npm run user -- list | add <cell> <first> <last> [email] | director <cell> | admin <cell> | delete <cell>` — test accounts; `admin` makes a CourtCaptain Admin (platform page `/platform`)

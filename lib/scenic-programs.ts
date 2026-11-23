@@ -1319,6 +1319,7 @@ export async function addToPool(
   teamId: string,
   byName: string,
   now: Date,
+  recAnyway = false, // a Director of Teams placing a team by hand (the FastBreak list): "REC open to" doesn't apply
 ): Promise<{ division: string } | { error: string }> {
   const team = (
     await q.query<{ gender: string; grade: number; level: string; name: string }>(
@@ -1327,7 +1328,7 @@ export async function addToPool(
     )
   ).rows[0];
   if (!team) return { error: "That team no longer exists." };
-  if (!(await recOpen(q, programId, teamId)))
+  if (!recAnyway && !(await recOpen(q, programId, teamId)))
     return { error: `REC in this program is only for the organizations Scenic City picked. COMP is open to all.` };
   const pool = await poolFor(q, programId, team);
   if (!pool) return { error: `This program has no ${team.gender} ${ordinal(team.grade)} ${team.level}.` };
@@ -1519,22 +1520,27 @@ async function leagueTerms(q: Pick<Queryable, "query">, programId: string, org: 
 }
 
 // Each registered team's choice in a program (teams not registered are missing).
-async function choices(q: Pick<Queryable, "query">, programId: string): Promise<Map<string, Choice>> {
-  const r = await q.query<{ team_id: string; all_season: boolean; days: Choice["days"] }>(
-    `select r.team_id::text, r.all_season,
+// `bracketBy`: put in the Brackets by hand (the FastBreak list's Championship teams), on top of the usual rule.
+async function choices(q: Pick<Queryable, "query">, programId: string): Promise<Map<string, Choice & { bracketBy: string | null }>> {
+  const r = await q.query<{ team_id: string; all_season: boolean; bracket_by: string | null; days: Choice["days"] }>(
+    `select r.team_id::text, r.all_season, r.bracket_by,
             coalesce((select json_agg(json_build_object('date', to_char(g.day, 'YYYY-MM-DD'), 'kind', d.kind) order by g.day, d.kind)
                       from scenic_registration_days d join game_days g on g.id = d.game_day_id
                       where d.program_id = r.program_id and d.team_id = r.team_id), '[]') as days
      from scenic_registrations r where r.program_id = $1`,
     [programId],
   );
-  return new Map(r.rows.map((x) => [x.team_id, { allSeason: x.all_season, days: x.days }]));
+  return new Map(r.rows.map((x) => [x.team_id, { allSeason: x.all_season, days: x.days, bracketBy: x.bracket_by }]));
 }
 
-// What a choice gives, against the League's terms today (for showing; saved choices were checked when made).
-function entryOf(c: Choice, terms: { options: ProgramOption[]; gameDates: string[] }): Entry {
-  const r = planChoice(terms.options, terms.gameDates, { allSeason: false, days: [] }, c);
-  return "error" in r ? { ...c, perDate: {}, bracket: c.allSeason, feeCents: 0 } : { ...c, ...r.result };
+// What a choice gives, against the League's terms today (for showing; saved choices were checked when made). In the
+// Brackets: by the usual rule, or put there by hand.
+function entryOf(c: Choice & { bracketBy?: string | null }, terms: { options: ProgramOption[]; gameDates: string[] }): Entry {
+  const { bracketBy, ...choice } = c;
+  const r = planChoice(terms.options, terms.gameDates, { allSeason: false, days: [] }, choice);
+  return "error" in r
+    ? { ...choice, perDate: {}, bracket: choice.allSeason || !!bracketBy, feeCents: 0 }
+    : { ...choice, ...r.result, bracket: r.result.bracket || !!bracketBy };
 }
 
 // Register a team (placed in its division's smallest pool), or add to its registration: for a League, the options and
@@ -1547,13 +1553,14 @@ export async function saveChoice(
   byName: string,
   now: Date,
   checkCloses = true, // each option's own close (false only for the FastBreak sync)
+  recAnyway = false, // the FastBreak list (a Director of Teams): "REC open to" doesn't apply
 ): Promise<{ error: string } | { division: string | null; entry: Entry | null }> {
   const kind = (await q.query<{ kind: string }>("select kind from scenic_programs where id = $1", [programId])).rows[0]?.kind;
   if (!kind) return { error: "That program no longer exists." };
   const registered = (await choices(q, programId)).get(teamId) ?? null;
   if (kind !== "League") {
     if (registered) return { error: "That team is already registered." };
-    const placed = await addToPool(q, programId, teamId, byName, now);
+    const placed = await addToPool(q, programId, teamId, byName, now, recAnyway);
     return "error" in placed ? placed : { division: placed.division, entry: null };
   }
   const add = parseChoice(choice);
@@ -1568,7 +1575,7 @@ export async function saveChoice(
   if (closed) return { error: closed };
   let division: string | null = null;
   if (!registered) {
-    const placed = await addToPool(q, programId, teamId, byName, now);
+    const placed = await addToPool(q, programId, teamId, byName, now, recAnyway);
     if ("error" in placed) return placed;
     division = placed.division;
   }
@@ -1583,7 +1590,7 @@ export async function saveChoice(
        select $1, $2, g.id, $4, $5, $6 from game_days g where g.day = $3::date on conflict do nothing`,
       [programId, teamId, d.date, d.kind, byName, now],
     );
-  return { division, entry: { ...plan.merged, ...plan.result } };
+  return { division, entry: { ...plan.merged, ...plan.result, bracket: plan.result.bracket || !!registered?.bracketBy } };
 }
 
 // A League's terms and one team's entry, for the registration pop-up.

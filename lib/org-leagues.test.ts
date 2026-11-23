@@ -82,7 +82,7 @@ describe("an organization's teams in Scenic City programs", () => {
       programs: [{ name: "Winter League 2027", status: "open", fits: true, registered: null }],
     });
     expect(await registerOrgTeam(deps(), jo, org, tid, pid, ALL)).toMatchObject({ ok: true });
-    expect((await listScenicTeams(deps(), dee, "Director"))!.teams[0]).toMatchObject({ name: "ER 4B East Ridge TBD", coachId: null }); // the league name: Abbreviation first
+    expect((await listScenicTeams(deps(), dee, "Director"))!.teams[0]).toMatchObject({ name: "4B East Ridge TBD", coachId: null }); // the league name: the same as its own
     await addOrgTeamCoach(deps(), jo, org, tid, { first: "Cy", last: "Coach", cell: "4235550003", role: "HeadCoach" });
     expect((await listScenicTeams(deps(), dee, "Director"))!.teams[0]).toMatchObject({ coachFirst: "Cy", coachLast: "Coach" });
     expect(await registerOrgTeam(deps(), jo, org, tid, pid, ALL)).toMatchObject({
@@ -99,7 +99,7 @@ describe("an organization's teams in Scenic City programs", () => {
     // Scenic City sees it under East Ridge, read-only, in the program.
     const scenic = (await listScenicTeams(deps(), dee, "Director"))!;
     expect(scenic.teams.map((t) => `${t.name} ${t.partnerName} ${t.canEdit}`)).toEqual([
-      "ER 4B East Ridge Coach East Ridge Parks & Rec false",
+      "4B East Ridge Coach East Ridge Parks & Rec false",
     ]); // renamed with its Head Coach
     expect(scenic.addFor.map((a) => a.label)).not.toContain("East Ridge Parks & Rec");
     const copy = scenic.teams[0].id;
@@ -114,7 +114,7 @@ describe("an organization's teams in Scenic City programs", () => {
         coachCell: "4235550003",
       }),
     ).toEqual({ ok: false, message: "This team is managed by its organization." });
-    expect(JSON.stringify(await getProgram(deps(), dee, pid))).toContain("ER 4B East Ridge Coach");
+    expect(JSON.stringify(await getProgram(deps(), dee, pid))).toContain("4B East Ridge Coach");
 
     // Withdraw while open; not after it closes.
     expect(await withdrawOrgTeam(deps(), jo, org, tid, pid)).toEqual({ ok: true });
@@ -139,7 +139,7 @@ describe("an organization's teams in Scenic City programs", () => {
     expect((await listScenicTeams(deps(), dee, "Director"))!.teams).toEqual([]);
     // Looking back: picking the ended program still lists it (and its division); an organization's team is never "Not registered".
     const back = (await listScenicTeams(deps(), dee, "Director", pid))!;
-    expect(back.teams.map((t) => [t.name, t.divisionLow, t.divisionHigh])).toEqual([["ER 4B East Ridge Coach", 3, 4]]);
+    expect(back.teams.map((t) => [t.name, t.divisionLow, t.divisionHigh])).toEqual([["4B East Ridge Coach", 3, 4]]);
     expect(back.programs).toEqual([{ id: pid, name: "Winter League 2027", ended: true }]);
     expect((await listScenicTeams(deps(), dee, "Director", "none"))!.teams).toEqual([]);
     now = new Date("2026-12-20T15:00:00Z");
@@ -257,7 +257,7 @@ describe("an organization's teams in Scenic City programs", () => {
     expect(await registerOrgTeam(deps(), jo, org, tid, pid, ALL)).toMatchObject({ ok: true });
     const d = (await getProgram(deps(), dee, pid))!.divisionList[0];
     expect(d).toMatchObject({ label: "Coed Pre-K", groups: [{ label: "Pre-K REC" }] });
-    expect(d.groups[0].pools[0].teams.map((t) => t.name)).toEqual(["ER PKC East Ridge TBD"]);
+    expect(d.groups[0].pools[0].teams.map((t) => t.name)).toEqual(["PKC East Ridge TBD"]);
   });
 
   it("registers all unregistered teams at once, each into its division (coach or not); skips ones with no division", async () => {
@@ -405,7 +405,7 @@ describe("an organization's teams in Scenic City programs", () => {
     const shown = (await teamPrograms(deps(), jo, org, tid))!.programs[0];
     expect(shown.entry).toMatchObject({ perDate: { "2026-12-05": 2, "2026-12-12": 2 }, bracket: true });
     const team = (await getProgram(deps(), dee, pid))!.divisionList[0].groups[0].pools[0].teams[0];
-    expect(team).toMatchObject({ name: "ER 2B East Ridge TBD", entry: { bracket: true, feeCents: 11500 } });
+    expect(team).toMatchObject({ name: "2B East Ridge TBD", entry: { bracket: true, feeCents: 11500 } });
 
     // The team withdraws from a date and re-enters it; a date Scenic City took it out of only Scenic City restores.
     const dayOff = (what: string, out: boolean) => setOrgTeamDayOff(deps(), jo, org, tid, pid, what, out);

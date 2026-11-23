@@ -15,6 +15,7 @@ import * as grid from "@/lib/scenic-grid";
 import * as courts from "@/lib/scenic-courts";
 import * as bindings from "@/lib/scenic-bindings";
 import * as fastbreak from "@/lib/fastbreak/orgs";
+import * as fbRegister from "@/lib/fastbreak/register";
 import * as publicLeague from "@/lib/public-league";
 import { fastbreakClient } from "@/lib/fastbreak/client";
 import { setProgramGradeRules as saveProgramGradeRules } from "@/lib/grade-rules";
@@ -193,6 +194,30 @@ export async function setFastbreakOrg(fbOrgId: string, pick: unknown) {
 }
 export async function syncFastbreakNow() {
   return guarded((u) => fastbreak.syncFastbreakNow({ ...deps, client: fastbreakClient }, u), "team-registration");
+}
+
+// The FastBreak list on Teams (the pill; Directors of Teams, checked in lib/fastbreak/register): FastBreak's teams, and
+// Register one into Scenic City.
+const fbClient = () => {
+  try {
+    return fastbreakClient();
+  } catch {
+    return null;
+  }
+};
+export async function loadFastbreakList() {
+  return guarded(async (u) => {
+    const client = fbClient();
+    if (!client) return { ok: false as const, message: "FastBreak isn't set up on this server (its API key is missing)." };
+    return (await fbRegister.fastbreakList({ ...deps, client }, u)) ?? { ok: false as const, message: "Only a Scenic City Director of Teams can do that." };
+  }, "team-registration");
+}
+export async function registerFromFastbreak(fbId: number, opts: { part?: string; level?: "COMP" | "REC"; twoGames?: string[] }) {
+  return guarded(async (u) => {
+    const client = fbClient();
+    if (!client) return { ok: false as const, message: "FastBreak isn't set up on this server (its API key is missing)." };
+    return fbRegister.registerFastbreakTeam({ ...deps, client }, u, fbId, opts);
+  }, "team-registration");
 }
 
 // Scheduler: create (or create again) one division's matchups on a Game Day (Admins and Directors of Scheduling).

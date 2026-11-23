@@ -39,7 +39,9 @@ export default function TeamRow({
   issue,
   page,
   registrations,
+  missingBirthdates = 0,
 }: {
+  missingBirthdates?: number; // players without a birthdate (typed-in rosters): PLAYER BIRTHDATES MUST BE ENTERED
   // ↗ the team's page opened right under the row (built on the server only while open); left out: ↗ goes to its page
   page?: { id: string; content: ReactNode | null };
   issue?: string | null; // a roster problem ("1 Too old"): the name turns red with a badge saying it
@@ -53,7 +55,7 @@ export default function TeamRow({
   hasCoach: boolean;
   waitingCoach?: string | null; // a Head Coach named without a cell yet ("Alex Campbell")
   needsEmail?: boolean; // the Head Coach (or the one waiting) has no email
-  players: number;
+  players: number | null; // null: its roster isn't kept here (a League team from outside)
   people?: ReactNode;
   lead?: ReactNode; // first button (Text coaches)
   roster?: { count: number; list: ReactNode }; // the 👥 count; tapping it opens `list` on the card
@@ -144,7 +146,7 @@ export default function TeamRow({
             <span className="min-w-0">
               <span
                 className={`block truncate font-semibold ${
-                  issue || teamNeeds({ hasCoach, waitingCoach, needsEmail: !!needsEmail, players: players ?? 0 })
+                  issue || teamNeeds({ hasCoach, waitingCoach, needsEmail: !!needsEmail, players, missingBirthdates })
                     ? "animate-pulse text-red-600 dark:text-red-400"
                     : ""
                 }`}
@@ -159,6 +161,8 @@ export default function TeamRow({
                 </span>
               )}
             </span>
+            {/* Its level right behind its name (REC or COMP). */}
+            <Chip tone={level === "COMP" ? "orange" : "zinc"}>{level}</Chip>
             {issue && <Chip tone="red">{issue}</Chip>}
           </>
         }
@@ -188,9 +192,8 @@ export default function TeamRow({
         }
         more={
           <>
-            {/* One line: the level, then its staff (grades and places, when shown, after the level). */}
+            {/* One line: its grades and places (when shown), then its staff. */}
             <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
-              <Chip tone={level === "COMP" ? "orange" : "zinc"}>{level}</Chip>
               {sub && <span className="mr-1 text-sm text-zinc-500 dark:text-zinc-400">{sub}</span>}
               {people}
             </div>
@@ -202,7 +205,8 @@ export default function TeamRow({
             {!hasCoach && !waitingCoach && <MustBeEntered what="COACH INFO" />}
             {waitingCoach && <MustBeEntered what="COACH CELL" />}
             {(waitingCoach || needsEmail) && <MustBeEntered what="COACH EMAIL" />}
-            {!players && <MustBeEntered what="ROSTER" />}
+            {players === 0 && <MustBeEntered what="ROSTER" />}
+            {missingBirthdates > 0 && <MustBeEntered what="PLAYER BIRTHDATES" />}
           </>
         }
       />
@@ -215,8 +219,9 @@ export default function TeamRow({
 // A grade card's title: red, with a ⚠ badge of how many of its teams have a problem.
 // Something a team must still enter (its MUST BE ENTERED lines): its grade, gender and level cards (and Home's Teams
 // card) flash red so you can drill down to it.
-export function teamNeeds(t: { hasCoach: boolean; waitingCoach: unknown; needsEmail: boolean; players: number }): boolean {
-  return (!t.hasCoach && !t.waitingCoach) || !!t.waitingCoach || t.needsEmail || !t.players;
+export function teamNeeds(t: { hasCoach: boolean; waitingCoach: unknown; needsEmail: boolean; players: number | null; missingBirthdates?: number }): boolean {
+  // players null: no roster kept here; missingBirthdates: players without a birthdate (where it's asked)
+  return (!t.hasCoach && !t.waitingCoach) || !!t.waitingCoach || t.needsEmail || t.players === 0 || !!t.missingBirthdates;
 }
 
 function gradeTitle(label: string, bad: number) {
@@ -431,14 +436,25 @@ export function ChatIcon() {
 }
 
 // A typed-in roster on a team's row (👥): each player's uniform number and name, by last name.
-export function OrgRosterList({ players }: { players: { first: string; last: string; jersey: string | null }[] }) {
+// A typed-in roster on a team's card: jersey, name, and its birthdate ("Born 5/3/2014"), or "no birthdate" in red where
+// birthdates are asked (`birthdate` given: null = missing; left out: not asked, e.g. CourtPlayers' rosters).
+export function OrgRosterList({ players }: { players: { first: string; last: string; jersey: string | null; birthdate?: string | null }[] }) {
   if (!players.length) return <p className="text-sm text-zinc-500">No players on the roster yet.</p>;
+  const born = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}/${d.slice(0, 4)}`;
   return (
     <ul className="divide-y divide-zinc-100 rounded-xl bg-zinc-50 px-3 text-sm dark:divide-white/5 dark:bg-white/5">
       {players.map((p, i) => (
-        <li key={i} className="py-1.5">
-          <JerseyNumber n={p.jersey} />
-          {p.first} <span className="font-semibold">{p.last}</span>
+        <li key={i} className="flex items-center justify-between gap-2 py-1.5">
+          <span className="min-w-0">
+            <JerseyNumber n={p.jersey} />
+            {p.first} <span className="font-semibold">{p.last}</span>
+          </span>
+          {p.birthdate !== undefined &&
+            (p.birthdate ? (
+              <span className="shrink-0 text-xs text-zinc-500">Born {born(p.birthdate)}</span>
+            ) : (
+              <span className="shrink-0 text-xs font-medium text-red-600 dark:text-red-400">no birthdate</span>
+            ))}
         </li>
       ))}
     </ul>

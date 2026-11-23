@@ -6,7 +6,7 @@ import { CONTEXT_COOKIE } from "@/lib/contexts";
 import { db } from "@/lib/db";
 import { switchSoloToOrg } from "@/lib/court-solo";
 import { setOrgGradeRules } from "@/lib/grade-rules";
-import { createOrganization, renameOrg, setOrgAbbr, setOrgColor, setOrgLogo, type Logo } from "@/lib/org-signup";
+import { createOrganization, renameOrg, setOrgAbbr, setOrgColor, setOrgDefaultAlt, setOrgLogo, type Logo } from "@/lib/org-signup";
 import { deleteOrganization } from "@/lib/org-delete";
 
 const deps = { pool: db, now: () => new Date() };
@@ -47,6 +47,19 @@ export async function registerOrganization(form: FormData) {
     return r;
   } catch (e) {
     console.error("Register organization failed:", e);
+    return { ok: false as const, message: "Something went wrong. Please try again." };
+  }
+}
+
+// Organization settings → General: the Default Alternate name (Admins; checked in lib/org-signup).
+export async function changeOrgDefaultAlt(org: string, value: string) {
+  const user = await currentUser();
+  if (!user) return { ok: false as const, message: "Please log in again." };
+  if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  try {
+    return await setOrgDefaultAlt(deps, user, String(org), value);
+  } catch (e) {
+    console.error("Default Alternate name change failed:", e);
     return { ok: false as const, message: "Something went wrong. Please try again." };
   }
 }

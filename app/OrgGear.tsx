@@ -77,6 +77,7 @@ export default async function OrgGear({ org, coachId, user }: { org: string; coa
       colors={o.color && !(ORG_COLORS as readonly string[]).includes(o.color) ? [o.color, ...ORG_COLORS] : ORG_COLORS}
       login={o.login}
       abbr={o.abbr}
+      defaultAlt={o.defaultAlt}
       name={o.name}
       short={o.short}
       canRename={owner}

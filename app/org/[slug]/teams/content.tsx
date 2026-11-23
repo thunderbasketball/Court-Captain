@@ -76,14 +76,18 @@ export async function OrgTeamsContent({
   const [own, scrims, rosterRows] = await Promise.all([
     upcomingOwnForTeams({ pool: db, now: () => new Date() }, slug, ids),
     teamScrimmages({ pool: db, now: () => new Date() }, slug, ids),
-    db.query<{ team: string; first: string; last: string; jersey: string | null }>(
-      `select team_id::text as team, first_name as first, last_name as last, jersey from org_team_players
-        where team_id = any($1::bigint[]) order by lower(last_name), lower(first_name)`,
+    db.query<{ team: string; first: string; last: string; jersey: string | null; birthdate: string | null }>(
+      `select team_id::text as team, first_name as first, last_name as last, jersey, to_char(birthdate, 'YYYY-MM-DD') as birthdate
+         from org_team_players where team_id = any($1::bigint[])
+        order by jersey::int nulls last, lower(last_name), lower(first_name)`,
       [ids],
     ),
   ]);
-  const rosters: Record<string, { first: string; last: string; jersey: string | null }[]> = {};
-  for (const { team, ...p } of rosterRows.rows) (rosters[team] ??= []).push(p); // Owners and Admins: 👁 View as on each coach // a CourtSolo account: its one team, no Add or Import
+  // Typed-in rosters (no CourtPlayers) ask each player's birthdate: shown on the card, a warning while any is missing.
+  const typedRoster = !(await hasFeature(db, slug, "player-registration"));
+  const rosters: Record<string, { first: string; last: string; jersey: string | null; birthdate?: string | null }[]> = {};
+  for (const { team, birthdate, ...p } of rosterRows.rows) (rosters[team] ??= []).push(typedRoster ? { ...p, birthdate } : p);
+  const noBirthdate = (id: string) => (typedRoster ? (rosters[id] ?? []).filter((p) => !p.birthdate).length : 0); // Owners and Admins: 👁 View as on each coach // a CourtSolo account: its one team, no Add or Import
 
   return (
     <>
@@ -147,6 +151,7 @@ export async function OrgTeamsContent({
               waitingCoach: t.waitingCoach,
               needsEmail: t.coaches.some((c) => c.role === "HeadCoach" && !c.email),
               players: t.players,
+              missingBirthdates: noBirthdate(t.id),
             })
           }
             row={(t) => (
@@ -165,6 +170,7 @@ export async function OrgTeamsContent({
               needsEmail={t.coaches.some((c) => c.role === "HeadCoach" && !c.email)}
               players={t.players}
               roster={{ count: t.players, list: <OrgRosterList players={rosters[t.id] ?? []} /> }}
+              missingBirthdates={noBirthdate(t.id)}
               schedule={{
                 items: (schedules[t.id] ?? []).length + (own[t.id] ?? []).length + (scrims[t.id] ?? []).length,
                 list: <ScheduleList games={schedules[t.id] ?? []} practices={[]} own={own[t.id] ?? []} scrims={scrims[t.id] ?? []} today={today} />,

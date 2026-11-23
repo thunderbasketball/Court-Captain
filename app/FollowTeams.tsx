@@ -120,9 +120,9 @@ export function MyTeams({ org }: { org: string }) {
   );
 }
 
-type Game = FollowedGame & { program: string };
+export type Game = FollowedGame & { program: string };
 
-function GameLine({ g, past = false }: { g: Game; past?: boolean }) {
+export function GameLine({ g, past = false }: { g: Game; past?: boolean }) {
   return (
     <li className={`flex gap-2 ${past ? "opacity-50" : ""}`}>
       <span className="w-24 shrink-0 text-zinc-500">

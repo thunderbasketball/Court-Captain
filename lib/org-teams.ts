@@ -247,11 +247,11 @@ async function ruleName(
   return name;
 }
 
-// A team's name, and its copy's in a league (a REC team's with the Abbreviation first).
+// A team's name, and its copy's in a league (the same name).
 async function setOrgTeamName(q: Pick<Queryable, "query">, org: string, teamId: string, name: string) {
   await q.query("update org_teams set name = $2 where id = $1", [teamId, name]);
   await q.query(
-    `update scenic_teams st set name = ${leagueNameSql("o", "$2", "t.level")}
+    `update scenic_teams st set name = ${leagueNameSql("o", "$2")}
      from organizations o, org_teams t where st.org_team_id = $1 and t.id = $1 and o.slug = $3`,
     [teamId, name, org],
   );
@@ -267,7 +267,7 @@ export async function renameAllOrgTeams(q: PoolClient, org: string): Promise<num
   let changed = 0;
   for (const t of teams) if ((await renameOrgTeam(q, org, t.id)) !== t.name) changed++;
   await q.query(
-    `update scenic_teams st set name = ${leagueNameSql("o", "t.name", "t.level")}
+    `update scenic_teams st set name = ${leagueNameSql("o", "t.name")}
        from org_teams t join organizations o on o.slug = t.org where st.org_team_id = t.id and t.org = $1`,
     [org],
   );

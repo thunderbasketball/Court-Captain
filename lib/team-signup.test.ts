@@ -173,7 +173,7 @@ describe("Register (an organization's teams, no login yet)", () => {
       ).rows,
     ).toEqual([
       { name: "5B Hixson Hoops Lee", all_season: false, registered_by: "Sam Lee", days: ["single_1"] }, // COMP: just its name
-      { name: "HH 4B Hoopers Kim", all_season: true, registered_by: "Sam Lee", days: [] }, // REC: the Abbreviation first
+      { name: "4B Hoopers Kim", all_season: true, registered_by: "Sam Lee", days: [] }, // REC: the Abbreviation first
     ]);
     const me = await getSessionUser(deps, done.token);
     expect(me?.coachId).toBe("5550101");

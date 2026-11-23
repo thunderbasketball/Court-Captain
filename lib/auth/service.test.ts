@@ -764,6 +764,46 @@ describe("sessions", () => {
     expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5551234" });
   });
 
+  it("act as: an organization that runs events views the coaches of teams registered in its current events", async () => {
+    await addUser({}); // Earl: Scenic City Admin
+    await grant(db.pool, "5551234 scenic-city Director", "5551234 scenic-city Admin");
+    await db.pool.query("insert into organizations (slug, name, short_name, kind) values ('chatt', 'City of Chattanooga', 'Chatt', 'Organization') on conflict do nothing");
+    await addUser({ cell: "4235550002", email: "pat@example.com", coach: false }); // Pat: Head Coach of a Chattanooga team
+    const ot = (
+      await db.pool.query<{ id: string }>(
+        "insert into org_teams (org, name, gender, grade_low, grade, level, created_by) values ('chatt', '5B Chatt Lee', 'Boys', 5, 5, 'COMP', 'x') returning id::text",
+      )
+    ).rows[0].id;
+    await db.pool.query("insert into org_team_coaches (team_id, coach_id, role, added_by) values ($1, '5550002', 'HeadCoach', 'x')", [ot]);
+    const t = token(await auth.submitPin(deps, CELL, "5678"));
+    expect(await auth.setActingAs(deps, t, "5550002")).toMatchObject({ ok: false, message: "You can only view people in your organization." });
+
+    // Registered in Scenic City's current League: viewable.
+    const prog = (
+      await db.pool.query<{ id: string }>(
+        `insert into scenic_programs (org, kind, name, starts_on, ends_on, reg_opens, reg_closes, created_by, updated_by)
+         values ('scenic-city', 'League', 'Winter', '2026-12-05', '2099-02-28', '2026-10-01', '2099-02-14', 't', 't') returning id::text`,
+      )
+    ).rows[0].id;
+    await db.pool.query(
+      `insert into scenic_divisions (program_id, gender, grade_low, grade_high) values (${prog}, 'Boys', 5, 5);
+       insert into scenic_grade_groups (division_id, grade, level) select id, 5, 'COMP' from scenic_divisions;
+       insert into scenic_pools (group_id, name) select id, 'A' from scenic_grade_groups;
+       insert into partners (name, kind, hosts_games, registers_teams, approved, created_by, org_slug)
+         values ('City of Chattanooga', 'Organization', false, true, true, 't', 'chatt');
+       insert into scenic_teams (name, gender, grade_low, grade, level, org_team_id, partner_id, created_by, updated_by)
+         select '5B Chatt Lee', 'Boys', 5, 5, 'COMP', ${ot}, id, 't', 't' from partners where org_slug = 'chatt';
+       insert into scenic_registrations (program_id, team_id, pool_id, registered_by)
+         select ${prog}, t.id, (select id from scenic_pools), 't' from scenic_teams t;`,
+    );
+    expect(await auth.setActingAs(deps, t, "5550002")).toEqual({ ok: true });
+    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5550002", actingBy: { coachId: "5551234" } });
+
+    // Withdrawn from the event: View as ends at once.
+    await db.pool.query("delete from scenic_registrations");
+    expect(await auth.getSessionUser(deps, t)).toMatchObject({ coachId: "5551234" });
+  });
+
   it("dashboards: an Admin may see anyone in their organization; a Director, or someone outside it, may not", async () => {
     await addUser({ director: true });
     await grant(db.pool, "5551234 thunder Admin");

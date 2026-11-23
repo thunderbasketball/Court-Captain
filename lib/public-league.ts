@@ -247,6 +247,52 @@ export async function followedTeams(q: Pick<Queryable, "query">, now: Date, ids:
   return list.flatMap((id) => teams.get(id) ?? []);
 }
 
+// An organization's public page (no login): its teams in a current event (any organization's League or event on the
+// public list that hasn't ended; Thunder's teams, or the organization's own), by name, each with its event, group and
+// (a published League) its games. Team names and games only: no roster, staff or contact details.
+export type OrgPublicTeam = { id: string; name: string; programs: FollowedProgram[] };
+
+export async function orgPublicTeams(q: Pick<Queryable, "query">, now: Date, org: string): Promise<OrgPublicTeam[]> {
+  const today = easternDate(now);
+  const programs = (await publicPrograms(q, now)).filter((p) => p.endsOn >= today);
+  if (!programs.length) return [];
+  const own = org === "thunder" ? "t.thunder_team_id is not null" : "t.org_team_id in (select id from org_teams where org = $2)";
+  const regs = await q.query<{ team: string; name: string; program: string; grade: number; gender: string; level: string }>(
+    `select t.id::text as team, t.name, r.program_id::text as program, g.grade, d.gender, g.level
+       from scenic_registrations r
+       join scenic_teams t on t.id = r.team_id
+       join scenic_pools po on po.id = r.pool_id
+       join scenic_grade_groups g on g.id = po.group_id
+       join scenic_divisions d on d.id = g.division_id
+      where r.program_id = any($1::bigint[]) and r.removed_by is null and ${NOT_DEV} and ${own}`,
+    org === "thunder" ? [programs.map((p) => p.id)] : [programs.map((p) => p.id), org],
+  );
+  const teams = new Map<string, OrgPublicTeam>();
+  for (const p of programs) {
+    const mine = regs.rows.filter((r) => r.program === p.id);
+    if (!mine.length) continue;
+    const schedule = p.kind === "League" && p.published ? await programSchedule(q, p.id) : null;
+    for (const r of mine) {
+      const t = teams.get(r.team) ?? { id: r.team, name: r.name, programs: [] };
+      teams.set(r.team, t);
+      t.programs.push({ id: p.id, name: p.name, group: groupLabel(r.grade, r.gender, r.level), games: schedule && gamesOf(schedule, r.team) });
+    }
+  }
+  return [...teams.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+}
+
+// One team's games in a published schedule.
+function gamesOf(schedule: PublicDay[], team: string): FollowedGame[] {
+  const games: FollowedGame[] = [];
+  for (const d of schedule)
+    for (const g of d.games) {
+      const home = g.homeId === team;
+      if (!home && g.awayId !== team) continue;
+      games.push({ date: d.date, starts: g.starts, gym: g.gym, court: g.court, map: g.map, opponent: home ? g.away : g.home, home });
+    }
+  return games;
+}
+
 // A Director of Programs or of Scheduling (on the Scheduler) publishes a League's schedule to the public page, or takes it back.
 export async function setSchedulePublished(deps: Deps, viewer: SessionUser, programId: unknown, on: boolean): Promise<Result> {
   if (!isId(programId)) return { ok: false, message: "Pick a League." };

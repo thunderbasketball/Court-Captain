@@ -11,6 +11,7 @@ export type PageMenu = {
   label: string; // for screen readers and the tooltip
   className: string; // the round button's look
   items: { key: string; label: string; panel: ReactNode }[];
+  panel?: ReactNode; // opens right away, with no choices (e.g. the FastBreak pill's list)
 };
 
 // A page's title with round menu buttons on its right (e.g. 📣 Text / Chat / Alert coaches, + Add / Import teams), sized
@@ -70,7 +71,12 @@ export default function PageMenus({
         {title}
         {slot ? (target ? createPortal(buttons, target) : null) : buttons}
       </div>
-      {open && (
+      {open?.panel && (
+        <div className="-mt-2 mb-4 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-zinc-950/5 dark:bg-zinc-900 dark:ring-white/10">
+          {open.panel}
+        </div>
+      )}
+      {open && !open.panel && (
         <div className="-mt-2 mb-4 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-zinc-950/5 dark:bg-zinc-900 dark:ring-white/10">
           <div className="flex flex-wrap gap-2">
             {open.items.map((i) => (

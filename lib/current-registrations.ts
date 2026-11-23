@@ -5,6 +5,55 @@ import { easternDate } from "./time";
 
 export type CurrentRegistration = { program: string; paid: boolean };
 
+// The organization's teams, and how many aren't registered in any event that hasn't ended (its Home's Teams card:
+// "Teams (5 · 1 not registered)"). Thunder's teams, or the organization's own.
+export async function unregisteredTeams(q: Pick<Queryable, "query">, org: string, now: Date): Promise<{ total: number; unregistered: number }> {
+  const thunder = org === "thunder";
+  const r = await q.query<{ total: number; unregistered: number }>(
+    `select count(*)::int as total,
+            count(*) filter (where not exists (
+              select 1 from scenic_teams st join scenic_registrations r on r.team_id = st.id join scenic_programs p on p.id = r.program_id
+               where ${thunder ? "st.thunder_team_id" : "st.org_team_id"} = t.id and p.ends_on >= $1::date and r.removed_by is null))::int as unregistered
+       from ${thunder ? "teams t" : "org_teams t where t.org = $2"}`,
+    thunder ? [easternDate(now)] : [easternDate(now), org],
+  );
+  return r.rows[0];
+}
+
+// An organization that runs events (Scenic City): the teams registered in its events that haven't ended, not taken out
+// (its Home's Teams card; simulated "(DEV)" teams left out).
+export async function eventTeamsCount(q: Pick<Queryable, "query">, org: string, now: Date): Promise<number> {
+  const r = await q.query<{ n: number }>(
+    `select count(distinct r.team_id)::int as n from scenic_registrations r
+       join scenic_programs p on p.id = r.program_id join scenic_teams t on t.id = r.team_id
+      where p.org = $1 and p.ends_on >= $2::date and r.removed_by is null and t.name not like '%(DEV)'`,
+    [org, easternDate(now)],
+  );
+  return r.rows[0].n;
+}
+
+// League teams' current registrations by their League id (Scenic City's Teams list cards).
+export async function leagueRegistrations(q: Pick<Queryable, "query">, ids: string[], now: Date): Promise<Record<string, CurrentRegistration[]>> {
+  if (!ids.length) return {};
+  const r = await q.query<{ id: string; program: string; paid: boolean }>(
+    `select r.team_id::text as id, p.name as program, r.paid from scenic_registrations r join scenic_programs p on p.id = r.program_id
+      where r.team_id = any($1::bigint[]) and p.ends_on >= $2::date and r.removed_by is null order by p.starts_on, lower(p.name)`,
+    [ids, easternDate(now)],
+  );
+  const out: Record<string, CurrentRegistration[]> = {};
+  for (const x of r.rows) (out[x.id] ??= []).push({ program: x.program, paid: x.paid });
+  return out;
+}
+
+// A League coach's own teams (Solo teams they own, or teams they're Head Coach of): their Teams card's count.
+export async function myLeagueTeamsCount(q: Pick<Queryable, "query">, coachId: string): Promise<number> {
+  const r = await q.query<{ n: number }>(
+    "select count(*)::int as n from scenic_teams where (coach_id = $1 or owner_coach_id = $1) and name not like '%(DEV)'",
+    [coachId],
+  );
+  return r.rows[0].n;
+}
+
 // By the team's id in its organization: `thunder` for Thunder's teams (teams), else an organization's (org_teams).
 export async function currentRegistrations(
   q: Pick<Queryable, "query">,

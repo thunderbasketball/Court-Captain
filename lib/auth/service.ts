@@ -305,8 +305,10 @@ export async function getSessionUser(deps: Deps, token: string | undefined): Pro
 }
 
 // An Admin may view the app as anyone in their organization: anyone with a role (or Request) there, its officials, or
-// anyone on one of its teams' staff (Thunder's, or another organization's Team Managers and Team Parents too). CourtCaptain staff (support for every organization) may view as anyone. SQL condition on the
-// two coach ids.
+// anyone on one of its teams' staff (Thunder's, or another organization's Team Managers and Team Parents too), and, for
+// an organization that runs events (CourtTeams, like Scenic City), the Head and Assistant Coaches of any team registered
+// in one of its events that hasn't ended (another organization's, Thunder's, a club's or a Solo team). CourtCaptain staff
+// (support for every organization) may view as anyone. SQL condition on the two coach ids.
 // (Wrapped in parentheses: it's combined with `and` in queries.)
 const CAN_VIEW_AS = (admin: string, target: string) => `(exists (select 1 from platform_admins p where p.coach_id = ${admin})
   or exists (
@@ -315,7 +317,15 @@ const CAN_VIEW_AS = (admin: string, target: string) => `(exists (select 1 from p
          or exists (select 1 from org_officials f where f.coach_id = ${target} and f.org = a.org)
          or (a.org = 'thunder' and exists (select 1 from team_staff ts where ts.coach_id = ${target}))
          or exists (select 1 from org_team_coaches oc join org_teams ot on ot.id = oc.team_id
-                     where oc.coach_id = ${target} and ot.org = a.org))))`;
+                     where oc.coach_id = ${target} and ot.org = a.org)
+         or exists (select 1 from scenic_registrations r join scenic_programs p on p.id = r.program_id
+                      join scenic_teams st on st.id = r.team_id
+                     where p.org = a.org and p.ends_on >= current_date and r.removed_by is null
+                       and (st.coach_id = ${target} or st.owner_coach_id = ${target}
+                            or exists (select 1 from team_staff ts where ts.team_id = st.thunder_team_id
+                                        and ts.coach_id = ${target} and ts.role in ('HeadCoach', 'AsstCoach'))
+                            or exists (select 1 from org_team_coaches oc where oc.team_id = st.org_team_id
+                                        and oc.coach_id = ${target} and oc.role in ('HeadCoach', 'AsstCoach')))))))`;
 
 // Can this Admin see this person (View as, their dashboard)? Anyone in an organization they're an Admin of.
 export async function adminCanSee(q: Pick<Queryable, "query">, adminId: string, targetId: string): Promise<boolean> {
