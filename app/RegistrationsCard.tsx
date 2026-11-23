@@ -1,6 +1,8 @@
 import type { SessionUser } from "@/lib/auth/service";
 import { db } from "@/lib/db";
 import { playerRegistrations, teamRegistrations } from "@/lib/registrations-list";
+import { stripeApi } from "@/lib/stripe/client";
+import { paymentsByTeam } from "@/lib/stripe/refunds";
 import PlayerRegistrationsView from "./PlayerRegistrationsView";
 import RegistrationsView from "./RegistrationsView";
 
@@ -26,5 +28,13 @@ export default async function RegistrationsCard({
   }
   const data = await teamRegistrations(deps, user, programId);
   if (!data) return <p className="text-sm text-zinc-500">Only the organization&apos;s Owners see registrations.</p>;
-  return <RegistrationsView programs={data.programs} rows={data.rows} />;
+  // Card payments (and Refund) on each registered team's card; Owners only (checked in lib/stripe/refunds).
+  const stripe = stripeApi();
+  const payments = await paymentsByTeam(
+    db,
+    user,
+    data.programs.map((p) => p.id),
+    stripe?.live ?? false,
+  );
+  return <RegistrationsView programs={data.programs} rows={data.rows} payments={payments ?? {}} canRefund={!!stripe && !!payments} />;
 }

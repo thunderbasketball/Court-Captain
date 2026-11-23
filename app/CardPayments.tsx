@@ -16,12 +16,16 @@ const STATE: Record<PaymentTeam["state"], string> = {
 };
 const SAY: Record<PaymentTeam["state"], string> = { registered: "Registered", withdrawn: "Withdrawn", deleted: "Deleted", waiting: "Not registered" };
 
-// Inside a League's Registrations (its Owners): each card payment, newest first, with its teams (still registered,
+// Inside a League's Registrations (its Owners): card payments with no team still registered (the rest show on the
+// team's own card), newest first, with its teams (still registered,
 // withdrawn or deleted), what was paid and refunded, and Refund (any amount up to what's left). Paid but not registered:
 // flagged red with why. The card flashes while one of those waits for a refund.
 export default async function CardPayments({ user, programId }: { user: SessionUser; programId: string }) {
   const stripe = stripeApi();
-  const list = await cardPayments(db, user, programId, stripe?.live ?? false);
+  // Payments with a team still registered show on that team's card (Registrations), with Refund; here, the rest.
+  const list = (await cardPayments(db, user, programId, stripe?.live ?? false))?.filter(
+    (p) => p.status !== "registered" || !p.teams.some((t) => t.state === "registered"),
+  );
   if (!list || !list.length) return null;
   const owed = list.filter((p) => p.status === "failed" && p.refundedCents < p.paidCents).length;
   return (

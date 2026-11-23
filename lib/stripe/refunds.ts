@@ -14,7 +14,7 @@ const LEAGUE = "scenic-city";
 const isId = (v: unknown): v is string => typeof v === "string" && /^\d{1,18}$/.test(v);
 const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
 
-export type PaymentTeam = { name: string; state: "registered" | "withdrawn" | "deleted" | "waiting" };
+export type PaymentTeam = { teamId: string | null; name: string; state: "registered" | "withdrawn" | "deleted" | "waiting" };
 export type CardPayment = {
   id: string;
   teams: PaymentTeam[];
@@ -67,6 +67,7 @@ export async function cardPayments(q: Pick<Queryable, "query">, viewer: SessionU
       at: p.at,
       refunds,
       teams: p.teams.map((t) => ({
+        teamId: t.team_id,
         name: t.name ?? "A team",
         state: !t.team_id ? "deleted" : t.registered ? "registered" : p.status === "registered" ? "withdrawn" : "waiting",
       })),
@@ -111,4 +112,41 @@ export async function refundPayment(deps: Deps, viewer: SessionUser, paymentId: 
       );
     return { ok: true as const, left: left - cents };
   });
+}
+
+// A card payment as shown on each of its registered teams' cards (Registrations), by `${programId}-${teamId}`.
+export type TeamCardPayment = {
+  id: string;
+  paidCents: number;
+  refundedCents: number;
+  teams: number; // one payment can cover several teams (Register ALL)
+  who: string; // its organization, else who paid
+  by: string;
+  at: string; // ISO
+  refunds: { cents: number; by: string; at: string }[];
+};
+
+// Each program's card payments by its registered teams (Owners; null otherwise). Payments with no team still registered
+// (withdrawn, deleted, or paid but not registered) stay on the Card payments card instead.
+export async function paymentsByTeam(q: Pick<Queryable, "query">, viewer: SessionUser, programIds: string[], live: boolean) {
+  const byTeam: Record<string, TeamCardPayment> = {};
+  for (const programId of programIds) {
+    const list = await cardPayments(q, viewer, programId, live);
+    if (!list) return null;
+    for (const p of list) {
+      if (p.status !== "registered") continue;
+      const card: TeamCardPayment = {
+        id: p.id,
+        paidCents: p.paidCents,
+        refundedCents: p.refundedCents,
+        teams: p.teams.length,
+        who: p.org ?? p.startedBy,
+        by: p.startedBy,
+        at: p.at.toISOString(),
+        refunds: p.refunds.map((f) => ({ ...f, at: f.at.toISOString() })),
+      };
+      for (const t of p.teams) if (t.state === "registered" && t.teamId) byTeam[`${programId}-${t.teamId}`] = card;
+    }
+  }
+  return byTeam;
 }

@@ -4,6 +4,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { setPaid } from "./org/scenic-city/actions";
 import type { TeamRegistration } from "@/lib/registrations-list";
+import type { TeamCardPayment } from "@/lib/stripe/refunds";
+import RefundForm from "./RefundForm";
 import { money } from "@/lib/program-options";
 import { formatCell } from "@/lib/phone";
 import { Chip, EmailLink, PhoneLink, pillCls } from "./ui";
@@ -24,7 +26,14 @@ type View = (typeof VIEWS)[number]["key"];
 const when = (iso: string) =>
   new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: TZ });
 
-export default function RegistrationsView({ programs, rows: loaded }: { programs: { id: string; name: string }[]; rows: TeamRegistration[] }) {
+type Pay = { payments: Record<string, TeamCardPayment>; canRefund: boolean };
+
+export default function RegistrationsView({
+  programs,
+  rows: loaded,
+  payments = {},
+  canRefund = false,
+}: { programs: { id: string; name: string }[]; rows: TeamRegistration[] } & Partial<Pay>) {
   const [program, setProgram] = useState(programs[0]?.id ?? "");
   // Marked Paid / Unpaid here: shown at once (the page refreshes behind it).
   const [marks, setMarks] = useState<Record<string, { paid: boolean; by: string }>>({});
@@ -77,14 +86,14 @@ export default function RegistrationsView({ programs, rows: loaded }: { programs
         <div className="space-y-2">
           {groups.map((g) => (
             <SubCard key={g.key} title={g.key} count={g.rows.length}>
-              <Rows rows={g.rows} onMarked={marked} />
+              <Rows rows={g.rows} onMarked={marked} payments={payments} canRefund={canRefund} />
             </SubCard>
           ))}
         </div>
       ) : (
         shown.length > 0 && (
           <div className="overflow-hidden rounded-xl ring-1 ring-zinc-950/10 dark:ring-white/10">
-            <Rows rows={shown} showWhen onMarked={marked} />
+            <Rows rows={shown} showWhen onMarked={marked} payments={payments} canRefund={canRefund} />
           </div>
         )
       )}
@@ -96,11 +105,13 @@ function Rows({
   rows,
   showWhen = false,
   onMarked,
+  payments,
+  canRefund,
 }: {
   rows: TeamRegistration[];
   showWhen?: boolean;
   onMarked: (r: TeamRegistration, paid: boolean) => void;
-}) {
+} & Pay) {
   return (
     <ul className="divide-y divide-zinc-100 dark:divide-white/5">
       {rows.map((r) => (
@@ -150,6 +161,7 @@ function Rows({
                   </dd>
                 </>
               )}
+              {payments[`${r.programId}-${r.teamId}`] && <CardPaid p={payments[`${r.programId}-${r.teamId}`]} canRefund={canRefund} />}
               <dt className="text-zinc-500">Registered</dt>
               <dd>
                 {when(r.registeredAt)} by {r.registeredBy}
@@ -212,5 +224,31 @@ function PaidButton({ r, onMarked }: { r: TeamRegistration; onMarked: (r: TeamRe
       </button>
       {error && <span className="mt-1 block text-xs text-red-600 dark:text-red-400">{error}</span>}
     </span>
+  );
+}
+
+const dollars = (c: number) => `$${(c / 100).toFixed(2)}`;
+const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: TZ });
+
+// The team's card payment: what was charged (with the card fee when added), refunds, and Refund (any amount up to
+// what's left; the server checks it's the League's Owner). One payment for several teams says so.
+function CardPaid({ p, canRefund }: { p: TeamCardPayment; canRefund: boolean }) {
+  const left = p.paidCents - p.refundedCents;
+  return (
+    <>
+      <dt className="text-zinc-500">Card</dt>
+      <dd className="space-y-1">
+        <span className="block">
+          {dollars(p.paidCents)} paid by {p.by} on {day(p.at)}
+          {p.teams > 1 && <span className="text-zinc-500"> · one payment for {p.teams} teams</span>}
+        </span>
+        {p.refunds.map((f, i) => (
+          <span key={i} className="block text-xs font-medium text-amber-700 dark:text-amber-300">
+            Refunded {dollars(f.cents)} by {f.by} on {day(f.at)}
+          </span>
+        ))}
+        {left > 0 && canRefund && <RefundForm paymentId={p.id} left={left} who={p.who} />}
+      </dd>
+    </>
   );
 }
