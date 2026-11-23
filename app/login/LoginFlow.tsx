@@ -4,6 +4,7 @@ import { Fragment, useRef, useState, useTransition, type ReactNode } from "react
 import * as act from "./actions";
 import type { ClientStep } from "./actions";
 import { pillCls } from "../ui";
+import StepGuide from "../StepGuide";
 
 type Screen = Exclude<ClientStep, { step: "error" } | { step: "loggedIn" }> | { step: "phone" } | { step: "verifyEmail" };
 
@@ -15,8 +16,11 @@ const link = "text-blue-700 underline-offset-2 hover:underline disabled:opacity-
 
 // `join`: on an organization's join link, Create Account signs the person in to finish joining there.
 // `next`: where to go once logged in (default: home).
-export default function LoginFlow({ join, next = "/" }: { join?: string; next?: string } = {}) {
+// `staffOnly`: an organization's login page (its name): a cell it doesn't know is told its Director sets up coaches
+// first, with "Not a coach? Create an account" below.
+export default function LoginFlow({ join, next = "/", staffOnly }: { join?: string; next?: string; staffOnly?: string } = {}) {
   const [screen, setScreen] = useState<Screen>({ step: "phone" });
+  const [anyway, setAnyway] = useState(false); // not a coach: create an account here after all
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, startTransition] = useTransition();
@@ -85,6 +89,7 @@ export default function LoginFlow({ join, next = "/" }: { join?: string; next?: 
 
   function restart() {
     setScreen({ step: "phone" });
+    setAnyway(false);
     setError(null);
     setNotice(null);
     setPin("");
@@ -181,12 +186,33 @@ export default function LoginFlow({ join, next = "/" }: { join?: string; next?: 
       break;
 
     case "create":
+      if (staffOnly && !anyway) {
+        body = (
+          <Panel title="Not set up yet" intro={`We don't have that cell number for ${staffOnly} yet.`}>
+            <p className="text-sm text-zinc-600 dark:text-zinc-300">
+              <strong>Coach or team staff?</strong> {staffOnly}&apos;s Director adds you to your team with your cell number first.
+              Ask them to, then come back and log in with that cell.
+            </p>
+            <button type="button" className={link} onClick={() => setAnyway(true)}>
+              Not a coach? Create an account
+            </button>
+          </Panel>
+        );
+        break;
+      }
       body = (
         <Form
           title="Create account"
           intro="We don't have that number yet. Fill this in and we'll email you a code."
           onSubmit={() => go(signup)}
         >
+          {/* Not on Thunder's page (it asks why they're joining) or when starting a new organization. */}
+          {join && join !== "new-org" && (
+            <p className="rounded-xl bg-amber-50 px-3 py-2.5 text-sm text-amber-900 ring-1 ring-amber-600/20 ring-inset dark:bg-amber-500/10 dark:text-amber-200 dark:ring-amber-400/20">
+              <strong>Coaching for an organization?</strong> Reach out to its Director to be added as a coach on your team
+              with this cell number. Then log in with it; you don&apos;t need to create an account here.
+            </p>
+          )}
           <Field label="First name">
             <input
               className={input}
@@ -415,6 +441,23 @@ export default function LoginFlow({ join, next = "/" }: { join?: string; next?: 
       break;
   }
 
+  // The step guide: a normal login (cell, PIN), a first login after the Director set them up (cell, email, code and a
+  // new PIN), verifying an email (cell, PIN, email, code), a forgotten PIN, or a new account.
+  const check = "Open your email and find our 6-digit code (check spam too).";
+  const GUIDES: Partial<Record<Screen["step"], [number, number | undefined, string, string]>> = {
+    phone: [1, undefined, "Your cell", staffOnly ? "Type your cell number. Coaches: use the cell your Director set you up with." : "Type your cell number."],
+    pin: [2, 2, "Your PIN", "Type your 4-digit PIN. Forgot it? Tap Forgot PIN? and we'll email you a code."],
+    starterEmail: [2, 3, "First login: your email", "Welcome! You're set up. Type your email and we'll send a code to confirm it's you."],
+    starterCode: [3, 3, "Code and PIN", `${check} Type it, then choose a 4-digit PIN. You'll log in with it from now on.`],
+    verifyChoice: [3, 4, "Verify your email", "Once only: confirm your email so your organization can reach you. Tap to email a code."],
+    verifyEmail: [3, 4, "Verify your email", "Type the email you check most, then tap Email me a code."],
+    verifyCode: [4, 4, "Enter the code", `${check} Type it and tap Verify and log in. A green ✓ then shows by your name.`],
+    resetCode: [2, 2, "New PIN", `${check} Type it, then choose a new 4-digit PIN twice.`],
+    signupCode: [3, 3, "Confirm email", `${check} Type it and tap Create account.`],
+    ...(staffOnly && !anyway ? {} : { create: [2, 3, "Create account", "Fill in your name, email and a 4-digit PIN, then tap Email me a code."] as [number, number, string, string] }),
+  };
+  const guide = GUIDES[screen.step];
+
   return (
     <div className="space-y-4">
       {error && (
@@ -435,6 +478,11 @@ export default function LoginFlow({ join, next = "/" }: { join?: string; next?: 
       )}
       {/* Keyed by step: each step gets fresh boxes, so the phone shows the right keyboard (an email box never keeps the
           cell number's keypad after the number goes on by itself). */}
+      {guide && (
+        <StepGuide name="login" step={guide[0]} total={guide[1]} title={guide[2]}>
+          {guide[3]}
+        </StepGuide>
+      )}
       <Fragment key={screen.step}>{body}</Fragment>
       {screen.step !== "phone" && (
         <button type="button" className={`${link} block`} onClick={restart}>

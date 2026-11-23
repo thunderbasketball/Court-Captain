@@ -4,6 +4,7 @@
 // gender, grade, its Head Coach (you or someone else), optional staff and (a League) ALL Season or Game Days, 3) the
 // emailed code. Then the organization and its teams are registered and you're logged in. No Level: set on the server.
 import { useState, useTransition, type ReactNode } from "react";
+import StepGuide from "../../StepGuide";
 import type { Choice as RegChoice } from "@/lib/program-options";
 import type { OpenProgram, TeamStep } from "@/lib/team-signup";
 import RegisterChoices from "../../org/scenic-city/programs/RegisterChoices";
@@ -207,6 +208,13 @@ export function TeamSignupForm({
     </div>
   );
 
+  // The step guide on each screen: 1) Log in (cell, PIN or a new PIN, or what they came to do), 2) Your teams, 3) Confirm email.
+  const step = (n: number, title: string, text: ReactNode) => (
+    <StepGuide name="register" step={n} total={3} title={title}>
+      {text}
+    </StepGuide>
+  );
+
   if (screen === "cell")
     return (
       <form
@@ -216,6 +224,7 @@ export function TeamSignupForm({
           go(() => lookupCell(head.cell));
         }}
       >
+        {step(1, "Log in", "Type your cell number and tap Next. It's your login. New here? We'll set you up as you go.")}
         <p className="text-sm text-zinc-600 dark:text-zinc-300">
           Register your teams with Scenic City. Start with your cell: it&apos;s your login.
         </p>
@@ -244,6 +253,7 @@ export function TeamSignupForm({
   if (screen === "choose")
     return (
       <div className="space-y-4">
+        {step(1, "Log in", "Pick the organization you're registering teams for, or Register a new organization.")}
         <p className="text-sm text-zinc-600 dark:text-zinc-300">Welcome back, {head.first}. What would you like to do?</p>
         {accounts.solo.map((a) => (
           <section key={a.slug} className="space-y-2">
@@ -327,6 +337,7 @@ export function TeamSignupForm({
           go(() => pinTeamSignup(head.cell, pin));
         }}
       >
+        {step(1, "Log in", "You've been here before. Type your 4-digit PIN. Forgot it? Tap Forgot PIN? and we'll email you a code.")}
         <p className="text-sm text-zinc-600 dark:text-zinc-300">
           {formatCell(normalizeCell(head.cell) ?? head.cell)} already has a login. Enter its PIN to log in; your information
           fills in from it.
@@ -377,6 +388,7 @@ export function TeamSignupForm({
           });
         }}
       >
+        {step(1, "Log in", "Open your email and find our 6-digit code (check spam too). Type it here, then choose a new PIN twice.")}
         <p className="text-sm text-zinc-600 dark:text-zinc-300">
           We emailed a 6-digit code to <strong>{maskedEmail}</strong>. Enter it and choose a new 4-digit PIN.
         </p>
@@ -430,6 +442,11 @@ export function TeamSignupForm({
           go(() => completeTeamSignup(head.cell, code));
         }}
       >
+        {step(
+          3,
+          "Confirm email",
+          "Open your email and find our 6-digit code (check spam too). Type it below and tap Register. Fees? Stripe's secure card page opens next.",
+        )}
         <p className="text-sm">
           We emailed a 6-digit code to <strong>{maskedEmail}</strong>. Enter it to finish registering {orgFullName}&apos;s{" "}
           {teams.length === 1 ? "team" : `${teams.length} teams`} in {program?.name}. When the League takes card payments,
@@ -463,6 +480,11 @@ export function TeamSignupForm({
         send();
       }}
     >
+      {step(
+        2,
+        "Your teams",
+        "Fill in your organization, then you, then each team. More teams? Tap + Add another team at the bottom. Then tap Email me a code.",
+      )}
       <section className="space-y-4">
         <h2 className="font-semibold">Program</h2>
         {fixed ? (

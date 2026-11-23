@@ -10,6 +10,7 @@ import { shortDate, type Choice, type ChoiceResult, type ProgramOption } from "@
 import type { BatchResult, BatchTeam } from "@/lib/scenic-programs";
 import type { LastBatch } from "@/lib/register-batches";
 import TeamsIncluded from "../TeamsIncluded";
+import StepGuide from "../StepGuide";
 import { cardFee } from "@/lib/stripe/card-fee";
 
 const money = (c: number) => `$${(c / 100).toFixed(2)}`;
@@ -154,6 +155,13 @@ function RegisterAllPreview({
   );
   return (
     <div className="space-y-3 text-sm">
+      {plan.teams.length > 0 && (
+        <StepGuide name="register-all" step={1} total={plan.payer ? 2 : 1} title="Pick your teams">
+          Every team that can register is checked. Uncheck any to leave out, then tap Register at the bottom.
+          {plan.payer ? ` Pay${payLaterOk ? " now" : ""} opens Stripe's secure card page (step 2).` : ""}
+          {payLaterOk && plan.payer ? " Pay later registers them now and emails the invoice." : ""}
+        </StepGuide>
+      )}
       {plan.teams.length ? (
         <p>
           <span className="font-semibold">
@@ -535,6 +543,10 @@ export function RegisterLeagueButton({
         {(close) =>
           asked ? (
             <div className="space-y-3">
+              <StepGuide name="register-team" step={2} total={2} title="Pay">
+                Pay now: Stripe&apos;s secure card page opens (card, Apple Pay or Google Pay). Pay later: your team is registered
+                now and the invoice is emailed to you.
+              </StepGuide>
               <p className="text-sm">
                 Fee: <strong>{money(asked.cents)}</strong>
                 {asked.card > 0 && <span className="text-zinc-500"> (+ {money(asked.card)} card processing when paid by card)</span>}
@@ -576,6 +588,11 @@ export function RegisterLeagueButton({
               {err && <p className="text-sm text-red-600 dark:text-red-400">{err}</p>}
             </div>
           ) : (
+            <div className="space-y-3">
+            <StepGuide name="register-team" step={1} total={2} title={entry ? "Pick dates" : "Pick what to register for"}>
+              {entry ? "Tap the Game Days to add, then tap Add to registration." : "Pick ALL Season or the Game Days you want, then tap Register."}{" "}
+              With a fee, you pay next (step 2).
+            </StepGuide>
             <RegisterChoices
               options={options}
               gameDates={gameDates}
@@ -599,6 +616,7 @@ export function RegisterLeagueButton({
                 return { ok: true as const };
               }}
             />
+            </div>
           )
         }
       </PopUp>

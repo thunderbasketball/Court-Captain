@@ -134,7 +134,8 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
       ) : (
         <div className={`${card} p-5`}>
           {/* Thunder asks a new account why they're joining; any other organization's new account logs straight in. */}
-          <LoginFlow join={org === "thunder" ? undefined : org} next={into} />
+          {/* Other organizations: their Director sets up coaches first, so a cell it doesn't know is told so. */}
+          <LoginFlow join={org === "thunder" ? undefined : org} next={into} staffOnly={org === "thunder" ? undefined : o.name} />
         </div>
       )}
       {/* Programs: tap one to see its Teams and (a League's, once published) Schedule; Register while it's open. */}

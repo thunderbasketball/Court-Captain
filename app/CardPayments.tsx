@@ -29,7 +29,7 @@ export default async function CardPayments({ user, programId }: { user: SessionU
   if (!list || !list.length) return null;
   const owed = list.filter((p) => p.status === "failed" && p.refundedCents < p.paidCents).length;
   return (
-    <SubCard title="Card payments" count={list.length} alert={owed > 0}>
+    <SubCard title="Refunded Registrations" count={list.length} alert={owed > 0}>
       <ul className="divide-y divide-zinc-100 text-sm dark:divide-white/5">
         {list.map((p) => {
           const left = p.paidCents - p.refundedCents;
