@@ -5,6 +5,7 @@
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { cleanName } from "./auth/validate";
+import { DEFAULT_COLUMNS, checkColumns, rowsToPlayers, splitRows, type ColumnKind } from "./roster-columns";
 import { canManageTeams, teamsManagerOf } from "./org-teams";
 import { hasFeature } from "./features";
 import { withTx, type Queryable } from "./sql";
@@ -207,41 +208,51 @@ export async function removeOrgPlayer(
   return r.rowCount ? { ok: true } : { ok: false, message: "That player isn't on this team." };
 }
 
-// ---- Many at once: First, Last, Grade, Jersey (optional), Birthdate, one player per row ----
+// ---- Many at once: one player per row, its columns chosen in the form (lib/roster-columns.ts) ----
 
 export type PlayerImportRow = { line: number; first: string; last: string; grade: string; jersey: string; birthdate: string; errors: string[] };
+// Which column holds what, and whether the first row is a header. Without it: First, Last, Grade, Jersey, Birthdate.
+export type ImportLayout = { columns: unknown; header: unknown };
 
-function fields(line: string): string[] {
-  const sep = line.includes("\t") ? "\t" : ",";
-  return line.split(sep).map((f) => f.trim().replace(/^"(.*)"$/, "$1"));
+export function parsePlayerRows(text: string, layout?: ImportLayout): PlayerImportRow[] | string {
+  const rows = splitRows(text);
+  let columns: ColumnKind[] = DEFAULT_COLUMNS;
+  let header = /^first/i.test(rows[0]?.[0] ?? "") && /last/i.test(rows[0]?.[1] ?? "");
+  if (layout) {
+    const c = checkColumns(layout.columns);
+    if (!c) return "Choose what each column holds.";
+    columns = c;
+    header = layout.header === true;
+  }
+  const named = (k: ColumnKind) => columns.includes(k);
+  if (!named("name") && !(named("first") && named("last"))) return "Choose the column with the names (Full name, or First and Last).";
+  return rowsToPlayers(rows, columns, header).map((r) => {
+    const p = cleanPlayer(r);
+    return { ...r, errors: typeof p === "string" ? [p] : [] };
+  });
 }
 
-export function parsePlayerRows(text: string): PlayerImportRow[] {
-  const rows: PlayerImportRow[] = [];
-  text
-    .replace(/\r\n?/g, "\n")
-    .split("\n")
-    .forEach((raw, i) => {
-      if (!raw.trim()) return;
-      const [first = "", last = "", grade = "", jersey = "", birthdate = ""] = fields(raw);
-      if (!rows.length && /^first/i.test(first) && /last/i.test(last)) return; // a header row
-      const p = cleanPlayer({ first, last, grade, jersey, birthdate });
-      rows.push({ line: i + 1, first, last, grade, jersey, birthdate, errors: typeof p === "string" ? [p] : [] });
-    });
-  return rows.slice(0, 100);
+type PreviewRow = PlayerImportRow & { status: "new" | "exists" | "error" };
+
+// Rows sent back from the Preview after being fixed one by one: the same five fields, checked again here.
+export function checkImportRows(v: unknown): PlayerImportRow[] | string {
+  if (!Array.isArray(v) || !v.length || v.length > 100) return "Paste your players or choose a CSV file.";
+  const field = (x: unknown) => (typeof x === "string" ? x.slice(0, 60) : "");
+  return v.map((x, i) => {
+    const o = (x && typeof x === "object" ? x : {}) as Record<string, unknown>;
+    const r = { first: field(o.first), last: field(o.last), grade: field(o.grade), jersey: field(o.jersey), birthdate: field(o.birthdate) };
+    const line = Number.isInteger(o.line) && (o.line as number) > 0 && (o.line as number) < 10_000 ? (o.line as number) : i + 1;
+    const p = cleanPlayer(r);
+    return { line, ...r, errors: typeof p === "string" ? [p] : [] };
+  });
 }
 
-export async function previewPlayerImport(
-  deps: Deps,
-  viewer: SessionUser,
-  org: unknown,
-  teamId: unknown,
-  text: unknown,
-): Promise<Result<{ rows: (PlayerImportRow & { status: "new" | "exists" | "error" })[] }>> {
+// Each row: New, On the team (same first and last name), or Fix (what's wrong, or listed twice).
+async function previewRows(deps: Deps, viewer: SessionUser, org: unknown, teamId: unknown, parsed: PlayerImportRow[] | string): Promise<Result<{ rows: PreviewRow[] }>> {
   const o = await rosterOrg(deps.pool, viewer, org, teamId);
   if (!o) return managersOnly;
-  if (!isId(teamId) || typeof text !== "string" || !text.trim() || text.length > 50_000)
-    return { ok: false, message: "Paste your players or choose a CSV file." };
+  if (!isId(teamId)) return { ok: false, message: "That team no longer exists." };
+  if (typeof parsed === "string") return { ok: false, message: parsed };
   const have = new Set(
     (
       await deps.pool.query<{ k: string }>(
@@ -254,13 +265,41 @@ export async function previewPlayerImport(
   const seen = new Set<string>();
   return {
     ok: true,
-    rows: parsePlayerRows(text).map((r) => {
-      const k = `${r.first.toLowerCase()} ${r.last.toLowerCase()}`;
+    rows: parsed.map((r) => {
+      const k = `${r.first.trim().toLowerCase()} ${r.last.trim().toLowerCase()}`;
       const errors = [...r.errors, ...(seen.has(k) ? ["Listed twice"] : [])];
       seen.add(k);
       return { ...r, errors, status: errors.length ? "error" : have.has(k) ? "exists" : "new" };
     }),
   };
+}
+
+export async function previewPlayerImport(
+  deps: Deps,
+  viewer: SessionUser,
+  org: unknown,
+  teamId: unknown,
+  text: unknown,
+  layout?: ImportLayout,
+): Promise<Result<{ rows: PreviewRow[] }>> {
+  if (typeof text !== "string" || !text.trim() || text.length > 50_000) return { ok: false, message: "Paste your players or choose a CSV file." };
+  return previewRows(deps, viewer, org, teamId, parsePlayerRows(text, layout));
+}
+
+// The Preview's rows after fixing some by hand: checked again, then shown again / added.
+export async function previewPlayerRows(deps: Deps, viewer: SessionUser, org: unknown, teamId: unknown, rows: unknown): Promise<Result<{ rows: PreviewRow[] }>> {
+  return previewRows(deps, viewer, org, teamId, checkImportRows(rows));
+}
+export async function importPlayerRows(
+  deps: Deps,
+  viewer: SessionUser,
+  org: unknown,
+  teamId: unknown,
+  rows: unknown,
+): Promise<Result<{ added: string[]; skipped: string[] }>> {
+  const parsed = checkImportRows(rows);
+  if (typeof parsed === "string") return { ok: false, message: parsed };
+  return addPlayers(deps, viewer, org, teamId, parsed);
 }
 
 export async function importOrgPlayers(
@@ -269,7 +308,10 @@ export async function importOrgPlayers(
   org: unknown,
   teamId: unknown,
   text: unknown,
+  layout?: ImportLayout,
 ): Promise<Result<{ added: string[]; skipped: string[] }>> {
   if (typeof text !== "string" || text.length > 50_000) return { ok: false, message: "Paste your players or choose a CSV file." };
-  return addPlayers(deps, viewer, org, teamId, parsePlayerRows(text));
+  const parsed = parsePlayerRows(text, layout);
+  if (typeof parsed === "string") return { ok: false, message: parsed };
+  return addPlayers(deps, viewer, org, teamId, parsed);
 }

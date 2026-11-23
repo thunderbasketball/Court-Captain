@@ -410,9 +410,11 @@ export async function sendUnreadEmails(deps: DigestDeps): Promise<number> {
   );
   let sent = 0;
   for (const { coach_id } of due.rows) {
-    // One person at a time, locked, so two servers (or a slow email) never send twice.
+    // One person at a time, locked, so two servers (or a slow email) never send twice; a person another copy of the app
+    // is already on is skipped, not waited for.
     const done = await withTx(deps.pool, async (q) => {
-      await q.query("select pg_advisory_xact_lock(hashtext('notify:' || $1))", [coach_id]);
+      const lock = await q.query<{ ok: boolean }>("select pg_try_advisory_xact_lock(hashtext('notify:' || $1)) as ok", [coach_id]);
+      if (!lock.rows[0].ok) return false;
       const st = await q.query<{ last_email_at: Date | null }>("select last_email_at from notify_state where coach_id = $1", [coach_id]);
       if (st.rows[0]?.last_email_at && st.rows[0].last_email_at > cutoff) return false;
       const rows = await q.query<{

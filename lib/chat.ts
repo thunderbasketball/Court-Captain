@@ -796,7 +796,9 @@ export async function sendUnreadChatEmails(deps: DigestDeps): Promise<number> {
   let sent = 0;
   for (const p of people.rows) {
     const done = await withTx(deps.pool, async (q) => {
-      await q.query("select pg_advisory_xact_lock(hashtext('chatnotify:' || $1))", [p.coach_id]);
+      // Another copy of the app (the live site runs several) already on this person: skip them instead of waiting.
+      const lock = await q.query<{ ok: boolean }>("select pg_try_advisory_xact_lock(hashtext('chatnotify:' || $1)) as ok", [p.coach_id]);
+      if (!lock.rows[0].ok) return false;
       const st = await q.query<{ last_chat_email_at: Date | null }>("select last_chat_email_at from notify_state where coach_id = $1", [
         p.coach_id,
       ]);
@@ -807,8 +809,8 @@ export async function sendUnreadChatEmails(deps: DigestDeps): Promise<number> {
       let total = 0;
       for (const { conv, org } of due) {
         const f = parseFull(conv);
-        const ctx = f && f.org === org ? await ctxOf(org) : null;
-        if (!f || !ctx || !access(ctx, f.k).member) continue;
+        if (!f || f.org !== org) continue;
+        // Unread messages first (one quick read); only then what this person may see there (several reads, once per org).
         const m = await q.query<{ sender_name: string; body: string; created_at: Date }>(
           `select m.sender_name, m.body, m.created_at from chat_messages m
            left join chat_reads r on r.conv = m.conv and r.coach_id = $2
@@ -818,6 +820,8 @@ export async function sendUnreadChatEmails(deps: DigestDeps): Promise<number> {
           [conv, p.coach_id, cutoffOf(org)],
         );
         if (!m.rows.length) continue;
+        const ctx = await ctxOf(org);
+        if (!ctx || !access(ctx, f.k).member) continue;
         const title = await titleOf(q, ctx, f.k);
         if (!title) continue;
         total += m.rows.length;

@@ -3,9 +3,10 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { GRADES } from "@/lib/team-names";
+import { COLUMN_KINDS, COLUMN_LABEL, guessColumns, splitRows, type ColumnKind } from "@/lib/roster-columns";
 import { Alert, PopUp, Toast, useConfirm } from "../../../client-ui";
 import { fieldLabel, inputCls, primaryBtn } from "../../../ui";
-import { addPlayer, importPlayers, previewPlayers, removePlayer, setPlayerBirthdate } from "./actions";
+import { addPlayer, importPlayers, previewPlayers, recheckPlayers, removePlayer, setPlayerBirthdate } from "./actions";
 import { AddPlayersIcon, ImportIcon, addIconBtn, iconBtn } from "../../../CardIcons";
 
 
@@ -100,6 +101,76 @@ type Row = {
   status: "new" | "exists" | "error";
 };
 
+const plain = ({ line, first, last, grade, jersey, birthdate }: Row) => ({ line, first, last, grade, jersey, birthdate });
+
+// One Preview row opened: its five fields to change; Save checks it again (and every row), Remove leaves it out.
+function RowEditor({
+  row,
+  busy,
+  onSave,
+  onRemove,
+  onCancel,
+}: {
+  row: Row;
+  busy: boolean;
+  onSave: (r: Pick<Row, "first" | "last" | "grade" | "jersey" | "birthdate">) => void;
+  onRemove: () => void;
+  onCancel: () => void;
+}) {
+  const [p, setP] = useState({ first: row.first, last: row.last, grade: row.grade, jersey: row.jersey, birthdate: row.birthdate });
+  const gradeKnown = (GRADES as readonly string[]).includes(p.grade);
+  return (
+    <form
+      className="grid gap-2 border-t border-zinc-100 px-3 py-3 dark:border-white/5"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSave(p);
+      }}
+    >
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block">
+          <span className={fieldLabel}>First name</span>
+          <input className={inputCls} value={p.first} onChange={(e) => setP({ ...p, first: e.target.value })} />
+        </label>
+        <label className="block">
+          <span className={fieldLabel}>Last name</span>
+          <input className={inputCls} value={p.last} onChange={(e) => setP({ ...p, last: e.target.value })} />
+        </label>
+        <label className="block">
+          <span className={fieldLabel}>Grade</span>
+          <select className={inputCls} value={gradeKnown ? p.grade : ""} onChange={(e) => setP({ ...p, grade: e.target.value })}>
+            <option value="">{p.grade && !gradeKnown ? `“${p.grade}”: pick one` : "Pick…"}</option>
+            {GRADES.map((g) => (
+              <option key={g} value={g}>
+                {g === "K" ? "K" : g}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className={fieldLabel}>Jersey (optional)</span>
+          <input className={inputCls} inputMode="numeric" value={p.jersey} onChange={(e) => setP({ ...p, jersey: e.target.value })} />
+        </label>
+        <label className="col-span-2 block">
+          <span className={fieldLabel}>Birthdate</span>
+          <input className={inputCls} placeholder="5/3/2016" value={p.birthdate} onChange={(e) => setP({ ...p, birthdate: e.target.value })} />
+        </label>
+      </div>
+      <div className="flex items-center gap-3">
+        <button type="submit" disabled={busy} className={`${primaryBtn} flex-1`}>
+          {busy ? "Checking…" : "Save"}
+        </button>
+        <button type="button" className="text-sm text-zinc-500" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="button" disabled={busy} className="text-sm text-red-600 dark:text-red-400" onClick={onRemove}>
+          Leave out
+        </button>
+      </div>
+    </form>
+  );
+}
+
 // Import players: paste rows (First, Last, Grade, Jersey, Birthdate) or choose a CSV file, Preview, then add the new ones.
 export function ImportPlayersButton({ org, teamId }: { org: string; teamId: string }) {
   const router = useRouter();
@@ -125,11 +196,31 @@ export function ImportPlayersButton({ org, teamId }: { org: string; teamId: stri
 }
 
 function ImportForm({ org, teamId, onDone }: { org: string; teamId: string; onDone: (msg: string) => void }) {
-  const [text, setText] = useState("");
+  const [text, setTextRaw] = useState("");
+  // Which column holds what: guessed from the rows each time they change, then changed by hand as needed.
+  const [layout, setLayout] = useState<{ columns: ColumnKind[]; header: boolean }>({ columns: [], header: false });
+  const setText = (t: string) => {
+    setTextRaw(t);
+    const g = guessColumns(splitRows(t));
+    setLayout((old) => (old.columns.length === g.columns.length && t.trim() && text.trim() ? old : g));
+  };
+  const sample = splitRows(text).slice(0, 4);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, start] = useTransition();
+  const [open, setOpen] = useState<number | null>(null);
   const fresh = rows?.filter((r) => r.status === "new") ?? [];
+  // A row fixed (or taken out) by hand: all rows checked again on the server, the next one to fix opened.
+  const recheck = (next: Row[]) =>
+    start(async () => {
+      setError(null);
+      if (!next.length) return setRows(null);
+      const r = await recheckPlayers(org, teamId, next.map(plain));
+      if (!r.ok) return setError(r.message);
+      setRows(r.rows);
+      const nextFix = r.rows.findIndex((x) => x.status === "error");
+      setOpen(nextFix >= 0 ? nextFix : null);
+    });
   if (rows)
     return (
       <div className="grid gap-3">
@@ -137,10 +228,15 @@ function ImportForm({ org, teamId, onDone }: { org: string; teamId: string; onDo
           <span className="font-semibold">{fresh.length} new</span>
           {rows.length - fresh.length > 0 && <span className="text-zinc-500"> · {rows.length - fresh.length} skipped</span>}
         </p>
-        <ul className="max-h-80 divide-y divide-zinc-100 overflow-y-auto rounded-xl ring-1 ring-zinc-950/10 dark:divide-white/5 dark:ring-white/10">
-          {rows.map((r) => (
-            <li key={r.line} className={`px-3 py-2 text-sm ${r.status === "new" ? "" : "bg-zinc-50 dark:bg-zinc-800/40"}`}>
-              <div className="flex items-start justify-between gap-2">
+        <ul className="max-h-[28rem] divide-y divide-zinc-100 overflow-y-auto rounded-xl ring-1 ring-zinc-950/10 dark:divide-white/5 dark:ring-white/10">
+          {rows.map((r, i) => (
+            <li key={`${r.line}-${i}`} className={`text-sm ${r.status === "new" ? "" : "bg-zinc-50 dark:bg-zinc-800/40"}`}>
+              <button
+                type="button"
+                className="flex w-full items-start justify-between gap-2 px-3 py-2 text-left"
+                aria-expanded={open === i}
+                onClick={() => setOpen(open === i ? null : i)}
+              >
                 <span className={r.status === "new" ? "font-medium" : "text-zinc-500"}>
                   {`${r.first} ${r.last}`.trim() || `Row ${r.line}`}
                   <span className="font-normal text-zinc-500">
@@ -148,6 +244,7 @@ function ImportForm({ org, teamId, onDone }: { org: string; teamId: string; onDo
                     {r.jersey && ` · #${r.jersey.replace(/^#/, "")}`}
                     {r.birthdate ? ` · born ${r.birthdate}` : " · no birthdate"}
                   </span>
+                  {r.errors.length > 0 && <span className="block text-xs font-normal text-red-600 dark:text-red-400">{r.errors.join(" · ")}</span>}
                 </span>
                 <span
                   className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
@@ -158,10 +255,18 @@ function ImportForm({ org, teamId, onDone }: { org: string; teamId: string; onDo
                         : "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300"
                   }`}
                 >
-                  {r.status === "new" ? "New" : r.status === "exists" ? "On the team" : "Fix"}
+                  {r.status === "new" ? "New" : r.status === "exists" ? "On the team" : open === i ? "Fix ▾" : "Fix ›"}
                 </span>
-              </div>
-              {r.errors.length > 0 && <p className="text-xs text-red-600 dark:text-red-400">{r.errors.join(" · ")}</p>}
+              </button>
+              {open === i && (
+                <RowEditor
+                  row={r}
+                  busy={busy}
+                  onCancel={() => setOpen(null)}
+                  onRemove={() => recheck(rows.filter((_, j) => j !== i))}
+                  onSave={(fixed) => recheck(rows.map((x, j) => (j === i ? { ...x, ...fixed } : x)))}
+                />
+              )}
             </li>
           ))}
         </ul>
@@ -173,7 +278,7 @@ function ImportForm({ org, teamId, onDone }: { org: string; teamId: string; onDo
           onClick={() =>
             start(async () => {
               setError(null);
-              const r = await importPlayers(org, teamId, text);
+              const r = await importPlayers(org, teamId, rows.map(plain));
               if (!r.ok) return setError(r.message);
               onDone(
                 `${r.added.length} player${r.added.length === 1 ? "" : "s"} added${r.skipped.length ? `, ${r.skipped.length} skipped` : ""}.`,
@@ -183,8 +288,11 @@ function ImportForm({ org, teamId, onDone }: { org: string; teamId: string; onDo
         >
           {busy ? "Adding…" : fresh.length ? `Add ${fresh.length} player${fresh.length === 1 ? "" : "s"}` : "Nothing new to add"}
         </button>
-        <button type="button" className="text-sm text-zinc-500" onClick={() => setRows(null)}>
-          ← Back to edit
+        <button type="button" className="text-sm text-zinc-500" onClick={() => {
+            setRows(null);
+            setOpen(null);
+          }}>
+          ← Back to the rows and columns
         </button>
       </div>
     );
@@ -195,15 +303,17 @@ function ImportForm({ org, teamId, onDone }: { org: string; teamId: string; onDo
         e.preventDefault();
         start(async () => {
           setError(null);
-          const r = await previewPlayers(org, teamId, text);
+          const r = await previewPlayers(org, teamId, text, layout);
           if (!r.ok) return setError(r.message);
           setRows(r.rows);
+          const firstFix = r.rows.findIndex((x) => x.status === "error");
+          setOpen(firstFix >= 0 && r.rows.filter((x) => x.status === "error").length <= 3 ? firstFix : null);
         });
       }}
     >
       <p className="text-sm text-zinc-500">
-        One player per row: <span className="font-medium text-zinc-700 dark:text-zinc-300">First, Last, Grade, Jersey, Birthdate</span>{" "}
-        (jersey optional; birthdate like 5/3/2014, and players without one are warned about). Paste from a spreadsheet or choose a CSV file.
+        One player per row, in any column order: names, grade, jersey (optional) and birthdate (like 5/3/2014; players without one are
+        warned about). Paste from a spreadsheet or choose a CSV file, then say what each column holds.
       </p>
       <input
         type="file"
@@ -218,9 +328,43 @@ function ImportForm({ org, teamId, onDone }: { org: string; teamId: string; onDo
         className={`${inputCls} min-h-40 font-mono text-xs`}
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder={"First,Last,Grade,Jersey,Birthdate\nAva,Smith,4,12,5/3/2016\nLiam,Jones,4th,,2015-09-21"}
+        placeholder={"Ava Smith\t5/3/2016\t4\t12\nLiam Jones\t9/21/2015\t4th"}
         spellCheck={false}
       />
+      {layout.columns.length > 0 && sample.length > 0 && (
+        <div className="grid gap-2">
+          <p className={fieldLabel}>What&apos;s in each column?</p>
+          {layout.columns.map((kind, i) => {
+            const eg = sample.slice(layout.header ? 1 : 0).find((r) => r[i]?.trim())?.[i];
+            return (
+              <label key={i} className="grid grid-cols-[1fr_auto] items-center gap-2 text-sm">
+                <span className="min-w-0 truncate">
+                  <span className="text-zinc-500">Column {i + 1}</span>
+                  {layout.header && sample[0]?.[i] && <span className="font-medium"> · {sample[0][i]}</span>}
+                  {eg && <span className="text-zinc-500"> · e.g. {eg}</span>}
+                </span>
+                <select
+                  className={`${inputCls} w-36`}
+                  value={kind}
+                  onChange={(e) =>
+                    setLayout((l) => ({ ...l, columns: l.columns.map((c, j) => (j === i ? (e.target.value as ColumnKind) : c)) }))
+                  }
+                >
+                  {COLUMN_KINDS.map((k) => (
+                    <option key={k} value={k}>
+                      {COLUMN_LABEL[k]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            );
+          })}
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={layout.header} onChange={(e) => setLayout((l) => ({ ...l, header: e.target.checked }))} />
+            The first row is column names (skip it)
+          </label>
+        </div>
+      )}
       {error && <Alert tone="red">{error}</Alert>}
       <button type="submit" disabled={busy || !text.trim()} className={`${primaryBtn} w-full`}>
         {busy ? "Checking…" : "Preview"}

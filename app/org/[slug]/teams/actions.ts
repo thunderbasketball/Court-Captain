@@ -62,11 +62,17 @@ export async function setPlayerBirthdate(org: string, teamId: string, playerId: 
 export async function removePlayer(org: string, teamId: string, playerId: string) {
   return guarded((u) => rosters.removeOrgPlayer(deps(), u, org, teamId, playerId));
 }
-export async function previewPlayers(org: string, teamId: string, text: string) {
-  return guarded((u) => rosters.previewPlayerImport(deps(), u, org, teamId, text));
+// The form says which column holds what (checked again in lib/org-rosters).
+export async function previewPlayers(org: string, teamId: string, text: string, layout: { columns: string[]; header: boolean }) {
+  return guarded((u) => rosters.previewPlayerImport(deps(), u, org, teamId, text, layout));
 }
-export async function importPlayers(org: string, teamId: string, text: string) {
-  return guarded((u) => rosters.importOrgPlayers(deps(), u, org, teamId, text));
+// The Preview's rows (some fixed by hand there): checked again on the server, then shown again or added.
+type ImportRow = { line: number; first: string; last: string; grade: string; jersey: string; birthdate: string };
+export async function recheckPlayers(org: string, teamId: string, rows: ImportRow[]) {
+  return guarded((u) => rosters.previewPlayerRows(deps(), u, org, teamId, rows));
+}
+export async function importPlayers(org: string, teamId: string, rows: ImportRow[]) {
+  return guarded((u) => rosters.importPlayerRows(deps(), u, org, teamId, rows));
 }
 
 // A Head Coach named without a cell yet: fix the name, or remove them (null). Their cell goes through addCoach (Head

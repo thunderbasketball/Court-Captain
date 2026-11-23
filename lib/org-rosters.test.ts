@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
-import { addOrgPlayer, importOrgPlayers, listOrgRoster, setOrgPlayerBirthdate } from "./org-rosters";
+import { addOrgPlayer, importOrgPlayers, importPlayerRows, listOrgRoster, previewPlayerRows, setOrgPlayerBirthdate } from "./org-rosters";
 import { createOrganization } from "./org-signup";
 import { createOrgTeam, setOrgTeamAltNames } from "./org-teams";
 import { orgTeamWarnings } from "./team-warnings";
@@ -66,6 +66,28 @@ describe("typed-in rosters: birthdates", () => {
     expect(await setOrgPlayerBirthdate(deps(), jo, org, tid, noah.id, "")).toMatchObject({ ok: false });
     expect(await setOrgPlayerBirthdate(deps(), jo, org, tid, noah.id, "2015-12-01")).toEqual({ ok: true });
     expect((await orgTeamWarnings(db.pool, org, now)).birthdates).toEqual([]);
+
+    // Columns chosen in the form, in any order (Full name split; checked on the server).
+    const lined = "Zoe Hart II     3/20/2017    4   24\nEli Park    9/1/2017   4   5";
+    const layout = { columns: ["name", "birthdate", "grade", "jersey"], header: false };
+    expect(await importOrgPlayers(deps(), jo, org, tid, lined, layout)).toMatchObject({ ok: true, added: ["Zoe Hart II", "Eli Park"] });
+    expect((await listOrgRoster(deps(), jo, org, tid))!.players.find((p) => p.first === "Zoe")).toMatchObject({ last: "Hart II", birthdate: "2017-03-20" });
+    expect(await importOrgPlayers(deps(), jo, org, tid, lined, { columns: ["birthdate", "grade"], header: false })).toMatchObject({ ok: false });
+    expect(await importOrgPlayers(deps(), jo, org, tid, lined, { columns: ["name", "=HYPERLINK()"], header: false })).toMatchObject({ ok: false });
+
+    // Fixed one by one in the Preview: rows sent back are checked again (Fix until right), then the new ones added.
+    const fixing = [
+      { line: 1, first: "Ivy", last: "Cole", grade: "", jersey: "30", birthdate: "4/4/2016" },
+      { line: 2, first: "Zoe", last: "Hart II", grade: "4", jersey: "", birthdate: "3/20/2017" },
+    ];
+    expect(await previewPlayerRows(deps(), jo, org, tid, fixing)).toMatchObject({
+      ok: true,
+      rows: [{ status: "error", errors: ["Grade: K to 12"] }, { status: "exists" }],
+    });
+    fixing[0].grade = "4";
+    expect(await previewPlayerRows(deps(), jo, org, tid, fixing)).toMatchObject({ ok: true, rows: [{ status: "new" }, { status: "exists" }] });
+    expect(await importPlayerRows(deps(), jo, org, tid, fixing)).toMatchObject({ ok: true, added: ["Ivy Cole"] });
+    expect(await importPlayerRows(deps(), jo, org, tid, "nope")).toMatchObject({ ok: false });
   }, 120_000);
   it("Edit team names: many Alternate names at once (all or none); blank goes back to the organization's name", async () => {
     const make = async (g: string) => ((await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: [g], level: "COMP" })) as { id: string }).id;
