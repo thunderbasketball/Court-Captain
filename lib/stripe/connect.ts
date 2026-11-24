@@ -26,6 +26,8 @@ export type StripeApi = {
     embedded?: boolean; // Stripe's form in our page (its clientSecret), not Stripe's own page (its url)
   }): Promise<{ id: string; url: string; clientSecret?: string }>;
   checkoutPaid(p: { account: string; id: string }): Promise<boolean>;
+  // A paid Checkout's reference: Stripe's payment id, and the card in words ("Visa ending 4242 · Apple Pay").
+  paymentDetails?(p: { account: string; id: string }): Promise<{ payment: string | null; card: string | null }>;
   // Refunds part (or all) of a Checkout's payment on the organization's account; `key`: the same refund isn't made twice.
   refund(p: { account: string; sessionId: string; cents: number; key: string }): Promise<string>;
 };

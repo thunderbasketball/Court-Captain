@@ -6,6 +6,7 @@ import { setPaid } from "./org/scenic-city/actions";
 import type { TeamRegistration } from "@/lib/registrations-list";
 import type { TeamCardPayment } from "@/lib/stripe/refunds";
 import RefundForm from "./RefundForm";
+import StripeRefLine from "./StripeRefLine";
 import { money } from "@/lib/program-options";
 import { formatCell } from "@/lib/phone";
 import { Chip, EmailLink, PhoneLink, pillCls } from "./ui";
@@ -291,6 +292,10 @@ function CardPaid({ p, canRefund, team }: { p: TeamCardPayment; canRefund: boole
           {when} by {p.by}
           {p.who !== p.by && <span className="text-zinc-500"> ({p.who})</span>} · Card (Stripe)
         </dd>
+        <dt className="text-zinc-500">Stripe</dt>
+        <dd className="min-w-0">
+          <StripeRefLine r={p.stripe} />
+        </dd>
         {p.refunds.length > 0 && (
           <>
             <dt className="text-zinc-500">Refunds</dt>
@@ -298,6 +303,7 @@ function CardPaid({ p, canRefund, team }: { p: TeamCardPayment; canRefund: boole
               {p.refunds.map((f, i) => (
                 <span key={i} className="block text-xs font-medium text-amber-700 dark:text-amber-300">
                   {dollars(f.cents)} by {f.by} on {day(f.at)}
+                  <span className="block font-normal break-all text-zinc-500 select-all">{f.ref}</span>
                 </span>
               ))}
             </dd>

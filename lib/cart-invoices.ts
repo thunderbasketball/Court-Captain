@@ -2,11 +2,12 @@
 // one program instead of paying by card now. It's emailed to them and the organization's Owners, shows as PENDING to the
 // League, and can be paid later by card from its page (by them or whoever manages the organization's teams), or marked paid
 // by the League's Owners (a check). Nothing is registered, or marked paid, until then; then its teams register together, paid.
-// Due the day before its first event: not paid by then, it's closed. Its prices are the League's own, checked again when paid.
+// Due the day before its first event: not paid by then, it's closed. Not offered when registration for anything on it closes
+// before that. Its prices are the League's own, checked again when paid.
 // Cancelling puts its items back in the cart. (A Pay later organization doesn't need one: its Pay later registers now.)
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
-import { Stop, findTeam, payItems, payLaterDue, priced, standing, tidy, type ClaimRow, type PayCartResult } from "./cart";
+import { Stop, findTeam, invoiceable, payItems, priced, standing, tidy, type ClaimRow, type PayCartResult } from "./cart";
 import { isOrgOwner } from "./org-admin";
 import { copyOf, partnerFor } from "./org-leagues";
 import { orgName } from "./org-registry";
@@ -58,17 +59,15 @@ export async function requestInvoice(deps: Deps, viewer: SessionUser, org: unkno
       if (!items.length) throw new Stop("Nothing is in your cart for that.");
       if (await payLater(q, programId, org)) throw new Stop("Your organization can Pay later: that registers the teams now and emails the invoice.");
       let cents = 0;
-      const dues: string[] = [];
       for (const x of items) {
         const p = await priced(q, deps.now(), { programId, choice: x.row.choice, team: x.team, registered: x.registered });
         if (p.problem) throw new Stop(`${x.team.name}: ${p.problem}`);
         cents += p.cents;
-        dues.push(await payLaterDue(q, deps.now(), programId, x.row.choice));
       }
       if (!cents) throw new Stop("There's nothing to pay: tap Register instead.");
-      const due = dues.sort()[0];
-      if (due < new Date(deps.now()).toLocaleDateString("en-CA", { timeZone: "America/New_York" }))
-        throw new Stop("It's too close to the event for an invoice: pay by card.");
+      const can = await invoiceable(q, deps.now(), items);
+      if (!can.ok) throw new Stop(can.why ?? "An invoice can't be requested for this.");
+      const due = can.due;
       const ins = await q.query<{ id: string }>(
         `insert into cart_invoices (program_id, team_org, coach_id, requested_name, requested_at, due_on) values ($1, $2, $3, $4, $5, $6) returning id::text`,
         [programId, org, viewer.coachId, by(viewer), deps.now(), due],

@@ -34,8 +34,36 @@ export type CardPayment = {
   error: string | null; // paid, but not registered: why
   startedBy: string;
   at: Date; // registered (or started)
-  refunds: { cents: number; by: string; at: Date }[];
+  refunds: { cents: number; by: string; at: Date; ref: string }[]; // ref: Stripe's refund id
+  stripe: StripeRef;
 };
+
+// Where to find a payment in Stripe: its payment id (null: not asked yet, or not found), the card, and its page in the
+// League's own Stripe dashboard.
+export type StripeRef = { payment: string | null; card: string | null; url: string | null };
+const stripeUrl = (account: string, payment: string, live: boolean) => `https://dashboard.stripe.com/${account}/${live ? "" : "test/"}payments/${payment}`;
+
+// Asks Stripe, once each, for the reference of a program's payments that went through (a hiccup: asked again next time).
+export async function fillStripeRefs(deps: Pick<Deps, "pool" | "stripe">, viewer: SessionUser, programIds: string[]): Promise<void> {
+  const stripe = deps.stripe;
+  if (!stripe?.paymentDetails || !programIds.length || !(await isOrgOwner(deps.pool, viewer.coachId, LEAGUE))) return;
+  const r = await deps.pool.query<{ id: string; account_id: string; session_id: string }>(
+    `select id::text, account_id, session_id from registration_payments
+      where org = $1 and livemode = $2 and program_id = any($3::bigint[]) and status in ('registered', 'failed') and session_id is not null and stripe_payment is null
+      order by id desc limit 20`,
+    [LEAGUE, stripe.live, programIds],
+  );
+  await Promise.all(
+    r.rows.map(async (p) => {
+      try {
+        const d = await stripe.paymentDetails!({ account: p.account_id, id: p.session_id });
+        if (d.payment) await deps.pool.query("update registration_payments set stripe_payment = $2, stripe_card = $3 where id = $1", [p.id, d.payment, d.card?.slice(0, 60) ?? null]);
+      } catch (e) {
+        console.error("Stripe reference failed:", e);
+      }
+    }),
+  );
+}
 
 // What a payment's team paid for, from the choice it registered (or added): "ALL Season", "Dec 5, Dec 12 · 1 Game",
 // "Dec 5 · 2nd Game"; a program without options (a Circuit or Tournament): "Registration".
@@ -67,14 +95,17 @@ export async function cardPayments(q: Pick<Queryable, "query">, viewer: SessionU
     started_by: string;
     at: Date;
     teams: { name: string | null; team_id: string | null; registered: boolean; cents: number; choice: unknown }[];
-    refunds: { cents: number; by: string; at: string }[];
+    refunds: { cents: number; by: string; at: string; ref: string }[];
+    account: string;
+    payment: string | null;
+    card: string | null;
   }>(
     `select p.id::text, o.name as org, p.fee_cents + p.card_fee_cents as paid, p.card_fee_cents as card_fee, p.kind, p.status, p.error, p.started_by,
-            coalesce(p.registered_at, p.started_at) as at,
+            coalesce(p.registered_at, p.started_at) as at, p.account_id as account, p.stripe_payment as payment, p.stripe_card as card,
             coalesce((select json_agg(json_build_object('name', x.team_name, 'team_id', x.team_id, 'cents', x.fee_cents, 'choice', x.choice,
                         'registered', exists (select 1 from scenic_registrations r where r.program_id = p.program_id and r.team_id = x.team_id))
                         order by lower(x.team_name)) from registration_payment_teams x where x.payment_id = p.id), '[]') as teams,
-            coalesce((select json_agg(json_build_object('cents', f.cents, 'by', f.refunded_by, 'at', f.refunded_at) order by f.refunded_at)
+            coalesce((select json_agg(json_build_object('cents', f.cents, 'by', f.refunded_by, 'at', f.refunded_at, 'ref', f.refund_id) order by f.refunded_at)
                         from registration_refunds f where f.payment_id = p.id), '[]') as refunds
        from registration_payments p left join organizations o on o.slug = p.team_org
       where p.program_id = $1 and p.org = $2 and p.livemode = $3 and p.status in ('registered', 'failed')
@@ -82,7 +113,7 @@ export async function cardPayments(q: Pick<Queryable, "query">, viewer: SessionU
     [programId, LEAGUE, live],
   );
   return r.rows.map((p) => {
-    const refunds = p.refunds.map((f) => ({ cents: f.cents, by: f.by, at: new Date(f.at) }));
+    const refunds = p.refunds.map((f) => ({ cents: f.cents, by: f.by, at: new Date(f.at), ref: f.ref }));
     return {
       id: p.id,
       org: p.org,
@@ -95,6 +126,7 @@ export async function cardPayments(q: Pick<Queryable, "query">, viewer: SessionU
       startedBy: p.started_by,
       at: p.at,
       refunds,
+      stripe: { payment: p.payment, card: p.card, url: p.payment ? stripeUrl(p.account, p.payment, live) : null },
       teams: p.teams.map((t) => ({
         teamId: t.team_id,
         name: t.name ?? "A team",
@@ -191,7 +223,8 @@ export type TeamCardPayment = {
   who: string; // its organization, else who paid
   by: string;
   at: string; // ISO
-  refunds: { cents: number; by: string; at: string }[];
+  refunds: { cents: number; by: string; at: string; ref: string }[];
+  stripe: StripeRef;
 };
 
 // Each program's card payments by its registered teams, newest first (Owners; null otherwise): a team's first
@@ -218,6 +251,7 @@ export async function paymentsByTeam(q: Pick<Queryable, "query">, viewer: Sessio
             who: p.org ?? p.startedBy,
             by: p.startedBy,
             at: p.at.toISOString(),
+            stripe: p.stripe,
             refunds: p.refunds.map((f) => ({ ...f, at: f.at.toISOString() })),
           });
     }

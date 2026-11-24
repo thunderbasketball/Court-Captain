@@ -6,7 +6,7 @@ import { money, shortDate as day } from "@/lib/program-options";
 import type { Cart, CartGroup } from "@/lib/cart";
 import { Toast } from "../client-ui";
 import StripeInPage, { payInPage } from "../StripeInPage";
-import { payCartGroup, removeCartItem, requestCartInvoice } from "./actions";
+import { clearCartItems, payCartGroup, removeCartItem, requestCartInvoice } from "./actions";
 
 // A person's cart (Home's Invoices and Cart card; a team's page): what they picked, by program, each with Remove, its
 // total, and Pay. Nothing is registered until it's paid (a Pay later organization may register now and owe it). Teams
@@ -21,9 +21,44 @@ export default function CartList({ cart, canPay }: { cart: Cart; canPay: boolean
           ))}
         </ul>
       )}
+      {canPay && cart.count > 0 && <RemoveAll org={cart.groups[0].org} count={cart.count} />}
       {cart.groups.map((g) => (
         <Group key={`${g.org} ${g.programId}`} g={g} canPay={canPay} />
       ))}
+    </div>
+  );
+}
+
+// Takes everything out of the cart (asks first, right here).
+function RemoveAll({ org, count }: { org: string; count: number }) {
+  const router = useRouter();
+  const [sure, setSure] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, start] = useTransition();
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-3">
+      {err && <span className="text-sm text-red-600 dark:text-red-400">{err}</span>}
+      {sure && (
+        <button type="button" className="text-sm text-zinc-500" onClick={() => setSure(false)}>
+          Keep
+        </button>
+      )}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          if (!sure) return setSure(true);
+          start(async () => {
+            const r = await clearCartItems(org);
+            if (!r.ok) setErr(r.message);
+            setSure(false);
+            router.refresh();
+          });
+        }}
+        className="rounded-full px-3 py-1 text-sm font-semibold text-red-600 ring-1 ring-red-600/30 disabled:opacity-50 dark:text-red-400"
+      >
+        {busy ? "Removing…" : sure ? `Yes, remove ${count === 1 ? "it" : `all ${count}`}` : "Remove all"}
+      </button>
     </div>
   );
 }
@@ -136,7 +171,7 @@ function Group({ g, canPay }: { g: CartGroup; canPay: boolean }) {
               >
                 {busy ? "One moment…" : g.cents > 0 ? `Pay ${money(total)}` : "Register"}
               </button>
-              {!g.payLater && g.cents > 0 && (
+              {!g.payLater && g.cents > 0 && g.invoice.ok && (
                 <button
                   type="button"
                   disabled={busy || problems > 0}
@@ -167,7 +202,7 @@ function Group({ g, canPay }: { g: CartGroup; canPay: boolean }) {
             </div>
           )}
           <p className="text-xs text-zinc-500">
-            {g.payLater ? "Registered when you pay, or now if you choose Pay later (its invoice is due in 30 days)." : "Not registered until it's paid, by card now or from an invoice (pay it by the day before the first event)."}
+            {g.payLater ? "Registered when you pay, or now if you choose Pay later (its invoice is due in 30 days)." : `Not registered until it's paid, by card now${g.invoice.ok ? ` or from an invoice (pay it by ${day(g.invoice.due)})` : ""}.`}
           </p>
         </>
       )}

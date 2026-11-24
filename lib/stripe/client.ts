@@ -61,6 +61,15 @@ export function stripeApi(): StripeApi | null {
     },
     checkoutPaid: async ({ account, id }) =>
       (await s.checkout.sessions.retrieve(id, {}, { stripeAccount: account })).payment_status === "paid",
+    paymentDetails: async ({ account, id }) => {
+      const c = await s.checkout.sessions.retrieve(id, { expand: ["payment_intent.latest_charge"] }, { stripeAccount: account });
+      const pi = c.payment_intent;
+      if (!pi || typeof pi === "string") return { payment: typeof pi === "string" ? pi : null, card: null };
+      const charge = pi.latest_charge;
+      const card = charge && typeof charge !== "string" ? charge.payment_method_details?.card : null;
+      const title = (t: string) => t.replace(/_/g, " ").replace(/\b\w/g, (x) => x.toUpperCase());
+      return { payment: pi.id, card: card ? `${title(card.brand ?? "card")} ending ${card.last4}${card.wallet ? ` · ${title(card.wallet.type)}` : ""}` : null };
+    },
     refund: async ({ account, sessionId, cents, key }) => {
       const session = await s.checkout.sessions.retrieve(sessionId, {}, { stripeAccount: account });
       const pi = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id;

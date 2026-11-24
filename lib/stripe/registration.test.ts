@@ -9,7 +9,7 @@ import { createTestDb, grant } from "../testing/db";
 import type { StripeApi } from "./connect";
 import { cardFee, confirmPayment, insertPayment, openCheckout, payee, registerOrPay } from "./registration";
 import { handleStripeEvent } from "./webhook";
-import { cardPayments, refundPayment } from "./refunds";
+import { cardPayments, fillStripeRefs, refundPayment } from "./refunds";
 import { buildInvoice, invoiceEmail, invoiceFor, invoiceStatus, openInvoices, pastDueInvoices, payInvoice, programInvoices } from "../invoices";
 import { deleteOrgTeam } from "../org-teams";
 
@@ -322,8 +322,32 @@ describe("paying to register", () => {
     expect(await refundPayment(deps, jo, id, 100)).toMatchObject({ ok: false });
     await grant(db.pool, "9913694 scenic-city Owner");
     expect(await cardPayments(db.pool, dee, pid, false)).toMatchObject([
-      { id, paidCents: 15000, refundedCents: 0, status: "registered", teams: [{ name: "4B East Ridge TBD", state: "registered" }] },
+      { id, paidCents: 15000, refundedCents: 0, status: "registered", teams: [{ name: "4B East Ridge TBD", state: "registered" }], stripe: { payment: null, url: null } },
     ]);
+    // Its reference in Stripe: asked once, Owners only (a hiccup is asked again).
+    let asked = 0;
+    const withDetails = (fail = false) => ({
+      pool: db.pool,
+      stripe: {
+        ...s.api,
+        paymentDetails: async () => {
+          asked++;
+          if (fail) throw new Error("down");
+          return { payment: "pi_test_1", card: "Visa ending 4242 · Apple Pay" };
+        },
+      },
+    });
+    await fillStripeRefs(withDetails(), jo, [pid]);
+    expect(asked).toBe(0);
+    await fillStripeRefs(withDetails(true), dee, [pid]);
+    await fillStripeRefs(withDetails(), dee, [pid]);
+    await fillStripeRefs(withDetails(), dee, [pid]);
+    expect(asked).toBe(2);
+    expect((await cardPayments(db.pool, dee, pid, false))![0].stripe).toEqual({
+      payment: "pi_test_1",
+      card: "Visa ending 4242 · Apple Pay",
+      url: "https://dashboard.stripe.com/acct_league/test/payments/pi_test_1",
+    });
 
     expect(await refundPayment(deps, dee, id, 20000)).toEqual({ ok: false, message: "At most $150.00 is left to refund." });
     expect(await refundPayment(deps, dee, id, 0)).toMatchObject({ ok: false });

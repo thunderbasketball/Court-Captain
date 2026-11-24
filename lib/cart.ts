@@ -13,7 +13,7 @@ import { mayNotAddDates } from "./league-dates";
 import { copyOf, partnerFor, teamRegistrar } from "./org-leagues";
 import { isOrgOwner } from "./org-admin";
 import { orgName } from "./org-registry";
-import { cleanChoice, closedReason, entryLine, pickedLine, planChoice, type Choice } from "./program-options";
+import { cleanChoice, closedReason, entryLine, optionLastDay, pickedLine, planChoice, type Choice } from "./program-options";
 import { leagueEntry, owesMore, payLater, programRegStatus } from "./scenic-programs";
 import { withTx, type Queryable } from "./sql";
 import { cardFee } from "./stripe/card-fee";
@@ -128,6 +128,16 @@ export async function addToCart(
       [viewer.coachId, programId, t.org, t.orgTeamId, t.orgTeamId ? null : t.teamId, picked && JSON.stringify(picked), !!reg, deps.now()],
     );
     return { ok: true as const, replaced: !!old.rowCount };
+  });
+}
+
+// Take everything out of their own cart (one organization's teams, as its card shows them). Requested invoices stay.
+export async function clearCart(deps: Deps, viewer: SessionUser, org: unknown): Promise<Result<{ removed: number }>> {
+  if (typeof org !== "string" || !org) return { ok: false, message: "That isn't in your cart." };
+  return withTx(deps.pool, async (q) => {
+    await q.query("select pg_advisory_xact_lock(hashtext('cart:' || $1))", [viewer.coachId]);
+    const r = await q.query("delete from cart_items where coach_id = $1 and team_org = $2 and removed_at is null and invoice_id is null", [viewer.coachId, org]);
+    return { ok: true as const, removed: r.rowCount ?? 0 };
   });
 }
 
@@ -299,6 +309,7 @@ export type CartGroup = {
   cents: number; // what can be paid for
   cardCents: number; // the card fee added for the team when paid by card
   payLater: boolean; // may register now and pay its invoice later
+  invoice: { due: string; ok: boolean; why: string | null }; // Request an invoice: pay by when, and why it can't be asked for
 };
 export type Cart = { groups: CartGroup[]; count: number; gone: { id: string; why: string }[] };
 
@@ -324,6 +335,7 @@ export async function getCart(deps: PayDeps, viewer: SessionUser, org?: string):
           cents: 0,
           cardCents: 0,
           payLater: await payLater(q, row.program_id, row.team_org),
+          invoice: { due: "", ok: false, why: null },
         };
         groups.set(key, g);
       }
@@ -332,6 +344,7 @@ export async function getCart(deps: PayDeps, viewer: SessionUser, org?: string):
       if (!p.problem) g.cents += p.cents;
     }
     for (const g of groups.values()) {
+      g.invoice = await invoiceable(q, deps.now(), shown.filter((x) => x.row.team_org === g.org && x.row.program_id === g.programId));
       g.lines.sort((a, b) => a.team.localeCompare(b.team, undefined, { numeric: true }));
       g.cardCents = to?.fee_payer === "team" ? cardFee(g.cents) : 0;
     }
@@ -341,6 +354,30 @@ export async function getCart(deps: PayDeps, viewer: SessionUser, org?: string):
     );
     return { groups: [...groups.values()], count: shown.length, gone: gone.rows };
   });
+}
+
+// Whether an invoice can be asked for these items (one organization, one program): it's due the day before their first
+// event, and registration for each of them must still be open then (the program's close, and each option's own).
+export async function invoiceable(q: Pick<Queryable, "query">, now: Date, items: Item[]): Promise<{ due: string; ok: boolean; why: string | null }> {
+  if (!items.length) return { due: "", ok: false, why: null };
+  const programId = items[0].row.program_id;
+  const dues: string[] = [];
+  const closes: string[] = [];
+  const p = (await q.query<{ kind: string; closes: string }>("select kind, reg_closes::text as closes from scenic_programs where id = $1", [programId])).rows[0];
+  for (const x of items) {
+    dues.push(await payLaterDue(q, now, programId, x.row.choice));
+    if (!x.registered) closes.push(p.closes);
+    if (p.kind !== "League") continue;
+    const { options, gameDates } = await leagueEntry(q, programId, x.registered ? x.team.teamId : null, x.team.org, x.team.level);
+    const last = (kind: string, date: string | undefined) => optionLastDay(options.find((o) => o.kind === kind), date as string);
+    if (x.row.choice?.allSeason) closes.push(last("all_season", gameDates[0]) ?? "9999-12-31");
+    for (const d of x.row.choice?.days ?? []) closes.push(last(d.kind, d.date) ?? "9999-12-31");
+  }
+  const due = dues.sort()[0];
+  const close = closes.sort()[0];
+  if (due < easternDate(now)) return { due, ok: false, why: "It's too close to the event for an invoice: pay by card." };
+  if (close && close < due) return { due, ok: false, why: `Registration closes ${short(close)}, before an invoice would be due (${short(due)}): pay by card.` };
+  return { due, ok: true, why: null };
 }
 
 const untilDay = (added: Date) => easternDate(new Date(added.getTime() + CART_DAYS * DAY));

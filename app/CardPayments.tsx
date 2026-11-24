@@ -4,6 +4,7 @@ import { stripeApi } from "@/lib/stripe/client";
 import { cardPayments, type PaymentTeam } from "@/lib/stripe/refunds";
 import { TZ } from "@/lib/time";
 import RefundForm from "./RefundForm";
+import StripeRefLine from "./StripeRefLine";
 import SubCard from "./SubCard";
 
 const money = (c: number) => `$${(c / 100).toFixed(2)}`;
@@ -53,6 +54,7 @@ export default async function CardPayments({ user, programId }: { user: SessionU
                   )}
                 </div>
               </div>
+              <StripeRefLine r={p.stripe} />
               {p.status === "failed" && <p className="text-xs font-semibold text-red-600 dark:text-red-400">Paid, but not registered: {p.error}</p>}
               {p.refunds.map((f, i) => (
                 <p key={i} className="text-xs text-zinc-500">

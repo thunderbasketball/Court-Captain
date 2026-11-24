@@ -71,6 +71,9 @@ export async function registerCartItemLater(id: string) {
     return r;
   });
 }
+export async function clearCartItems(org: string) {
+  return guarded((u) => cart.clearCart(stripeDeps(), u, org));
+}
 // Pay for one organization's teams in one program. `mode` (a Pay later organization, after it's asked): "card" or "later".
 // `inPage`: Stripe's form opens in the page (`payInPage`) instead of Stripe's own page.
 export async function payCartGroup(org: string, programId: string, mode?: "card" | "later", inPage = false) {

@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
-import { addManyToCart, addToCart, getCart, inCarts, payCart, programCarts, registerPayLater, removeFromCart } from "./cart";
+import { addManyToCart, addToCart, clearCart, getCart, inCarts, payCart, programCarts, registerPayLater, removeFromCart } from "./cart";
 import { cancelRequested, markRequestedPaid, payRequested, pendingInvoices, requestInvoice, requestedInvoice, requestedInvoiceEmail } from "./cart-invoices";
 import { buildInvoice, pastDueInvoices } from "./invoices";
 import { registerAllOrgTeams, registerOrgTeam, teamPrograms } from "./org-leagues";
@@ -379,6 +379,10 @@ describe("the shopping cart", () => {
     ]);
     expect(many).toEqual({ ok: true, added: 1, refused: [expect.stringContaining("already in Ann X's cart")] });
     expect((await cart(jo)).groups[0].lines).toMatchObject([{ what: "Dec 12 1 game", cents: 3500 }]);
+    // Remove all: only their own.
+    expect(await clearCart(deps(), jo, org)).toEqual({ ok: true, removed: 1 });
+    expect((await cart(jo)).count).toBe(0);
+    expect((await cart(ann)).count).toBe(1);
 
     // REC: ALL Season only, whatever else is picked; not in the cart either.
     await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ($1, 'court-sync', 'setup', 't') on conflict do nothing", [org]);
@@ -397,5 +401,27 @@ describe("the shopping cart", () => {
     if (!late.ok) throw new Error(late.message);
     expect(late.teams.map((t) => t.choice)).toEqual([null, null]);
     expect(late.skipped).toEqual([expect.stringContaining("ALL Season registration closed")]); // the REC team
+  });
+
+  it("Request an invoice isn't there when registration closes before it would be due (the program's close, or an option's own)", async () => {
+    const [a, b] = [await team(), await team("3")];
+    const set = (sql: string) => db.pool.query(sql, [pid]);
+    await add(jo, a, ALL);
+    const can = async () => (await cart(jo)).groups[0].invoice;
+    expect(await can()).toEqual({ due: "2026-12-04", ok: true, why: null });
+    await set("update scenic_program_options set closes_on = '2026-11-28' where program_id = $1 and kind = 'all_season'");
+    expect(await can()).toMatchObject({ ok: false, why: expect.stringContaining("closes Nov 28") });
+    expect(await requestInvoice(deps(), jo, org, pid)).toMatchObject({ ok: false, message: expect.stringContaining("closes Nov 28") });
+    expect((await cart(jo)).count).toBe(1); // still in the cart
+    await set("update scenic_program_options set closes_on = '2026-12-04' where program_id = $1 and kind = 'all_season'"); // the same day: fine
+    expect(await can()).toMatchObject({ ok: true });
+    await set("update scenic_programs set reg_closes = '2026-12-01' where id = $1"); // the program's
+    expect(await can()).toMatchObject({ ok: false, why: expect.stringContaining("closes Dec 1") });
+    await set("update scenic_programs set reg_closes = '2027-01-31' where id = $1");
+    // A single date that closes days before it.
+    await clearCart(deps(), jo, org);
+    await set("update scenic_program_options set closes_days_before = 6 where program_id = $1 and kind = 'single_1'");
+    await add(jo, b, day("2026-12-12"));
+    expect(await can()).toMatchObject({ due: "2026-12-11", ok: false, why: expect.stringContaining("closes Dec 6") });
   });
 });
