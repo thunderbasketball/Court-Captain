@@ -448,7 +448,7 @@ export async function ProgramContent({
 
         {byDate.length > 0 && (
           <div className="mt-4">
-          <CollapseCard title="Teams by Event" count={byDate.length}>
+          <CollapseCard title="Teams by Game Day" count={byDate.length}>
             <p className="px-4 pb-2 text-xs text-zinc-500">
               Each Game Day&apos;s teams with games guaranteed (1GG/2GG), then the teams in the Brackets.
             </p>
@@ -465,7 +465,7 @@ export async function ProgramContent({
                     <span className={`text-sm font-semibold ${d.bracket ? "text-violet-800 dark:text-violet-300" : ""}`}>
                       {d.title}
                       {d.bracket && (
-                        <span className="block text-xs font-normal text-zinc-500">One event: teams play until they lose</span>
+                        <span className="block text-xs font-normal text-zinc-500">Teams play until they lose</span>
                       )}
                     </span>
                     <span className="flex shrink-0 items-center gap-2 text-xs text-zinc-500">

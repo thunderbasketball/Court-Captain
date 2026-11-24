@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Alert } from "../client-ui";
 import { changeCourtSync } from "./actions";
 
-// Feature Settings → CourtSync: its Owners and Admins see whether it's on; CourtCaptain staff (`canChange`) tick it. With CourtTeams it's the Scheduler part
+// Feature Settings → CourtSync: its Owners and Admins see whether it's on; CourtCaptain staff (`canChange`) tick it. With CourtEvents it's the Scheduler part
 // (other organizations host your games); otherwise Host (your gyms host others' games once a Scheduler approves you).
 export default function SyncSwitch({ org, on, part, canChange }: { org: string; on: boolean; part: SyncPart; canChange: boolean }) {
   const router = useRouter();

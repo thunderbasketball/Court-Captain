@@ -1,6 +1,6 @@
 // Program types and options, safe for the browser (the program form) and the server alike (SPEC.md section 14).
 // CourtPlayers: a Season (teams formed from player registrations; Tryouts, Open Gyms, Scrimmages when it has them), a
-// Training Session (one day) or a Training Course (several dates; its number of sessions). CourtTeams (team programs):
+// Training Session (one day) or a Training Course (several dates; its number of sessions). CourtEvents (team programs):
 // a League (pool games over several weeks, then a post-season bracket), a Tournament (a weekend: pool games into a
 // bracket), a Shootout (pool games only) or a Circuit (bulk registration into several Tournaments and/or Shootouts).
 export const PROGRAM_KINDS = [

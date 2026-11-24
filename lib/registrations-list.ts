@@ -1,4 +1,4 @@
-// Registrations (Home card). A CourtTeams organization (Scenic City): every team registered in its programs that are
+// Registrations (Home card). A CourtEvents organization (Scenic City): every team registered in its programs that are
 // current (not ended more than 30 days ago), with what it registered for, its fee and Paid, who registered it and when,
 // and its Head Coach's cell and email. Its Owners only for now (it shows contact details); null for anyone else.
 // The page offers several views of the same rows (newest first, by division, by organization, unpaid).

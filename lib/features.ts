@@ -3,7 +3,7 @@
 // Alerts come with every organization. The server checks before showing a page or making a change.
 //
 // Two levels:
-// - FEATURES: what an organization has and buys (CourtPlayers, CourtTeams, …), stored in `org_features`.
+// - FEATURES: what an organization has and buys (CourtPlayers, CourtEvents, …), stored in `org_features`.
 // - Feature (abilities): the finer parts the pages check (programs, uniforms, practice, …), worked out from the features
 //   it has (`abilitiesFrom`).
 import { memo, remembering } from "./request-memo";
@@ -21,10 +21,10 @@ export const FEATURES = [
       "Player registration programs: players register; evaluations, tryouts and open gyms with check-in. Includes CourtPractice, Uniforms, Team and Parents chats, chats with your coaches, and Directors.",
   },
   {
-    key: "court-teams",
-    name: "CourtTeams",
+    key: "court-teams", // stored under its first name, CourtTeams
+    name: "CourtEvents",
     about:
-      "Team registration programs (Leagues, Circuits, Tournaments): teams register; divisions, the Scheduler and publishing. Includes chat with the registered teams' coaches, and Directors.",
+      "Events teams register for (Leagues, Circuits, Tournaments, Shootouts): divisions, the Scheduler and publishing. Includes chat with the registered teams' coaches, and Directors.",
   },
   {
     key: "court-practice",
@@ -41,14 +41,14 @@ export const FEATURES = [
     key: "court-sync",
     name: "CourtSync",
     about:
-      "Scheduler (with CourtTeams): other organizations host your games. Host: offer your gyms for others' games once a Scheduler approves you. Officials (with CourtOfficials): work leagues' games. Includes Scheduler ↔ Host chat.",
+      "Scheduler (with CourtEvents): other organizations host your games. Host: offer your gyms for others' games once a Scheduler approves you. Officials (with CourtOfficials): work leagues' games. Includes Scheduler ↔ Host chat.",
     free: true,
   },
   {
     key: "court-club",
     name: "CourtClub",
     about:
-      "Your teams, coaches and rosters; register your teams into CourtTeams programs that are open to you. A team is active from its program registration until 30 days after it ends. A stand-alone team is a club of one.",
+      "Your teams, coaches and rosters; register your teams into CourtEvents programs that are open to you. A team is active from its program registration until 30 days after it ends. A stand-alone team is a club of one.",
     always: true,
   },
   {
@@ -77,7 +77,7 @@ export type Feature =
   | "uniforms"
   | "practice"
   | "events"
-  | "chat" // the organization's chats: Directors (CourtPlayers or CourtTeams)
+  | "chat" // the organization's chats: Directors (CourtPlayers or CourtEvents)
   | "team-chat" // team, Parents and own-coach chats (CourtPlayers)
   | "hosting-available" // CourtSync Host
   | "team-registration"
@@ -99,7 +99,7 @@ const GIVES: Record<FeatureKey, Feature[]> = {
   alerts: ["alerts"],
 };
 
-// CourtSync's part: Scheduler with CourtTeams (others host your games), Officials with CourtOfficials and no gyms (an
+// CourtSync's part: Scheduler with CourtEvents (others host your games), Officials with CourtOfficials and no gyms (an
 // Officials Group working leagues' games), else Host (your gyms host others' games; a host may keep officials too).
 export type SyncPart = "Schedule" | "Officials" | "Host";
 export const syncPart = (has: ReadonlySet<string>): SyncPart =>
@@ -127,7 +127,7 @@ export const READY_FOR_ANY_ORG = new Set<FeatureKey>(["court-sync", "court-club"
 // Keys stored before the CourtCaptain features were named (left in place for the live site until it gets this code;
 // ignored here). Delete those rows after pushing.
 export const RETIRED_KEYS = [
-  "court-scheduler", // became part of CourtTeams (110_feature_layout.sql)
+  "court-scheduler", // became part of CourtEvents (110_feature_layout.sql)
   "court-facility", // became CourtFacilities (free) + CourtPractice
   "court-org", // CourtOrg and CourtSolo became CourtClub (106_court_club.sql)
   "court-solo",

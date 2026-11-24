@@ -409,7 +409,7 @@ async function HomeCards({
           },
         ]
       : []),
-    // Registrations, several views: CourtTeams (Scenic City's programs) every registered team; CourtPlayers every
+    // Registrations, several views: CourtEvents (Scenic City's programs) every registered team; CourtPlayers every
     // registered player. Its Owners only for now (checked again in lib/registrations-list).
     ...(!owner
       ? []

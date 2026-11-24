@@ -13,7 +13,7 @@ const isPlayerKind = (k: string): k is PlayerGeneral["kind"] => PROGRAM_KINDS.so
 
 // A program's form (SPEC.md section 14), as cards: 1 General (its name, its Type, pick one, and that type's options),
 // then the type's own card with everything it needs. CourtPlayers: Season (options Tryouts, Open Gyms, Scrimmages),
-// Training Session, Training Course (its number of sessions). CourtTeams: League and Tournament (pool games, Single or
+// Training Session, Training Course (its number of sessions). CourtEvents: League and Tournament (pool games, Single or
 // Double elimination), Shootout (pool games), Circuit. `program` changes a player program (its type stays a player one).
 export default function ProgramForm({
   org,
@@ -27,7 +27,7 @@ export default function ProgramForm({
 }: {
   org: string;
   players: boolean; // CourtPlayers: the player types
-  teams: boolean; // CourtTeams (its Directors of Programs): the team types
+  teams: boolean; // CourtEvents (its Directors of Programs): the team types
   sources: { id: string; name: string; startsOn: string; endsOn: string }[];
   facilities?: string[];
   program?: PlayerProgramFields;

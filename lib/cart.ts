@@ -5,7 +5,7 @@
 // adds those dates), the team is gone, or the person may no longer register it; they're told why. One cart at a time: what's
 // in one person's cart can't go in another's (the team's page says whose it's in); paying now still may. Not paid for in 7
 // days, it comes out. The League's Owners see what's in everyone's carts for a program, and may register one now to be paid
-// later (due the day before its first event), case by case. Rights, rules and prices
+// later (due the day before its first Game Day), case by case. Rights, rules and prices
 // are checked on the server when the cart is shown and again when it's paid; nothing is taken from the browser.
 import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
@@ -375,7 +375,7 @@ export async function invoiceable(q: Pick<Queryable, "query">, now: Date, items:
   }
   const due = dues.sort()[0];
   const close = closes.sort()[0];
-  if (due < easternDate(now)) return { due, ok: false, why: "It's too close to the event for an invoice: pay by card." };
+  if (due < easternDate(now)) return { due, ok: false, why: "It's too close to the first Game Day for an invoice: pay by card." };
   if (close && close < due) return { due, ok: false, why: `Registration closes ${short(close)}, before an invoice would be due (${short(due)}): pay by card.` };
   return { due, ok: true, why: null };
 }
@@ -568,7 +568,7 @@ export type ProgramCartItem = {
   adding: boolean;
   cents: number;
   problem: string | null;
-  due: string; // registered now to pay later: its due date (the day before its first event)
+  due: string; // registered now to pay later: its due date (the day before its first Game Day)
   added: string; // YYYY-MM-DD
   until: string; // the day it comes out by itself
 };
@@ -624,7 +624,7 @@ export async function payLaterDue(q: Pick<Queryable, "query">, now: Date, progra
 }
 
 // Register one of them now, to be paid later (a League Owner, case by case): out of that person's cart (telling them), its
-// fee owed on their organization's invoice, due the day before its first event (past due the day of). Who did it is
+// fee owed on their organization's invoice, due the day before its first Game Day (past due the day of). Who did it is
 // recorded.
 export async function registerPayLater(deps: Deps, viewer: SessionUser, itemId: unknown): Promise<Result<{ programId: string; org: string; team: string }>> {
   if (!isId(itemId)) return { ok: false, message: "That isn't in a cart any more." };

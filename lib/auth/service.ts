@@ -319,7 +319,7 @@ export async function getSessionUser(deps: Deps, token: string | undefined): Pro
 
 // An Admin may view the app as anyone in their organization: anyone with a role (or Request) there, its officials, or
 // anyone on one of its teams' staff (Thunder's, or another organization's Team Managers and Team Parents too), and, for
-// an organization that runs events (CourtTeams, like Scenic City), the Head and Assistant Coaches of any team registered
+// an organization that runs events (CourtEvents, like Scenic City), the Head and Assistant Coaches of any team registered
 // in one of its events that hasn't ended (another organization's, Thunder's, a club's or a Solo team). CourtCaptain staff
 // (support for every organization) may view as anyone. SQL condition on the two coach ids.
 // (Wrapped in parentheses: it's combined with `and` in queries.)

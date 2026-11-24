@@ -6,7 +6,7 @@ import { fillStripeRefs, paymentsByTeam } from "@/lib/stripe/refunds";
 import PlayerRegistrationsView from "./PlayerRegistrationsView";
 import RegistrationsView from "./RegistrationsView";
 
-// Home's Registrations card: a CourtTeams organization's registered teams (Scenic City), or a CourtPlayers
+// Home's Registrations card: a CourtEvents organization's registered teams (Scenic City), or a CourtPlayers
 // organization's registered players. Its Owners only for now. Who may see it is checked in
 // lib/registrations-list; anyone else sees a note.
 export default async function RegistrationsCard({

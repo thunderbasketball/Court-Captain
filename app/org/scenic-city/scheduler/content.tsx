@@ -97,7 +97,7 @@ export async function SchedulerContent({
     })
     .filter((d) => d.programs.length);
   const programLength = program ? await programGameLength({ pool: db, now: () => new Date() }, user, program.id) : null;
-  // Each event is published on its own (Directors of Programs or Scheduling), with a toggle in front of its name.
+  // Each Game Day (and the Brackets) is published on its own (Directors of Programs or Scheduling), with a toggle in front of its name.
   const [mayPublish, published] = program ? await Promise.all([canPublish(db, user), publishedDays(db, program.id)]) : [false, new Map<string, string>()];
   const day = days.find((d) => d.date === q.day) ?? days.find((d) => d.date >= s.today) ?? days[0];
   const view: View = VIEWS.find((v) => v.key === q.view)?.key ?? "teams";
@@ -169,7 +169,7 @@ export async function SchedulerContent({
                 const on = published.has(d.date);
                 const m = dayMetrics(d);
                 return (
-                  // A published event is tinted green, one not published red.
+                  // A published one is tinted green, one not published red.
                   <details
                     key={d.date}
                     id={`day-${d.date}`}
@@ -256,7 +256,7 @@ const CHIP = {
   plain: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
 } as const;
 
-// An event's numbers, shown while its card is closed: matchups made of those needed (games guaranteed, two teams a game),
+// A Game Day's (or the Brackets') numbers, shown while its card is closed: matchups made of those needed (games guaranteed, two teams a game),
 // games placed (a court and time), games still TBD, pairs that meet again, courts in use and the first and last start.
 // `left`: what isn't done yet (asked about when publishing), or null. The Brackets have none until they're made.
 function dayMetrics(d: ScheduleDay): { chips: { text: string; tone: keyof typeof CHIP }[]; left: string | null } {
@@ -497,7 +497,7 @@ function Teams({ day, coaches, who }: { day: ScheduleDay; coaches: Map<string, C
             {p.programName}
             {p.bracket && ` · Brackets ${p.bracketDays.map(shortDate).join(", ")}`}
           </Link>
-          {p.bracket && <p className="text-xs text-zinc-500">One event: teams play until they lose</p>}
+          {p.bracket && <p className="text-xs text-zinc-500">Teams play until they lose</p>}
           {p.teams.length ? (
             byDivision(p.teams).map(([division, teams]) => {
               const playing = teams.filter((t) => !t.removedBy && !t.out).length;

@@ -70,7 +70,7 @@ describe("chat", () => {
       await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ('east-ridge', $1, 'setup', 'test')", [f]);
   };
 
-  it("chats follow features: CourtPlayers every chat, CourtTeams the Directors' only, others none", async () => {
+  it("chats follow features: CourtPlayers every chat, CourtEvents the Directors' only, others none", async () => {
     await eastRidge("court-sync");
     await grant(db.pool, "5550004 east-ridge Director", "5550002 east-ridge Coach");
     const erDir = person("5550004", "Max");
@@ -95,7 +95,7 @@ describe("chat", () => {
     ]);
   });
 
-  it("CourtTeams: Directors chat with each program's registered teams' coaches, and one coach", async () => {
+  it("CourtEvents: Directors chat with each program's registered teams' coaches, and one coach", async () => {
     await db.pool.query("delete from org_features where org = 'scenic-city'");
     await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ('scenic-city', 'court-teams', 'setup', 'test')");
     await db.pool.query("insert into users (coach_id, first_name, last_name, cell) values ('5550009', 'Sue', 'S', '4235550009')");

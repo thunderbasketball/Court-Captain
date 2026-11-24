@@ -1,4 +1,4 @@
-// Chat (SPEC.md section 11), by the organization's features: CourtPlayers has every chat below; CourtTeams has the
+// Chat (SPEC.md section 11), by the organization's features: CourtPlayers has every chat below; CourtEvents has the
 // Directors chat and private chats (Directors); other organizations have none (Support chat is apart, lib/support.ts). Conversations are fixed keys
 // whose members follow the current roles in that organization:
 //   directors        Directors
@@ -14,7 +14,7 @@
 //   dm-<a>-<b>       two people (lower id first), one of them a Director
 //   staff-<by>-<id>  Director <by> + that team's whole staff
 //   heads-<by>       Director <by> + every Head Coach
-// CourtTeams (an organization's team programs: Leagues, Circuits, Tournaments):
+// CourtEvents (an organization's team programs: Leagues, Circuits, Tournaments):
 //   program-<id>     the organization's Directors + the coaches of the teams registered in that program
 //   (and coach-<id> / dm with a registered team's coach: they count as the organization's coaches while its program runs)
 // CourtSync (stored under the Scheduler's organization, whatever its other chats):
@@ -183,7 +183,7 @@ function parseFull(key: unknown): { org: string; k: Key } | null {
   return { org, k };
 }
 
-// Which chats an organization has (its features): all (CourtPlayers), Directors' (CourtTeams: the Directors chat, its
+// Which chats an organization has (its features): all (CourtPlayers), Directors' (CourtEvents: the Directors chat, its
 // programs' coaches chats, a Director's chat with one registered coach, and private chats), or none.
 export type ChatLevel = "all" | "directors" | "none";
 export async function chatLevel(q: Q, org: string): Promise<ChatLevel> {
@@ -381,7 +381,7 @@ async function orgChatOptions(deps: Deps, viewer: SessionUser, org: string): Pro
   const key = (k: string) => orgKey(org, k);
   const out: ChatOption[] = [];
   if (level === "directors") {
-    // CourtTeams: the Directors chat, each running program's coaches, and one registered coach; a coach: theirs.
+    // CourtEvents: the Directors chat, each running program's coaches, and one registered coach; a coach: theirs.
     const progs = await deps.pool.query<{ id: string; name: string }>(
       `select id::text, name from scenic_programs where org = $1 and ends_on >= current_date
         ${ctx.director ? "" : "and id = any($2::bigint[])"} order by starts_on, lower(name)`,

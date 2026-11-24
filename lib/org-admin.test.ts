@@ -124,7 +124,7 @@ describe("Admins and Director areas", () => {
     expect(await directorAreas(db.pool, cy.coachId, "thunder")).toEqual([]);
   });
 
-  it("only CourtPlayers and CourtTeams organizations have Directors", async () => {
+  it("only CourtPlayers and CourtEvents organizations have Directors", async () => {
     await db.pool.query("delete from organizations where slug = 'east-ridge'");
     await db.pool.query("insert into organizations (slug, name, short_name, kind) values ('east-ridge', 'East Ridge', 'ER', 'Organization')");
     await db.pool.query(
@@ -135,7 +135,7 @@ describe("Admins and Director areas", () => {
     expect((await directorsPanel(deps(), ada, "east-ridge"))!.directorsOn).toBe(false);
     expect(await setDirectorAreas(deps(), ada, "east-ridge", cy.coachId, ["teams"])).toMatchObject({
       ok: false,
-      message: expect.stringContaining("CourtPlayers, CourtTeams or CourtOfficials"),
+      message: expect.stringContaining("CourtPlayers, CourtEvents or CourtOfficials"),
     });
     await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ('east-ridge', 'court-teams', 'setup', 'test')");
     expect(await hasDirectors(db.pool, "east-ridge")).toBe(true);

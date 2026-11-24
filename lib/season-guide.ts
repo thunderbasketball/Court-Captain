@@ -1,4 +1,4 @@
-// Standard emails (SPEC.md section 13): an organization that runs Leagues and events (CourtTeams) emails
+// Standard emails (SPEC.md section 13): an organization that runs Leagues and events (CourtEvents) emails
 // - the Season Guide to everyone associated with its Leagues: how to use CourtCaptain for a good season;
 // - the Hosting Guide to its hosting sites' staff: gyms, game days, scoresheets and scores.
 // Its Owners, Admins and Directors of Teams (or, for the Hosting Guide, of Facilities); they see the email and every

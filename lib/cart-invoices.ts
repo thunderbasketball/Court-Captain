@@ -2,7 +2,7 @@
 // one program instead of paying by card now. It's emailed to them and the organization's Owners, shows as PENDING to the
 // League, and can be paid later by card from its page (by them or whoever manages the organization's teams), or marked paid
 // by the League's Owners (a check). Nothing is registered, or marked paid, until then; then its teams register together, paid.
-// Due the day before its first event: not paid by then, it's closed. Not offered when registration for anything on it closes
+// Due the day before its first Game Day: not paid by then, it's closed. Not offered when registration for anything on it closes
 // before that. Its prices are the League's own, checked again when paid.
 // Cancelling puts its items back in the cart. (A Pay later organization doesn't need one: its Pay later registers now.)
 import type { Pool } from "pg";

@@ -1,5 +1,5 @@
 // Programs (SPEC.md section 14, "Where we're going"): every organization's programs in one shape. A program takes
-// players (CourtPlayers: a Season, with Sessions like open gyms and tryouts that have check-in) or teams (CourtTeams:
+// players (CourtPlayers: a Season, with Sessions like open gyms and tryouts that have check-in) or teams (CourtEvents:
 // a League, Circuit or Tournament). Kept in player_programs and scenic_programs until step 5 makes them one table.
 import type { ProgramSettings } from "./player-programs";
 import type { Queryable } from "./sql";

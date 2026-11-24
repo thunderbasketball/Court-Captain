@@ -163,7 +163,7 @@ export async function setDirectorRoleActive(deps: Deps, viewer: SessionUser, org
   return { ok: true };
 }
 
-// Only CourtPlayers, CourtTeams and CourtOfficials (Directors of Officials assign) organizations have Directors (SPEC.md
+// Only CourtPlayers, CourtEvents and CourtOfficials (Directors of Officials assign) organizations have Directors (SPEC.md
 // section 14); every organization has Owners and Admins. Directors added before stay until an Admin removes them.
 export async function hasDirectors(pool: Pick<Queryable, "query">, org: OrgSlug): Promise<boolean> {
   const has = await orgFeatureKeys(pool, org);
@@ -295,7 +295,7 @@ export async function directorsPanel(deps: Deps, viewer: SessionUser, org: OrgSl
     })),
     areas: areas.map((a) => ({ key: a.key, name: a.name, covers: a.covers })),
     options: people.rows,
-    directorsOn, // CourtPlayers or CourtTeams: Admins add Directors
+    directorsOn, // CourtPlayers or CourtEvents: Admins add Directors
     // Owners also choose Admins (anyone active who isn't one yet, Directors included) and other Owners (Admins too).
     canManageAdmins: owner,
     ownerOptions: owner
@@ -367,7 +367,7 @@ export async function setDirectorAreas(
     if (!u.rowCount) return { ok: false as const, message: "That person isn't an active user." };
     if (await isOrgAdmin(q, coachId, org)) return { ok: false as const, message: "Admins have every area." };
     if (want.length && !(await hasDirectors(q, org)))
-      return { ok: false as const, message: "Directors come with CourtPlayers, CourtTeams or CourtOfficials. Your Owners and Admins run everything." };
+      return { ok: false as const, message: "Directors come with CourtPlayers, CourtEvents or CourtOfficials. Your Owners and Admins run everything." };
     const offered = new Set<string>((await orgAreas(q, org)).map((a) => a.key));
     if (!want.every((a) => offered.has(a)))
       return { ok: false as const, message: `${await orgShort(q, org)} doesn't have that area.` };

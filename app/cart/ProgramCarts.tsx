@@ -8,7 +8,7 @@ import { Toast } from "../client-ui";
 import { registerCartItemLater } from "./actions";
 
 // A League program's In carts card (its Owners): what's in people's carts for it, by organization and whose cart, not paid
-// for yet. Each can be registered now and paid later, case by case (asked first): due the day before its first event.
+// for yet. Each can be registered now and paid later, case by case (asked first): due the day before its first Game Day.
 export default function ProgramCarts({ items, canAct }: { items: ProgramCartItem[]; canAct: boolean }) {
   const groups: { key: string; org: string; who: string; items: ProgramCartItem[] }[] = [];
   for (const i of items) {
@@ -65,7 +65,7 @@ function Line({ i, canAct }: { i: ProgramCartItem; canAct: boolean }) {
         <div className="flex flex-wrap items-center gap-3">
           {sure && (
             <p className="w-full text-xs text-zinc-600 dark:text-zinc-300">
-              Register {i.team} now? {i.orgName} owes {money(i.cents)}, due {shortDate(i.due)} (the day before its first event){i.org !== "scenic-city" && "; its invoice is emailed"}. It comes out of{" "}
+              Register {i.team} now? {i.orgName} owes {money(i.cents)}, due {shortDate(i.due)} (the day before its first Game Day){i.org !== "scenic-city" && "; its invoice is emailed"}. It comes out of{" "}
               {i.who}&rsquo;s cart.
             </p>
           )}

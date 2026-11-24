@@ -1,5 +1,5 @@
 // CourtSync officiating (SPEC.md section 14, step 4c): an Officials Group (CourtOfficials + CourtSync) asks a league (a
-// CourtSync Scheduler: CourtTeams + CourtSync) to officiate its games. The group's Admins and Directors of Officials ask;
+// CourtSync Scheduler: CourtEvents + CourtSync) to officiate its games. The group's Admins and Directors of Officials ask;
 // the league's Admins and Directors of Scheduling or Programs approve or decline. Next: the league assigns an approved
 // group to each gym of a program.
 import type { Pool } from "pg";

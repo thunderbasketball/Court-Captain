@@ -229,7 +229,7 @@ function forSeason(choices: ScrimmageChoices, settings: Program["settings"]): Sc
   };
 }
 
-// The Programs card on Home, the same for every organization with CourtPlayers or CourtTeams: + on its title line (the
+// The Programs card on Home, the same for every organization with CourtPlayers or CourtEvents: + on its title line (the
 // kinds its features allow, for those who manage them) opens the new program's form right in the card; each program
 // is a card (logo, kind, name, where it stands, dates, how many registered) that opens right there. A player program
 // shows its dates and Sessions, with a gear (top right) to change it; a team program opens all of it (its own gear,

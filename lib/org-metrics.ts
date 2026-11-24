@@ -49,7 +49,7 @@ export type OrgMetrics = {
   // Each team's use of the app: its staff's page views in the last 30 days and their last visit (least used first).
   teamUse: { id: string; name: string; views: number; lastVisit: Date | null }[];
   waiting: { requests: number; newChats: number; workingChats: number };
-  // Its Leagues' events still to come whose schedule isn't published (the Brackets once, on their first day).
+  // Its Leagues' Game Days still to come whose schedule isn't published (the Brackets once, on their first day).
   unpublished: { programId: string; program: string; day: string; bracket: boolean }[];
   // Its current Leagues' possible roster conflicts still to look at (a Conflict or Likely).
   rosterConflicts: { programId: string; program: string; n: number }[];

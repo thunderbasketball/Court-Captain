@@ -56,7 +56,7 @@ export type ProgramFields = {
 
 const dollars = (c: number | null) => (c === null ? "" : (c / 100).toFixed(2));
 // The options form: each Registration Option on or off, with its fee (text, dollars) and its own close: with the
-// program's registration, on a date, or a number of days before the event.
+// program's registration, on a date, or a number of days before the Game Day.
 type CloseMode = "program" | "date" | "days";
 type OptionsForm = Record<string, { on: boolean; fee: string; closes: CloseMode; closesOn: string; days: string }>;
 const optionsForm = (list: ProgramOption[]): OptionsForm =>
@@ -252,7 +252,7 @@ export function ProgramEditor({
                     )}
                   </div>
                   {opts[o.key].on && (
-                    // Its own close: with the program's registration, on a date, or days before the event.
+                    // Its own close: with the program's registration, on a date, or days before the Game Day.
                     <div className="mt-2 space-y-1.5 pl-6">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-xs text-zinc-500">Closes</span>
@@ -1120,7 +1120,7 @@ export function TeamMenu({
   );
 }
 
-// An event's Publish toggle (Directors of Programs or Scheduling), in front of its name on the Scheduler: on, its games show
+// A Game Day's (or the Brackets') Publish toggle (Directors of Programs or Scheduling), in front of its name on the Scheduler: on, its games show
 // on the public League page, its teams' pages and to families; off, they're taken back. Asks first. (It sits in the card's
 // title line, so tapping it doesn't open the card.)
 export function PublishToggle({ programId, day, label, on, left }: { programId: string; day: string; label: string; on: boolean; left: string | null }) {
@@ -1135,7 +1135,7 @@ export function PublishToggle({ programId, day, label, on, left }: { programId: 
         role="switch"
         aria-checked={on}
         aria-label={`Publish ${label}`}
-        title={on ? "Published: tap to unpublish" : "Publish this event's schedule"}
+        title={on ? "Published: tap to unpublish" : "Publish this schedule"}
         disabled={busy}
         onClick={async (e) => {
           e.preventDefault();
@@ -1145,7 +1145,7 @@ export function PublishToggle({ programId, day, label, on, left }: { programId: 
               on
                 ? {
                     title: `Unpublish ${label}?`,
-                    message: "Its games stop showing on the public page, team pages and to families. Other events stay as they are.",
+                    message: "Its games stop showing on the public page, team pages and to families. The other days stay as they are.",
                     confirmLabel: "Unpublish",
                   }
                 : {

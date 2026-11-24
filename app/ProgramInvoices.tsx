@@ -8,7 +8,7 @@ const money = (c: number) => `$${(c / 100).toFixed(2).replace(/\.00$/, "")}`;
 const day = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 const ABOUT: Record<InvoiceStatus, string> = {
   "PAST DUE": "Their due date has passed.",
-  DUE: "A balance is owed. Pay later is due 30 days after registering (registered from a cart: the day before the event); the rest is due now.",
+  DUE: "A balance is owed. Pay later is due 30 days after registering (registered from a cart: the day before its first Game Day); the rest is due now.",
   PENDING: "Requested, not paid yet: their teams register once it's paid.",
   PAID: "Nothing owed.",
 };

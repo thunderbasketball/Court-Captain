@@ -32,7 +32,7 @@ export type InvoiceLine = {
   paid: boolean;
   paidCents: number; // all of it once paid; or what was paid before more was added
   paidBy: string | null; // "Card (Stripe)", or the Owner who marked it
-  dueOn: string | null; // Pay later, not paid: YYYY-MM-DD, 30 days after it was registered (registered from a cart by the League: the day before its first event)
+  dueOn: string | null; // Pay later, not paid: YYYY-MM-DD, 30 days after it was registered (registered from a cart by the League: the day before its first Game Day)
 };
 export type Invoice = {
   programId: string;

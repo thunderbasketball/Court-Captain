@@ -16,7 +16,7 @@ import type { ReactNode } from "react";
 
 // The To Do items that need someone (each flashes red, and so do To Do and the Home card): players not on a team,
 // uniforms missing a number or size, teams missing something, teams whose staff haven't used the app in 30 days, and
-// what's waiting (join requests, Support chats), its Leagues' events not published yet, and their possible roster conflicts.
+// what's waiting (join requests, Support chats), its Leagues' Game Days not published yet, and their possible roster conflicts.
 export function todoCounts(m: Metrics) {
   const idle = m.teamUse.filter((t) => !t.views).length;
   const waiting = m.waiting.requests + m.waiting.newChats + m.waiting.workingChats;

@@ -91,7 +91,7 @@ export function DirectorButtons({
   org: string;
   areas: AreaOption[];
   options: Person[];
-  directorsOn?: boolean; // CourtPlayers or CourtTeams: the organization has Directors
+  directorsOn?: boolean; // CourtPlayers or CourtEvents: the organization has Directors
   canManageAdmins: boolean;
   adminOptions: Person[];
   ownerOptions?: Person[]; // Owners: who can be made another Owner

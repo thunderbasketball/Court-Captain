@@ -16,7 +16,7 @@ describe("organization features", () => {
     expect([...(await orgFeatureKeys(db.pool, "thunder"))].sort()).toEqual(
       ["alerts", "court-club", "court-facilities", "court-players", "court-sync"].sort(),
     );
-    // CourtScheduler became part of CourtTeams, its CourtSync Scheduler part CourtSync itself (110_feature_layout.sql).
+    // CourtScheduler became part of CourtEvents, its CourtSync Scheduler part CourtSync itself (110_feature_layout.sql).
     expect([...(await orgFeatureKeys(db.pool, "scenic-city"))].sort()).toEqual(
       ["alerts", "court-club", "court-facilities", "court-sync", "court-teams"].sort(),
     );
@@ -29,7 +29,7 @@ describe("organization features", () => {
     );
   });
 
-  it("CourtSync is the Scheduler part with CourtTeams, else Host; CourtPractice and CourtOfficials on their own", () => {
+  it("CourtSync is the Scheduler part with CourtEvents, else Host; CourtPractice and CourtOfficials on their own", () => {
     expect(syncPart(new Set(["court-sync"]))).toBe("Host");
     expect(syncPart(new Set(["court-sync", "court-teams"]))).toBe("Schedule");
     expect([...abilitiesFrom(["court-sync", "court-teams"])]).not.toContain("hosting-available");
