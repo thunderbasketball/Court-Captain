@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import PageOutline from "../../../../PageOutline";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { requireFeature } from "@/lib/features-server";
@@ -16,7 +17,7 @@ import { AddCourt, GymButton, RemoveCourt } from "./GymTools";
 
 export default function PartnerPage({ params }: PageProps<"/org/scenic-city/partners/[id]">) {
   return (
-    <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
+    <Suspense fallback={<PageOutline />}>
       <Partner params={params} />
     </Suspense>
   );

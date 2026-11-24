@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import PageOutline from "../../../../PageOutline";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
@@ -12,7 +13,7 @@ import { hasArea } from "@/lib/org-admin";
 
 export default function NewTeamPage() {
   return (
-    <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
+    <Suspense fallback={<PageOutline />}>
       <NewTeam />
     </Suspense>
   );

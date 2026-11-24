@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import PageOutline from "../../PageOutline";
 import { notFound, redirect } from "next/navigation";
 import { adminCanSee } from "@/lib/auth/service";
 import { currentUser, devBypass } from "@/lib/auth/server";
@@ -7,7 +8,7 @@ import Dashboard from "../Dashboard";
 
 export default function PersonDashboardPage({ params }: PageProps<"/me/[coachId]">) {
   return (
-    <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
+    <Suspense fallback={<PageOutline />}>
       <PersonDashboard params={params} />
     </Suspense>
   );

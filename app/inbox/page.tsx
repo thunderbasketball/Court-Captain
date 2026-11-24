@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import PageOutline from "../PageOutline";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { listInbox, listSent, markRead, sendsAlerts } from "@/lib/announcements";
@@ -12,7 +13,7 @@ import { PageTitle, card } from "../ui";
 
 export default function InboxPage({ searchParams }: PageProps<"/inbox">) {
   return (
-    <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
+    <Suspense fallback={<PageOutline />}>
       <Inbox searchParams={searchParams} />
     </Suspense>
   );

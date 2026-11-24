@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { HeaderOutline, TeamOutline } from "../../../../PageOutline";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { currentScenic } from "@/lib/contexts-server";
@@ -10,7 +11,7 @@ type Props = { params: Promise<{ id: string }>; searchParams: Promise<Record<str
 // A League team's own page (app/org/scenic-city/teams/[id]/view.tsx; also opened inside its row on the Teams list).
 export default function LeagueTeamRoute(props: Props) {
   return (
-    <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
+    <Suspense fallback={<><HeaderOutline /><TeamOutline /></>}>
       <LeagueTeam {...props} />
     </Suspense>
   );
@@ -22,8 +23,12 @@ async function LeagueTeam({ params, searchParams }: Props) {
   const [{ id }, sp, scenic] = await Promise.all([params, searchParams, currentScenic(user)]);
   return (
     <>
-      <AppHeader user={user} context={scenic?.key ?? "scenic:Coach"} tab="scenic-teams" />
-      <LeagueTeamView id={id} opened={typeof sp.tab === "string" ? sp.tab : ""} />
+      <Suspense fallback={<HeaderOutline />}>
+        <AppHeader user={user} context={scenic?.key ?? "scenic:Coach"} tab="scenic-teams" />
+      </Suspense>
+      <Suspense fallback={<TeamOutline />}>
+        <LeagueTeamView id={id} opened={typeof sp.tab === "string" ? sp.tab : ""} />
+      </Suspense>
     </>
   );
 }

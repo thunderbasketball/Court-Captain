@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import PageOutline from "../../../../PageOutline";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
@@ -14,7 +15,7 @@ import { followRename } from "@/lib/org-rename";
 
 export default function OrgGymsPage({ params }: PageProps<"/org/[slug]/facilities/gyms">) {
   return (
-    <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
+    <Suspense fallback={<PageOutline />}>
       <OrgGymsTab params={params} />
     </Suspense>
   );

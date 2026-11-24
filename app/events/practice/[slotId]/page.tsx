@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import PageOutline from "../../../PageOutline";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
@@ -12,7 +13,7 @@ import { eventWhen } from "../../format";
 
 export default function PracticeCheckInPage({ params }: PageProps<"/events/practice/[slotId]">) {
   return (
-    <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
+    <Suspense fallback={<PageOutline />}>
       <PracticeCheckIn params={params} />
     </Suspense>
   );

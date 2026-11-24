@@ -1,9 +1,10 @@
 import { Suspense } from "react";
+import { HeaderOutline, TeamOutline } from "../../../../PageOutline";
 import { ThunderTeamView } from "./view";
 
 export default function TeamPage({ params, searchParams }: PageProps<"/org/thunder/teams/[id]">) {
   return (
-    <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
+    <Suspense fallback={<><HeaderOutline /><TeamOutline /></>}>
       <Team params={params} searchParams={searchParams} />
     </Suspense>
   );

@@ -1,3 +1,5 @@
+import { HeaderOutline, TeamOutline } from "../../../../PageOutline";
+import type { SessionUser } from "@/lib/auth/service";
 import { Suspense } from "react";
 import PaidNotice from "../../../../PaidNotice";
 import { orgKey } from "@/lib/chat";
@@ -62,6 +64,35 @@ export async function OrgTeamView({
     if (embedded) return null;
     notFound();
   }
+  // Its team chip in the header when they're on its staff (like a Thunder team), else the organization's.
+  const teamChip = `orgteam:${slug}:${found.team.id}`;
+  const body = <TeamBody user={user} slug={slug} found={found} searchParams={searchParams} embedded={embedded} />;
+  if (embedded) return body;
+  const headerContext = (await currentContexts(user)).contexts.some((c) => c.key === teamChip) ? teamChip : `org:${slug}`;
+  // Who may see it is settled above; the header and the team then each show as soon as they're ready.
+  return (
+    <>
+      <Suspense fallback={<HeaderOutline />}>
+        <AppHeader user={user} context={headerContext} tab="org-teams" />
+      </Suspense>
+      <Suspense fallback={<TeamOutline />}>{body}</Suspense>
+    </>
+  );
+}
+
+async function TeamBody({
+  user,
+  slug,
+  found,
+  searchParams,
+  embedded,
+}: {
+  user: SessionUser;
+  slug: string;
+  found: NonNullable<Awaited<ReturnType<typeof getOrgTeam>>>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+  embedded: boolean;
+}) {
   const { team: t, canManage } = found;
   const deps = { pool: db, now: () => new Date() };
   const ref = { org: slug, teamId: t.id };
@@ -113,9 +144,6 @@ export async function OrgTeamView({
   const [copy, requests] = await Promise.all([copyOf, requestsOf]); // already loading beside the rest
   const leagueRosterList = await leagueRosters({ pool: db, now: () => new Date() }, user, copy); // locked at its 1st game in a League
   const schedule = requests && requests.length ? requests : null;
-  // Its team chip in the header when they're on its staff (like a Thunder team), else the organization's.
-  const teamChip = `orgteam:${slug}:${t.id}`;
-  const headerContext = (await currentContexts(user)).contexts.some((c) => c.key === teamChip) ? teamChip : `org:${slug}`;
   const published = games.filter((g) => g.published);
   const scrims = scrimsByTeam[t.id] ?? [];
   const [library, formations, ownLocations] = await Promise.all([
@@ -246,7 +274,6 @@ export async function OrgTeamView({
   );
   return (
     <>
-      {!embedded && <AppHeader user={user} context={headerContext} tab="org-teams" />}
       <Suspense fallback={null}>
         <PaidNotice />
       </Suspense>

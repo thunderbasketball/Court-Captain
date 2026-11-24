@@ -27,6 +27,7 @@ import { OrgMetricsWithVisits, todoCounts } from "./OrgMetrics";
 import RegistrationsCard from "./RegistrationsCard";
 import ProgramsCard, { programCount } from "./ProgramsCard";
 import SubCard from "./SubCard";
+import { CardsOutline, HeaderOutline } from "./PageOutline";
 import SupportCard from "./SupportCard";
 import OwnerRemovalCard from "./OwnerRemovalCard";
 import { myOwnerRemovals } from "@/lib/owner-removal";
@@ -119,6 +120,39 @@ export default async function OrgHome({
     const [first] = await myLeagueTeams(db, user.coachId);
     if (first) redirect(`/org/scenic-city/teams/${first.id}`);
   }
+  // The header's chips: the role this Home is shown as.
+  const scenic = org === "scenic-city" ? await currentScenic(user) : null;
+  const context = org === "thunder" ? "director" : scenic ? scenic.key : `org:${org}`;
+  // Who may be here is settled above; the header and the cards then each show as soon as they're ready.
+  return (
+    <>
+      <Suspense fallback={<HeaderOutline />}>
+        <AppHeader user={user} context={context} tab={org === "thunder" ? "thunder-home" : org === "scenic-city" ? "scenic-home" : "org-home"} />
+      </Suspense>
+      <Suspense fallback={null}>
+        <PaidNotice />
+      </Suspense>
+      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
+        <Suspense fallback={<CardsOutline n={7} />}>
+          <HomeCards user={user} org={org} roles={roles} searchParams={searchParams} />
+        </Suspense>
+      </main>
+    </>
+  );
+}
+
+// Home's cards: their counts and alerts, and what's in the open ones.
+async function HomeCards({
+  user,
+  org,
+  roles,
+  searchParams,
+}: {
+  user: SessionUser;
+  org: OrgSlug;
+  roles: string[];
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const sp = await searchParams;
   const openCard = typeof sp.open === "string" ? sp.open : null;
   const inner = Promise.resolve(innerParams(sp));
@@ -437,20 +471,7 @@ export default async function OrgHome({
     { key: "support", title: "Support", alert: (metrics?.waiting.newChats ?? 0) > 0, body: <SupportCard user={user} org={org} /> },
   ];
 
-  // The header's chips: the role this Home is shown as.
-  const scenic = org === "scenic-city" ? await currentScenic(user) : null;
-  const context = org === "thunder" ? "director" : scenic ? scenic.key : `org:${org}`;
-  return (
-    <>
-      <AppHeader user={user} context={context} tab={org === "thunder" ? "thunder-home" : org === "scenic-city" ? "scenic-home" : "org-home"} />
-      <Suspense fallback={null}>
-        <PaidNotice />
-      </Suspense>
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-6xl">
-        <MembersCards cards={cards} open={openCard} heading={null} />
-      </main>
-    </>
-  );
+  return <MembersCards cards={cards} open={openCard} heading={null} />;
 }
 
 // A League's teams in its current programs still missing something: a Head Coach's cell or email, or (a team from an

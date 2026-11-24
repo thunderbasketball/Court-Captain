@@ -1,3 +1,6 @@
+import { Suspense } from "react";
+import { HeaderOutline, TeamOutline } from "../../../../PageOutline";
+import type { SessionUser } from "@/lib/auth/service";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { hasFeature } from "@/lib/features";
@@ -77,6 +80,33 @@ export async function ThunderTeamView({
   // even for the Director; otherwise the Director sees everything.
   const { active } = await currentContexts(user);
   const asDirector = hasArea(user, "teams") && !(active?.key === `team:${team.id}` && team.myRoles.length > 0);
+  const body = <TeamBody user={user} team={team} asDirector={asDirector} searchParams={searchParams} embedded={embedded} />;
+  if (embedded) return body;
+  // Who may see it is settled above; the header and the team then each show as soon as they're ready.
+  return (
+    <>
+      <Suspense fallback={<HeaderOutline />}>
+        <AppHeader user={user} tab="teams" context={asDirector ? "director" : `team:${team.id}`} />
+      </Suspense>
+      <Suspense fallback={<TeamOutline />}>{body}</Suspense>
+    </>
+  );
+}
+
+async function TeamBody({
+  user,
+  team,
+  asDirector,
+  searchParams,
+  embedded,
+}: {
+  user: SessionUser;
+  team: NonNullable<Awaited<ReturnType<typeof getTeam>>>;
+  asDirector: boolean;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+  embedded: boolean;
+}) {
+  const deps = { pool: db, now: () => new Date() };
   const canEditTeam = asDirector && team.canEditTeam;
   const canEditStaff = asDirector || team.myRoles.includes("HeadCoach") || team.myRoles.includes("AsstCoach"); // an assistant: Manager, Team Parent
   const ref = { org: "thunder" as const, teamId: team.id };
@@ -193,7 +223,6 @@ export async function ThunderTeamView({
 
   return (
     <>
-      {!embedded && <AppHeader user={user} tab="teams" context={asDirector ? "director" : `team:${team.id}`} />}
       <SharedTeamPage
         embedded={embedded}
         back={asDirector && !embedded ? "/org/thunder?open=teams#teams" : null}

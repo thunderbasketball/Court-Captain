@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import PageOutline from "../../PageOutline";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { audienceChoices, sendsAlerts } from "@/lib/announcements";
@@ -10,7 +11,7 @@ import ComposeForm from "./ComposeForm";
 
 export default function NewAnnouncementPage({ searchParams }: PageProps<"/inbox/new">) {
   return (
-    <Suspense fallback={<p className="p-4 text-zinc-500">Loading…</p>}>
+    <Suspense fallback={<PageOutline />}>
       <NewAnnouncement searchParams={searchParams} />
     </Suspense>
   );
