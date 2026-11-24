@@ -52,6 +52,7 @@ describe("importing gyms", () => {
     );
     const input = { name: "East Ridge Parks & Rec", short: "East Ridge", kind: "Organization", color: "#0f766e" };
     await createOrganization(deps(), jo, { ...input, features: ["court-sync"] }, null);
+    await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ($1, 'court-sync', 'setup', 'test') on conflict do nothing", [org]);
   });
 
   it("previews (new, already a gym, problems) and adds the new ones; Thunder's too", async () => {

@@ -8,7 +8,8 @@ import { fieldLabel, inputCls, pillCls, primaryBtn } from "../ui";
 
 type FeatureChoice = { key: string; name: string; about: string; ready: boolean };
 
-// The new organization's details and what it needs. Live at once; the person registering is its Owner.
+// The new organization's details and (CourtCaptain staff: `features`) what it needs. Live at once; the person registering
+// is its Owner.
 export default function RegisterOrgForm({
   kinds,
   labels,
@@ -120,7 +121,7 @@ export default function RegisterOrgForm({
           ))}
         </div>
       </div>
-      <fieldset>
+      {features.length > 0 && <fieldset>
         <legend className={fieldLabel}>What do you need?</legend>
         <div className="space-y-2">
           {features.map((f) => (
@@ -147,7 +148,7 @@ export default function RegisterOrgForm({
           Ready ones turn on now. &quot;Coming soon&quot; ones are noted for your organization and turn on when they&apos;re
           ready.
         </p>
-      </fieldset>
+      </fieldset>}
       {error && <Alert tone="red">{error}</Alert>}
       <button type="submit" disabled={busy} className={`${primaryBtn} w-full`}>
         {busy ? "Creating…" : "Create organization"}

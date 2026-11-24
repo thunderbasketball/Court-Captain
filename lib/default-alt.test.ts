@@ -26,7 +26,7 @@ describe("an organization's Default Alternate name (leagues only)", () => {
     const r = (await createOrganization(
       deps(),
       jo,
-      { name: "Baylor School", short: "Baylor", kind: "School", color: "#0f766e", features: ["court-sync"] },
+      { name: "Baylor School", short: "Baylor", kind: "School", color: "#0f766e", features: ["court-club"] },
       null,
     )) as { slug: string };
     slug = r.slug;

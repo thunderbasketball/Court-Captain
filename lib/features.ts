@@ -11,7 +11,7 @@ import type { Queryable } from "./sql";
 import type { OrgSlug } from "./orgs";
 
 // The layout agreed Nov 11, 2026 (SPEC.md section 14, "Where we're going"). `always`: every organization has it (free,
-// part of CourtOrg). `free`: no charge, but the organization turns it on (CourtSync, in its Feature Settings). The rest
+// part of CourtOrg). `free`: no charge, but turned on for the organization (CourtSync; by CourtCaptain staff while testing). The rest
 // are paid upgrades.
 export const FEATURES = [
   {
@@ -195,9 +195,10 @@ export async function hasFeature(pool: Pick<Queryable, "query">, org: OrgSlug, f
   return feature === "alerts" || (await orgFeatures(pool, org)).has(feature);
 }
 
-export const NO_FEATURE = "Your organization doesn't have this feature. A Director can add it on Upgrades.";
+export const NO_FEATURE = "Your organization doesn't have this feature. Ask CourtCaptain to add it.";
 
-// CourtSync is free: an organization's Owners and Admins turn it on or off (Feature Settings). Off keeps its
+// CourtSync is free. While CourtCaptain is being tested (SPEC.md section 14, Sign-up while testing) only CourtCaptain staff
+// turn it on or off (Feature Settings, where its Owners and Admins see whether it's on). Off keeps its
 // partnerships and game space as they are; they just don't show until it's on again.
 export async function setCourtSync(
   deps: { pool: Pick<Queryable, "query">; now: () => Date },
@@ -206,8 +207,8 @@ export async function setCourtSync(
   on: unknown,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   if (typeof on !== "boolean") return { ok: false, message: "Pick on or off." };
-  const admin = await deps.pool.query<{ ok: boolean }>("select acts_as($1, $2, 'Admin') as ok", [viewer.coachId, org]);
-  if (!admin.rows[0]?.ok) return { ok: false, message: "Only an Owner or Admin of this organization can turn CourtSync on or off." };
+  const staff = await deps.pool.query("select 1 from platform_admins where coach_id = $1", [viewer.coachId]);
+  if (!staff.rowCount) return { ok: false, message: "Only CourtCaptain can turn CourtSync on or off for now. Ask us in Support." };
   if (on)
     await deps.pool.query(
       `insert into org_features (org, feature, source, turned_on_by, turned_on_at) values ($1, 'court-sync', 'org', $2, $3)

@@ -3,7 +3,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { currentUser } from "@/lib/auth/server";
 import { FEATURES, READY_FOR_ANY_ORG } from "@/lib/features";
-import { KIND_LABEL, KIND_PRESET, ORG_COLORS, ORG_KINDS } from "@/lib/org-signup";
+import { isPlatformAdmin } from "@/lib/platform";
+import { KIND_LABEL, KIND_PRESET, ORG_COLORS, ORG_KINDS, PUBLIC_KINDS } from "@/lib/org-signup";
 import LoginFlow from "../login/LoginFlow";
 import { card } from "../ui";
 import RegisterOrgForm from "./RegisterOrgForm";
@@ -19,7 +20,7 @@ export default function RegisterPage({ searchParams }: PageProps<"/register">) {
         <Image src="/brand/courtcaptain.png" alt="CourtCaptain" width={768} height={512} priority className="h-auto w-44" />
         <h1 className="text-xl font-semibold tracking-tight">Register your organization</h1>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Schools, clubs, leagues and officials groups. Live right away; you&apos;ll be its Owner.
+          Your teams, registered for events. Live right away; you&apos;ll be its Owner.
         </p>
       </div>
       <Suspense fallback={<p className="text-center text-zinc-500">Loading…</p>}>
@@ -33,8 +34,7 @@ export default function RegisterPage({ searchParams }: PageProps<"/register">) {
 // first, then the form.
 async function Register({ searchParams }: { searchParams: PageProps<"/register">["searchParams"] }) {
   const user = await currentUser();
-  // "Host games" from Get started arrives with ?need=court-sync ticked; "Register your organization's teams" with court-club
-  // (old court-org links too).
+  // "Register your organization's teams" arrives with ?need=court-club (old court-org links too).
   const asked = (await searchParams).need;
   const need = asked === "court-org" ? "court-club" : asked;
   if (!user)
@@ -82,14 +82,16 @@ async function Register({ searchParams }: { searchParams: PageProps<"/register">
         </div>
       );
   }
-  const features = FEATURES.filter((f) => f.key !== "alerts").map((f) => ({
+  // While testing: types and features are picked by CourtCaptain staff only (checked again in lib/org-signup).
+  const staff = await isPlatformAdmin(db, user.coachId);
+  const features = FEATURES.filter((f) => staff && f.key !== "alerts").map((f) => ({
     key: f.key,
     name: f.name,
     about: f.about,
     ready: READY_FOR_ANY_ORG.has(f.key),
   }));
   features.sort((a, b) => Number(b.ready) - Number(a.ready));
-  const preset = typeof need === "string" && features.some((f) => f.key === need) ? [need] : [];
+  const preset = !staff ? ["court-club"] : typeof need === "string" && features.some((f) => f.key === need) ? [need] : [];
   return (
     <div className={`${card} p-5`}>
       <p className="mb-4 flex items-center justify-between gap-3 text-sm text-zinc-600 dark:text-zinc-300">
@@ -100,7 +102,7 @@ async function Register({ searchParams }: { searchParams: PageProps<"/register">
           ← Back
         </Link>
       </p>
-      <RegisterOrgForm kinds={ORG_KINDS} labels={KIND_LABEL} kindPreset={KIND_PRESET} colors={ORG_COLORS} features={features} preset={preset} />
+      <RegisterOrgForm kinds={staff ? ORG_KINDS : PUBLIC_KINDS} labels={KIND_LABEL} kindPreset={KIND_PRESET} colors={ORG_COLORS} features={features} preset={preset} />
     </div>
   );
 }

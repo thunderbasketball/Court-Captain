@@ -53,7 +53,7 @@ export async function requestOfficiating(deps: Deps, viewer: SessionUser, offici
     if (!(await groupSide(q, viewer, officialsOrg)))
       return { ok: false as const, message: `Only a ${await orgShort(q, officialsOrg)} Admin or Director of Officials can do that.` };
     if (!(await officiatesGames(q, officialsOrg)))
-      return { ok: false as const, message: "Turn on CourtSync (gear → Feature Settings) to work leagues' games." };
+      return { ok: false as const, message: "CourtSync has to be on to work leagues' games. Ask CourtCaptain in Support." };
     if (!(await isLeague(q, forOrg))) return { ok: false as const, message: `${await orgName(q, forOrg)} doesn't schedule games on CourtCaptain.` };
     const r = await q.query(
       `insert into officiating_partnerships (officials_org, for_org, status, requested_by, requested_at) values ($1, $2, 'pending', $3, $4)

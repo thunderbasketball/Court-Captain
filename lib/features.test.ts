@@ -47,12 +47,14 @@ describe("organization features", () => {
     expect([...abilitiesFrom(["team-building", "court-scheduler", "court-facility"])].sort()).toEqual(["alerts", "team-building"]); // old keys ignored
   });
 
-  it("CourtSync: the organization's Owners and Admins turn it on and off", async () => {
+  it("CourtSync: CourtCaptain staff turn it on and off (not the organization's Owners and Admins, while testing)", async () => {
     const deps = { pool: db.pool, now: () => new Date() };
     await db.pool.query("insert into users (coach_id, first_name, last_name, cell) values ('5550001', 'Al', 'X', '4235550001') on conflict do nothing");
     const al = { coachId: "5550001", firstName: "Al", lastName: "X" };
     expect(await setCourtSync(deps, al, "thunder", false)).toMatchObject({ ok: false });
-    await db.pool.query("select set_role('5550001', 'thunder', 'Admin', true, 'test')");
+    await db.pool.query("select set_role('5550001', 'thunder', 'Admin', true, 'test'), set_role('5550001', 'thunder', 'Owner', true, 'test')");
+    expect(await setCourtSync(deps, al, "thunder", false)).toMatchObject({ ok: false });
+    await db.pool.query("insert into platform_admins (coach_id, granted_by) values ('5550001', 'test')");
     expect(await setCourtSync(deps, al, "thunder", "off")).toMatchObject({ ok: false });
     expect(await setCourtSync(deps, al, "thunder", false)).toEqual({ ok: true });
     expect(await hasFeature(db.pool, "thunder", "hosting-available")).toBe(false);

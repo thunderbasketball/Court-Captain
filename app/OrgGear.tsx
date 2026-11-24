@@ -17,6 +17,7 @@ import { teamWarningSettings } from "@/lib/team-warnings";
 import SubCard from "./SubCard";
 import { clubActiveDays } from "@/lib/court-club";
 import ClubSettingsForm from "./warnings/ClubSettingsForm";
+import { isPlatformAdmin } from "@/lib/platform";
 import SyncSwitch from "./warnings/SyncSwitch";
 import ChatSettingsForm from "./warnings/ChatSettingsForm";
 import { chatEmailSetting } from "@/lib/chat";
@@ -31,12 +32,13 @@ const CHAT_EMAILS: boolean = false;
 // The gear after an organization's last tab, for its Admins only (checked here on the server): its name (Owners), login link, every
 // feature (what it has, since when, and what it can add: buying upgrades in the app is coming soon), its color and logo.
 export default async function OrgGear({ org, coachId, user }: { org: string; coachId: string; user?: SessionUser }) {
-  const [admin, owner, o, on, asked] = await Promise.all([
+  const [admin, owner, o, on, asked, staff] = await Promise.all([
     isOrgAdmin(db, coachId, org),
     isOrgOwner(db, coachId, org),
     orgInfo(db, org),
     db.query<{ feature: string; turned_on_at: Date }>("select feature, turned_on_at from org_features where org = $1", [org]),
     db.query<{ feature: string }>("select feature from org_feature_requests where org = $1", [org]),
+    isPlatformAdmin(db, coachId),
   ]);
   if (!admin || !o) return null;
   const now = new Date();
@@ -89,9 +91,9 @@ export default async function OrgGear({ org, coachId, user }: { org: string; coa
       featureSettings={
         (
           <div className="space-y-2">
-            {/* CourtSync: free; its Owners and Admins turn it on here. */}
+            {/* CourtSync: free; CourtCaptain staff turn it on here (its Owners and Admins see it). */}
             <SubCard title="CourtSync" count={has.has("court-sync") ? `On · ${syncPart(has)}` : "Off"}>
-              <SyncSwitch org={org} on={has.has("court-sync")} part={syncPart(has)} />
+              <SyncSwitch org={org} on={has.has("court-sync")} part={syncPart(has)} canChange={staff} />
             </SubCard>
             {/* CourtClub (not an Officials Group's: it has no teams). */}
             {has.has("court-club") && (

@@ -1,9 +1,11 @@
 // Registering a new organization on CourtCaptain (SPEC.md section 14). It's live at once: the person registering is its
-// Owner (also Admin and Director). They pick the features they need: those that work for any organization today are
-// turned on; the others are recorded as requested.
+// Owner (also Admin and Director). While CourtCaptain is being tested, anyone gets a CourtOrg (CourtClub: teams they register
+// into programs) and nothing else; CourtCaptain staff also pick any type and features (those that work for any
+// organization today are turned on; the others are recorded as requested).
 import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { FEATURES, READY_FOR_ANY_ORG, featuresChanged, type FeatureKey } from "./features";
+import { isPlatformAdmin } from "./platform";
 import { slugFor } from "./org-slug";
 import { renameAllOrgTeams } from "./org-teams";
 import { leagueNameSql } from "./solo-names";
@@ -16,6 +18,9 @@ type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
 
 export const ORG_KINDS = ["School", "Club", "League", "Officials", "Organization"] as const;
+// Not CourtCaptain staff: these types, with these features, whatever the browser sent.
+export const PUBLIC_KINDS = ["School", "Club", "Organization"] as const;
+const PUBLIC_FEATURES: FeatureKey[] = ["court-club"];
 // How each type reads on the form ("Officials Group"), and what it starts with ticked.
 export const KIND_LABEL: Record<(typeof ORG_KINDS)[number], string> = {
   School: "School",
@@ -70,10 +75,11 @@ export async function createOrganization(
   const short =
     typeof input.short === "string" && input.short.trim() ? cleanOrgName(input.short, 20) : name.length <= 20 ? name : null;
   if (!short) return { ok: false, message: 'Enter a short name (up to 20 characters), e.g. "Baylor".' };
-  const kind = ORG_KINDS.find((k) => k === input.kind);
-  if (!kind) return { ok: false, message: "Choose School, Club, League, Officials Group or Organization." };
+  const staff = await isPlatformAdmin(deps.pool, viewer.coachId);
+  const kind = (staff ? ORG_KINDS : PUBLIC_KINDS).find((k) => k === input.kind);
+  if (!kind) return { ok: false, message: staff ? "Choose School, Club, League, Officials Group or Organization." : "Choose School, Club or Organization." };
   const color = ORG_COLORS.find((c) => c === input.color) ?? ORG_COLORS[0];
-  const picked = Array.isArray(input.features)
+  const picked = !staff ? PUBLIC_FEATURES : Array.isArray(input.features)
     ? [...new Set(input.features)].filter((f): f is FeatureKey => FEATURES.some((x) => x.key === f) && f !== "alerts")
     : [];
   if (!picked.length) return { ok: false, message: "Choose at least one thing you need." };

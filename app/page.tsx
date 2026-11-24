@@ -40,24 +40,18 @@ async function HomeContent() {
   );
 }
 
-// A CourtCaptain account with no organization yet: start an organization (a group of teams), a stand-alone team, or a
-// hosting program.
+// A CourtCaptain account with no organization yet: start an organization (a group of teams) or a stand-alone team.
 function GetStarted({ firstName }: { firstName: string }) {
   const choices = [
     {
       href: "/register",
       title: "Start an organization",
-      about: "A group of teams: a club, school or league on CourtCaptain. You'll be its Owner.",
+      about: "A group of teams: a club or school on CourtCaptain. You'll be its Owner.",
     },
     {
       href: "/login/scenic-city",
       title: "Register a stand-alone team",
       about: "A team of your own (CourtClub, one team): pick an event and tap Register, then One team.",
-    },
-    {
-      href: "/register?need=court-sync",
-      title: "Start a hosting program",
-      about: "Offer your gyms to host leagues' games: register with CourtSync.",
     },
   ];  return (
     <section className="space-y-4">

@@ -4,7 +4,7 @@ import { managesOfficials } from "./officials";
 import { hasDirectors } from "./org-admin";
 import type { SessionUser } from "./auth/service";
 import { userContexts } from "./contexts";
-import { hasFeature } from "./features";
+import { hasFeature, setCourtSync } from "./features";
 import { listOrgs, orgInfo } from "./org-registry";
 import { addOrgGym, availableUses, facilitiesView, removeOrgGym, setAvailability } from "./facilities";
 import { decideHosting, hostingOffers, hostingRequests, requestHosting } from "./org-partnerships";
@@ -49,7 +49,26 @@ describe("registering an organization", () => {
     );
   });
 
-  it("is live at once: the person registering is its Owner; ready features turn on, the rest are requested", async () => {
+  const asStaff = () => db.pool.query("insert into platform_admins (coach_id, granted_by) values ('5550001', 'test')");
+
+  it("while testing: anyone gets a CourtOrg with its teams and nothing else, whatever the browser sends", async () => {
+    const all = ["court-sync", "court-officials", "court-playbook", "court-players", "court-teams", "court-practice"];
+    for (const kind of ["League", "Officials", "Gang"])
+      expect(await createOrganization(deps(), jo, { ...input, kind, features: all }, null)).toEqual({ ok: false, message: "Choose School, Club or Organization." });
+    expect(await createOrganization(deps(), jo, { ...input, features: all }, null)).toEqual({ ok: true, slug: "baylor-school", on: ["court-club"], requested: [] });
+    expect([...(await orgFeatureKeys(db.pool, "baylor-school"))].sort().filter((k, i, a) => a.indexOf(k) === i)).toEqual(["alerts", "court-club", "court-facilities"]);
+    expect((await db.pool.query("select 1 from org_feature_requests")).rowCount).toBe(0);
+    for (const f of ["hosting-available", "programs", "officials", "playbook", "practice", "player-registration"] as const) expect(await hasFeature(db.pool, "baylor-school", f)).toBe(false);
+    expect(await hasFeature(db.pool, "baylor-school", "team-building")).toBe(true); // its teams
+    // No features sent at all is fine: the form doesn't ask.
+    expect(await createOrganization(deps(), jo, { ...input, name: "Other School", kind: "Club", features: [] }, null)).toMatchObject({ ok: true, on: ["court-club"] });
+    // Its Owner can't turn CourtSync on.
+    expect(await setCourtSync(deps(), jo, "baylor-school", true)).toMatchObject({ ok: false, message: /Only CourtCaptain/ });
+    expect(await hasFeature(db.pool, "baylor-school", "hosting-available")).toBe(false);
+  });
+
+  it("CourtCaptain staff pick: ready features turn on, the rest are requested; the person registering is its Owner", async () => {
+    await asStaff();
     expect(await createOrganization(deps(), jo, input, { bytes: png, type: "image/png" })).toEqual({
       ok: true,
       slug: "baylor-school",
@@ -83,6 +102,7 @@ describe("registering an organization", () => {
   });
 
   it("an Officials Group: CourtOfficials and CourtSync on, no teams or gyms; its Owner keeps its officials", async () => {
+    await asStaff();
     expect(
       await createOrganization(
         deps(),
@@ -98,6 +118,7 @@ describe("registering an organization", () => {
   });
 
   it("checks the name, picks, and logo on the server; names are unique; slugs don't clash", async () => {
+    await asStaff();
     expect(await createOrganization(deps(), jo, { ...input, name: "=HYPERLINK()" }, null)).toMatchObject({ ok: false });
     expect(await createOrganization(deps(), jo, { ...input, kind: "Gang" }, null)).toMatchObject({ ok: false });
     expect(await createOrganization(deps(), jo, { ...input, features: ["alerts"] }, null)).toMatchObject({
@@ -155,6 +176,7 @@ describe("registering an organization", () => {
       null,
     );
     const org = "east-ridge-parks-and-rec";
+    await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ($1, 'court-sync', 'setup', 'test')", [org]); // by CourtCaptain
     const sue = { ...jo, coachId: "5550003", firstName: "Sue" }; // Scenic City Admin
     await db.pool.query("insert into users (coach_id, first_name, last_name, cell) values ('5550003', 'Sue', 'X', '4235550003')");
     await grant(db.pool, "5550003 scenic-city Director", "5550003 scenic-city Admin");

@@ -46,7 +46,7 @@ export async function changeChatEmailSetting(org: string, on: boolean, hours: nu
   }
 }
 
-// Owners and Admins (checked in lib/features): CourtSync on or off.
+// CourtCaptain staff (checked in lib/features): CourtSync on or off.
 export async function changeCourtSync(org: string, on: boolean) {
   const user = await currentUser();
   if (!user) return { ok: false as const, message: "Please log in again." };
