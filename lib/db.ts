@@ -20,9 +20,16 @@ export const db =
     // DB_POOL_MAX overrides (`npm run dev`: 10, so a Home page's many small reads wait less; a host and scripts: 5).
     // Supabase's Session pooler allows 15 at once in all (dev server, scripts and tests together).
     max: Number(process.env.DB_POOL_MAX) || (transactionPooler ? 3 : process.env.NODE_ENV === "development" ? 10 : 5),
-    // Hand idle connections back quickly so other copies of the app can use them.
-    idleTimeoutMillis: 10_000,
+    // An idle connection is kept for a minute (opening one takes as long as about 7 lookups), so someone tapping around
+    // doesn't wait for a new one each time; then it's handed back so other copies of the app can use it. Scripts and
+    // tests end their own.
+    idleTimeoutMillis: 60_000,
+    keepAlive: true,
   });
+
+// An idle connection the database or its pooler drops (a restart) is thrown away and the next lookup opens another.
+// Without this listener, Node would stop the whole app.
+if (!db.listenerCount("error")) db.on("error", (e) => console.warn(`[db] an idle connection was dropped: ${e.message}`));
 
 if (process.env.NODE_ENV !== "production") globalForDb.thunderPool = db;
 
