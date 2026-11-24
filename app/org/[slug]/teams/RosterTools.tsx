@@ -6,7 +6,7 @@ import { GRADES } from "@/lib/team-names";
 import { COLUMN_KINDS, COLUMN_LABEL, guessColumns, splitRows, type ColumnKind } from "@/lib/roster-columns";
 import { Alert, PopUp, Toast, useConfirm } from "../../../client-ui";
 import { fieldLabel, inputCls, primaryBtn } from "../../../ui";
-import { addPlayer, importPlayers, previewPlayers, recheckPlayers, removePlayer, setPlayerBirthdate } from "./actions";
+import { addPlayer, importPlayers, previewPlayers, recheckPlayers, removePlayer, setPlayerBirthdate, setPlayerInfo } from "./actions";
 import { AddPlayersIcon, ImportIcon, addIconBtn, iconBtn } from "../../../CardIcons";
 
 
@@ -172,7 +172,8 @@ function RowEditor({
 }
 
 // Import players: paste rows (First, Last, Grade, Jersey, Birthdate) or choose a CSV file, Preview, then add the new ones.
-export function ImportPlayersButton({ org, teamId }: { org: string; teamId: string }) {
+// `org` null: a League team kept by the League (FastBreak, a club, Solo).
+export function ImportPlayersButton({ org, teamId }: { org: string | null; teamId: string }) {
   const router = useRouter();
   const [msg, setMsg] = useState<string | null>(null);
   return (
@@ -195,7 +196,7 @@ export function ImportPlayersButton({ org, teamId }: { org: string; teamId: stri
   );
 }
 
-function ImportForm({ org, teamId, onDone }: { org: string; teamId: string; onDone: (msg: string) => void }) {
+function ImportForm({ org, teamId, onDone }: { org: string | null; teamId: string; onDone: (msg: string) => void }) {
   const [text, setTextRaw] = useState("");
   // Which column holds what: guessed from the rows each time they change, then changed by hand as needed.
   const [layout, setLayout] = useState<{ columns: ColumnKind[]; header: boolean }>({ columns: [], header: false });
@@ -427,7 +428,8 @@ export function PlayerBirthdate({
   birthdate,
   canEdit,
 }: {
-  org: string;
+  org: string | null; // null: a League team kept by the League
+ 
   teamId: string;
   playerId: string;
   birthdate: string | null;
@@ -482,5 +484,74 @@ export function PlayerBirthdate({
       </button>
       {err && <span className="text-red-600 dark:text-red-400">{err}</span>}
     </span>
+  );
+}
+
+// A player's name and grade, in their opened row: Edit name or grade opens the fields right there.
+export function PlayerInfo({
+  org,
+  teamId,
+  player,
+}: {
+  org: string | null; // null: a League team kept by the League
+  teamId: string;
+  player: { id: string; first: string; last: string; grade: number | null };
+}) {
+  const router = useRouter();
+  const was = { first: player.first, last: player.last, grade: player.grade === null ? "" : player.grade === 0 ? "K" : String(player.grade) };
+  const gradeKnown = (GRADES as readonly string[]).includes(was.grade);
+  const [editing, setEditing] = useState(false);
+  const [p, setP] = useState(was);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, start] = useTransition();
+  if (!editing)
+    return (
+      <button type="button" onClick={() => setEditing(true)} className="block text-xs font-medium text-thunder-blue dark:text-blue-400">
+        Edit name or grade
+      </button>
+    );
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          setErr(null);
+          const r = await setPlayerInfo(org, teamId, player.id, { ...p, grade: (GRADES as readonly string[]).includes(p.grade) ? p.grade : "" });
+          if (!r.ok) return setErr(r.message);
+          setEditing(false);
+          router.refresh();
+        });
+      }}
+    >
+      <div className="grid grid-cols-[1fr_1fr_5rem] gap-2">
+        <input aria-label="First name" className={inputCls} value={p.first} onChange={(e) => setP({ ...p, first: e.target.value })} required />
+        <input aria-label="Last name" className={inputCls} value={p.last} onChange={(e) => setP({ ...p, last: e.target.value })} required />
+        <select aria-label="Grade" className={inputCls} value={p.grade} onChange={(e) => setP({ ...p, grade: e.target.value })}>
+          {!gradeKnown && <option value={was.grade}>{was.grade === "-1" ? "Pre-K" : "Grade"}</option>}
+          {GRADES.map((g) => (
+            <option key={g} value={g}>
+              {g}
+            </option>
+          ))}
+        </select>
+      </div>
+      {err && <p className="text-xs text-red-600 dark:text-red-400">{err}</p>}
+      <div className="flex items-center gap-3">
+        <button disabled={busy} className="rounded-full bg-thunder-blue px-3 py-1 text-xs font-semibold text-white disabled:opacity-50">
+          {busy ? "Saving…" : "Save"}
+        </button>
+        <button
+          type="button"
+          className="text-xs text-zinc-500"
+          onClick={() => {
+            setP(was);
+            setEditing(false);
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }

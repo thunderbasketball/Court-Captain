@@ -37,6 +37,7 @@ export default function TeamRosterList({
                 <EligibleChip teamGrades={team.grades} grade={p.grade} birthdate={p.birthdate} year={year} rules={rules} />
               </span>
               <span className="text-right text-xs text-zinc-400">
+                {!p.number && <span className="font-medium text-red-600 dark:text-red-400">no number · </span>}
                 {gradeLabel(p.grade)}
                 {p.birthdate ? bornLabel(p.birthdate) : <span className="font-medium text-red-600 dark:text-red-400"> · no birthdate</span>}
                 {who && ` · Rostered by ${p.rosteredBy}`}

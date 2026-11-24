@@ -7,6 +7,7 @@ import { hasFeature } from "@/lib/features";
 import { orgMetadata } from "@/lib/org-metadata";
 import { orgInfo } from "@/lib/org-registry";
 import { publicLeague, publicLeagues } from "@/lib/public-league";
+import { publicly } from "@/lib/public-cache";
 import { REC_LIMITED, shortDate } from "@/lib/program-options";
 import { easternDate } from "@/lib/time";
 import OrgLogo from "../../OrgLogo";
@@ -49,11 +50,11 @@ async function League({
   if (!o) notFound();
   const sp = await searchParams;
   const now = new Date();
-  const leagues = await publicLeagues(db, now);
   const today = easternDate(now);
+  const leagues = await publicly(`leagues:${today}`, () => publicLeagues(db, now));
   // The League asked for, else the first one still going.
   const pickedId = typeof sp.l === "string" ? sp.l : (leagues.find((l) => l.endsOn >= today) ?? leagues[0])?.id;
-  const league = pickedId ? await publicLeague(db, now, pickedId) : null;
+  const league = leagues.some((l) => l.id === pickedId) ? await publicly(`league:${today}:${pickedId}`, () => publicLeague(db, now, pickedId)) : null;
   // Register tab while the League's registration is open and Team Registrations is on.
   const canRegister = !!league?.registering && (await hasFeature(db, org, "team-registration"));
   // Register opens right in its card: the organization's name, the person registering and each of its teams.

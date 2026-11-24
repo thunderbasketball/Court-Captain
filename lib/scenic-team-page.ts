@@ -39,6 +39,34 @@ export type LeagueTeamPage = {
   manage: boolean; // a Director of Teams, Owner or Admin
 };
 
+// What a League team (or a Thunder or organization team's League copy) is in that hasn't ended: division, Paid, its dates.
+// For pages that already checked the viewer may see the team.
+export async function leaguePrograms(q: Pick<Queryable, "query">, id: string): Promise<LeagueTeamPage["programs"]> {
+  const regs = await q.query<{ id: string; name: string; kind: string; division: string; paid: boolean; out: boolean }>(
+      `select p.id::text, p.name, p.kind, r.paid, r.removed_by is not null as out,
+              d.gender || ' ' || d.grade_low || '-' || d.grade_high || ' · ' || g.grade || ' ' || g.level as division
+         from scenic_registrations r join scenic_programs p on p.id = r.program_id
+         join scenic_pools po on po.id = r.pool_id join scenic_grade_groups g on g.id = po.group_id
+         join scenic_divisions d on d.id = g.division_id
+        where r.team_id = $1 and p.ends_on >= $2::date order by p.starts_on, lower(p.name)`,
+      [id, easternDate(new Date())],
+    );
+  const programs: LeagueTeamPage["programs"] = [];
+  for (const p of regs.rows) {
+    const entry = p.kind === "League" ? (await leagueEntry(q, p.id, id)).entry : null;
+    const [g, rest] = p.division.split(" · ");
+    const [gender, span] = g.split(" ");
+    const [lo, hi] = span.split("-").map(Number);
+    const [grade, level] = rest.split(" ");
+    programs.push({
+      ...p,
+      division: `${gender} ${gradeLabel(lo, hi).replace("/", "–")} · ${gradeLabel(Number(grade), Number(grade))} ${level}`,
+      entry: entry && { perDate: entry.perDate, bracket: entry.bracket, feeCents: entry.feeCents, allSeason: entry.allSeason },
+    });
+  }
+  return programs;
+}
+
 // The page's data, or null when the team isn't a League team or the viewer may not see it.
 export async function leagueTeamPage(q: Pick<Queryable, "query">, viewer: SessionUser, id: unknown): Promise<LeagueTeamPage | null> {
   if (!isId(id)) return null;
@@ -71,7 +99,7 @@ export async function leagueTeamPage(q: Pick<Queryable, "query">, viewer: Sessio
   const manage = (await orgHasArea(q, viewer.coachId, ORG, "teams")) || (await isOrgAdmin(q, viewer.coachId, ORG));
   if (!manage && !t.coach && !t.contact && t.owner_id !== viewer.coachId) return null;
 
-  const [head, staff, regs] = await Promise.all([
+  const [head, staff, programs] = await Promise.all([
     q.query<NonNullable<LeagueTeamPage["head"]>>(
       `select u.coach_id as "coachId", u.first_name as first, u.last_name as last, u.cell, u.email,
               (u.verified_email is not null and lower(trim(u.verified_email)) = lower(trim(coalesce(u.email, '')))) as verified
@@ -83,29 +111,8 @@ export async function leagueTeamPage(q: Pick<Queryable, "query">, viewer: Sessio
         order by array_position(array['AsstCoach', 'Manager', 'TeamParent'], role)`,
       [id],
     ),
-    q.query<{ id: string; name: string; kind: string; division: string; paid: boolean; out: boolean }>(
-      `select p.id::text, p.name, p.kind, r.paid, r.removed_by is not null as out,
-              d.gender || ' ' || d.grade_low || '-' || d.grade_high || ' · ' || g.grade || ' ' || g.level as division
-         from scenic_registrations r join scenic_programs p on p.id = r.program_id
-         join scenic_pools po on po.id = r.pool_id join scenic_grade_groups g on g.id = po.group_id
-         join scenic_divisions d on d.id = g.division_id
-        where r.team_id = $1 and p.ends_on >= $2::date order by p.starts_on, lower(p.name)`,
-      [id, easternDate(new Date())],
-    ),
+    leaguePrograms(q, id),
   ]);
-  const programs: LeagueTeamPage["programs"] = [];
-  for (const p of regs.rows) {
-    const entry = p.kind === "League" ? (await leagueEntry(q, p.id, t.id)).entry : null;
-    const [g, rest] = p.division.split(" · ");
-    const [gender, span] = g.split(" ");
-    const [lo, hi] = span.split("-").map(Number);
-    const [grade, level] = rest.split(" ");
-    programs.push({
-      ...p,
-      division: `${gender} ${gradeLabel(lo, hi).replace("/", "–")} · ${gradeLabel(Number(grade), Number(grade))} ${level}`,
-      entry: entry && { perDate: entry.perDate, bracket: entry.bracket, feeCents: entry.feeCents, allSeason: entry.allSeason },
-    });
-  }
   return {
     team: {
       id: t.id,
@@ -153,8 +160,8 @@ export async function leagueStaff(q: Pick<Queryable, "query">, ids: string[]): P
        from scenic_teams st join users u on u.coach_id = st.coach_id
       where st.id = any($1::bigint[]) and st.org_team_id is null and st.thunder_team_id is null
      union all
-     select st.id::text, null, s.role, s.first_name, s.last_name, s.cell, s.email, false
-       from scenic_teams st join scenic_team_staff s on s.team_id = st.id
+     select st.id::text, u.coach_id, s.role, s.first_name, s.last_name, s.cell, coalesce(s.email, u.email), coalesce(${VERIFIED}, false)
+       from scenic_teams st join scenic_team_staff s on s.team_id = st.id left join users u on u.coach_id = s.coach_id
       where st.id = any($1::bigint[]) and st.org_team_id is null and st.thunder_team_id is null`,
     [ids],
   );
@@ -170,7 +177,9 @@ export async function leagueStaff(q: Pick<Queryable, "query">, ids: string[]): P
 export async function myLeagueTeams(q: Pick<Queryable, "query">, coachId: string): Promise<{ id: string; name: string }[]> {
   const r = await q.query<{ id: string; name: string }>(
     `select id::text, name from scenic_teams
-      where (coach_id = $1 or owner_coach_id = $1) and org_team_id is null and thunder_team_id is null and name not like '%(DEV)'
+      where (coach_id = $1 or owner_coach_id = $1
+             or exists (select 1 from scenic_team_staff s where s.team_id = scenic_teams.id and s.coach_id = $1 and s.role = 'AsstCoach'))
+        and org_team_id is null and thunder_team_id is null and name not like '%(DEV)'
       order by lower(name)`,
     [coachId],
   );

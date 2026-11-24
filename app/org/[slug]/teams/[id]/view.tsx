@@ -9,6 +9,9 @@ import { db } from "@/lib/db";
 import { teamPrograms } from "@/lib/org-leagues";
 import { scheduledGames } from "@/lib/scenic-games";
 import { currentContexts } from "@/lib/contexts-server";
+import { leagueRosters } from "@/lib/roster-snapshot";
+import { MissingNumbers, PlayerNumber } from "../../../../roster-numbers/RosterNumbers";
+import LeagueRosterCards from "../../../../league-roster/LeagueRosterCards";
 import { teamRequests } from "@/lib/schedule-requests";
 import ScheduleRequests from "../../../../ScheduleRequests";
 import { LeagueGames, ScheduleList } from "../../../../LeagueGames";
@@ -19,8 +22,8 @@ import { DateChips, ProgramButton, RegisterLeagueButton } from "../../../../leag
 import { easternDate } from "@/lib/time";
 import { HeadCoachEmailButton, StaffEdit, WaitingCoachButton } from "../../../../CoachContactTools";
 import { listOrgRoster } from "@/lib/org-rosters";
-import { AddPlayerButton, ImportPlayersButton, PlayerBirthdate, RemovePlayerButton } from "../RosterTools";
-import { AddCoachButton, AddCoachPanel, DeleteTeamButton, TeamEditButton, RemoveCoachButton } from "../TeamTools";
+import { AddPlayerButton, ImportPlayersButton, PlayerBirthdate, PlayerInfo, RemovePlayerButton } from "../RosterTools";
+import { AddCoachButton, AddCoachPanel, DeleteTeamButton, TeamEditButton, RemoveCoachButton, type StaffSpot } from "../TeamTools";
 import { followRename } from "@/lib/org-rename";
 import { canChangeOwnPractices, ownPracticeLocations, ownPracticesOn, upcomingOwnPractices } from "@/lib/team-practices";
 import TeamPractices from "../../../../TeamPractices";
@@ -87,6 +90,7 @@ export async function OrgTeamView({
   ]);
   // Typed-in rosters (no CourtPlayers) ask each player's birthdate; with CourtPlayers it comes from registrations.
   const typedRoster = !(await hasFeature(db, slug, "player-registration"));
+  const noNumber = typedRoster ? (roster?.players ?? []).filter((p) => !p.jersey) : []; // every player needs a uniform number
   const noBirthdate = typedRoster ? (roster?.players ?? []).filter((p) => !p.birthdate).length : 0;
   const asked = sp.tab;
   const opened = typeof asked === "string" ? asked : "";
@@ -94,10 +98,20 @@ export async function OrgTeamView({
   const day = (d: string) =>
     new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
   const hasHead = t.coaches.some((c) => c.role === "HeadCoach");
+  // The staff spots this person may fill or empty (checked again on the server), the same on every organization's teams.
+  const myRoles = user.actingBy ? [] : t.coaches.filter((c) => c.id === user.coachId).map((c) => c.role);
+  const spots: StaffSpot[] = canManage
+    ? ["HeadCoach", "AsstCoach", "Manager", "TeamParent"]
+    : myRoles.includes("HeadCoach")
+      ? ["AsstCoach", "Manager", "TeamParent"]
+      : myRoles.includes("AsstCoach")
+        ? ["Manager", "TeamParent"]
+        : [];
   // Team chat (CourtPlayers): the team's coaches and the Directors, opened right here (who can open it is checked again).
   const teamChat = chatOn && (canManage || t.coaches.some((c) => c.id === user.coachId));
   const canOwn = practicesOn && mayChangeOwn;
   const [copy, requests] = await Promise.all([copyOf, requestsOf]); // already loading beside the rest
+  const leagueRosterList = await leagueRosters({ pool: db, now: () => new Date() }, user, copy); // locked at its 1st game in a League
   const schedule = requests && requests.length ? requests : null;
   // Its team chip in the header when they're on its staff (like a Thunder team), else the organization's.
   const teamChip = `orgteam:${slug}:${t.id}`;
@@ -256,6 +270,7 @@ export async function OrgTeamView({
           ...(t.waitingCoach || t.coaches.some((c) => c.role === "HeadCoach" && !c.email) ? (["COACH EMAIL"] as const) : []),
           ...(!t.players ? (["ROSTER"] as const) : []),
           ...(noBirthdate ? (["PLAYER BIRTHDATES"] as const) : []),
+          ...(noNumber.length ? (["PLAYER NUMBERS"] as const) : []),
         ]}
         edit={
           canManage && (
@@ -296,9 +311,9 @@ export async function OrgTeamView({
             tool: canManage && <WaitingCoachButton org={slug} teamId={t.id} first={t.waitingCoach.first} last={t.waitingCoach.last} />,
           },
           chatKey: teamChat ? orgKey(slug, `team-${t.id}`) : null,
-          add: canManage && <AddCoachButton teamId={t.id} />,
-          addPanel: canManage && <AddCoachPanel org={slug} teamId={t.id} hasHead={hasHead} />,
-          remove: (c: TeamStaffRow) => canManage && <RemoveCoachButton org={slug} teamId={t.id} coachId={c.coachId} name={`${c.first} ${c.last}`.trim()} />,
+          add: spots.length > 0 && <AddCoachButton teamId={t.id} />,
+          addPanel: spots.length > 0 && <AddCoachPanel org={slug} teamId={t.id} hasHead={hasHead} roles={spots} />,
+          remove: (c: TeamStaffRow) => spots.some((x) => x === c.role) && <RemoveCoachButton org={slug} teamId={t.id} coachId={c.coachId} name={`${c.first} ${c.last}`.trim()} />,
           headEmail: (c: TeamStaffRow) => canManage && <HeadCoachEmailButton org={slug} teamId={t.id} name={`${c.first} ${c.last}`.trim()} />,
           edit: (c: TeamStaffRow) => who && (
               <StaffEdit org={slug} teamId={t.id} coachId={c.coachId} role={c.role} first={c.first} last={c.last} cell={c.cell} email={c.email} />
@@ -315,11 +330,14 @@ export async function OrgTeamView({
             right: (
               <>
                 {p.grade === 0 ? "K" : `Grade ${p.grade}`}
+                {typedRoster && !p.jersey && <span className="font-semibold text-red-600 dark:text-red-400"> · no number</span>}
                 {typedRoster && !p.birthdate && <span className="font-semibold text-red-600 dark:text-red-400"> · no birthdate</span>}
               </>
             ),
             more: (
               <div className="space-y-2">
+                {typedRoster && roster?.canManage && <PlayerInfo key={`${p.first} ${p.last} ${p.grade}`} org={slug} teamId={t.id} player={p} />}
+                {typedRoster && roster?.canManage && <PlayerNumber key={p.jersey ?? ""} org={slug} teamId={t.id} id={p.id} number={p.jersey} />}
                 {typedRoster && (
                   <PlayerBirthdate org={slug} teamId={t.id} playerId={p.id} birthdate={p.birthdate} canEdit={!!roster?.canManage} />
                 )}
@@ -328,12 +346,15 @@ export async function OrgTeamView({
                     {who && `Added by ${p.addedBy}`}
                     {who && p.birthdateBy && ` · birthdate by ${p.birthdateBy}`}
                   </span>
-                  {roster?.canManage && <RemovePlayerButton org={slug} teamId={t.id} playerId={p.id} name={`${p.first} ${p.last}`} />}
+                  {roster?.canRemove && <RemovePlayerButton org={slug} teamId={t.id} playerId={p.id} name={`${p.first} ${p.last}`} />}
                 </div>
               </div>
             ),
           })),
-          alert: !t.players || noBirthdate > 0, // flashes until it has players, each with a birthdate
+          alert: !t.players || noBirthdate > 0 || noNumber.length > 0, // flashes until it has players, each with a birthdate and number
+          note: typedRoster && (
+            <MissingNumbers org={slug} teamId={t.id} players={noNumber} taken={players.flatMap((p) => (p.jersey ? [p.jersey] : []))} canEdit={!!roster?.canManage} />
+          ),
           cells: [],
           emails: [],
           chatKey: null,
@@ -345,6 +366,14 @@ export async function OrgTeamView({
           ),
           empty: roster?.canManage ? "No players yet. Tap the add icon (or import)." : "No players on the roster yet.",
         }}
+        leagueRosters={
+          copy && leagueRosterList.length
+            ? {
+                count: leagueRosterList.reduce((n, r) => n + r.players.filter((x) => !x.removedBy).length, 0),
+                body: <LeagueRosterCards rosters={leagueRosterList} teamId={copy} who={who} />,
+              }
+            : null
+        }
         gamesCount={published.length + scrims.length}
         games={
           <>

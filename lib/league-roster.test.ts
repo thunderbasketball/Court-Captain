@@ -1,6 +1,18 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
-import { addLeaguePlayer, leagueRoster, mayManageLeagueTeam, removeLeaguePlayer, removeLeagueStaff, saveLeagueStaff } from "./league-roster";
+import {
+  addLeaguePlayer,
+  importLeagueRows,
+  leagueRoster,
+  mayManageLeagueTeam,
+  previewLeagueImport,
+  previewLeagueRows,
+  removeLeaguePlayer,
+  removeLeagueStaff,
+  saveLeagueStaff,
+  setLeagueBirthdate,
+} from "./league-roster";
+import { leagueStaff, leagueTeamPage, myLeagueTeams } from "./scenic-team-page";
 import { createTestDb, grant } from "./testing/db";
 
 const person = (coachId: string, firstName: string): SessionUser =>
@@ -85,5 +97,61 @@ describe("a League team's roster and staff", () => {
     expect(await removeLeagueStaff(deps(), sam, team, "AsstCoach")).toMatchObject({ ok: false });
     expect(await removeLeagueStaff(deps(), dee, team, "AsstCoach")).toEqual({ ok: true });
     expect((await db.pool.query("select count(*)::int as n from scenic_team_staff")).rows[0].n).toBe(0);
+  }, 120_000);
+
+  it("imports its roster like an organization's, birthdates can be fixed, and its Assistant Coach logs in and manages the team", async () => {
+    const text = "Zoe Hart II     3/20/2017    4   24\nEli Park    9/1/2017   4   5\nAva Lee   1/1/2016   4   12";
+    const layout = { columns: ["name", "birthdate", "grade", "jersey"], header: false };
+    await addLeaguePlayer(deps(), mo, team, { first: "Ava", last: "Lee", jersey: "7" });
+    expect(await previewLeagueImport(deps(), sam, team, text, layout)).toMatchObject({ ok: false });
+    expect(await previewLeagueImport(deps(), dee, orgCopy, text, layout)).toMatchObject({ ok: false }); // kept on its organization's page
+    const pre = await previewLeagueImport(deps(), mo, team, text, layout);
+    if (!pre.ok) throw new Error(pre.message);
+    expect(pre.rows.map((r) => [r.first, r.last, r.status])).toEqual([
+      ["Zoe", "Hart II", "new"],
+      ["Eli", "Park", "new"],
+      ["Ava", "Lee", "exists"],
+    ]);
+    const bad = [{ ...pre.rows[0], grade: "" }];
+    expect(await previewLeagueRows(deps(), mo, team, bad)).toMatchObject({ ok: true, rows: [{ status: "error" }] });
+    expect(await importLeagueRows(deps(), sam, team, pre.rows)).toMatchObject({ ok: false });
+    expect(await importLeagueRows(deps(), mo, team, [...pre.rows, { ...pre.rows[0], first: "Kit", jersey: "5" }, { ...pre.rows[0], first: "=x" }])).toMatchObject({
+      ok: true,
+      added: ["Zoe Hart II", "Eli Park"],
+      skipped: ["Ava Lee: already on the team", "Kit Hart II: #5 is taken", expect.stringContaining("First and last name")],
+    });
+    const eli = (await leagueRoster(db.pool, team)).find((p) => p.first === "Eli")!;
+    expect(await setLeagueBirthdate(deps(), sam, team, eli.id, "5/3/2016")).toMatchObject({ ok: false });
+    expect(await setLeagueBirthdate(deps(), mo, team, eli.id, "nope")).toMatchObject({ ok: false });
+    expect(await setLeagueBirthdate(deps(), mo, team, eli.id, "5/3/2016")).toEqual({ ok: true });
+    expect((await leagueRoster(db.pool, team)).find((p) => p.first === "Eli")!.birthdate).toBe("2016-05-03");
+
+    // The coach adds an Assistant Coach: a login with that cell, the Coach role, this team; a Manager is contact only.
+    const coachRole = async (cell: string) =>
+      (await db.pool.query("select 1 from org_roles r join users u on u.coach_id = r.coach_id where u.cell = $1 and r.org = 'scenic-city' and r.role = 'Coach'", [cell])).rowCount;
+    expect(await saveLeagueStaff(deps(), mo, team, { role: "AsstCoach", first: "Al", last: "Ash", cell: "4235550303", email: "al@example.com" })).toEqual({ ok: true });
+    expect(await saveLeagueStaff(deps(), mo, team, { role: "Manager", first: "Meg", last: "May", cell: "4235550505" })).toEqual({ ok: true });
+    const al = person("5550303", "Al");
+    expect(await coachRole("4235550303")).toBe(1);
+    expect(await coachRole("4235550505")).toBe(0);
+    expect(await mayManageLeagueTeam(db.pool, al, team)).toBe(true);
+    expect((await myLeagueTeams(db.pool, "5550303")).map((t) => t.id)).toEqual([team]);
+    expect(await leagueTeamPage(db.pool, al, team)).not.toBeNull();
+    expect((await leagueStaff(db.pool, [team]))[team].map((m) => [m.role, m.first, m.coachId])).toEqual([
+      ["HeadCoach", "Mo", "5550101"],
+      ["AsstCoach", "Al", "5550303"],
+      ["Manager", "Meg", null],
+    ]);
+    // An Assistant Coach changes the Manager and Team Parent, never the Assistant Coach.
+    expect(await saveLeagueStaff(deps(), al, team, { role: "TeamParent", first: "Pat", last: "Poe", cell: "4235550606" })).toEqual({ ok: true });
+    expect(await removeLeagueStaff(deps(), al, team, "TeamParent")).toEqual({ ok: true });
+    expect(await saveLeagueStaff(deps(), al, team, { role: "AsstCoach", first: "Zed", last: "Zee", cell: "4235550707" })).toMatchObject({ ok: false });
+    expect(await removeLeagueStaff(deps(), al, team, "AsstCoach")).toMatchObject({ ok: false });
+    // Replaced: the new one's login; the first no longer coaches here. Removed: neither does the second.
+    expect(await saveLeagueStaff(deps(), mo, team, { role: "AsstCoach", first: "Bo", last: "Bell", cell: "4235550404" })).toEqual({ ok: true });
+    expect([await coachRole("4235550303"), await coachRole("4235550404")]).toEqual([0, 1]);
+    expect(await mayManageLeagueTeam(db.pool, al, team)).toBe(false);
+    expect(await removeLeagueStaff(deps(), mo, team, "AsstCoach")).toEqual({ ok: true });
+    expect(await coachRole("4235550404")).toBe(0);
   }, 120_000);
 });

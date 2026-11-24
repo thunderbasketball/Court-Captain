@@ -3,6 +3,7 @@
 // or that suddenly lost more than half the players (e.g. a filter or a half-cleared tab).
 import type { Pool } from "pg";
 import { applyBirthdateFixes } from "../birthdate-fix";
+import { applyParentFixes } from "../player-parents";
 import { createHash } from "node:crypto";
 import { withTx } from "../sql";
 import { replaceRegistrations } from "./import";
@@ -37,6 +38,7 @@ export async function syncRegistrations(deps: Deps): Promise<SyncResult> {
     if (prev.rows[0]?.source_hash === hash) {
       await q.query("update sync_status set checked_at = $2, ok = true, message = null where name = $1", [SYNC_NAME, now]);
       await applyBirthdateFixes(q, false); // in case another copy of the app (an older one) replaced them
+      await applyParentFixes(q, false);
       return { status: "unchanged" };
     }
 

@@ -2,6 +2,7 @@
 // court then start time, filled in with the League, division, date, time, gym and court, Home and Away teams, their
 // coaches and their rosters (jersey numbers when the team has them). For the Scheduler's Admins and Directors of
 // Scheduling, and for an organization's own gyms its Admins and Directors of Facilities (Documents card). Read only.
+import { takeSnapshots } from "./roster-snapshot";
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { hasArea, orgHasArea } from "./org-admin";
@@ -11,7 +12,7 @@ import { TZ } from "./time";
 import { isScheduler } from "./scenic-programs";
 import { gradeRange } from "./scenic-teams";
 
-type Deps = { pool: Pool };
+type Deps = { pool: Pool; now?: () => Date };
 
 export type SheetPlayer = { jersey: string | null; name: string };
 export type SheetTeam = { name: string; coach: string | null; players: SheetPlayer[] };
@@ -56,6 +57,7 @@ export async function gymScoresheets(deps: Deps, viewer: SessionUser, day: unkno
   if (!gym) return null;
   const games = await deps.pool.query<{
     id: string;
+    program: string;
     league: string;
     gender: string;
     grade_low: number;
@@ -66,7 +68,7 @@ export async function gymScoresheets(deps: Deps, viewer: SessionUser, day: unkno
     home: string | null;
     away: string | null;
   }>(
-    `select m.id::text, p.name as league, d.gender, d.grade_low, d.grade_high, to_char(m.starts, 'HH24:MI') as starts,
+    `select m.id::text, m.program_id::text as program, p.name as league, d.gender, d.grade_low, d.grade_high, to_char(m.starts, 'HH24:MI') as starts,
             coalesce(gd.minutes_override, p.game_minutes, 55) as minutes,
             ${partner ? "c.name" : "coalesce(c.name, 'Main')"} as court,
             (case when coalesce(m.home_side, 'a') = 'a' then m.team_a else m.team_b end)::text as home,
@@ -86,8 +88,20 @@ export async function gymScoresheets(deps: Deps, viewer: SessionUser, day: unkno
     [day, id],
   );
   const teamIds = [...new Set(games.rows.flatMap((g) => [g.home, g.away].filter((x): x is string => !!x)))];
-  const teams = new Map<string, SheetTeam>();
+  const teams = new Map<string, SheetTeam>(); // by League and team
   if (teamIds.length) {
+    // Once a team has played its 1st game, its League roster (the snapshot, with any fixes); before that, its roster now.
+    await takeSnapshots(deps.pool, teamIds, deps.now?.() ?? new Date());
+    const locked = await deps.pool.query<{ key: string; players: SheetPlayer[] }>(
+      `select s.program_id || ':' || s.team_id as key,
+              coalesce((select json_agg(json_build_object('jersey', x.jersey, 'name', x.first_name || ' ' || x.last_name)
+                                        order by nullif(x.jersey, '')::int nulls last, lower(x.last_name), lower(x.first_name))
+                          from scenic_snapshot_players x
+                         where x.program_id = s.program_id and x.team_id = s.team_id and x.removed_by is null), '[]') as players
+         from scenic_roster_snapshots s where s.team_id = any($1::bigint[])`,
+      [teamIds],
+    );
+    const lockedOf = new Map(locked.rows.map((x) => [x.key, x.players]));
     const r = await deps.pool.query<{ id: string; name: string; coach: string | null; players: SheetPlayer[] }>(
       `select t.id::text, t.name, nullif(trim(coalesce(u.first_name, t.coach_first, '') || ' ' || coalesce(u.last_name, t.coach_last, '')), '') as coach,
               coalesce(
@@ -98,12 +112,19 @@ export async function gymScoresheets(deps: Deps, viewer: SessionUser, day: unkno
                                  order by nullif(un.number, '')::int nulls last, lower(x.last_name), lower(x.first_name))
                    from team_players x left join team_uniforms un on un.team_id = x.team_id and un.registrant_id = x.registrant_id
                   where x.team_id = t.thunder_team_id),
+                (select json_agg(json_build_object('jersey', x.jersey, 'name', x.first_name || ' ' || x.last_name)
+                                 order by nullif(x.jersey, '')::int nulls last, lower(x.last_name), lower(x.first_name))
+                   from scenic_team_players x where x.team_id = t.id),
                 '[]') as players
          from scenic_teams t left join users u on u.coach_id = t.coach_id
         where t.id = any($1::bigint[])`,
       [teamIds],
     );
-    for (const t of r.rows) teams.set(t.id, { name: t.name, coach: t.coach, players: t.players });
+    for (const program of new Set(games.rows.map((g) => g.program)))
+      for (const t of r.rows) {
+        const key = `${program}:${t.id}`;
+        teams.set(key, { name: t.name, coach: t.coach, players: lockedOf.get(key) ?? t.players });
+      }
   }
   // The games' assigned referees (the officials group scheduling that gym), by spot.
   const refs = new Map<string, string[]>();
@@ -131,8 +152,8 @@ export async function gymScoresheets(deps: Deps, viewer: SessionUser, day: unkno
       gym: gym.name,
       court: g.court,
       address: gym.address,
-      home: g.home ? (teams.get(g.home) ?? null) : null,
-      away: g.away ? (teams.get(g.away) ?? null) : null,
+      home: g.home ? (teams.get(`${g.program}:${g.home}`) ?? null) : null,
+      away: g.away ? (teams.get(`${g.program}:${g.away}`) ?? null) : null,
       officials: refs.get(g.id) ?? [],
     })),
   };

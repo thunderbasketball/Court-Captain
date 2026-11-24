@@ -116,6 +116,33 @@ describe("create account", () => {
     expect(mail.sent).toHaveLength(0);
   });
 
+  it("a parent's cell (on a player's registration): only with an email on that registration, at every first sign-in", async () => {
+    await db.pool.query(
+      `insert into registrations (registrant_id, registration_id, first_name, last_name, gender, grade, grade_sort, program,
+         parent1_cell, parent1_email, parent2_cell, parent2_email, raw, imported_at, imported_by)
+       values ('r1', 'g1', 'Ava', 'Epps', 'Girls', '4', 4, 'Winter', $1, 'Mom@Example.com', '4235550999', 'dad@example.com', '{}', now(), 'x')`,
+      [CELL],
+    );
+    const family = { ...form, purpose: "family" };
+    // Anyone could type her cell: their own email doesn't work, nor the other parent's.
+    expectError(await auth.startSignup(deps, family), MSG.parentEmail);
+    expectError(await auth.startSignup(deps, { ...family, email: "dad@example.com" }), MSG.parentEmail);
+    expectError(await auth.startSignup(deps, { ...form, email: "other@example.com" }), MSG.parentEmail); // whatever the reason
+    expect(mail.sent).toHaveLength(0);
+    // Hers: a code to it, then she's in and stays logged in like anyone else.
+    expect(await auth.startSignup(deps, { ...family, email: "mom@example.com" })).toMatchObject({ step: "signupCode" });
+    expect(mail.sent[0].to).toBe("mom@example.com");
+    expect(await auth.completeSignup(deps, CELL, mail.lastCode())).toMatchObject({ step: "loggedIn", token: expect.any(String) });
+
+    // Someone added to a team's staff with her cell: the first login (starter PIN) asks for the registration's email too.
+    await db.pool.query("delete from sessions");
+    await db.pool.query("delete from org_roles");
+    await db.pool.query("delete from users");
+    await addUser({ pin: null, email: null, verified: false });
+    expectError(await auth.sendStarterCode(deps, CELL, "evil@example.com"), MSG.parentEmail);
+    expect(await auth.sendStarterCode(deps, CELL, "mom@example.com")).toMatchObject({ step: "starterCode" });
+  });
+
   it("emails a code and saves nothing until it checks out", async () => {
     const s = await auth.startSignup(deps, form);
     expect(s).toEqual({ step: "signupCode", maskedEmail: "e**l@example.com" });

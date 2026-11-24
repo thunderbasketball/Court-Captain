@@ -2,9 +2,9 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useConfirm } from "../client-ui";
-import { previewSeasonGuide, sendSeasonGuideNow } from "./actions";
+import { previewGuide, sendGuideNow } from "./actions";
 
-type Preview = Extract<Awaited<ReturnType<typeof previewSeasonGuide>>, { ok: true }>;
+type Preview = Extract<Awaited<ReturnType<typeof previewGuide>>, { ok: true }>;
 
 const when = (d: Date) =>
   new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
@@ -23,10 +23,51 @@ function Addresses({ title, list }: { title: string; list: string[] }) {
   );
 }
 
-// The season guide (the Teams page's 📧 Season guide pill): whether this is the live site or test mode, every address
-// (To you; Cc the organizations' staff; Bcc the coaches), the email itself, and the last send. Send asks first (a
-// pop-up). Live: to everyone; test mode: only to you, listing the addresses. Checked again on the server.
-export default function SeasonGuidePanel({ org }: { org: string }) {
+const GUIDES = [
+  { kind: "season", title: "Season Guide", about: "To everyone associated with the League: team staff, organizations, hosting sites and officials." },
+  { kind: "hosting", title: "Hosting Guide", about: "To the staff of the organizations hosting games." },
+] as const;
+
+// The Teams page's Standard emails card, for an organization that runs Leagues: each email a card, built only once
+// opened (its addresses and text come from the server).
+export function StandardEmails({ org }: { org: string }) {
+  return (
+    <div className="space-y-2">
+      {GUIDES.map((g) => (
+        <GuideCard key={g.kind} org={org} {...g} />
+      ))}
+    </div>
+  );
+}
+
+function GuideCard({ org, kind, title, about }: { org: string; kind: string; title: string; about: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10"
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-2.5 select-none [&::-webkit-details-marker]:hidden">
+        <span className="min-w-0">
+          <span className="block font-semibold">{title}</span>
+          <span className="block text-xs text-zinc-500">{about}</span>
+        </span>
+        <span aria-hidden className={`text-xs text-zinc-400 transition ${open ? "rotate-90" : ""}`}>
+          ▶
+        </span>
+      </summary>
+      {open && (
+        <div className="border-t border-zinc-100 p-3 dark:border-white/5">
+          <GuidePanel org={org} kind={kind} title={title} />
+        </div>
+      )}
+    </details>
+  );
+}
+
+// One standard email: whether this is the live site or test mode, every address, the email itself, and the last send.
+// Send asks first (a pop-up). Live: to everyone; test mode: only to you, listing the addresses. Checked on the server.
+function GuidePanel({ org, kind, title }: { org: string; kind: string; title: string }) {
   const [p, setP] = useState<Preview | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -35,7 +76,7 @@ export default function SeasonGuidePanel({ org }: { org: string }) {
 
   useEffect(() => {
     let live = true;
-    previewSeasonGuide(org).then((r) => {
+    previewGuide(org, kind).then((r) => {
       if (!live) return;
       if (r.ok) setP(r);
       else setErr(r.message);
@@ -43,19 +84,19 @@ export default function SeasonGuidePanel({ org }: { org: string }) {
     return () => {
       live = false;
     };
-  }, [org]);
+  }, [org, kind]);
 
   async function send() {
     if (!p) return;
     const ok = await confirm({
-      title: p.live ? `Send the season guide to ${p.bcc.length + p.cc.length + 1} people?` : "Send the test email to you?",
+      title: p.live ? `Send the ${title} to ${p.bcc.length + p.cc.length + 1} people?` : "Send the test email to you?",
       message: p.live ? (
         <>
-          To you, Cc {p.cc.length} staff of the organizations playing or hosting, Bcc {p.bcc.length} coaches.
+          To you{p.cc.length > 0 && `, Cc ${p.cc.length} organization staff`}, Bcc {p.bcc.length} {kind === "hosting" ? "hosting staff" : "team staff"}.
           {p.last?.live && ` It was last sent ${when(p.last.at)} by ${p.last.by}.`} This can&apos;t be unsent.
         </>
       ) : (
-        <>Test mode: only you ({p.to}) get it, with every address it would go to on the live site. No coach or staff gets anything.</>
+        <>Test mode: only you ({p.to}) get it, with every address it would go to on the live site. Nobody else gets anything.</>
       ),
       confirmLabel: p.live ? "Send to everyone" : "Send to me",
       tone: "warning",
@@ -63,11 +104,11 @@ export default function SeasonGuidePanel({ org }: { org: string }) {
     if (!ok) return;
     start(async () => {
       setErr(null);
-      const r = await sendSeasonGuideNow(org);
+      const r = await sendGuideNow(org, kind);
       if (!r.ok) return setErr(r.message);
       setDone(
         r.live
-          ? `Sent: to you, Cc ${r.cc}, Bcc ${r.bcc} coaches (${r.emails} email${r.emails === 1 ? "" : "s"}).`
+          ? `Sent: to you, Cc ${r.cc}, Bcc ${r.bcc} (${r.emails} email${r.emails === 1 ? "" : "s"}).`
           : `Test email sent to ${r.to} with the ${r.cc + r.bcc} addresses it would go to. Check your inbox (and Spam).`,
       );
     });
@@ -79,7 +120,7 @@ export default function SeasonGuidePanel({ org }: { org: string }) {
       {confirmDialog}
       {p.live ? (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800 dark:bg-red-500/10 dark:text-red-200">
-          <strong>Live:</strong> this goes to every coach and staff member below.
+          <strong>Live:</strong> this goes to everyone listed below.
         </p>
       ) : (
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">
@@ -87,12 +128,12 @@ export default function SeasonGuidePanel({ org }: { org: string }) {
         </p>
       )}
       <p className="text-sm">
-        {p.teams} team{p.teams === 1 ? "" : "s"} in your current events · {p.orgs} organization{p.orgs === 1 ? "" : "s"} playing or hosting.
+        {p.about}
       </p>
       <div className="space-y-1.5">
         <Addresses title="To (you)" list={[p.to]} />
-        <Addresses title="Cc: staff of the organizations playing or hosting" list={p.cc} />
-        <Addresses title="Bcc: coaches" list={p.bcc} />
+        {kind === "season" && <Addresses title={p.ccLabel} list={p.cc} />}
+        <Addresses title={p.bccLabel} list={p.bcc} />
       </div>
       {p.last && (
         <p className="text-xs text-zinc-500">

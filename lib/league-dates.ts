@@ -8,7 +8,8 @@
 // added the dates) or when it costs nothing.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
-import { leagueEntry, payLater, saveChoice, type Entry } from "./scenic-programs";
+import { hasFeature } from "./features";
+import { leagueEntry, payLater, saveChoice, teamOrgOf, type Entry } from "./scenic-programs";
 import { whoForTeam } from "./schedule-requests";
 import { withTx } from "./sql";
 import type { StripeApi } from "./stripe/connect";
@@ -37,6 +38,9 @@ export async function addLeagueDates(
   if (!isId(programId) || !isId(teamId)) return { ok: false, message: "Pick a team and a League." };
   // A REC team's dates are added by its directors only; a COMP team's coaches add them too.
   const who = await whoForTeam(deps.pool, viewer, teamId);
+  const teamOrg = await teamOrgOf(deps.pool, teamId);
+  if (!who.director && who.coach && teamOrg && (await hasFeature(deps.pool, teamOrg, "player-registration")))
+    return { ok: false, message: "Your Director handles registrations." }; // CourtPlayers: its Directors add dates
   if (!who.director && !(who.coach && who.level !== "REC"))
     return {
       ok: false,
@@ -55,9 +59,11 @@ export async function addLeagueDates(
   if ("error" in check) return { ok: false, message: check.error };
   if (check.cents > 0) {
     const t = (
-      await deps.pool.query<{ org: string; org_team_id: string | null }>(
+      await deps.pool.query<{ org: string; org_team_id: string | null; page: string }>(
         `select coalesce(ot.org, case when st.thunder_team_id is not null then 'thunder' else 'scenic-city' end) as org,
-                st.org_team_id::text
+                st.org_team_id::text,
+                case when st.thunder_team_id is not null then '/org/thunder/teams/' || st.thunder_team_id
+                     when ot.id is not null then '/org/' || ot.org || '/teams/' || ot.id else '/org/scenic-city/teams/' || st.id end as page
            from scenic_teams st left join org_teams ot on ot.id = st.org_team_id where st.id = $1`,
         [teamId],
       )
@@ -75,7 +81,7 @@ export async function addLeagueDates(
       });
       const sd = { pool: deps.pool, stripe: deps.stripe, now: deps.now };
       if (inPage) return { ok: true, payInPage: await openCheckoutInPage(sd, id, base) };
-      return { ok: true, pay: await openCheckout(sd, id, base, `/org/scenic-city/teams/${teamId}?paid=cancelled`) };
+      return { ok: true, pay: await openCheckout(sd, id, base, `${t.page}?paid=cancelled`) };
     }
   }
 

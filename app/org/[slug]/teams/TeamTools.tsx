@@ -63,7 +63,10 @@ export function AddCoachButton({ teamId }: { teamId: string }) {
   );
 }
 
-export function AddCoachPanel({ org, teamId, hasHead }: { org: string; teamId: string; hasHead: boolean }) {
+// `roles`: the spots this person may fill (its Directors: any; its Head Coach: all but Head Coach; an Assistant Coach: Team
+// Manager and Team Parent).
+export type StaffSpot = "HeadCoach" | "AsstCoach" | "Manager" | "TeamParent";
+export function AddCoachPanel({ org, teamId, hasHead, roles }: { org: string; teamId: string; hasHead: boolean; roles: StaffSpot[] }) {
   const router = useRouter();
   const [msg, setMsg] = useState<string | null>(null);
   const id = addStaffPanel(teamId);
@@ -74,7 +77,7 @@ export function AddCoachPanel({ org, teamId, hasHead }: { org: string; teamId: s
           <CoachForm
             org={org}
             teamId={teamId}
-            hasHead={hasHead}
+            roles={hasHead ? roles.filter((r) => r !== "HeadCoach") : roles}
             onAdded={(text) => {
               closeCardPanel(id);
               setMsg(text);
@@ -91,18 +94,18 @@ export function AddCoachPanel({ org, teamId, hasHead }: { org: string; teamId: s
 function CoachForm({
   org,
   teamId,
-  hasHead,
+  roles,
   onAdded,
 }: {
   org: string;
   teamId: string;
-  hasHead: boolean;
+  roles: StaffSpot[];
   onAdded: (msg: string) => void;
 }) {
   const [first, setFirst] = useState("");
   const [last, setLast] = useState("");
   const [cell, setCell] = useState("");
-  const [role, setRole] = useState(hasHead ? "AsstCoach" : "HeadCoach");
+  const [role, setRole] = useState<StaffSpot>(roles[0]);
   const [error, setError] = useState<string | null>(null);
   const [busy, start] = useTransition();
   return (
@@ -141,14 +144,16 @@ function CoachForm({
         />
       </label>
       <div className="flex flex-wrap gap-2">
-        {!hasHead && (
+        {roles.includes("HeadCoach") && (
           <button type="button" className={pillCls(role === "HeadCoach")} onClick={() => setRole("HeadCoach")}>
             Head Coach
           </button>
         )}
-        <button type="button" className={pillCls(role === "AsstCoach")} onClick={() => setRole("AsstCoach")}>
-          Assistant Coach
-        </button>
+        {roles.includes("AsstCoach") && (
+          <button type="button" className={pillCls(role === "AsstCoach")} onClick={() => setRole("AsstCoach")}>
+            Assistant Coach
+          </button>
+        )}
         <button type="button" className={pillCls(role === "Manager")} onClick={() => setRole("Manager")}>
           Team Manager
         </button>

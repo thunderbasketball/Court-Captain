@@ -3,7 +3,7 @@
 import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import { isLiveSite, sendMail } from "@/lib/email";
-import { seasonGuidePreview, sendSeasonGuide } from "@/lib/season-guide";
+import { guideKind, seasonGuidePreview, sendSeasonGuide } from "@/lib/season-guide";
 import { actionBase } from "../stripe/deps";
 
 const deps = () => ({ pool: db, now: () => new Date() });
@@ -22,11 +22,11 @@ async function guarded<T>(fn: (user: NonNullable<Awaited<ReturnType<typeof curre
   }
 }
 
-export async function previewSeasonGuide(org: string) {
+export async function previewGuide(org: string, kind: string) {
   const base = await actionBase();
-  return guarded((u) => seasonGuidePreview(deps(), u, String(org), base, isLiveSite()));
+  return guarded((u) => seasonGuidePreview(deps(), u, String(org), base, isLiveSite(), guideKind(kind)));
 }
-export async function sendSeasonGuideNow(org: string) {
+export async function sendGuideNow(org: string, kind: string) {
   const base = await actionBase();
-  return guarded((u) => sendSeasonGuide({ ...deps(), sendMail }, u, String(org), base, isLiveSite()));
+  return guarded((u) => sendSeasonGuide({ ...deps(), sendMail }, u, String(org), base, isLiveSite(), guideKind(kind)));
 }

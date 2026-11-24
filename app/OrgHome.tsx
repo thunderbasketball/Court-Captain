@@ -28,6 +28,8 @@ import RegistrationsCard from "./RegistrationsCard";
 import ProgramsCard, { programCount } from "./ProgramsCard";
 import SubCard from "./SubCard";
 import SupportCard from "./SupportCard";
+import OwnerRemovalCard from "./OwnerRemovalCard";
+import { myOwnerRemovals } from "@/lib/owner-removal";
 import ScoresList from "./scores/ScoresList";
 import { easternDate } from "@/lib/time";
 import { scoreGames } from "@/lib/scores";
@@ -249,7 +251,20 @@ export default async function OrgHome({
     ? admin || teamsArea || programsArea || (officials && has("officials"))
     : admin || (has("team-building") && teamsArea) || playersArea || officials;
 
+  // Asked to be removed as an Owner here: their own approval (never while viewing as them).
+  const ownerRemovals = user.actingBy ? [] : (await myOwnerRemovals(db, user.coachId)).filter((x) => x.org === org);
   const cards: MemberCard[] = [
+    ...(ownerRemovals.length
+      ? [
+          {
+            key: "owner-removal",
+            title: "Owner removal",
+            count: "needs your approval",
+            alert: true,
+            body: <OwnerRemovalCard list={ownerRemovals.map((x) => ({ id: x.id, orgName: x.orgName, requestedBy: x.requestedBy }))} />,
+          },
+        ]
+      : []),
     // Home: uniform requests (Directors of Uniforms), the metrics (Owners and Admins), the schedule analysis (Scheduler).
     ...(metrics || requests || scheduler
       ? [

@@ -19,6 +19,7 @@ import {
   checkPin,
   isVerified,
   issueCode,
+  parentEmailIssue,
   lockCell,
   newPinError,
   getSessionUser,
@@ -326,6 +327,8 @@ export async function teamSignupStart(deps: Deps, input: TeamSignupInput): Promi
     } else {
       const clash = await q.query("select 1 from users where coach_id = $1", [coachIdFromCell(cell)]);
       if (clash.rowCount) return err("That number is already in use. Please contact Scenic City.");
+      const notTheirs = await parentEmailIssue(q, cell, email); // a parent's cell: the email on that registration
+      if (notTheirs) return err(notTheirs);
       const pinError = newPinError(input.pin1, input.pin2);
       if (pinError) return err(pinError);
       pinHash = await hashPin(input.pin1 as string);

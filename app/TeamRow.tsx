@@ -8,7 +8,7 @@ import { BellIcon, NotifyPanel } from "./NotifyButton";
 import type { AudienceInput } from "@/lib/announcements";
 
 // What a team still needs, flashing red until it's done.
-export function MustBeEntered({ what }: { what: "COACH INFO" | "COACH CELL" | "COACH EMAIL" | "ROSTER" | "PLAYER BIRTHDATES" }) {
+export function MustBeEntered({ what }: { what: "COACH INFO" | "COACH CELL" | "COACH EMAIL" | "ROSTER" | "PLAYER BIRTHDATES" | "PLAYER NUMBERS" }) {
   return <span className="block animate-pulse text-sm font-semibold text-red-600 dark:text-red-400">{what} MUST BE ENTERED</span>;
 }
 
@@ -40,8 +40,10 @@ export default function TeamRow({
   page,
   registrations,
   missingBirthdates = 0,
+  missingNumbers = 0,
 }: {
   missingBirthdates?: number; // players without a birthdate (typed-in rosters): PLAYER BIRTHDATES MUST BE ENTERED
+  missingNumbers?: number; // players without a uniform number: PLAYER NUMBERS MUST BE ENTERED
   // ↗ the team's page opened right under the row (built on the server only while open); left out: ↗ goes to its page
   page?: { id: string; content: ReactNode | null };
   issue?: string | null; // a roster problem ("1 Too old"): the name turns red with a badge saying it
@@ -146,7 +148,7 @@ export default function TeamRow({
             <span className="min-w-0">
               <span
                 className={`block truncate font-semibold ${
-                  issue || teamNeeds({ hasCoach, waitingCoach, needsEmail: !!needsEmail, players, missingBirthdates })
+                  issue || teamNeeds({ hasCoach, waitingCoach, needsEmail: !!needsEmail, players, missingBirthdates, missingNumbers })
                     ? "animate-pulse text-red-600 dark:text-red-400"
                     : ""
                 }`}
@@ -207,6 +209,7 @@ export default function TeamRow({
             {(waitingCoach || needsEmail) && <MustBeEntered what="COACH EMAIL" />}
             {players === 0 && <MustBeEntered what="ROSTER" />}
             {missingBirthdates > 0 && <MustBeEntered what="PLAYER BIRTHDATES" />}
+            {missingNumbers > 0 && <MustBeEntered what="PLAYER NUMBERS" />}
           </>
         }
       />
@@ -219,9 +222,9 @@ export default function TeamRow({
 // A grade card's title: red, with a ⚠ badge of how many of its teams have a problem.
 // Something a team must still enter (its MUST BE ENTERED lines): its grade, gender and level cards (and Home's Teams
 // card) flash red so you can drill down to it.
-export function teamNeeds(t: { hasCoach: boolean; waitingCoach: unknown; needsEmail: boolean; players: number | null; missingBirthdates?: number }): boolean {
+export function teamNeeds(t: { hasCoach: boolean; waitingCoach: unknown; needsEmail: boolean; players: number | null; missingBirthdates?: number; missingNumbers?: number }): boolean {
   // players null: no roster kept here; missingBirthdates: players without a birthdate (where it's asked)
-  return (!t.hasCoach && !t.waitingCoach) || !!t.waitingCoach || t.needsEmail || t.players === 0 || !!t.missingBirthdates;
+  return (!t.hasCoach && !t.waitingCoach) || !!t.waitingCoach || t.needsEmail || t.players === 0 || !!t.missingBirthdates || !!t.missingNumbers;
 }
 
 function gradeTitle(label: string, bad: number) {
@@ -452,12 +455,11 @@ export function OrgRosterList({ players }: { players: { first: string; last: str
             <JerseyNumber n={p.jersey} />
             {p.first} <span className="font-semibold">{p.last}</span>
           </span>
-          {p.birthdate !== undefined &&
-            (p.birthdate ? (
-              <span className="shrink-0 text-xs text-zinc-500">Born {born(p.birthdate)}</span>
-            ) : (
-              <span className="shrink-0 text-xs font-medium text-red-600 dark:text-red-400">no birthdate</span>
-            ))}
+          <span className="shrink-0 text-xs text-zinc-500">
+            {!p.jersey && <span className="font-medium text-red-600 dark:text-red-400">no number{p.birthdate !== undefined && " · "}</span>}
+            {p.birthdate !== undefined &&
+              (p.birthdate ? `Born ${born(p.birthdate)}` : <span className="font-medium text-red-600 dark:text-red-400">no birthdate</span>)}
+          </span>
         </li>
       ))}
     </ul>

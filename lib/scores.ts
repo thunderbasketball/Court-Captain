@@ -6,6 +6,7 @@ import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { directionsUrl } from "./directions";
 import { recomputePi } from "./power-index";
+import { takeSnapshots } from "./roster-snapshot";
 import { PLACE_SQL } from "./scenic-games";
 import { gradeLabel } from "./scenic-teams";
 import { withTx, type Queryable } from "./sql";
@@ -154,6 +155,9 @@ export async function saveScore(
       [matchupId, scoreA, scoreB, ff, cleared ? null : by(viewer), cleared ? null : deps.now()],
     );
     await recomputePi(q, m.program_id, deps.now());
+    // Both teams have played: their League roster snapshots are saved if it was their 1st game (a forfeit counts).
+    const ab = (await q.query<{ a: string; b: string }>("select team_a::text as a, team_b::text as b from scenic_matchups where id = $1", [matchupId])).rows[0];
+    await takeSnapshots(q, [ab.a, ab.b], deps.now());
     return { ok: true as const };
   });
 }

@@ -60,6 +60,7 @@ export async function TeamsContent({
   // Teams whose page is open right in their row (↗; `?team=<id>,…`): only those are built.
   const openTeams = new Set(typeof sp.team === "string" ? sp.team.split(",") : []);
   // Roster players needs player registrations (CourtPlayers); Directors of Teams (checked again on the server).
+  const uniformsOn = await hasFeature(db, "thunder", "uniforms"); // numbers are set on Uniforms
   const rosterBoard = (await hasFeature(db, "thunder", "player-registration")) && hasArea(user, "teams");
   // Each team's published Scenic City League games (matchups are made for its copy there), for the 📅 on its card.
   const copies = (
@@ -125,6 +126,7 @@ export async function TeamsContent({
               waitingCoach: t.waitingCoach,
               needsEmail: t.staff.some((p) => p.role === "HeadCoach" && !p.email),
               players: t.players.length,
+              missingNumbers: uniformsOn ? t.players.filter((p) => !p.number).length : 0,
             })
           }
           // Roster players (with player registration): the grade's roster board, on its card's title line.
@@ -153,6 +155,7 @@ export async function TeamsContent({
               waitingCoach={t.waitingCoach && `${t.waitingCoach.first} ${t.waitingCoach.last}`}
               needsEmail={t.staff.some((p) => p.role === "HeadCoach" && !p.email)}
               players={t.players.length}
+              missingNumbers={uniformsOn ? t.players.filter((p) => !p.number).length : 0}
               people={t.staff.map((p) => (
                 <ContactChip
                   key={p.role}

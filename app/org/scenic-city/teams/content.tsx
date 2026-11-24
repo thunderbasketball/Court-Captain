@@ -16,7 +16,8 @@ import { TZ } from "@/lib/time";
 import AppHeader from "../../../AppHeader";
 import { AddTeamPanel } from "../../../AddTeam";
 import PageMenus, { PLUS_BTN, PlusIcon } from "../../../PageMenus";
-import SeasonGuidePanel from "../../../season-guide/SeasonGuidePanel";
+import { StandardEmails } from "../../../season-guide/SeasonGuidePanel";
+import SubCard from "../../../SubCard";
 import { ImportTeamsPanel, UndoImportButton } from "../../../TeamImport";
 import { CollapseCard, GroupCard, PageTitle } from "../../../ui";
 import { DeleteTeam, TeamEditor } from "./TeamEditor";
@@ -161,6 +162,7 @@ export async function ScenicTeamsContent({
         // A League team kept here: its roster on the card (👥), birthdates shown, a warning while any is missing.
         roster={t.canEdit || rosters[t.id] ? { count: t.players ?? 0, list: <OrgRosterList players={rosters[t.id] ?? []} /> } : undefined}
         missingBirthdates={(rosters[t.id] ?? []).filter((p) => !p.birthdate).length}
+        missingNumbers={(rosters[t.id] ?? []).filter((p) => !p.jersey).length}
         // ↗ its team page opened right here (built only while open): Edit and Delete in its card, its games inside.
         page={{
           id: t.id,
@@ -268,17 +270,6 @@ export async function ScenicTeamsContent({
                         },
                       ]
                     : []),
-                  // The season guide (Owners, Admins, Directors of Teams; checked on the server): emails the coaches of the
-                  // teams in its current events how to use CourtCaptain, after a preview and a confirm.
-                  {
-                    key: "guide",
-                    icon: <span className="text-sm font-semibold">📧 Season guide</span>,
-                    label: "Email teams the season guide",
-                    className:
-                      "rounded-full px-3 py-1.5 text-zinc-700 ring-1 ring-zinc-950/10 hover:bg-zinc-50 dark:text-zinc-200 dark:ring-white/15",
-                    items: [],
-                    panel: <SeasonGuidePanel org="scenic-city" />,
-                  },
                   {
                     key: "add",
                     icon: <PlusIcon />,
@@ -319,6 +310,14 @@ export async function ScenicTeamsContent({
               : []
           }
         />
+        {/* Standard emails (an organization that runs Leagues; who may send each is checked on the server). */}
+        {director && (
+          <div className="mb-3">
+            <SubCard title="Standard emails" count={2}>
+              <StandardEmails org="scenic-city" />
+            </SubCard>
+          </div>
+        )}
         {/* Which program: current and upcoming first, then past ones (ended), then teams not registered now. */}
         <nav aria-label="Programs" className="mb-3 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
           {[...data.programs.map((p) => ({ key: p.id, label: p.ended ? `${p.name} · ended` : p.name })), { key: "none", label: "Not registered" }].map(

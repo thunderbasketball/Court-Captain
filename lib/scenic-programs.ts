@@ -14,6 +14,7 @@ import { REG_OPTIONS, closedReason, planChoice, type Choice, type ChoiceResult, 
 import { clubAbbr } from "./scenic-club-teams";
 import { cleanPlaceName } from "./scenic-partners";
 import { LEVELS, gradeLabel, gradeRange, teamsICanManage, type Level } from "./scenic-teams";
+import { memo } from "./request-memo";
 import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
 import { scheduledGames, type ScheduledGame } from "./scenic-games";
@@ -39,14 +40,17 @@ export const isProgramsDirector = (q: Queryable, viewer: SessionUser) => orgHasA
 // Admins and Directors of Scheduling take teams out of a Game Day, the Brackets or a whole program (and restore them).
 export const isScheduler = (q: Pick<Queryable, "query">, viewer: SessionUser) => orgHasArea(q, viewer.coachId, ORG, "scheduling");
 
-async function inScenicCity(q: Queryable, viewer: SessionUser): Promise<boolean> {
-  const r = await q.query(
-    `select 1 where acts_as($1, 'scenic-city', 'Director')
-       or exists (select 1 from org_roles where coach_id = $1 and org = 'scenic-city' and role <> 'Request')`,
-    [viewer.coachId],
-  );
-  return r.rowCount === 1;
-}
+// (Read once per page: lib/request-memo.ts; always fresh in actions and transactions. So are a program, its prices and
+// its teams' choices below.)
+const inScenicCity = (q: Queryable, viewer: SessionUser): Promise<boolean> =>
+  memo(q, `in-scenic:${viewer.coachId}`, async () => {
+    const r = await q.query(
+      `select 1 where acts_as($1, 'scenic-city', 'Director')
+         or exists (select 1 from org_roles where coach_id = $1 and org = 'scenic-city' and role <> 'Request')`,
+      [viewer.coachId],
+    );
+    return r.rowCount === 1;
+  });
 
 async function run<T extends object>(fn: () => Promise<T>): Promise<Result<T>> {
   try {
@@ -134,7 +138,10 @@ export const TEAM_COACHES = `coalesce((select json_agg(k order by k.head desc, k
                where s.team_id = t.thunder_team_id and s.role in ('HeadCoach', 'AsstCoach')
               union all
               select oc.coach_id, oc.role from org_team_coaches oc
-               where oc.team_id = t.org_team_id and oc.role in ('HeadCoach', 'AsstCoach')) p
+               where oc.team_id = t.org_team_id and oc.role in ('HeadCoach', 'AsstCoach')
+              union all
+              select ls.coach_id, ls.role from scenic_team_staff ls
+               where ls.team_id = t.id and ls.role = 'AsstCoach' and ls.coach_id is not null and t.org_team_id is null and t.thunder_team_id is null) p
         join users u on u.coach_id = p.id
       union all
       select 'w:' || coalesce(t.partner_id::text, t.owner_coach_id) || ':' || lower(t.coach_first || ' ' || t.coach_last),
@@ -198,7 +205,11 @@ export type ProgramDetail = ProgramSummary & {
 };
 
 export async function getProgram(deps: Deps, viewer: SessionUser, id: unknown): Promise<ProgramDetail | null> {
-  if (!isId(id) || !(await inScenicCity(deps.pool, viewer))) return null;
+  if (!isId(id)) return null;
+  return memo(deps.pool, `program:${id}:${viewer.coachId}`, () => readProgram(deps, viewer, id));
+}
+async function readProgram(deps: Deps, viewer: SessionUser, id: string): Promise<ProgramDetail | null> {
+  if (!(await inScenicCity(deps.pool, viewer))) return null;
   const today = easternDate(deps.now());
   const p = await deps.pool.query<Omit<ProgramSummary, "status"> & { createdBy: string; updatedBy: string }>(
     `${SUMMARY.replace("from scenic_programs p", ', p.created_by as "createdBy", p.updated_by as "updatedBy" from scenic_programs p')} where p.id = $1`,
@@ -1269,7 +1280,9 @@ export type RecLimit = {
   choices: { id: string; name: string }[]; // organizations that can be picked (CourtSync + CourtOrg or CourtPlayers), by name
 };
 
-export async function recLimit(q: Pick<Queryable, "query">, programId: string): Promise<RecLimit> {
+export const recLimit = (q: Pick<Queryable, "query">, programId: string): Promise<RecLimit> =>
+  memo(q, `rec-limit:${programId}`, () => readRecLimit(q, programId));
+async function readRecLimit(q: Pick<Queryable, "query">, programId: string): Promise<RecLimit> {
   const [p, picked, choices] = await Promise.all([
     q.query<{ by: string | null }>("select rec_limited_by as by from scenic_programs where id = $1", [programId]),
     q.query<{ id: string }>("select partner_id::text as id from scenic_program_rec_partners where program_id = $1", [programId]),
@@ -1369,14 +1382,17 @@ export function parseChoice(v: unknown): Choice | null {
 // ---- An organization's own terms in a League (its ALL Season price, Pay later) ----
 
 // The organization a League team belongs to: an organization's team, Thunder's, or none (Scenic City's own, outside clubs).
-export async function teamOrgOf(q: Pick<Queryable, "query">, teamId: string): Promise<string | null> {
-  const r = await q.query<{ org: string | null }>(
-    `select coalesce(o.org, case when st.thunder_team_id is not null then 'thunder' end) as org
-       from scenic_teams st left join org_teams o on o.id = st.org_team_id where st.id = $1`,
-    [teamId],
-  );
-  return r.rows[0]?.org ?? null;
-}
+export const teamOrgOf = async (q: Pick<Queryable, "query">, teamId: string): Promise<string | null> => (await teamFacts(q, teamId))?.org ?? null;
+
+const teamFacts = (q: Pick<Queryable, "query">, teamId: string): Promise<{ org: string | null; level: string } | undefined> =>
+  memo(q, `league-team:${teamId}`, async () => {
+    const r = await q.query<{ org: string | null; level: string }>(
+      `select coalesce(o.org, case when st.thunder_team_id is not null then 'thunder' end) as org, st.level
+         from scenic_teams st left join org_teams o on o.id = st.org_team_id where st.id = $1`,
+      [teamId],
+    );
+    return r.rows[0];
+  });
 
 export type PriceGroup = { id: string; name: string; allSeasonCents: number | null; payLater: boolean; setBy: string; setAt: Date; orgs: string[] };
 
@@ -1502,34 +1518,47 @@ export async function tagOrgs(deps: Deps, viewer: SessionUser, programId: unknow
 // A League's options and Game Days (regular season, not Bracket Days), soonest first. `org`: an organization with its own
 // ALL Season price sees (and pays) that instead.
 async function leagueTerms(q: Pick<Queryable, "query">, programId: string, org: string | null = null) {
-  const [o, d] = await Promise.all([
-    q.query<ProgramOption>(
-      `select kind, fee_cents as "feeCents", closes_on::text as "closesOn", closes_days_before as "closesDaysBefore"
-         from scenic_program_options where program_id = $1`,
-      [programId],
-    ),
-    q.query<{ day: string }>(
-      `select to_char(g.day, 'YYYY-MM-DD') as day from program_game_days pg join game_days g on g.id = pg.game_day_id
-       where pg.program_id = $1 and pg.kind = 'game' order by g.day`,
-      [programId],
-    ),
+  const [all, prices] = await Promise.all([
+    memo(q, `league-terms:${programId}`, async () => {
+      const [o, d] = await Promise.all([
+        q.query<ProgramOption>(
+          `select kind, fee_cents as "feeCents", closes_on::text as "closesOn", closes_days_before as "closesDaysBefore"
+             from scenic_program_options where program_id = $1`,
+          [programId],
+        ),
+        q.query<{ day: string }>(
+          `select to_char(g.day, 'YYYY-MM-DD') as day from program_game_days pg join game_days g on g.id = pg.game_day_id
+           where pg.program_id = $1 and pg.kind = 'game' order by g.day`,
+          [programId],
+        ),
+      ]);
+      return { options: o.rows, gameDates: d.rows.map((r) => r.day) };
+    }),
+    org ? orgAllSeason(q, programId) : null,
   ]);
-  let options = o.rows;
-  if (org) {
-    const t = await q.query<{ cents: number | null }>(
-      `select g.all_season_cents as cents from scenic_program_org_terms t join scenic_price_groups g on g.id = t.group_id
-        where t.program_id = $1 and t.org = $2`,
-      [programId, org],
-    );
-    const own = t.rows[0]?.cents;
-    if (own !== null && own !== undefined) options = options.map((x) => (x.kind === "all_season" ? { ...x, feeCents: own } : x));
-  }
-  return { options, gameDates: d.rows.map((r) => r.day) };
+  const own = org ? prices!.get(org) : undefined;
+  return {
+    options: all.options.map((x) => (own !== undefined && x.kind === "all_season" ? { ...x, feeCents: own } : x)),
+    gameDates: [...all.gameDates],
+  };
 }
+
+// Every organization's own ALL Season price in a program (those with one), asked once for them all.
+const orgAllSeason = (q: Pick<Queryable, "query">, programId: string): Promise<Map<string, number>> =>
+  memo(q, `league-org-prices:${programId}`, async () => {
+    const r = await q.query<{ org: string; cents: number }>(
+      `select t.org, g.all_season_cents as cents from scenic_program_org_terms t join scenic_price_groups g on g.id = t.group_id
+        where t.program_id = $1 and g.all_season_cents is not null`,
+      [programId],
+    );
+    return new Map(r.rows.map((x) => [x.org, x.cents]));
+  });
 
 // Each registered team's choice in a program (teams not registered are missing).
 // `bracketBy`: put in the Brackets by hand (the FastBreak list's Championship teams), on top of the usual rule.
-async function choices(q: Pick<Queryable, "query">, programId: string): Promise<Map<string, Choice & { bracketBy: string | null }>> {
+type Picked = Map<string, Choice & { bracketBy: string | null }>;
+const choices = (q: Pick<Queryable, "query">, programId: string): Promise<Picked> => memo(q, `league-choices:${programId}`, () => readChoices(q, programId));
+async function readChoices(q: Pick<Queryable, "query">, programId: string): Promise<Picked> {
   const r = await q.query<{ team_id: string; all_season: boolean; bracket_by: string | null; days: Choice["days"] }>(
     `select r.team_id::text, r.all_season, r.bracket_by,
             coalesce((select json_agg(json_build_object('date', to_char(g.day, 'YYYY-MM-DD'), 'kind', d.kind) order by g.day, d.kind)
@@ -1614,9 +1643,10 @@ export async function leagueEntry(
   org?: string | null, // the team's organization (its own price), when it has no League copy yet
   level?: string | null, // the team's level, when it has no League copy yet (REC: no 2nd Game offered)
 ): Promise<{ options: ProgramOption[]; gameDates: string[]; entry: Entry | null }> {
-  const terms = await leagueTerms(q, programId, org ?? (teamId ? await teamOrgOf(q, teamId) : null));
+  const team = teamId && (!org || !level) ? await teamFacts(q, teamId) : undefined;
+  const terms = await leagueTerms(q, programId, org ?? team?.org ?? null);
   const c = teamId ? ((await choices(q, programId)).get(teamId) ?? null) : null;
-  const lv = level ?? (teamId ? (await q.query<{ level: string }>("select level from scenic_teams where id = $1", [teamId])).rows[0]?.level : null);
+  const lv = level ?? team?.level ?? null;
   const options = lv === "REC" ? terms.options.filter((o) => o.kind !== "single_2nd") : terms.options;
   return { ...terms, options, entry: c ? entryOf(c, terms) : null };
 }

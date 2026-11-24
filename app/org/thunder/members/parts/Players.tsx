@@ -13,6 +13,8 @@ import { AddPlayerButton, RemoveAddedPlayer } from "../../players/AddPlayerButto
 import PlayerEvalButton from "../../players/PlayerEvalButton";
 import BirthdateFix from "../../players/BirthdateFix";
 import { birthdateFixes } from "@/lib/birthdate-fix";
+import { parentSlots } from "@/lib/player-parents";
+import PlayerParents from "../../players/PlayerParents";
 import { Chip, EmailLink, GroupCard, Notice, PageTitle, PersonRow, PhoneLink, genderTint } from "../../../../ui";
 import { PlayerTeamButton } from "../../../../ViewAsButton";
 
@@ -34,6 +36,8 @@ export default async function PlayersPart({ user }: { user: SessionUser }) {
   const who = await seesWho(db, user, "thunder"); // Owners and Admins see who did it
   const canAdd = hasArea(user, "players"); // Owners, Admins and Directors of Players add players (fees can be waived)
   const fixes = await birthdateFixes(db); // birthdays fixed in the app (kept through sheet syncs)
+  // Each player's two parents, to add or fix (kept through sheet syncs, like birthdays).
+  const parents = await parentSlots(db, user, groups.flatMap((g) => [...g.unrostered, ...g.teams.flatMap((t) => t.players)].map((p) => p.registrantId)));
 
   const today = easternDate(new Date());
   const schoolYear = schoolYearOf(today);
@@ -102,6 +106,7 @@ export default async function PlayersPart({ user }: { user: SessionUser }) {
             {g.email && <EmailLink email={g.email} />}
           </p>
         ))}
+      <PlayerParents registrantId={p.registrantId} slots={parents.get(p.registrantId) ?? []} who={who} />
       {!rostered && p.interestedTeams.length > 0 && (
         <div className="flex flex-wrap items-center gap-1 pt-0.5">
           <span className="text-xs text-zinc-500">Interested:</span>

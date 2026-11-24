@@ -7,6 +7,7 @@ import { clubAbbr } from "./scenic-club-teams";
 import { orgHasArea } from "./org-admin";
 import { PLACE_SQL } from "./scenic-games";
 import { directionsUrl } from "./directions";
+import { takeSnapshots } from "./roster-snapshot";
 import { PROGRAM_LOGO_SQL } from "./scenic-programs";
 import { gradeLabel, gradeRange } from "./scenic-teams";
 import type { Queryable } from "./sql";
@@ -239,6 +240,21 @@ export async function followedTeams(q: Pick<Queryable, "query">, now: Date, ids:
   );
   for (const p of players.rows)
     teams.get(p.team)?.roster?.push({ name: publicName(p.first, p.last), jersey: p.jersey });
+  // Locked at its 1st game in a League: its League roster (with the League's fixes) instead.
+  await takeSnapshots(q, [...teams.keys()], now);
+  const locked = await q.query<{ team: string; players: { first: string; last: string; jersey: string | null }[] }>(
+    `select distinct on (s.team_id) s.team_id::text as team,
+            coalesce((select json_agg(json_build_object('first', x.first_name, 'last', x.last_name, 'jersey', x.jersey)
+                               order by (case when x.jersey ~ '^[0-9]+$' then x.jersey::int end) nulls last, lower(x.last_name), lower(x.first_name))
+                        from scenic_snapshot_players x
+                       where x.program_id = s.program_id and x.team_id = s.team_id and x.removed_by is null), '[]') as players
+       from scenic_roster_snapshots s join scenic_programs p on p.id = s.program_id
+      where s.team_id = any($1::bigint[]) and p.ends_on >= $2::date
+      order by s.team_id, s.first_game_at desc`,
+    [[...teams.keys()], easternDate(now)],
+  );
+  for (const l of locked.rows)
+    teams.get(l.team)!.roster = l.players.map((p) => ({ name: publicName(p.first, p.last), jersey: p.jersey }));
   const programs = await publicPrograms(q, now, org);
   const regs = await q.query<{ team: string; program: string; grade: number; gender: string; level: string }>(
     `select r.team_id::text as team, r.program_id::text as program, g.grade, d.gender, g.level

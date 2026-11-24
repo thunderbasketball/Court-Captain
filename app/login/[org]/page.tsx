@@ -16,6 +16,7 @@ import { hasFeature } from "@/lib/features";
 import { orgPublicTeams, publicPrograms } from "@/lib/public-league";
 import OrgTeams from "./OrgTeams";
 import { easternDate } from "@/lib/time";
+import { publicly } from "@/lib/public-cache";
 import { shortDate } from "@/lib/program-options";
 import PublicPrograms, { type ProgramCard } from "./PublicPrograms";
 import { gamesOfTheWeek } from "@/lib/games-of-week";
@@ -91,7 +92,7 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
       }))
     : [];
   const programs: ProgramCard[] = showPrograms
-    ? (await publicPrograms(db, now, org)).map((p) => ({
+    ? (await publicly(`programs:${today}:${org}`, () => publicPrograms(db, now, org))).map((p) => ({
         id: p.id,
         name: p.name,
         kind: p.kind,
@@ -152,7 +153,7 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
           <MyTeams org={org} />
           {/* The coming Game Day's best REC and COMP matchups (its Leagues, once a schedule is published). */}
           {await (async () => {
-            const week = await gamesOfTheWeek(db, now, org);
+            const week = await publicly(`week:${today}:${org}`, () => gamesOfTheWeek(db, now, org));
             return week ? <GamesOfTheWeek week={week} /> : null;
           })()}
         </>
@@ -162,7 +163,7 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
       <div className="lg:pt-1">
       <PublicPrograms org={org} programs={programs} />
       {/* Its teams in a current event, with their League games; ☆ follows one on this device. Names and games only. */}
-      <OrgTeams org={org} teams={await orgPublicTeams(db, now, org)} today={today} />
+      <OrgTeams org={org} teams={await publicly(`teams:${today}:${org}`, () => orgPublicTeams(db, now, org))} today={today} />
       {/* A parent: their player's team, practices and games (a code to the email on the registration; no login). */}
       {players && (
         <section className="mt-6 space-y-2">

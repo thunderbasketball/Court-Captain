@@ -121,7 +121,7 @@ export default async function OrgGear({ org, coachId, user }: { org: string; coa
                   <WarningsForm
                     org={org}
                     settings={w.settings}
-                    parts={["roster", "idle", ...(w.uniformsKept ? (["uniforms"] as const) : []), ...(w.typedRosters ? (["birthdates"] as const) : [])]}
+                    parts={["roster", "idle", ...(w.uniformsKept ? (["uniforms"] as const) : []), ...(w.typedRosters ? (["birthdates", "numbers"] as const) : [])]}
                     setBy={w.setBy}
                   />
                 </div>

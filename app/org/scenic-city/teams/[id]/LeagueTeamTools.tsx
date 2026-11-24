@@ -102,7 +102,8 @@ const ROLES = [
   { key: "TeamParent", label: "Team Parent" },
 ];
 
-// A League team's other staff: + Add staff right in the Staff card (one per role; adding one again replaces it).
+// A League team's other staff: + Add staff right in the Staff card (one per role; adding one again replaces it). An
+// Assistant Coach gets a login with that cell.
 export function AddLeagueStaff({ teamId }: { teamId: string }) {
   const router = useRouter();
   const blank = { role: "AsstCoach", first: "", last: "", cell: "", email: "" };

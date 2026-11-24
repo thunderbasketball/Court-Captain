@@ -264,7 +264,7 @@ export async function listDirectors(pool: Pick<Queryable, "query">, org: OrgSlug
 // What an organization's Users page shows to its Admins: Directors, the areas on offer, and who can be added.
 export async function directorsPanel(deps: Deps, viewer: SessionUser, org: OrgSlug) {
   if (!(await isOrgAdmin(deps.pool, viewer.coachId, org))) return null;
-  const [directors, areas, people, owner, directorsOn] = await Promise.all([
+  const [directors, areas, people, owner, directorsOn, removals] = await Promise.all([
     listDirectors(deps.pool, org),
     orgAreas(deps.pool, org),
     deps.pool.query<{ id: string; name: string }>(
@@ -281,11 +281,18 @@ export async function directorsPanel(deps: Deps, viewer: SessionUser, org: OrgSl
     ),
     isOrgOwner(deps.pool, viewer.coachId, org),
     hasDirectors(deps.pool, org),
+    deps.pool.query<{ id: string; coach: string }>("select id::text, coach_id as coach from owner_removals where org = $1 and decision is null", [org]),
   ]);
   // Only areas this organization offers (an old area that moved to a new one isn't shown).
   const offered = new Set<string>(areas.map((a) => a.key));
   return {
-    directors: directors.map((d) => ({ ...d, areas: d.areas.filter((a) => offered.has(a)) })),
+    // removal: an Owner asked to step down, waiting for their approval (its request).
+    directors: directors.map((d) => ({
+      ...d,
+      areas: d.areas.filter((a) => offered.has(a)),
+      removal: removals.rows.find((x) => x.coach === d.id)?.id ?? null,
+      me: d.id === viewer.coachId,
+    })),
     areas: areas.map((a) => ({ key: a.key, name: a.name, covers: a.covers })),
     options: people.rows,
     directorsOn, // CourtPlayers or CourtTeams: Admins add Directors
@@ -324,6 +331,8 @@ export async function setOwner(deps: Deps, viewer: SessionUser, org: unknown, co
       );
       return { ok: true as const };
     }
+    // Another Owner: they're asked, and approve it themselves (lib/owner-removal).
+    if (coachId !== viewer.coachId) return { ok: false as const, message: "They have to approve it first." };
     const others = await q.query<{ n: number }>(
       `select count(*)::int as n from org_roles r where r.org = $1 and r.role = 'Owner' and r.coach_id <> $2
        and not exists (select 1 from platform_admins p where p.coach_id = r.coach_id)`,
@@ -331,6 +340,10 @@ export async function setOwner(deps: Deps, viewer: SessionUser, org: unknown, co
     );
     if (others.rows[0].n === 0) return { ok: false as const, message: `${await orgShort(q, org)} needs at least one Owner.` };
     await q.query("select set_role($1, $2, 'Owner', false, $3)", [coachId, org, by(viewer)]);
+    await q.query(
+      "update owner_removals set decision = 'approved', decided_by = $3, decided_at = $4 where org = $1 and coach_id = $2 and decision is null",
+      [org, coachId, by(viewer), deps.now()],
+    );
     return { ok: true as const };
   });
 }

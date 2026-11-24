@@ -20,6 +20,7 @@ import {
   setOwner,
   addPersonFor,
 } from "./org-admin";
+import { cancelOwnerRemoval, decideOwnerRemoval, myOwnerRemovals, requestOwnerRemoval } from "./owner-removal";
 import { createTestDb, grant } from "./testing/db";
 
 const person = (coachId: string, firstName: string, isDirector = false): SessionUser => ({
@@ -239,7 +240,7 @@ describe("Admins and Director areas", () => {
     expect((await userContexts(db.pool, ada)).find((c) => c.key === "director")?.label).toBe("Owner");
   });
 
-  it("Owners add other Owners (also Admin and Director) and remove them; at least one Owner stays", async () => {
+  it("Owners add other Owners (also Admin and Director); removing one waits for their approval; at least one Owner stays", async () => {
     await grant(db.pool, "5550001 thunder Owner", "5550002 thunder Admin");
     expect(await setOwner(deps(), bo, "thunder", cy.coachId, true)).toEqual({
       ok: false,
@@ -255,9 +256,44 @@ describe("Admins and Director areas", () => {
         )
       ).rows.map((r) => r.role);
     expect(await roles("5550003")).toEqual(["Admin", "Director", "Owner"]); // Request cleared
-    // The new Owner can remove the first; the last one can't go.
-    expect(await setOwner(deps(), cy, "thunder", ada.coachId, false)).toEqual({ ok: true });
+    // Another Owner isn't removed at once: they're emailed, and approve it themselves.
+    expect(await setOwner(deps(), cy, "thunder", ada.coachId, false)).toEqual({ ok: false, message: "They have to approve it first." });
+    await db.pool.query("update users set email = coach_id || '@example.com'");
+    const mail: { to: string; subject: string; text: string }[] = [];
+    const d = { ...deps(), sendEmail: async (to: string, subject: string, text: string) => void mail.push({ to, subject, text }) };
+    const ask = (who: SessionUser, id: string) => requestOwnerRemoval(d, who, "thunder", id, "https://app.test");
+    expect(await ask(bo, ada.coachId)).toMatchObject({ ok: false }); // Owners only
+    expect(await ask(cy, bo.coachId)).toEqual({ ok: false, message: "They aren't an Owner of this organization." });
+    expect(await ask(cy, cy.coachId)).toMatchObject({ ok: false }); // yourself: no approval
+    expect(await ask(cy, ada.coachId)).toEqual({ ok: true, emailed: true });
+    expect(mail).toHaveLength(1);
+    expect(mail[0].to).toBe("5550001@example.com");
+    expect(mail[0].text).toContain("https://app.test/switch?org=thunder");
+    expect(await ask(cy, ada.coachId)).toMatchObject({ ok: false }); // already waiting
+    expect(await roles("5550001")).toContain("Owner"); // still one
+    const [w] = await myOwnerRemovals(db.pool, ada.coachId);
+    expect(w).toMatchObject({ org: "thunder", requestedBy: "Cy X" });
+    expect((await directorsPanel(deps(), cy, "thunder"))!.directors.find((x) => x.id === ada.coachId)).toMatchObject({ removal: w.id });
+
+    // Only they answer; only an Owner cancels.
+    expect(await decideOwnerRemoval(d, cy, w.id, true)).toMatchObject({ ok: false });
+    expect(await cancelOwnerRemoval(deps(), bo, w.id)).toMatchObject({ ok: false });
+    expect(await decideOwnerRemoval(d, ada, w.id, false)).toEqual({ ok: true });
+    expect(await roles("5550001")).toContain("Owner");
+    expect(mail[1]).toMatchObject({ to: "5550003@example.com", subject: expect.stringContaining("declined") });
+
+    // Asked again and cancelled: it can't be answered. Asked again and approved: they stay an Admin.
+    expect(await ask(cy, ada.coachId)).toMatchObject({ ok: true });
+    const [w2] = await myOwnerRemovals(db.pool, ada.coachId);
+    expect(await cancelOwnerRemoval(deps(), cy, w2.id)).toEqual({ ok: true });
+    expect(await decideOwnerRemoval(d, ada, w2.id, true)).toEqual({ ok: false, message: "That was already answered." });
+    expect(await ask(cy, ada.coachId)).toMatchObject({ ok: true });
+    const [w3] = await myOwnerRemovals(db.pool, ada.coachId);
+    expect(await decideOwnerRemoval(d, ada, w3.id, true)).toEqual({ ok: true });
     expect(await roles("5550001")).toEqual(["Admin", "Director"]);
+    expect(await myOwnerRemovals(db.pool, ada.coachId)).toEqual([]);
+
+    // The last Owner can't go.
     expect(await setOwner(deps(), cy, "thunder", cy.coachId, false)).toEqual({
       ok: false,
       message: "Thunder needs at least one Owner.",

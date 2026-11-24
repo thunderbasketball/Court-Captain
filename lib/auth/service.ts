@@ -104,7 +104,20 @@ export const MSG = {
   badName: "Enter your first and last name (letters only).",
   taken: "That number is already in use. Please contact the Director.",
   askDirector: "Please contact the Director to reset your PIN.",
+  parentEmail: "That cell is on a player's registration. Use the email on that registration, or ask your Director to update it.",
 };
+
+// A cell on a player's registration (a parent's) opens that family, so its login's first email must be one on that
+// registration for that parent: anyone could type a parent's cell. Null: fine (no registration has it, or it matches).
+export async function parentEmailIssue(q: Pick<Queryable, "query">, cell: string, email: string): Promise<string | null> {
+  const r = await q.query<{ ok: boolean }>(
+    `select case when parent1_cell = $1 and lower(trim(parent1_email)) = $2 then true
+                 when parent2_cell = $1 and lower(trim(parent2_email)) = $2 then true else false end as ok
+       from registrations where parent1_cell = $1 or parent2_cell = $1`,
+    [cell, email.trim().toLowerCase()],
+  );
+  return r.rows.length && !r.rows.some((x) => x.ok) ? MSG.parentEmail : null;
+}
 
 // Verified only when Email = VerifiedEmail.
 export function isVerified(u: Pick<UserRow, "email" | "verified_email">): boolean {
@@ -421,6 +434,8 @@ export async function sendStarterCode(deps: Deps, cellInput: unknown, emailInput
     if (!(await isStarterPin(user.pin_hash))) return { step: "pin" };
     const email = user.email ? user.email.trim().toLowerCase() : cleanEmail(emailInput);
     if (!email) return err(MSG.badEmail);
+    const notTheirs = await parentEmailIssue(q, cell, email);
+    if (notTheirs) return err(notTheirs);
     const fail = await issueCode(deps, q, cell, "starter", email);
     return fail ?? { step: "starterCode", maskedEmail: maskEmail(email) };
   });
@@ -499,6 +514,8 @@ export async function sendVerifyCode(deps: Deps, cellInput: unknown, pin: unknow
     if (isVerified(user)) return startSession(deps, q, user.coach_id);
     const email = emailInput ? cleanEmail(emailInput) : user.email?.trim().toLowerCase() || null;
     if (!email) return err(MSG.badEmail);
+    const notTheirs = user.verified_email ? null : await parentEmailIssue(q, cell, email); // never verified yet
+    if (notTheirs) return err(notTheirs);
     const fail = await issueCode(deps, q, cell, "verify", email);
     return fail ?? { step: "verifyCode", maskedEmail: maskEmail(email) };
   });
@@ -650,6 +667,8 @@ export async function startSignup(
     await lockCell(q, cell);
     const clash = await q.query("select 1 from users where cell = $1 or coach_id = $2", [cell, coachIdFromCell(cell)]);
     if (clash.rows.length) return err(MSG.taken);
+    const notTheirs = await parentEmailIssue(q, cell, email);
+    if (notTheirs) return err(notTheirs);
     const fail = await issueCode(deps, q, cell, "signup", email, { firstName, lastName, pinHash, join, reason });
     return fail ?? { step: "signupCode", maskedEmail: maskEmail(email) };
   });

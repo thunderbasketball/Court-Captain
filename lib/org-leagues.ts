@@ -167,6 +167,7 @@ export async function teamRegistrar(
   const manager = await teamsManagerOf(q, viewer, org);
   if (manager) return { org: manager, manager: true };
   if (typeof org !== "string" || !isId(orgTeamId)) return null;
+  if (await hasFeature(q, org, "player-registration")) return null; // CourtPlayers: registrations are its Directors'
   const r = await q.query<{ org: string }>(
     `select t.org from org_teams t join org_team_coaches c on c.team_id = t.id
       where t.id = $1 and t.org = $2 and t.archived_at is null and c.coach_id = $3 and c.role in ('HeadCoach', 'AsstCoach')

@@ -142,6 +142,18 @@ describe("public League page (no login)", () => {
     expect(fay.programs[0].games).toEqual([{ date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "Magic", home: true }]);
     // The whole schedule, games already played too (the device shows the next 21 days collapsed).
     expect((await followedTeams(db.pool, new Date("2026-12-07T15:00:00Z"), [id("Magic")]))[0].programs[0].games).toHaveLength(1);
+    // Locked at its 1st game: the League roster shows (without a player the League took off), not the team's roster now.
+    await db.pool.query("insert into scenic_roster_snapshots (program_id, team_id, first_game_at) values ($1, $2, now())", [prog, id("Magic")]);
+    await db.pool.query(
+      `insert into scenic_snapshot_players (program_id, team_id, first_name, last_name, jersey, removed_by) values
+         ($1, $2, 'Zed', 'Young', '20', null), ($1, $2, 'Ava', 'Lee', '4', null), ($1, $2, 'Gone', 'Off', '1', 'Dee X')`,
+      [prog, id("Magic")],
+    );
+    await db.pool.query("insert into scenic_team_players (team_id, first_name, last_name, jersey, added_by) values ($1, 'Late', 'Add', '9', 't')", [id("Magic")]);
+    expect((await followedTeams(db.pool, now, [id("Magic")]))[0].roster).toEqual([
+      { name: "Ava L.", jersey: "4" },
+      { name: "Zed Y.", jersey: "20" },
+    ]);
     // An organization's team keeps a roster: first names and last initials, jerseys; never full last names.
     const ot = (
       await db.pool.query<{ id: string }>(

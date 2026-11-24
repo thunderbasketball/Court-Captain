@@ -17,7 +17,7 @@ import {
   setOrgWaitingCoach,
   updateOrgTeam,
 } from "./org-teams";
-import { addOrgPlayer, importOrgPlayers, listOrgRoster, previewPlayerImport, removeOrgPlayer } from "./org-rosters";
+import { addOrgPlayer, importOrgPlayers, listOrgRoster, previewPlayerImport, removeOrgPlayer, setOrgPlayerInfo } from "./org-rosters";
 import { createTestDb } from "./testing/db";
 
 const jo: SessionUser = {
@@ -217,7 +217,10 @@ describe("teams for a registered organization", () => {
     const sam = { ...jo, coachId: "5550009", firstName: "Sam", lastName: "Lee" };
     expect((await listOrgTeams(deps(), sam, org))!).toMatchObject({ canManage: false, teams: [{ name: "4B Bolts Lee" }] });
     expect(await createOrgTeam(deps(), sam, org, { gender: "Boys", grades: ["4"], level: "REC" })).toMatchObject({ ok: false });
-    expect(await removeOrgTeamCoach(deps(), sam, org, id, "5550008")).toMatchObject({ ok: false });
+    // The team's own staff: its Assistant Coach is the Head Coach's to change (never the Head Coach spot, or anyone else's).
+    expect(await removeOrgTeamCoach(deps(), { ...jo, coachId: "5550007" }, org, id, "5550008")).toMatchObject({ ok: false });
+    expect(await removeOrgTeamCoach(deps(), sam, org, id, "5550009")).toMatchObject({ ok: false });
+    expect(await removeOrgTeamCoach(deps(), sam, org, id, "5550008")).toEqual({ ok: true });
     expect(await listOrgTeams(deps(), { ...jo, coachId: "5550007" }, org)).toBeNull();
 
     // Removing the last team a coach is on takes their Coach role away.
@@ -375,7 +378,7 @@ Coed,3,REC,,,,`;
     expect((await listOrgTeams(deps(), jo, org))!.teams[0].players).toBe(1);
   });
 
-  it("without CourtPlayers the team's Head and Assistant Coaches enter its roster; with CourtPlayers only its Directors", async () => {
+  it("without CourtPlayers the team's staff enter its roster; with CourtPlayers only its Directors", async () => {
     const t = (await createOrgTeam(deps(), jo, org, { gender: "Girls", grades: ["4"], level: "REC" })) as { id: string };
     await db.pool.query(
       "insert into users (coach_id, first_name, last_name, cell) values ('5550008', 'Cam', 'Coach', '4235550008'), ('5550009', 'Nat', 'Nobody', '4235550009')",
@@ -389,9 +392,36 @@ Coed,3,REC,,,,`;
     expect(await addOrgPlayer(deps(), nat, org, t.id, { first: "Zoe", last: "Kim", grade: "4" })).toMatchObject({ ok: false }); // not its coach
     const r = (await listOrgRoster(deps(), cam, org, t.id))!;
     expect(r.players.map((p) => p.first)).toEqual(["Ava", "Mia"]); // by jersey number (#3, #5)
+    // A Team Manager or Team Parent adds players and fixes their information too, but doesn't remove one.
+    await db.pool.query(
+      "insert into users (coach_id, first_name, last_name, cell) values ('5550010', 'Meg', 'Manager', '4235550010'), ('5550011', 'Pat', 'Parent', '4235550011')",
+    );
+    await db.pool.query(
+      "insert into org_team_coaches (team_id, coach_id, role, added_by) values ($1, '5550010', 'Manager', 't'), ($1, '5550011', 'TeamParent', 't')",
+      [t.id],
+    );
+    const meg = { ...jo, coachId: "5550010", firstName: "Meg", lastName: "Manager" };
+    const pat = { ...jo, coachId: "5550011", firstName: "Pat", lastName: "Parent" };
+    expect(await listOrgRoster(deps(), meg, org, t.id)).toMatchObject({ canManage: true, canRemove: false });
+    expect(await addOrgPlayer(deps(), pat, org, t.id, { first: "Ivy", last: "Ash", grade: "4", jersey: "7" })).toMatchObject({ ok: true });
+    const mia = r.players[1].id;
+    expect(await setOrgPlayerInfo(deps(), nat, org, t.id, mia, { first: "Mia", last: "Leigh", grade: "4" })).toMatchObject({ ok: false });
+    expect(await setOrgPlayerInfo(deps(), meg, org, t.id, mia, { first: "Ava", last: "smith", grade: "4" })).toEqual({ ok: false, message: "Ava smith is already on the team." });
+    expect(await setOrgPlayerInfo(deps(), meg, org, t.id, mia, { first: "=Mia", last: "Leigh", grade: "4" })).toMatchObject({ ok: false });
+    expect(await setOrgPlayerInfo(deps(), meg, org, t.id, mia, { first: "Mia", last: "Leigh", grade: "3" })).toEqual({ ok: true });
+    expect((await db.pool.query("select first_name, last_name, grade, edited_by from org_team_players where id = $1", [mia])).rows[0]).toEqual({
+      first_name: "Mia",
+      last_name: "Leigh",
+      grade: 3,
+      edited_by: "Meg Manager",
+    });
+    expect(await removeOrgPlayer(deps(), meg, org, t.id, mia)).toMatchObject({ ok: false });
+    expect(await removeOrgPlayer(deps(), cam, org, t.id, mia)).toEqual({ ok: true });
     // With CourtPlayers the roster comes from registrations, set by its Directors: the coach can't change it.
+    expect((await listOrgRoster(deps(), pat, org, t.id))!.canManage).toBe(true);
     await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ($1, 'court-players', 'setup', 't')", [org]);
     expect((await listOrgRoster(deps(), cam, org, t.id))!.canManage).toBe(false);
+    expect((await listOrgRoster(deps(), pat, org, t.id))!.canManage).toBe(false);
     expect(await removeOrgPlayer(deps(), cam, org, t.id, r.players[0].id)).toMatchObject({ ok: false });
     expect(await removeOrgPlayer(deps(), jo, org, t.id, r.players[0].id)).toEqual({ ok: true });
   });

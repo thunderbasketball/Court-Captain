@@ -15,6 +15,8 @@ import TeamPractices from "../../../../TeamPractices";
 import HowPracticesWork from "../../../../HowPracticesWork";
 import { canEvaluate, listEvaluations } from "@/lib/evaluations";
 import { listRoster, rosterCandidates } from "@/lib/rosters";
+import { parentSlots } from "@/lib/player-parents";
+import PlayerParents from "../../players/PlayerParents";
 import { canUnlockUniforms, listUniforms, uniformsMissing } from "@/lib/uniforms";
 import { listFormations, listPlays, orgLibrary } from "@/lib/playbook";
 import PlaybookCard from "../../../../PlaybookCard";
@@ -36,8 +38,11 @@ import UniformsBoard from "./UniformsBoard";
 import HowUniformsWork from "../../uniforms/HowUniformsWork";
 import { AddPlayersButton, RemovePlayerButton } from "./RosterTools";
 import { scheduledGames } from "@/lib/scenic-games";
+import { leagueRosters } from "@/lib/roster-snapshot";
+import { leaguePrograms } from "@/lib/scenic-team-page";
+import LeagueRosterCards from "../../../../league-roster/LeagueRosterCards";
 import { teamRequests } from "@/lib/schedule-requests";
-import ScheduleRequests from "../../../../ScheduleRequests";
+import LeagueRegistrations from "../../../../LeagueRegistrations";
 import { easternDate } from "@/lib/time";
 import { ScheduleList } from "../../../../LeagueGames";
 import { teamScrimmages } from "@/lib/scrimmages";
@@ -73,7 +78,7 @@ export async function ThunderTeamView({
   const { active } = await currentContexts(user);
   const asDirector = hasArea(user, "teams") && !(active?.key === `team:${team.id}` && team.myRoles.length > 0);
   const canEditTeam = asDirector && team.canEditTeam;
-  const canEditStaff = asDirector || team.myRoles.includes("HeadCoach");
+  const canEditStaff = asDirector || team.myRoles.includes("HeadCoach") || team.myRoles.includes("AsstCoach"); // an assistant: Manager, Team Parent
   const ref = { org: "thunder" as const, teamId: team.id };
   const canBook = asDirector || team.myRoles.some((r) => r !== "TeamParent");
   // Its copy in the League (matchups and schedule requests are made for it), and its schedule requests (its coaches).
@@ -141,6 +146,8 @@ export async function ThunderTeamView({
     : allParentCells;
   const parentEmails = [...new Set(players.flatMap((p) => p.parents.flatMap((g) => (g.email ? [g.email.toLowerCase()] : []))))];
   const [copy, requests] = await Promise.all([copyOf, requestsOf]); // already loading beside the rest
+  const leagueRosterList = await leagueRosters({ pool: db, now: () => new Date() }, user, copy); // locked at its 1st game in a League
+  const regs = copy ? await leaguePrograms(db, copy) : []; // what it's registered in
   const published = games.filter((g) => g.published); // the Games card: only once its League's schedule is published
   // Owners and Admins: 👁 View as on the team's staff and on players' parents who have a login (matched by cell), even
   // while on the team's own chip; who they may view is checked again when they tap it.
@@ -151,7 +158,7 @@ export async function ThunderTeamView({
   const week = typeof sp.week === "string" ? sp.week : undefined; // the Full schedule's week
   const opened = typeof requested === "string" ? requested : "";
   // The second round: what needs the first (players, practices, plays, Uniforms on), again side by side.
-  const [parentLogins, available, uniformsAndUnlock, library, formations, ownLocations, rsvps, parentOptions] = await Promise.all([
+  const [parentLogins, available, uniformsAndUnlock, library, formations, ownLocations, rsvps, parentOptions, parentsOf] = await Promise.all([
     admin
       ? db
           .query<{ cell: string; coach_id: string }>("select cell, coach_id from users where active and cell = any($1)", [allParentCells])
@@ -177,6 +184,8 @@ export async function ThunderTeamView({
       myKids.map((p) => p.player),
     ),
     canEditStaff ? rosterParentOptions(deps, team.id) : [],
+    // Its staff (any role) and the Directors add a player's missing parent.
+    asDirector || team.myRoles.length ? parentSlots(db, user, players.map((p) => p.registrantId)) : null,
   ]);
   const [uniforms, canUnlock] = uniformsAndUnlock ?? [null, false];
   // Each player's uniform number (with Uniforms), shown before their name on the Roster.
@@ -204,6 +213,7 @@ export async function ThunderTeamView({
           ...(team.waitingCoach ? (["COACH CELL"] as const) : []),
           ...(team.waitingCoach || team.staff.some((x) => x.role === "HeadCoach" && !x.email) ? (["COACH EMAIL"] as const) : []),
           ...(!players.length ? (["ROSTER"] as const) : []),
+          ...(uniforms && players.some((p) => !number.get(p.registrantId)) ? (["PLAYER NUMBERS"] as const) : []),
         ]}
         edit={
           canEditTeam && (
@@ -263,6 +273,7 @@ export async function ThunderTeamView({
           ),
           remove: (s: TeamStaffRow) =>
             canEditStaff &&
+            (asDirector || team.myRoles.includes("HeadCoach") || s.role === "Manager" || s.role === "TeamParent") &&
             (s.role !== "HeadCoach" || asDirector) && (
               <RemoveStaffButton teamId={team.id} coachId={s.coachId} role={s.role as never} label={`${s.first} ${s.last}`} />
             ),
@@ -283,6 +294,7 @@ export async function ThunderTeamView({
             chips: <EligibleChip teamGrades={team.grades} grade={p.grade} birthdate={p.birthdate} year={schoolYear} rules={gradeRules} />,
             right: (
               <>
+                {uniforms && !number.get(p.registrantId) && <span className="font-semibold text-red-600 dark:text-red-400">no number · </span>}
                 {gradeLabel(p.grade)}
                 {bornLabel(p.birthdate)}
                 {!p.registered && <span className="text-amber-700 dark:text-amber-400"> · not registered</span>}
@@ -302,6 +314,7 @@ export async function ThunderTeamView({
                   </span>
                 ))}
                 {p.registered && !p.parents.length && <span className="block text-xs text-zinc-400">No parent contact in registration</span>}
+                {p.registered && <PlayerParents registrantId={p.registrantId} slots={parentsOf?.get(p.registrantId) ?? []} who={who} />}
                 {!p.registered && <span className="block text-xs text-amber-700 dark:text-amber-400">No longer in registrations</span>}
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-zinc-400">{who && `Rostered by ${p.rosteredBy}`}</span>
@@ -310,16 +323,26 @@ export async function ThunderTeamView({
               </>
             ),
           })),
-          alert: !players.length || !!issue,
+          alert: !players.length || !!issue || (!!uniforms && players.some((p) => !number.get(p.registrantId))),
           badge: issue && <Chip tone="red">{issue}</Chip>,
           cells: parentCells,
           emails: parentEmails,
           chatKey: chatOn ? `parents-${team.id}` : null,
           add: asDirector && <AddPlayersButton teamId={team.id} teamName={team.name} candidates={candidates} canSecond={hasArea(user, "players")} />,
-          note: onePerPlayer && (
+          note: (
+            <>
+              {/* Every player needs a uniform number: set (or fixed) on this team's Uniforms card. */}
+              {uniforms && players.some((p) => !number.get(p.registrantId)) && (
+                <p className="mx-4 mb-3 rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-700 ring-1 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/30">
+                  {players.filter((p) => !number.get(p.registrantId)).length} without a uniform number: enter them in this team&apos;s Uniforms card below.
+                </p>
+              )}
+              {onePerPlayer && (
             <p className="px-4 pb-3 text-xs text-zinc-500">
               💬 Text parents goes to one parent per player: a group text holds {MAX_GROUP_TEXT} numbers at most.
             </p>
+              )}
+            </>
           ),
           empty: asDirector ? "No players yet. Tap “+ Add players”." : "No players on the roster yet.",
           // Players still available (eligible, not on any team), for its coaches: ☆/★ interest and Evaluate.
@@ -336,14 +359,29 @@ export async function ThunderTeamView({
             </div>
           ),
         }}
+        leagueRosters={
+          copy && leagueRosterList.length
+            ? {
+                count: leagueRosterList.reduce((n, r) => n + r.players.filter((x) => !x.removedBy).length, 0),
+                body: <LeagueRosterCards rosters={leagueRosterList} teamId={copy} who={who} />,
+              }
+            : null
+        }
+        programs={
+          copy && regs.length
+            ? {
+                title: "Current Registrations",
+                count: regs.length,
+                body: (
+                  // CourtPlayers: registrations are its Directors' (Add dates, a 2nd Game); its coaches make schedule requests.
+                  <LeagueRegistrations user={user} teamId={copy} programs={regs} games={games} requests={requests} canAdd={asDirector} today={easternDate(new Date())} />
+                ),
+              }
+            : null
+        }
         gamesCount={published.length + scrims.length}
         games={
           <>
-            {requests && copy && requests.length > 0 && (
-              <div className="mb-3">
-                <ScheduleRequests teamId={copy} days={requests} />
-              </div>
-            )}
             {published.length + scrims.length ? (
             <ScheduleList games={published} practices={[]} scrims={scrims} today={easternDate(new Date())} />
           ) : (

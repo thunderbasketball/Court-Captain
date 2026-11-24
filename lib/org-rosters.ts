@@ -1,6 +1,7 @@
-// Rosters for a registered organization's teams (SPEC.md section 14). Its Admins and Directors of Teams add players
-// (first, last, grade, birthdate, optional jersey number) one at a time or many at once (pasted or a CSV, with a preview
-// first), and remove them; the team's coaches see the roster. Names and numbers are unique on a team. A player without a
+// Rosters for a registered organization's teams (SPEC.md section 14). Without CourtPlayers its Admins, Directors of Teams
+// and the team's staff (coaches, Team Managers, Team Parents) add players (first, last, grade, birthdate, optional jersey
+// number) one at a time or many at once (pasted or a CSV, with a preview first) and fix their information; Admins,
+// Directors of Teams and the Head and Assistant Coaches remove them. Names and numbers are unique on a team. A player without a
 // birthdate is warned about (and it can be filled in on the roster).
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
@@ -14,7 +15,8 @@ type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
 const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
 const isId = (v: unknown): v is string => typeof v === "string" && /^\d{1,18}$/.test(v);
-const managersOnly = { ok: false as const, message: "Only an Admin or Director of Teams, or the team's Head or Assistant Coach, can change its roster." };
+const coachesOnly = { ok: false as const, message: "Only an Admin or Director of Teams, or the team's Head or Assistant Coach, can remove a player." };
+const managersOnly = { ok: false as const, message: "Only an Admin or Director of Teams, or the team's staff, can change its roster." };
 
 export type OrgPlayer = {
   id: string;
@@ -66,16 +68,17 @@ const jerseyOf = (v: unknown) => {
 
 // The team, if this person may see its roster: its organization's Admins and Directors of Teams, or its coaches.
 // Who enters it (SPEC.md section 14): with CourtPlayers the roster comes from player registrations, set by its
-// Directors; without it (CourtTeams, CourtClub) the organization's Admins and Directors of Teams or the team's Head and
-// Assistant Coaches type or import it.
+// Directors; without it (CourtOrg, CourtClub) the organization's Admins and Directors of Teams or the team's staff type or
+// import it (`remove`: its Head and Assistant Coaches, not a Team Manager or Team Parent).
 async function teamFor(q: Pick<Queryable, "query">, viewer: SessionUser, org: string, teamId: string) {
   const t = await q.query("select 1 from org_teams where id = $1 and org = $2", [teamId, org]);
   if (!t.rowCount) return null;
-  if (await canManageTeams(q, viewer, org)) return { manage: true };
+  if (await canManageTeams(q, viewer, org)) return { manage: true, remove: true };
   const c = await q.query<{ role: string }>("select role from org_team_coaches where team_id = $1 and coach_id = $2", [teamId, viewer.coachId]);
   if (!c.rowCount) return null;
   const coach = c.rows.some((r) => r.role === "HeadCoach" || r.role === "AsstCoach");
-  return { manage: coach && !(await hasFeature(q, org, "player-registration")) };
+  const typed = !(await hasFeature(q, org, "player-registration"));
+  return { manage: typed, remove: coach && typed };
 }
 
 export async function listOrgRoster(
@@ -83,7 +86,7 @@ export async function listOrgRoster(
   viewer: SessionUser,
   org: string,
   teamId: string,
-): Promise<{ players: OrgPlayer[]; canManage: boolean } | null> {
+): Promise<{ players: OrgPlayer[]; canManage: boolean; canRemove: boolean } | null> {
   if (!isId(teamId)) return null;
   const t = await teamFor(deps.pool, viewer, org, teamId);
   if (!t) return null;
@@ -94,11 +97,11 @@ export async function listOrgRoster(
      order by jersey::int nulls last, lower(last_name), lower(first_name)`, // by jersey number (none last), then name
     [teamId],
   );
-  return { players: r.rows, canManage: t.manage };
+  return { players: r.rows, canManage: t.manage, canRemove: t.remove };
 }
 
 // The organization, when this person may change this team's roster (see teamFor).
-async function rosterOrg(q: Pick<Queryable, "query">, viewer: SessionUser, org: unknown, teamId: unknown): Promise<string | null> {
+export async function rosterOrg(q: Pick<Queryable, "query">, viewer: SessionUser, org: unknown, teamId: unknown): Promise<string | null> {
   const o = await teamsManagerOf(q, viewer, org);
   if (o) return o;
   if (typeof org !== "string" || !isId(teamId)) return null;
@@ -107,7 +110,7 @@ async function rosterOrg(q: Pick<Queryable, "query">, viewer: SessionUser, org: 
 
 export type PlayerInput = { first: unknown; last: unknown; grade: unknown; jersey?: unknown; birthdate?: unknown };
 
-function cleanPlayer(p: PlayerInput): { first: string; last: string; grade: number; jersey: string | null; birthdate: string | null } | string {
+export function cleanPlayer(p: PlayerInput): { first: string; last: string; grade: number; jersey: string | null; birthdate: string | null } | string {
   const first = cleanName(p.first);
   const last = cleanName(p.last);
   if (!first || !last) return "First and last name (letters only)";
@@ -191,6 +194,60 @@ export async function setOrgPlayerBirthdate(
   return r.rowCount ? { ok: true } : { ok: false, message: "That player isn't on this team." };
 }
 
+// Fix a player's name or grade (a blank grade leaves it as it is); who did it is recorded.
+export async function setOrgPlayerInfo(
+  deps: Deps,
+  viewer: SessionUser,
+  org: unknown,
+  teamId: unknown,
+  playerId: unknown,
+  input: { first?: unknown; last?: unknown; grade?: unknown },
+): Promise<Result> {
+  const o = await rosterOrg(deps.pool, viewer, org, teamId);
+  if (!o) return managersOnly;
+  if (!isId(teamId) || !isId(playerId)) return { ok: false, message: "That player isn't on this team." };
+  const c = cleanInfo(input);
+  if (typeof c === "string") return { ok: false, message: c };
+  return withTx(deps.pool, async (q) => {
+    if (!(await q.query("select 1 from org_teams where id = $1 and org = $2 for update", [teamId, o])).rowCount)
+      return { ok: false as const, message: "That team no longer exists." };
+    return saveInfo(q, "org_team_players", teamId, playerId, c, by(viewer), deps.now());
+  });
+}
+
+// Also for a League team's roster (lib/league-roster).
+export function cleanInfo(input: { first?: unknown; last?: unknown; grade?: unknown }): { first: string; last: string; grade: number | null } | string {
+  const first = cleanName(input?.first);
+  const last = cleanName(input?.last);
+  if (!first || !last) return "First and last name (letters only).";
+  const blank = input.grade === "" || input.grade === null || input.grade === undefined;
+  const grade = blank ? null : gradeOf(input.grade);
+  if (!blank && grade === null) return "Grade: K to 12.";
+  return { first, last, grade };
+}
+export async function saveInfo(
+  q: Pick<Queryable, "query">,
+  table: "org_team_players" | "scenic_team_players",
+  teamId: string,
+  playerId: string,
+  c: { first: string; last: string; grade: number | null },
+  who: string,
+  now: Date,
+): Promise<Result> {
+  const same = await q.query(`select 1 from ${table} where team_id = $1 and id <> $2 and lower(first_name) = lower($3) and lower(last_name) = lower($4)`, [
+    teamId,
+    playerId,
+    c.first,
+    c.last,
+  ]);
+  if (same.rowCount) return { ok: false, message: `${c.first} ${c.last} is already on the team.` };
+  const r = await q.query(
+    `update ${table} set first_name = $3, last_name = $4, grade = coalesce($5, grade), edited_by = $6, edited_at = $7 where id = $2 and team_id = $1`,
+    [teamId, playerId, c.first, c.last, c.grade, who, now],
+  );
+  return r.rowCount ? { ok: true } : { ok: false, message: "That player isn't on this team." };
+}
+
 export async function removeOrgPlayer(
   deps: Deps,
   viewer: SessionUser,
@@ -198,9 +255,9 @@ export async function removeOrgPlayer(
   teamId: unknown,
   playerId: unknown,
 ): Promise<Result> {
-  const o = await rosterOrg(deps.pool, viewer, org, teamId);
-  if (!o) return managersOnly;
   if (!isId(teamId) || !isId(playerId)) return { ok: false, message: "That player isn't on this team." };
+  const o = (await teamsManagerOf(deps.pool, viewer, org)) ?? (typeof org === "string" && (await teamFor(deps.pool, viewer, org, teamId))?.remove ? org : null);
+  if (!o) return coachesOnly;
   const r = await deps.pool.query(
     `delete from org_team_players p using org_teams t where p.id = $1 and p.team_id = t.id and t.id = $2 and t.org = $3`,
     [playerId, teamId, o],
@@ -232,7 +289,7 @@ export function parsePlayerRows(text: string, layout?: ImportLayout): PlayerImpo
   });
 }
 
-type PreviewRow = PlayerImportRow & { status: "new" | "exists" | "error" };
+export type PreviewRow = PlayerImportRow & { status: "new" | "exists" | "error" };
 
 // Rows sent back from the Preview after being fixed one by one: the same five fields, checked again here.
 export function checkImportRows(v: unknown): PlayerImportRow[] | string {
@@ -262,16 +319,18 @@ async function previewRows(deps: Deps, viewer: SessionUser, org: unknown, teamId
       )
     ).rows.map((r) => r.k),
   );
+  return { ok: true, rows: importStatus(parsed, have) };
+}
+
+// `have`: the names on the team ("ava smith"). Also for a League team's import (lib/league-roster).
+export function importStatus(parsed: PlayerImportRow[], have: ReadonlySet<string>): PreviewRow[] {
   const seen = new Set<string>();
-  return {
-    ok: true,
-    rows: parsed.map((r) => {
-      const k = `${r.first.trim().toLowerCase()} ${r.last.trim().toLowerCase()}`;
-      const errors = [...r.errors, ...(seen.has(k) ? ["Listed twice"] : [])];
-      seen.add(k);
-      return { ...r, errors, status: errors.length ? "error" : have.has(k) ? "exists" : "new" };
-    }),
-  };
+  return parsed.map((r) => {
+    const k = `${r.first.trim().toLowerCase()} ${r.last.trim().toLowerCase()}`;
+    const errors = [...r.errors, ...(seen.has(k) ? ["Listed twice"] : [])];
+    seen.add(k);
+    return { ...r, errors, status: errors.length ? "error" : have.has(k) ? "exists" : "new" };
+  });
 }
 
 export async function previewPlayerImport(

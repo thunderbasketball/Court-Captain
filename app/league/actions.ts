@@ -3,8 +3,9 @@
 import { db } from "@/lib/db";
 import { hasFeature } from "@/lib/features";
 import { isOrgSlug } from "@/lib/orgs";
-import { followedTeams, publicLeague } from "@/lib/public-league";
+import { MAX_FOLLOWED, followedTeams, publicLeague } from "@/lib/public-league";
 import { easternDate } from "@/lib/time";
+import { publicly } from "@/lib/public-cache";
 
 // One program's public Teams and Schedule, loaded when it's opened on the login page. No login on purpose: only what the
 // public League page already shows (team names, groups, game times and places; no contact information), and only a
@@ -12,9 +13,11 @@ import { easternDate } from "@/lib/time";
 export async function loadPublicProgram(org: string, id: string) {
   if (!isOrgSlug(org) || !(await hasFeature(db, org, "programs"))) return { ok: false as const, message: "Not found." };
   const now = new Date();
-  const p = await publicLeague(db, now, String(id), org); // only that organization's programs
+  if (!/^\d{1,18}$/.test(String(id))) return { ok: false as const, message: "That program isn't public right now." };
+  const today = easternDate(now);
+  const p = await publicly(`program:${today}:${org}:${id}`, () => publicLeague(db, now, String(id), org)); // only that organization's programs
   if (!p) return { ok: false as const, message: "That program isn't public right now." };
-  return { ok: true as const, groups: p.groups, schedule: p.schedule, today: easternDate(now) };
+  return { ok: true as const, groups: p.groups, schedule: p.schedule, today };
 }
 
 // My Teams on the login page: the teams a device follows (ids kept on the device; nothing stored here). The same public
@@ -22,5 +25,8 @@ export async function loadPublicProgram(org: string, id: string) {
 export async function loadFollowedTeams(org: string, ids: string[]) {
   if (!isOrgSlug(org) || !(await hasFeature(db, org, "programs"))) return { ok: false as const, message: "Not found." };
   const now = new Date();
-  return { ok: true as const, teams: await followedTeams(db, now, ids, org), today: easternDate(now) };
+  const today = easternDate(now);
+  const list = Array.isArray(ids) ? [...new Set(ids.filter((x) => typeof x === "string" && /^\d{1,18}$/.test(x)))].slice(0, MAX_FOLLOWED) : [];
+  const teams = await publicly(`followed:${today}:${org}:${list.join(",")}`, () => followedTeams(db, now, list, org));
+  return { ok: true as const, teams, today };
 }

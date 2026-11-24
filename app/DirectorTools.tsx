@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { addPerson, setAdmin, setAssigner, setDirectorAreas, setOwner } from "./org-admin/actions";
+import { addPerson, cancelOwnerRemoval, setAdmin, setAssigner, setDirectorAreas, setOwner } from "./org-admin/actions";
 import { PopUp, useConfirm } from "./client-ui";
 import { inputCls } from "./ui";
 import { iconBtn } from "./CardIcons";
@@ -12,7 +12,7 @@ const AREAS_NOTE =
   "Each Director manages only their areas. Admins have every area and choose Directors; Owners also choose Admins.";
 
 type AreaOption = { key: string; name: string; covers: string };
-export type Director = { id: string; name: string; owner: boolean; admin: boolean; areas: string[] };
+export type Director = { id: string; name: string; owner: boolean; admin: boolean; areas: string[]; removal?: string | null; me?: boolean };
 type Person = { id: string; name: string };
 
 // On an organization's Users page (SPEC.md section 14): Admins add Directors and change their areas; Owners also add and
@@ -150,7 +150,7 @@ export function DirectorRole({
   const assigning = areas.some((a) => a.key === "officials");
   const assigner = assigning && person.areas.includes("officials");
   const label = person.owner
-    ? `Owner · every area${assigner ? " · Officials Assigner" : ""}`
+    ? `Owner · every area${person.removal ? " · removal waiting for their approval" : ""}${assigner ? " · Officials Assigner" : ""}`
     : person.admin
       ? `Admin · every area${assigner ? " · Officials Assigner" : ""}`
       : person.areas.length
@@ -162,10 +162,16 @@ export function DirectorRole({
       ? [
           {
             key: "owner",
-            label: "Remove Owner",
-            danger: true,
-            ask: `Remove ${person.name} as Owner of ${orgName}? They stay an Admin.`,
-            run: () => setOwner(org, person.id, false),
+            ...(person.removal
+              ? { label: "Cancel removal", danger: false, ask: null, run: () => cancelOwnerRemoval(person.removal!) }
+              : {
+                  label: "Remove Owner",
+                  danger: true,
+                  ask: person.me
+                    ? `Step down as Owner of ${orgName}? You stay an Admin.`
+                    : `Ask ${person.name} to be removed as Owner of ${orgName}? They're emailed, and stay an Owner until they approve it. Then they stay an Admin.`,
+                  run: () => setOwner(org, person.id, false),
+                }),
           },
         ]
       : []),

@@ -8,7 +8,7 @@ import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { isOrgOwner } from "./org-admin";
 import { orgName } from "./org-registry";
-import { teamsManagerOf } from "./org-teams";
+import { canManageTeams } from "./org-teams";
 import { leagueEntry, payLater } from "./scenic-programs";
 import { gradeLabel, gradeRange } from "./scenic-teams";
 import type { Queryable } from "./sql";
@@ -82,7 +82,7 @@ export async function buildInvoice(q: Pick<Queryable, "query">, programId: strin
     let cents = p.fee_cents ?? 0;
     let what = p.kind;
     if (p.kind === "League") {
-      const e = (await leagueEntry(q, programId, t.team_id, org)).entry;
+      const e = (await leagueEntry(q, programId, t.team_id, org, t.level)).entry;
       cents = e?.feeCents ?? 0;
       what = e?.allSeason ? "ALL Season" : e ? e.days.map((x) => day(x.date)).join(", ") || "Game Days" : "League";
     }
@@ -117,7 +117,7 @@ export async function buildInvoice(q: Pick<Queryable, "query">, programId: strin
 // Directors of Teams) and the League's Owners.
 export async function mayViewInvoice(q: Pick<Queryable, "query">, viewer: SessionUser, org: string): Promise<boolean> {
   if (await isOrgOwner(q, viewer.coachId, LEAGUE)) return true;
-  return !!(await teamsManagerOf(q, viewer, org));
+  return canManageTeams(q, viewer, org);
 }
 
 export async function invoiceFor(q: Pick<Queryable, "query">, viewer: SessionUser, programId: unknown, org: unknown): Promise<Invoice | null> {
@@ -128,7 +128,7 @@ export async function invoiceFor(q: Pick<Queryable, "query">, viewer: SessionUse
 
 // An organization's invoices with a balance due (its Home's Open invoices card), soonest program first.
 export async function openInvoices(q: Pick<Queryable, "query">, viewer: SessionUser, org: string): Promise<Invoice[]> {
-  if (!(await teamsManagerOf(q, viewer, org))) return [];
+  if (!(await canManageTeams(q, viewer, org))) return [];
   const programs = await q.query<{ id: string }>(
     `select distinct p.id::text, p.starts_on from scenic_registrations r join scenic_programs p on p.id = r.program_id
        join scenic_teams st on st.id = r.team_id
@@ -159,7 +159,7 @@ export async function payInvoice(
   inPage = false, // Stripe's form opens in the page (`payInPage`)
 ): Promise<{ ok: true; pay: string; payInPage?: undefined } | { ok: true; payInPage: InPage; pay?: undefined } | { ok: false; message: string }> {
   if (!isId(programId) || typeof org !== "string") return { ok: false, message: "That invoice wasn't found." };
-  if (!(await teamsManagerOf(deps.pool, viewer, org))) return { ok: false, message: "Only whoever manages the teams can pay." };
+  if (!(await canManageTeams(deps.pool, viewer, org))) return { ok: false, message: "Only whoever manages the teams can pay." };
   const to = await payee(deps.pool, deps.stripe);
   if (!to || !deps.stripe) return { ok: false, message: "The League isn't taking card payments right now. Pay it the way the League asks." };
   const inv = await buildInvoice(deps.pool, programId, org);

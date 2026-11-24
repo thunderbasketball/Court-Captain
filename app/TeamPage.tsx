@@ -79,6 +79,7 @@ export default function TeamPage(p: {
     empty: string;
     after?: ReactNode; // Available players
   };
+  leagueRosters?: { count: number; body: ReactNode } | null; // locked at its 1st game in a League (none yet: no card)
   games: ReactNode; // the Games card's inside
   gamesCount: number;
   programs?: { title: string; count: number; body: ReactNode } | null; // Current Registrations (under Register Team)
@@ -301,6 +302,12 @@ export default function TeamPage(p: {
         </ul>
         {p.roster.after}
       </CollapseCard>
+
+      {p.leagueRosters && p.leagueRosters.count > 0 && (
+        <CollapseCard title="League roster" count={p.leagueRosters.count} open={p.opened === "league-roster"}>
+          {p.leagueRosters.body}
+        </CollapseCard>
+      )}
 
       <CollapseCard title="Games" count={p.gamesCount} open={p.opened === "games"}>
         <div className="px-4 pb-4">{p.games}</div>

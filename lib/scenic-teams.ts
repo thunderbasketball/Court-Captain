@@ -244,7 +244,8 @@ async function run<T extends object>(fn: () => Promise<T>): Promise<Result<T>> {
 export async function dropScenicCoachIfIdle(q: Pick<Queryable, "query">, coachId: string | null, who: string) {
   if (!coachId) return;
   const still = await q.query(
-    "select 1 from scenic_teams where coach_id = $1 and org_team_id is null and thunder_team_id is null limit 1",
+    `select 1 from scenic_teams where coach_id = $1 and org_team_id is null and thunder_team_id is null
+     union all select 1 from scenic_team_staff where coach_id = $1 and role = 'AsstCoach' limit 1`,
     [coachId],
   );
   if (!still.rowCount) await q.query("select set_role($1, 'scenic-city', 'Coach', false, $2)", [coachId, who]);

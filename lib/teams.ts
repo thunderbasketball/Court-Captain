@@ -520,12 +520,14 @@ async function lockTeamForStaff(q: PoolClient, viewer: SessionUser, teamId: stri
   const t = await q.query("select 1 from teams where id = $1 for update", [teamId]);
   if (!t.rows[0]) throw new UserError("That team no longer exists.");
   if (hasArea(viewer, "teams")) return;
-  // A head coach can manage their own team's other staff, but not the head coach spot.
-  const head = await q.query("select 1 from team_staff where team_id = $1 and role = 'HeadCoach' and coach_id = $2", [
-    teamId,
-    viewer.coachId,
-  ]);
-  if (!head.rows[0]) throw new UserError("Only a Director of Teams or this team's head coach can change staff.");
+  // A head coach can manage their own team's other staff, but not the head coach spot; an assistant coach, its Team
+  // Manager and Team Parent (the same on every organization's teams).
+  const mine = (await q.query<{ role: Role }>("select role from team_staff where team_id = $1 and coach_id = $2", [teamId, viewer.coachId])).rows.map((r) => r.role);
+  const helper = role === "Manager" || role === "TeamParent";
+  if (!mine.includes("HeadCoach") && !(helper && mine.includes("AsstCoach")))
+    throw new UserError(
+      helper ? "Only a Director of Teams or this team's coaches can change this." : "Only a Director of Teams or this team's head coach can change staff.",
+    );
   if (role === "HeadCoach") throw new UserError("Only a Director of Teams can change the head coach.");
 }
 

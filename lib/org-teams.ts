@@ -185,6 +185,25 @@ async function mustManage(q: Pick<Queryable, "query">, viewer: SessionUser, org:
   return o;
 }
 
+// Who may change this staff spot: the organization's Admins and Directors of Teams (any); the team's own Head Coach (its
+// Assistant Coaches, Team Managers and Team Parents) and its Assistant Coaches (Team Managers and Team Parents), the
+// same on every organization's teams.
+async function mustChangeStaff(q: Pick<Queryable, "query">, viewer: SessionUser, org: unknown, teamId: string, role: string): Promise<OrgSlug> {
+  const o = await teamsManagerOf(q, viewer, org);
+  if (o) return o;
+  const usableOrg = await usable(q, org);
+  if (usableOrg && role !== "HeadCoach") {
+    const mine = (
+      await q.query<{ role: string }>(
+        "select c.role from org_team_coaches c join org_teams t on t.id = c.team_id where t.id = $1 and t.org = $2 and c.coach_id = $3",
+        [teamId, usableOrg, viewer.coachId],
+      )
+    ).rows.map((r) => r.role);
+    if (mine.includes("HeadCoach") || (mine.includes("AsstCoach") && (role === "Manager" || role === "TeamParent"))) return usableOrg;
+  }
+  throw new TeamError("Only an Admin, a Director of Teams or the team's coaches can change this.");
+}
+
 // Adding a team: gender, grades (one, or two in a row, as "K" … "12"), level, its Head Coach ("none", "user:<id>" of an
 // active user, or a new person { first, last, cell }) and an optional Alternate name. The name is made from them.
 export type OrgTeamInput = { gender: unknown; grades: unknown; level: unknown; headCoach?: unknown; altName?: unknown };
@@ -607,7 +626,7 @@ export async function addOrgTeamCoach(
     if (!role) throw new TeamError("Pick Head Coach, Assistant Coach, Team Manager or Team Parent.");
     const email = input.email ? cleanEmail(input.email) : null;
     if (input.email && !email) throw new TeamError("Enter a real email address (or leave it blank).");
-    const o = await mustManage(deps.pool, viewer, org);
+    const o = await mustChangeStaff(deps.pool, viewer, org, teamId, role.key);
     return withTx(deps.pool, async (q) => {
       const t = await q.query("select 1 from org_teams where id = $1 and org = $2 for update", [teamId, o]);
       if (!t.rowCount) throw new TeamError("That team no longer exists.");
@@ -651,7 +670,8 @@ export async function removeOrgTeamCoach(
 ): Promise<Result> {
   return run(async () => {
     if (!isId(teamId) || !isCoachId(coachId)) throw new TeamError("That coach isn't on this team.");
-    const o = await mustManage(deps.pool, viewer, org);
+    const spot = await deps.pool.query<{ role: string }>("select role from org_team_coaches where team_id = $1 and coach_id = $2", [teamId, coachId]);
+    const o = await mustChangeStaff(deps.pool, viewer, org, teamId, spot.rows[0]?.role ?? "HeadCoach");
     return withTx(deps.pool, async (q) => {
       const d = await q.query(
         `delete from org_team_coaches c using org_teams t

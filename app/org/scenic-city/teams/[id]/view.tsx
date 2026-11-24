@@ -5,19 +5,20 @@ import { db } from "@/lib/db";
 import { seesWho } from "@/lib/org-admin";
 import { scheduledGames } from "@/lib/scenic-games";
 import { leagueTeamPage } from "@/lib/scenic-team-page";
+import { leagueRosters } from "@/lib/roster-snapshot";
+import { ImportPlayersButton, PlayerBirthdate, PlayerInfo } from "../../../[slug]/teams/RosterTools";
+import { MissingNumbers, PlayerNumber } from "../../../../roster-numbers/RosterNumbers";
+import LeagueRosterCards from "../../../../league-roster/LeagueRosterCards";
 import { teamRequests } from "@/lib/schedule-requests";
 import { easternDate } from "@/lib/time";
-import { LeagueGames, ScheduleList } from "../../../../LeagueGames";
+import { ScheduleList } from "../../../../LeagueGames";
 import NextSevenDays from "../../../../NextSevenDays";
-import ScheduleRequests from "../../../../ScheduleRequests";
+import LeagueRegistrations from "../../../../LeagueRegistrations";
 import TeamPage, { type TeamStaffRow } from "../../../../TeamPage";
 import { leagueRoster, mayManageLeagueTeam } from "@/lib/league-roster";
 import { leagueStaff } from "@/lib/scenic-team-page";
-import { AddLeagueDates, AddLeaguePlayer, AddLeagueStaff, RemoveLeaguePlayer, RemoveLeagueStaff } from "./LeagueTeamTools";
-import { leagueEntry } from "@/lib/scenic-programs";
-import { Chip } from "../../../../ui";
+import { AddLeaguePlayer, AddLeagueStaff, RemoveLeaguePlayer, RemoveLeagueStaff } from "./LeagueTeamTools";
 
-const day = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
 // A League team's page (Solo teams and outside clubs' teams), like every organization's team page: its card (with
 // `edit`: Edit and Delete, from the Teams list), Current Registrations (dates, Brackets, Paid, its games) with Schedule
@@ -32,6 +33,7 @@ export async function LeagueTeamView({ id, opened = "", embedded = false, edit }
     notFound();
   }
   const deps = { pool: db, now: () => new Date() };
+  const leagueRosterList = await leagueRosters(deps, user, id); // locked at its 1st game in a League
   const [who, games, requests, players, manage, kept, staffBy] = await Promise.all([
     seesWho(db, user, "scenic-city"),
     scheduledGames(db, [id]).then((g) => g[id] ?? []),
@@ -42,15 +44,6 @@ export async function LeagueTeamView({ id, opened = "", embedded = false, edit }
     leagueStaff(db, [id]), // its whole staff, from where it's kept (Thunder's, its organization's, or here)
   ]);
   const today = easternDate(new Date());
-  // Add dates / 2nd Game: the same people as Schedule requests (its coaches, its organization's and Scenic City's
-  // Owners, Admins and Directors of Teams, the Scheduler), on each League it's in and not taken out of.
-  const terms = requests
-    ? new Map(
-        await Promise.all(
-          page.programs.filter((p) => p.kind === "League" && !p.out).map(async (p) => [p.id, await leagueEntry(db, p.id, id)] as const),
-        ),
-      )
-    : null;
   const published = games.filter((g) => g.published);
   const t = page.team;
   const schedule = requests && requests.length ? requests : null;
@@ -66,6 +59,7 @@ export async function LeagueTeamView({ id, opened = "", embedded = false, edit }
           ...(page.head ? [] : ["COACH INFO" as const]),
           ...(kept && !players.length ? ["ROSTER" as const] : []),
           ...(kept && players.some((p) => !p.birthdate) ? ["PLAYER BIRTHDATES" as const] : []),
+          ...(kept && players.some((p) => !p.jersey) ? ["PLAYER NUMBERS" as const] : []),
         ]}
         next7={<NextSevenDays games={published} practices={[]} own={[]} now={new Date()} team={{ org: "scenic-city", teamId: t.id }} staff={false} mine={[]} rsvps={{}} />}
         opened={opened}
@@ -98,25 +92,50 @@ export async function LeagueTeamView({ id, opened = "", embedded = false, edit }
             last: p.last,
             right: (
               <span className="text-xs text-zinc-500">
+                {!p.jersey && <span className="font-medium text-red-600 dark:text-red-400">no number · </span>}
                 {p.grade !== null && `${p.grade === 0 ? "K" : `Grade ${p.grade}`} · `}
                 {p.birthdate ? `Born ${Number(p.birthdate.slice(5, 7))}/${Number(p.birthdate.slice(8, 10))}/${p.birthdate.slice(0, 4)}` : <span className="font-medium text-red-600 dark:text-red-400">no birthdate</span>}
               </span>
             ),
             more: (
               <div className="space-y-1 text-sm text-zinc-600 dark:text-zinc-300">
-                <p>{p.birthdate ? `Born ${day(p.birthdate)}, ${p.birthdate.slice(0, 4)}` : "No birthdate"}</p>
+                {manage && kept && <PlayerInfo key={`${p.first} ${p.last} ${p.grade}`} org={null} teamId={t.id} player={p} />}
+                <PlayerBirthdate org={null} teamId={t.id} playerId={p.id} birthdate={p.birthdate} canEdit={manage && kept} />
                 {who && <p className="text-xs text-zinc-500">Added by {p.addedBy}</p>}
+                {manage && kept && <PlayerNumber key={p.jersey ?? ""} org={null} teamId={t.id} id={p.id} number={p.jersey} />}
                 {manage && <RemoveLeaguePlayer id={p.id} name={`${p.first} ${p.last}`} />}
               </div>
             ),
           })),
-          alert: kept && (!players.length || players.some((p) => !p.birthdate)),
+          alert: kept && (!players.length || players.some((p) => !p.birthdate || !p.jersey)),
           cells: [],
           emails: [],
           chatKey: null,
-          note: manage ? <AddLeaguePlayer teamId={t.id} /> : undefined,
+          add: manage && kept ? <ImportPlayersButton org={null} teamId={t.id} /> : undefined,
+          note: (
+            <>
+              {kept && (
+                <MissingNumbers
+                  org={null}
+                  teamId={t.id}
+                  players={players.filter((p) => !p.jersey)}
+                  taken={players.flatMap((p) => (p.jersey ? [p.jersey] : []))}
+                  canEdit={manage}
+                />
+              )}
+              {manage && <AddLeaguePlayer teamId={t.id} />}
+            </>
+          ),
           empty: kept ? "No players yet." : `${t.from}: its roster is kept on its own team page.`,
         }}
+        leagueRosters={
+          leagueRosterList.length
+            ? {
+                count: leagueRosterList.reduce((n, r) => n + r.players.filter((x) => !x.removedBy).length, 0),
+                body: <LeagueRosterCards rosters={leagueRosterList} teamId={id} who={who} />,
+              }
+            : null
+        }
         gamesCount={published.length}
         games={
           published.length ? (
@@ -131,42 +150,7 @@ export async function LeagueTeamView({ id, opened = "", embedded = false, edit }
                 title: "Current Registrations",
                 count: page.programs.length,
                 body: (
-                  <div className="space-y-3 px-4 pb-3">
-                    {page.programs.map((p) => (
-                      <div key={p.id} className="space-y-1 text-sm">
-                        <p className="flex flex-wrap items-center gap-2">
-                          <span className="font-semibold">{p.name}</span>
-                          <Chip tone={p.paid ? "green" : "amber"}>{p.paid ? "Paid" : "Unpaid"}</Chip>
-                          {p.out && <span className="text-xs font-medium text-red-600 dark:text-red-400">Taken out by the League</span>}
-                        </p>
-                        <p className="text-zinc-500">{p.division}</p>
-                        {p.entry && (
-                          <p className="text-zinc-600 dark:text-zinc-300">
-                            {p.entry.allSeason
-                              ? "ALL Season"
-                              : Object.entries(p.entry.perDate)
-                                  .sort(([a], [b]) => a.localeCompare(b))
-                                  .map(([d, gg]) => `${day(d)} ${gg}GG`)
-                                  .join(", ")}
-                            {p.entry.bracket && <span className="font-medium text-violet-700 dark:text-violet-300"> · Brackets</span>}
-                          </p>
-                        )}
-                        <LeagueGames games={games.filter((g) => g.programId === p.id)} today={today} />
-                        {terms?.get(p.id)?.entry && !user.actingBy && (
-                          <AddLeagueDates
-                            programId={p.id}
-                            teamId={t.id}
-                            options={terms.get(p.id)!.options}
-                            gameDates={terms.get(p.id)!.gameDates}
-                            today={today}
-                            entry={terms.get(p.id)!.entry}
-                            paid={p.paid}
-                          />
-                        )}
-                      </div>
-                    ))}
-                    {schedule && <ScheduleRequests teamId={t.id} days={schedule} />}
-                  </div>
+                  <LeagueRegistrations user={user} teamId={t.id} programs={page.programs} games={games} requests={schedule} canAdd={!!requests} today={today} />
                 ),
               }
             : null

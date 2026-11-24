@@ -256,6 +256,11 @@ export async function setOrgOwner(deps: Deps, viewer: SessionUser, org: unknown,
     );
     if (n.rows[0].n === 0) return { ok: false as const, message: `${await orgName(q, org)} needs at least one Owner.` };
     await q.query("select set_role($1, $2, 'Owner', false, $3)", [coachId, org, who]);
+    // A removal that was waiting for their approval is settled by this (CourtCaptain did it).
+    await q.query(
+      "update owner_removals set decision = 'approved', decided_by = $3, decided_at = $4 where org = $1 and coach_id = $2 and decision is null",
+      [org, coachId, `${who} (CourtCaptain)`, deps.now()],
+    );
     return { ok: true as const };
   });
 }

@@ -9,6 +9,7 @@ import { playerTeam } from "@/lib/player-team";
 import * as rosters from "@/lib/rosters";
 import { addPlayer, removeAddedPlayer, type AddedPlayerInput } from "@/lib/added-players";
 import { fixBirthdate } from "@/lib/birthdate-fix";
+import * as parents from "@/lib/player-parents";
 
 // Director only (checked again inside lib/player-team). Viewing, so allowed while viewing as someone.
 export async function loadPlayerTeam(registrantId: string) {
@@ -133,6 +134,29 @@ export async function fixBirthdateAction(registrantId: string, date: string | nu
     return await fixBirthdate({ pool: db, now: () => new Date() }, user, registrantId, date);
   } catch (e) {
     console.error("Fix birthday failed:", e);
+    return { ok: false as const, message: "Something went wrong. Please try again." };
+  }
+}
+
+// Add or fix a player's parent, or (null) go back to the registration's (their team's staff and Directors; checked again
+// in lib/player-parents).
+export async function saveParentAction(
+  registrantId: string,
+  slot: 1 | 2,
+  input: { first: string; last: string; cell: string; email: string } | null,
+) {
+  const user = await currentUser();
+  if (!user) return { ok: false as const, message: "Please log in again." };
+  if (user.actingBy) return { ok: false as const, message: VIEW_ONLY };
+  const refused = await featureRefusal("thunder", "player-registration");
+  if (refused) return refused;
+  const deps = { pool: db, now: () => new Date() };
+  try {
+    return input === null
+      ? await parents.undoParent(deps, user, registrantId, slot)
+      : await parents.saveParent(deps, user, registrantId, slot, input);
+  } catch (e) {
+    console.error("Save parent failed:", e);
     return { ok: false as const, message: "Something went wrong. Please try again." };
   }
 }
