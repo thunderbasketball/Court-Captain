@@ -1,7 +1,7 @@
 // Add dates (and a 2nd Game on a date it already plays) to a League team's registration, from its League team page
 // (SPEC.md section 13). Who: a COMP team's coaches (never a REC team's), the Owners, Admins and Directors of Teams of the
 // organization it belongs to and of Scenic City, and the Scheduler. Only a registration it already has (the first one is
-// made on its organization's page, or by Scenic City). REC teams never add a 2nd Game (saveChoice).
+// made on its organization's page, or by Scenic City). REC teams register ALL Season only, so they add nothing (saveChoice).
 // When the League takes cards and the addition costs something, it goes to Stripe Checkout and is added only once Stripe
 // says it's paid (lib/stripe/registration's confirmPayment, the same as Register). Nothing is added unpaid, except for an
 // organization in a Pay later price group (added now; a Paid registration whose fee goes up turns Unpaid, marked by who

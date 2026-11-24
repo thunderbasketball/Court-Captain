@@ -108,7 +108,7 @@ describe("paying to register", () => {
     expect(cardFee(0)).toBe(0);
   });
 
-  it("Add dates from a League team page: to Stripe when it costs something, added only once paid; REC: no 2nd Game", async () => {
+  it("Add dates from a League team page: to Stripe when it costs something, added only once paid; REC: ALL Season only", async () => {
     const s = fakeStripe();
     const deps = { pool: db.pool, stripe: s.api, now: () => now };
     await db.pool.query(
@@ -130,8 +130,8 @@ describe("paying to register", () => {
       })) as { id: string }
     ).id;
     await saveProgramDates(deps, dee, lp, { add: ["2027-03-06", "2027-03-13"], addBrackets: [], remove: [] });
-    await addDivision(deps, dee, lp, { gender: "Boys", from: 3, to: 4, levels: ["REC"] });
-    const tid = await team();
+    await addDivision(deps, dee, lp, { gender: "Boys", from: 3, to: 4, levels: ["COMP"] });
+    const tid = ((await createOrgTeam(deps, jo, org, { gender: "Boys", grades: ["4"], level: "COMP" })) as { id: string }).id;
     // Registered for Mar 6 (as its payment would).
     expect(await registerOrgTeam(deps, jo, org, tid, lp, { allSeason: false, days: [{ date: "2027-03-06", kind: "single_1" }] })).toMatchObject({ ok: true });
     const copy = (await db.pool.query<{ id: string }>("select id::text from scenic_teams where org_team_id = $1", [tid])).rows[0].id;
@@ -148,11 +148,12 @@ describe("paying to register", () => {
     s.paid.add(`cs_test_${id}`);
     expect(await confirmPayment(deps, id, `cs_test_${id}`)).toMatchObject({ ok: true, registered: true, message: "Paid: registration updated." });
     expect(await dates()).toEqual(["2027-03-06", "2027-03-13"]);
-    // REC: no 2nd Game, not offered and refused.
-    expect((await leagueEntry(db.pool, lp, copy)).options.map((o) => o.kind)).toEqual(["single_1"]);
-    expect(await addLeagueDates(deps, jo, lp, copy, { allSeason: false, days: [{ date: "2027-03-06", kind: "single_2nd" }] }, BASE)).toEqual({
+    // REC: ALL Season only, so no dates or 2nd Games are offered, and they're refused.
+    await db.pool.query("update scenic_teams set level = 'REC' where id = $1", [copy]);
+    expect((await leagueEntry(db.pool, lp, copy)).options).toEqual([]);
+    expect(await addLeagueDates(deps, jo, lp, copy, { allSeason: false, days: [{ date: "2027-03-06", kind: "single_2nd" }] }, BASE)).toMatchObject({
       ok: false,
-      message: "REC teams don't add a 2nd Game.",
+      message: expect.stringContaining("ALL Season only"),
     });
   });
 

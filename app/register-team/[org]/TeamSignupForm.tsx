@@ -5,7 +5,7 @@
 // emailed code. Then the organization and its teams are registered and you're logged in. No Level: set on the server.
 import { useState, useTransition, type ReactNode } from "react";
 import StepGuide from "../../StepGuide";
-import type { Choice as RegChoice } from "@/lib/program-options";
+import { REC_ALL_SEASON, optionsFor, type Choice as RegChoice } from "@/lib/program-options";
 import type { OpenProgram, TeamStep } from "@/lib/team-signup";
 import RegisterChoices from "../../org/scenic-city/programs/RegisterChoices";
 import { formatCell, normalizeCell } from "@/lib/phone";
@@ -48,6 +48,8 @@ const newTeam = (key: number): TeamDraft => ({ key, alt: "", gender: "", grade: 
 // Grade pills: Pre-K (on its own), K (0) and 1st–12th; one grade, or two next to each other ("7-8").
 const GRADE_PILLS = [{ value: "PK", label: "Pre-K" }, { value: "0", label: "K" }, ...Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }))];
 const gradeOn = (grade: string, g: string) => (g === "PK" ? grade === "PK" : grade !== "PK" && grade.split("-").includes(g));
+// Its group in a League: gender and (top) grade, "Boys 3".
+const groupOf = (gender: string, grade: string) => `${grade === "PK" ? "Coed" : gender} ${grade === "PK" ? -1 : grade.split("-").at(-1)}`;
 function pickGrade(grade: string, g: string): string {
   if (g === "PK" || grade === "PK" || !grade) return grade === g ? "" : g;
   const on = grade.split("-").map(Number);
@@ -652,12 +654,14 @@ export function TeamSignupForm({
             <div className="space-y-3">
               <span className={fieldLabel}>Register for</span>
               <RegisterChoices
-                options={program.league.options}
+                key={`${program.id} ${groupOf(t.gender, t.grade)}`}
+                options={optionsFor(program.league.options, program.league.recOnly.includes(groupOf(t.gender, t.grade)) ? "REC" : "COMP")}
                 gameDates={program.league.gameDates}
                 today={today}
                 entry={null}
                 onChange={(c) => setTeam(t.key, { choice: c })}
               />
+              {program.league.recOnly.includes(groupOf(t.gender, t.grade)) && <p className="text-xs text-zinc-500">{REC_ALL_SEASON}</p>}
             </div>
           )}
         </section>

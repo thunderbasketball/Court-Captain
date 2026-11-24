@@ -447,24 +447,24 @@ describe("an organization's teams in Scenic City programs", () => {
       entry: { perDate: { "2027-01-09": 2 }, feeCents: 17000 },
     });
 
-    // A REC team: no 2nd Game for anyone (not offered, refused on the server); its coaches don't add dates (its directors do).
+    // A REC team: ALL Season only (nothing else offered, refused on the server).
     const rec = ((await createOrgTeam(deps(), jo, org, { gender: "Boys", grades: ["3"], level: "REC" })) as { id: string }).id;
     await db.pool.query("insert into org_team_coaches (team_id, coach_id, role, added_by) values ($1, '5550777', 'HeadCoach', 't')", [rec]);
-    expect(await registerOrgTeam(deps(), jo, org, rec, pid, { allSeason: false, days: [{ date: "2026-12-05", kind: "single_1" }] })).toMatchObject({ ok: true });
+    const noDates = { ok: false, message: expect.stringContaining("REC teams register for ALL Season only") };
+    expect(await registerOrgTeam(deps(), jo, org, rec, pid, { allSeason: false, days: [{ date: "2026-12-05", kind: "single_1" }] })).toEqual(noDates);
+    expect(await registerOrgTeam(deps(), jo, org, rec, pid, { allSeason: true, days: [{ date: "2026-12-05", kind: "single_2nd" }] })).toEqual(noDates);
     const recShown = (await teamPrograms(deps(), kim, org, rec))!;
     expect(recShown).toMatchObject({ canRegister: false, canAddDates: false });
-    expect(recShown.programs[0].options.map((o) => o.kind)).not.toContain("single_2nd");
-    expect(await registerOrgTeam(deps(), jo, org, rec, pid, { allSeason: false, days: [{ date: "2026-12-05", kind: "single_2nd" }] })).toEqual({
-      ok: false,
-      message: "REC teams don't add a 2nd Game.",
-    });
+    expect(recShown.programs[0].options.filter((o) => o.kind !== "all_season")).toEqual([]);
+    await db.pool.query("insert into scenic_program_options (program_id, kind, fee_cents) values ($1, 'all_season', 10000) on conflict do nothing", [pid]);
+    expect(await registerOrgTeam(deps(), jo, org, rec, pid, { allSeason: true, days: [] })).toMatchObject({ ok: true });
     expect(await registerOrgTeam(deps(), kim, org, rec, pid, { allSeason: false, days: [{ date: "2026-12-12", kind: "single_1" }] })).toMatchObject({ ok: false });
     const recCopy = (await db.pool.query<{ id: string }>("select id::text from scenic_teams where org_team_id = $1", [rec])).rows[0].id;
     expect(await addLeagueDates(deps(), kim, pid, recCopy, { allSeason: false, days: [{ date: "2026-12-12", kind: "single_1" }] })).toEqual({
       ok: false,
       message: "A REC team's dates are added by its Director, Admin or Owner.",
     });
-    expect(await addLeagueDates(deps(), jo, pid, recCopy, { allSeason: false, days: [{ date: "2026-12-12", kind: "single_1" }] })).toMatchObject({ ok: true });
+    expect(await addLeagueDates(deps(), jo, pid, recCopy, { allSeason: false, days: [{ date: "2026-12-12", kind: "single_2nd" }] })).toEqual(noDates);
 
     // The team withdraws from a date and re-enters it; a date Scenic City took it out of only Scenic City restores.
     const dayOff = (what: string, out: boolean) => setOrgTeamDayOff(deps(), jo, org, tid, pid, what, out);

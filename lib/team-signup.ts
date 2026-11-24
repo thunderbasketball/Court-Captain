@@ -86,7 +86,8 @@ export type OpenProgram = {
   regCloses: string;
   logo: string | null; // its logo's link
   recLimited: boolean; // REC open only to the organizations Scenic City picked
-  league: { options: ProgramOption[]; gameDates: string[] } | null; // a League's options and Game Days
+  // A League's options and Game Days; recOnly: the groups ("Boys 3") that are only REC there (ALL Season only).
+  league: { options: ProgramOption[]; gameDates: string[]; recOnly: string[] } | null;
 };
 
 // Programs open for registration today, by start date.
@@ -102,7 +103,12 @@ export async function openPrograms(q: Pick<Queryable, "query">, now: Date): Prom
     r.rows.map(async (p) => {
       if (p.kind !== "League") return { ...p, league: null };
       const { options, gameDates } = await leagueEntry(q, p.id, null);
-      return { ...p, league: { options, gameDates } };
+      const rec = await q.query<{ g: string }>(
+        `select d.gender || ' ' || g.grade as g from scenic_divisions d join scenic_grade_groups g on g.division_id = d.id
+          where d.program_id = $1 group by d.gender, g.grade having bool_and(g.level = 'REC')`,
+        [p.id],
+      );
+      return { ...p, league: { options, gameDates, recOnly: rec.rows.map((x) => x.g) } };
     }),
   );
 }

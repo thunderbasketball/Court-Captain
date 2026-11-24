@@ -371,9 +371,9 @@ describe("Scenic City programs", () => {
       ],
     });
     await saveProgramDates(deps(), dee, id, { add: ["2027-01-09", "2027-01-16"], remove: [] });
-    await div(id, "Boys", 5, 5, ["REC"]);
-    const a = await team(pat, baylor, "Baylor A", "Boys", "5");
-    const b = await team(pat, baylor, "Baylor B", "Boys", "5");
+    await div(id, "Boys", 5, 5, ["COMP"]);
+    const a = await team(pat, baylor, "Baylor A", "Boys", "5", "COMP");
+    const b = await team(pat, baylor, "Baylor B", "Boys", "5", "COMP");
     now = new Date("2026-11-21T15:00:00Z"); // after ALL Season closed (Nov 20)
     expect(await registerTeam(deps(), pat, id, a, ALL)).toEqual({ ok: false, message: "ALL Season registration closed Nov 20." });
     // Jan 9 closes Jan 6 (3 days before): open on Nov 21.
@@ -396,7 +396,7 @@ describe("Scenic City programs", () => {
 
     const view = await getProgram(deps(), pat, id);
     expect(view!.canRegister).toEqual([
-      { teamId: b34c, name: "Baylor 3/4 Comp (3rd/4th COMP)", division: "Boys 3rd–4th · 4th COMP" },
+      { teamId: b34c, level: "COMP", name: "Baylor 3/4 Comp (3rd/4th COMP)", division: "Boys 3rd–4th · 4th COMP" },
     ]);
     expect(view!.cantRegister).toEqual([{ name: "Baylor 5th", why: "no Boys 5th REC here" }]);
 

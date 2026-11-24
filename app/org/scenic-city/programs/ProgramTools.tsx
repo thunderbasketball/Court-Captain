@@ -29,7 +29,7 @@ import { fieldLabel, inputCls, pillCls } from "../../../ui";
 import { GearIcon } from "../../../OrgSettings";
 import { CardPanel, PanelIcon, closeCardPanel } from "../../../CardIcons";
 import SubCard from "../../../SubCard";
-import { REG_OPTIONS, type ProgramOption } from "@/lib/program-options";
+import { REG_OPTIONS, optionsFor, type ProgramOption } from "@/lib/program-options";
 import RegisterChoices from "./RegisterChoices";
 import GradeRulesForm, { rulesSummary } from "../../../GradeRulesForm";
 import type { GradeRules } from "@/lib/eligibility";
@@ -528,7 +528,7 @@ export function RegisterTeam({
   league,
 }: {
   programId: string;
-  teams: { teamId: string; name: string; division: string }[];
+  teams: { teamId: string; name: string; division: string; level: string }[];
   league: { options: ProgramOption[]; gameDates: string[]; today: string;
   } | null;
 }) {
@@ -554,7 +554,7 @@ export function RegisterTeam({
         {chosen && (
           <RegisterChoices
             key={chosen.teamId}
-            options={league.options}
+            options={optionsFor(league.options, chosen.level)}
             gameDates={league.gameDates}
             today={league.today}
             entry={null}

@@ -380,11 +380,22 @@ describe("the shopping cart", () => {
     expect(many).toEqual({ ok: true, added: 1, refused: [expect.stringContaining("already in Ann X's cart")] });
     expect((await cart(jo)).groups[0].lines).toMatchObject([{ what: "Dec 12 1 game", cents: 3500 }]);
 
+    // REC: ALL Season only, whatever else is picked; not in the cart either.
+    await db.pool.query("insert into org_features (org, feature, source, turned_on_by) values ($1, 'court-sync', 'setup', 't') on conflict do nothing", [org]);
+    await addDivision(deps(), dee, pid, { gender: "Girls", from: 3, to: 4, levels: ["REC"] });
+    const rec = ((await createOrgTeam(deps(), jo, org, { gender: "Girls", grades: ["4"], level: "REC" })) as { id: string }).id;
+    const mixed = await registerAllOrgTeams(deps(), jo, org, pid, true);
+    if (!mixed.ok) throw new Error(mixed.message);
+    expect(mixed.teams.find((t) => t.id === rec)).toMatchObject({ level: "REC", choice: ALL });
+    expect(await registerAllOrgTeams(deps(), jo, org, pid, false, [rec], null, { [rec]: day("2026-12-05") })).toMatchObject({ ok: false, message: expect.stringContaining("ALL Season only") });
+    expect(await add(jo, rec, day("2026-12-05"))).toMatchObject({ ok: false });
+    expect(await add(jo, rec, ALL)).toMatchObject({ ok: true });
+
     // ALL Season closed: each picks its dates.
     await db.pool.query("update scenic_program_options set closes_on = '2026-11-20' where program_id = $1 and kind = 'all_season'", [pid]);
     const late = await registerAllOrgTeams(deps(), jo, org, pid, true);
     if (!late.ok) throw new Error(late.message);
     expect(late.teams.map((t) => t.choice)).toEqual([null, null]);
-    expect(late.skipped).toEqual([]);
+    expect(late.skipped).toEqual([expect.stringContaining("ALL Season registration closed")]); // the REC team
   });
 });

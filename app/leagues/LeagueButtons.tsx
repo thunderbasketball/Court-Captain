@@ -8,7 +8,7 @@ import { PopUp, Toast, useConfirm } from "../client-ui";
 import RegisterChoices from "../org/scenic-city/programs/RegisterChoices";
 import StripeInPage, { payInPage } from "../StripeInPage";
 import { addCartItem, addCartItems } from "../cart/actions";
-import { addLabel, addable, closedReason, pickedLine, planChoice, shortDate, type Choice, type ChoiceResult, type ProgramOption } from "@/lib/program-options";
+import { addLabel, addable, closedReason, optionsFor, pickedLine, planChoice, shortDate, type Choice, type ChoiceResult, type ProgramOption } from "@/lib/program-options";
 import type { BatchResult, BatchTeam } from "@/lib/scenic-programs";
 import type { LastBatch } from "@/lib/register-batches";
 import TeamsIncluded from "../TeamsIncluded";
@@ -137,7 +137,7 @@ function RegisterAllPreview({
   const terms = plan.terms ?? null;
   // What each team registers for: what was changed here, else what it starts as (null: it must pick its dates).
   const choiceOf = (t: BatchTeam): Choice | null => choices[t.id] ?? t.choice;
-  const optionsOf = (t: BatchTeam) => (t.level === "REC" ? (terms?.options ?? []).filter((o) => o.kind !== "single_2nd") : (terms?.options ?? [])); // REC: no 2nd Game
+  const optionsOf = (t: BatchTeam) => optionsFor(terms?.options ?? [], t.level); // REC: ALL Season only
   const NONE: Choice = { allSeason: false, days: [] };
   // Its price, and why it can't register as picked (checked again on the server).
   const costOf = (t: BatchTeam): { cents: number; problem: string | null } => {
@@ -151,14 +151,15 @@ function RegisterAllPreview({
   const sub = picked.reduce((n, t) => n + costOf(t).cents, 0);
   const problems = picked.filter((t) => costOf(t).problem).length;
   const changed = Object.fromEntries(picked.flatMap((t) => (choiceOf(t) && terms ? [[t.id, choiceOf(t)!] as const] : [])));
+  const comp = picked.filter((t) => t.level !== "REC");
   const cartable = !!terms && sub > 0 && org !== "thunder" && org !== "scenic-city";
   const setChoice = (ids: string[], c: Choice) =>
     setChoices((s) => ({
       ...s,
       ...Object.fromEntries(
         plan.teams
-          .filter((t) => ids.includes(t.id))
-          .map((t) => [t.id, t.level === "REC" ? { ...c, days: c.days.filter((d) => d.kind !== "single_2nd") } : c]),
+          .filter((t) => ids.includes(t.id) && t.level !== "REC") // REC: ALL Season only
+          .map((t) => [t.id, c]),
       ),
     }));
   const payLaterOk = "payLaterOk" in plan && plan.payLaterOk === true; // a Pay later organization may also pay later
@@ -191,7 +192,7 @@ function RegisterAllPreview({
     <div className="space-y-3 text-sm">
       {plan.teams.length > 0 && (
         <StepGuide name="register-all" step={1} total={plan.payer ? 2 : 1} title="Pick your teams">
-          Every team that can register is checked. Uncheck any to leave out{terms ? ", change what any registers for" : ""}, then tap Register
+          Every team that can register is checked. Uncheck any to leave out{terms ? ", change what a COMP team registers for (REC teams are ALL Season; they can sit out dates in Schedule requests)" : ""}, then tap Register
           {cartable ? " (or Add to cart)" : ""} at the bottom.
           {plan.payer ? ` Pay${payLaterOk ? " now" : ""} opens Stripe's secure card page (step 2).` : ""}
           {payLaterOk && plan.payer ? " Pay later registers them now and emails the invoice." : ""}
@@ -208,8 +209,8 @@ function RegisterAllPreview({
       ) : (
         <p>No teams can be registered.</p>
       )}
-      {/* The checked teams together: the same picks for all of them. */}
-      {terms && picked.length > 1 && (
+      {/* The checked COMP teams together: the same picks for all of them. */}
+      {terms && comp.length > 1 && (
         <div className="rounded-lg ring-1 ring-zinc-950/10 dark:ring-white/10">
           <button
             type="button"
@@ -217,12 +218,12 @@ function RegisterAllPreview({
             onClick={() => setEditing(editing === "all" ? null : "all")}
             className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium text-thunder-blue dark:text-blue-400"
           >
-            Change what all {picked.length} checked teams register for
+            Change what the {comp.length} checked COMP teams register for
             <span className={`text-zinc-400 transition-transform ${editing === "all" ? "rotate-90" : ""}`}>›</span>
           </button>
           {editing === "all" && (
             <div className="px-3 pb-3">
-              <RegisterChoices options={terms.options} gameDates={terms.gameDates} today={terms.today} entry={null} onChange={(c) => setChoice(picked.map((t) => t.id), c)} />
+              <RegisterChoices options={terms.options} gameDates={terms.gameDates} today={terms.today} entry={null} onChange={(c) => setChoice(comp.map((t) => t.id), c)} />
             </div>
           )}
         </div>
@@ -314,9 +315,11 @@ function RegisterAllPreview({
                               </span>
                               <span className="shrink-0 tabular-nums">
                                 {!costOf(t).problem && money(costOf(t).cents)}{" "}
-                                <button type="button" onClick={() => setEditing(editing === t.id ? null : t.id)} className="font-medium text-thunder-blue dark:text-blue-400">
-                                  {editing === t.id ? "Done" : choiceOf(t) ? "Change" : "Pick dates"}
-                                </button>
+                                {t.level !== "REC" && (
+                                  <button type="button" onClick={() => setEditing(editing === t.id ? null : t.id)} className="font-medium text-thunder-blue dark:text-blue-400">
+                                    {editing === t.id ? "Done" : choiceOf(t) ? "Change" : "Pick dates"}
+                                  </button>
+                                )}
                               </span>
                             </div>
                             {editing === t.id && (

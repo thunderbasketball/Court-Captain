@@ -189,3 +189,8 @@ export function firstOpenDate(options: ProgramOption[], gameDates: string[], tod
     }
   return null;
 }
+
+// What a team of this level may register for: a REC team ALL Season only (it sits out dates in Schedule requests).
+export const REC_ALL_SEASON = "REC teams register for ALL Season only. They can sit out dates in Schedule requests.";
+export const optionsFor = (options: ProgramOption[], level: string | null | undefined): ProgramOption[] =>
+  level === "REC" ? options.filter((o) => o.kind === "all_season") : options;

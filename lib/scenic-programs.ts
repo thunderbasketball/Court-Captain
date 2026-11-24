@@ -15,6 +15,8 @@ import {
   cleanChoice,
   closedReason,
   firstOpenDate,
+  REC_ALL_SEASON,
+  optionsFor,
   planChoice,
   startingChoice,
   type Choice,
@@ -210,7 +212,7 @@ export type ProgramDetail = ProgramSummary & {
   canManage: boolean;
   canSchedule: boolean; // take teams out of a day, the Brackets or the program, and restore them
   // The viewer's teams that can register now, with where each would go (none while registration is closed).
-  canRegister: { teamId: string; name: string; division: string }[];
+  canRegister: { teamId: string; name: string; division: string; level: string }[];
   // Their teams that can't, and why.
   cantRegister: { name: string; why: string }[];
 };
@@ -359,6 +361,7 @@ async function readProgram(deps: Deps, viewer: SessionUser, id: string): Promise
       else if (d && g)
         canRegister.push({
           teamId: t.id,
+          level: t.level,
           name: `${t.name} (${gradeLabel(t.gradeLow, t.grade)} ${t.level})`,
           division: `${d.label} · ${g.label}`,
         });
@@ -1155,7 +1158,7 @@ export async function registerAllScenicTeams(
 // ---- Register all: a preview first, then the registrations as one batch that can be undone ----
 
 // id: the team picked; cents: what it costs (ALL Season, or the program's fee)
-// level: REC or COMP (a REC team has no 2nd Game). choice: what it registers as (a League; null: pick its dates).
+// level: REC (ALL Season only) or COMP. choice: what it registers as (a League; null: pick its dates).
 export type BatchTeam = {
   id: string;
   name: string;
@@ -1239,7 +1242,9 @@ export async function registerBatch(
   if (b.pay) await q.query("savepoint batch_pay");
   for (const t of copies) {
     const id = t.copy;
-    const choice = picks.get(t.id) ?? probe;
+    const level = (await q.query<{ level: string }>("select level from scenic_teams where id = $1", [id])).rows[0]?.level ?? "";
+    const rec = level === "REC" && league; // ALL Season only
+    const choice = picks.get(t.id) ?? (rec ? { allSeason: true, days: [] } : probe);
     const placed = await saveChoice(q, b.programId, id, choice, by(b.viewer), b.now);
     if ("error" in placed) {
       if (picks.has(t.id)) throw new BatchError(`${t.name}: ${placed.error}`);
@@ -1254,8 +1259,8 @@ export async function registerBatch(
     out.push({
       id: t.id,
       name: t.name,
-      level: (await q.query<{ level: string }>("select level from scenic_teams where id = $1", [id])).rows[0]?.level ?? "",
-      choice: league ? (picks.get(t.id) ?? start) : null,
+      level,
+      choice: league ? (picks.get(t.id) ?? (rec ? choice : start)) : null,
       division: placed.division ?? "",
       dates: e ? Object.keys(e.perDate).sort() : [],
       bracket: !!e?.bracket,
@@ -1647,10 +1652,10 @@ export async function saveChoice(
   }
   const add = parseChoice(choice);
   if (!add) return { error: "Pick ALL Season or at least one date." };
-  // REC teams play one game a date: no 2nd Game.
-  if (add.days.some((d) => d.kind === "single_2nd")) {
+  // A REC team registers for ALL Season only. (Not for what FastBreak already registered, or what was already paid for.)
+  if (add.days.length && checkCloses && !recAnyway) {
     const lv = await q.query<{ level: string }>("select level from scenic_teams where id = $1", [teamId]);
-    if (lv.rows[0]?.level === "REC") return { error: "REC teams don't add a 2nd Game." };
+    if (lv.rows[0]?.level === "REC") return { error: REC_ALL_SEASON };
   }
   const today = easternDate(now);
   if (add.days.some((d) => d.date < today)) return { error: "Past Game Days can't be picked." };
@@ -1686,13 +1691,13 @@ export async function leagueEntry(
   programId: string,
   teamId: string | null,
   org?: string | null, // the team's organization (its own price), when it has no League copy yet
-  level?: string | null, // the team's level, when it has no League copy yet (REC: no 2nd Game offered)
+  level?: string | null, // the team's level, when it has no League copy yet (REC: ALL Season only)
 ): Promise<{ options: ProgramOption[]; gameDates: string[]; entry: Entry | null }> {
   const team = teamId && (!org || !level) ? await teamFacts(q, teamId) : undefined;
   const terms = await leagueTerms(q, programId, org ?? team?.org ?? null);
   const c = teamId ? ((await choices(q, programId)).get(teamId) ?? null) : null;
   const lv = level ?? team?.level ?? null;
-  const options = lv === "REC" ? terms.options.filter((o) => o.kind !== "single_2nd") : terms.options;
+  const options = optionsFor(terms.options, lv);
   return { ...terms, options, entry: c ? entryOf(c, terms) : null };
 }
 
