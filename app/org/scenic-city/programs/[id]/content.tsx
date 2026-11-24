@@ -45,6 +45,8 @@ import SubCard from "../../../../SubCard";
 import RegistrationsCard from "../../../../RegistrationsCard";
 import ProgramInvoices from "../../../../ProgramInvoices";
 import ProgramCarts from "../../../../cart/ProgramCarts";
+import RosterConflicts from "../RosterConflicts";
+import { rosterConflicts } from "@/lib/roster-conflicts";
 import { programCarts } from "@/lib/cart";
 import { pendingInvoices } from "@/lib/cart-invoices";
 import { stripeApi } from "@/lib/stripe/client";
@@ -92,10 +94,11 @@ export async function ProgramContent({
         .filter((o) => o.id !== p.id && o.divisions > 0)
         .map((o) => ({ id: o.id, name: o.name, divisions: o.divisions }))
     : [];
-  const [games, requestOn, requestSet] = await Promise.all([
+  const [games, requestOn, requestSet, conflicts] = await Promise.all([
     p.kind === "League" ? programSchedule(db, p.id) : [], // the Schedule card
     p.kind === "League" ? requestDays(db, p.id) : {}, // Game Days taking schedule requests
     requestSettings(db, p.id), // their blocks and limit
+    manage && p.kind === "League" ? rosterConflicts({ pool: db, now: () => new Date() }, user, p.id) : null,
   ]);
   const fee = p.feeCents === null ? null : `$${(p.feeCents / 100).toFixed(2)}`;
   // Paid / Unpaid (when the program charges): unpaid shows behind the team to Directors of Programs; only Scenic City's
@@ -586,6 +589,14 @@ export async function ProgramContent({
               ) : (
                 <p className="text-sm text-zinc-500">Only Scenic City&apos;s Owners see the list of registered teams.</p>
               )}
+            </SubCard>
+          </div>
+        )}
+        {/* Roster conflicts: players who look like they're on two teams (Owners, Admins and Directors of Programs). */}
+        {conflicts && (
+          <div className="mt-4">
+            <SubCard title="Roster conflicts" count={conflicts.conflicts.length} alert={conflicts.conflicts.some((c) => c.strength !== "Check")}>
+              <RosterConflicts programId={p.id} report={conflicts} canAct={!user.actingBy} />
             </SubCard>
           </div>
         )}

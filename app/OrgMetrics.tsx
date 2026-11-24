@@ -16,7 +16,7 @@ import type { ReactNode } from "react";
 
 // The To Do items that need someone (each flashes red, and so do To Do and the Home card): players not on a team,
 // uniforms missing a number or size, teams missing something, teams whose staff haven't used the app in 30 days, and
-// what's waiting (join requests, Support chats), and its Leagues' events not published yet.
+// what's waiting (join requests, Support chats), its Leagues' events not published yet, and their possible roster conflicts.
 export function todoCounts(m: Metrics) {
   const idle = m.teamUse.filter((t) => !t.views).length;
   const waiting = m.waiting.requests + m.waiting.newChats + m.waiting.workingChats;
@@ -27,6 +27,7 @@ export function todoCounts(m: Metrics) {
     idle,
     waiting,
     unpublished: m.unpublished.length,
+    conflicts: m.rosterConflicts.reduce((n, p) => n + p.n, 0),
   };
   return { ...items, open: Object.values(items).filter((n) => n > 0).length };
 }
@@ -122,6 +123,19 @@ export default function OrgMetrics({
                 ))}
               </ul>
               <p className="pt-2 text-xs text-zinc-500">Publish each on the Scheduler, with the toggle in front of its name.</p>
+            </SubCard>
+          )}
+          {todo.conflicts > 0 && (
+            <SubCard title="Roster conflicts" count={todo.conflicts} alert>
+              <ul className="divide-y divide-zinc-100 dark:divide-white/5">
+                {m.rosterConflicts.map((p) => (
+                  <li key={p.programId} className="flex justify-between gap-3 py-1.5 text-sm">
+                    <span className="font-medium">{p.program}</span>
+                    <span className="text-xs text-zinc-500">{p.n} to look at</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="pt-2 text-xs text-zinc-500">Players who look like they&rsquo;re on two teams: the League&rsquo;s card, Roster conflicts.</p>
             </SubCard>
           )}
           {m.notOnTeam && (

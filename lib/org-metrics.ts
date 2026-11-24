@@ -9,6 +9,7 @@ import { ordinal } from "./grades";
 import { isOrgAdmin } from "./org-admin";
 import type { Queryable } from "./sql";
 import { TZ, easternDate, weekOf } from "./time";
+import { openConflicts } from "./roster-conflicts";
 import { feeTrend, type FeeDay, type FeeRow } from "./fee-trend";
 
 type Deps = { pool: Pick<Queryable, "query">; now: () => Date };
@@ -50,6 +51,8 @@ export type OrgMetrics = {
   waiting: { requests: number; newChats: number; workingChats: number };
   // Its Leagues' events still to come whose schedule isn't published (the Brackets once, on their first day).
   unpublished: { programId: string; program: string; day: string; bracket: boolean }[];
+  // Its current Leagues' possible roster conflicts still to look at (a Conflict or Likely).
+  rosterConflicts: { programId: string; program: string; n: number }[];
 };
 
 const count = async (q: Pick<Queryable, "query">, sql: string, params: unknown[] = []) =>
@@ -62,7 +65,7 @@ export async function orgMetrics(deps: Deps, viewer: SessionUser, org: string): 
   const has = await orgFeatures(q, org);
   const thunder = org === "thunder";
   const teamsOn = has.has("team-building");
-  const [registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished] = await Promise.all([
+  const [registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished, rosterConflicts] = await Promise.all([
     thunder && has.has("player-registration") ? registrationMetrics(q, now) : null,
     teamsOn ? teamCounts(q, org) : null,
     thunder && has.has("player-registration") ? notOnTeamMetrics(q) : null,
@@ -73,8 +76,9 @@ export async function orgMetrics(deps: Deps, viewer: SessionUser, org: string): 
     waitingOn(q, org),
     teamsOn ? teamUsage(q, org, now) : [],
     has.has("programs") ? unpublishedEvents(q, org, now) : [],
+    has.has("programs") ? openConflicts(q, org, now) : [],
   ]);
-  return { registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished };
+  return { registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished, rosterConflicts };
 }
 
 async function registrationMetrics(q: Pick<Queryable, "query">, now: Date): Promise<OrgMetrics["registrations"]> {

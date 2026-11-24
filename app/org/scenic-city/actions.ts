@@ -16,6 +16,7 @@ import * as courts from "@/lib/scenic-courts";
 import * as bindings from "@/lib/scenic-bindings";
 import * as fastbreak from "@/lib/fastbreak/orgs";
 import * as fbRegister from "@/lib/fastbreak/register";
+import * as rosterConflicts from "@/lib/roster-conflicts";
 import * as publicLeague from "@/lib/public-league";
 import { fastbreakClient } from "@/lib/fastbreak/client";
 import { setProgramGradeRules as saveProgramGradeRules } from "@/lib/grade-rules";
@@ -123,6 +124,9 @@ export async function registerTeam(programId: string, teamId: string, choice?: u
 }
 export async function registerAllScenicTeams(programId: string, preview?: boolean, only?: string[], choices?: Record<string, unknown>) {
   return guarded((u) => programs.registerAllScenicTeams(deps, u, programId, preview === true, only, choices), "programs");
+}
+export async function reviewRosterConflict(programId: string, pair: string, decision: "different" | "allowed" | null) {
+  return guarded((u) => rosterConflicts.reviewConflict(deps, u, programId, pair, decision), "programs");
 }
 export async function setTeamOff(programId: string, teamId: string, what: string, out: boolean) {
   return guarded((u) => programs.setTeamOff(deps, u, programId, teamId, what, out === true), "programs");
