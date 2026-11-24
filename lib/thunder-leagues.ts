@@ -87,6 +87,7 @@ export async function registerAllThunderTeams(
   preview = false,
   only?: unknown, // the teams left checked in the confirmation
   pay?: BatchPay | null, // the League takes cards: one payment for all, registered once it's paid
+  choices?: unknown, // what each registers for, when not ALL Season
 ): Promise<Result<BatchResult>> {
   if (!hasArea(viewer, "teams")) return { ok: false, message: "Only a Director of Teams can register teams." };
   if (!isId(programId)) return { ok: false, message: "Pick a program." };
@@ -107,7 +108,7 @@ export async function registerAllThunderTeams(
       const now = deps.now();
       const r = await registerBatch(
         q,
-        { programId, org: "thunder", viewer, now, preview, only, pay },
+        { programId, org: "thunder", viewer, now, preview, only, pay, choices },
         teams.rows.map((t) => ({ id: t.id, name: t.name, teamId: () => thunderCopy(q, t.id, partnerId, by(viewer), now) })),
       );
       return { ok: true as const, ...r };

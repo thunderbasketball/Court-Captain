@@ -13,7 +13,7 @@ import { mayNotAddDates } from "./league-dates";
 import { copyOf, partnerFor, teamRegistrar } from "./org-leagues";
 import { isOrgOwner } from "./org-admin";
 import { orgName } from "./org-registry";
-import { closedReason, entryLine, planChoice, type Choice } from "./program-options";
+import { cleanChoice, closedReason, entryLine, pickedLine, planChoice, type Choice } from "./program-options";
 import { leagueEntry, owesMore, payLater, programRegStatus } from "./scenic-programs";
 import { withTx, type Queryable } from "./sql";
 import { cardFee } from "./stripe/card-fee";
@@ -31,24 +31,9 @@ const MAX_ITEMS = 200;
 export const CART_DAYS = 7;
 const DAY = 86_400_000;
 const expired = (added: Date, now: Date) => added.getTime() + CART_DAYS * DAY <= now.getTime();
-const KINDS = new Set(["single_1", "single_2", "single_2nd"]);
 
 // The team being registered: an organization's own team (its team page), or a League team (its League page; Thunder's).
 export type CartTeam = { org: string; orgTeamId: string } | { teamId: string };
-
-// A picked choice from the browser, cleaned to its known fields (null: not a choice). The League's rules come later.
-function cleanChoice(v: unknown): Choice | null {
-  if (!v || typeof v !== "object") return null;
-  const { allSeason, days } = v as { allSeason?: unknown; days?: unknown };
-  if (!Array.isArray(days) || days.length > 100) return null;
-  const out: Choice = { allSeason: allSeason === true, days: [] };
-  for (const d of days) {
-    const x = (d && typeof d === "object" ? d : {}) as { date?: unknown; kind?: unknown };
-    if (typeof x.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(x.date) || typeof x.kind !== "string" || !KINDS.has(x.kind)) return null;
-    out.days.push({ date: x.date, kind: x.kind as Choice["days"][number]["kind"] });
-  }
-  return out;
-}
 
 type Found = {
   org: string; // whose team it is
@@ -144,6 +129,30 @@ export async function addToCart(
     );
     return { ok: true as const, replaced: !!old.rowCount };
   });
+}
+
+// Several of an organization's teams into the cart at once, each with its own pick (Register ALL). Those that can't are
+// named with why; the others go in.
+export async function addManyToCart(
+  deps: Deps,
+  viewer: SessionUser,
+  programId: unknown,
+  org: unknown,
+  items: unknown,
+): Promise<Result<{ added: number; refused: string[] }>> {
+  if (!Array.isArray(items) || !items.length || items.length > MAX_ITEMS) return { ok: false, message: "Check at least one team." };
+  let added = 0;
+  const refused: string[] = [];
+  for (const x of items as { id?: unknown; choice?: unknown }[]) {
+    const r = await addToCart(deps, viewer, programId, { org, orgTeamId: x?.id }, x?.choice);
+    if (r.ok) {
+      added++;
+      continue;
+    }
+    const name = isId(x?.id) ? (await findTeam(deps.pool, { orgTeamId: x.id }))?.name : undefined;
+    refused.push(name && !r.message.startsWith(name) ? `${name}: ${r.message}` : r.message);
+  }
+  return added || !refused.length ? { ok: true, added, refused } : { ok: false, message: refused.join(" ") };
 }
 
 // Whether two picks are the same thing: ALL Season twice, the same date (a 2nd Game is its own), or a date ALL Season covers.
@@ -264,9 +273,6 @@ export async function priced(
 }
 
 const short = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-const DAY_WORDS: Record<string, string> = { single_1: "1 game", single_2: "2 games", single_2nd: "2nd Game" };
-const pickedLine = (c: Choice) =>
-  [...(c.allSeason ? ["ALL Season"] : []), ...[...c.days].sort((a, b) => a.date.localeCompare(b.date)).map((d) => `${short(d.date)} ${DAY_WORDS[d.kind]}`)].join(" · ");
 
 type Row = {
   id: string;

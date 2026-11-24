@@ -1,14 +1,15 @@
+import type { PoolClient } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
-import { addToCart, getCart, inCarts, payCart, programCarts, registerPayLater, removeFromCart } from "./cart";
+import { addManyToCart, addToCart, getCart, inCarts, payCart, programCarts, registerPayLater, removeFromCart } from "./cart";
 import { cancelRequested, markRequestedPaid, payRequested, pendingInvoices, requestInvoice, requestedInvoice, requestedInvoiceEmail } from "./cart-invoices";
 import { buildInvoice, pastDueInvoices } from "./invoices";
-import { registerOrgTeam, teamPrograms } from "./org-leagues";
+import { registerAllOrgTeams, registerOrgTeam, teamPrograms } from "./org-leagues";
 import { createOrganization } from "./org-signup";
 import { createOrgTeam, removeOrgTeamCoach } from "./org-teams";
 import { addDivision, savePriceGroup, saveProgram, saveProgramDates, tagOrgs, programPriceGroups } from "./scenic-programs";
 import type { StripeApi } from "./stripe/connect";
-import { confirmPayment, registerOrPay } from "./stripe/registration";
+import { confirmPayment, insertPayment, openCheckout, registerOrPay, type PayTeam } from "./stripe/registration";
 import { createTestDb, grant } from "./testing/db";
 
 const person = (coachId: string, firstName: string): SessionUser =>
@@ -336,5 +337,54 @@ describe("the shopping cart", () => {
     const c = await team();
     await add(jo, c, ALL);
     expect(await requestInvoice(deps(), jo, org, pid)).toMatchObject({ ok: false, message: expect.stringContaining("Pay later") });
+  });
+
+  it("Register ALL: each team its own pick (REC: no 2nd Game), all or none; or all of them into the cart", async () => {
+    const [a, b] = [await team(), await team("3")];
+    const pre = await registerAllOrgTeams(deps(), jo, org, pid, true);
+    if (!pre.ok) throw new Error(pre.message);
+    expect(pre.terms).toMatchObject({ gameDates: ["2026-12-05", "2026-12-12", "2026-12-19"], today: "2026-11-24" });
+    expect(pre.teams.map((t) => [t.level, t.choice, t.cents])).toEqual([
+      ["COMP", ALL, 25000],
+      ["COMP", ALL, 25000],
+    ]);
+    // A pick that can't be is refused (all or none), named; nothing unreadable.
+    const bad = await registerAllOrgTeams(deps(), jo, org, pid, false, [a, b], null, { [b]: day("2026-12-25") });
+    expect(bad).toMatchObject({ ok: false, message: expect.stringContaining("isn't one of this League's Game Days") });
+    expect(await registerAllOrgTeams(deps(), jo, org, pid, false, [a], null, { [a]: "x" })).toMatchObject({ ok: false });
+    expect(await regOf(a)).toBeNull();
+    // Paid by card: each at its own price; registered as picked once paid.
+    let paymentId = "";
+    const pay = {
+      feePayer: "org" as const,
+      record: async (q: PoolClient, teams: PayTeam[]) => (paymentId = await insertPayment(q, { account_id: "acct_league", fee_payer: "org", live: false }, { programId: pid, teamOrg: org, teams, startedBy: "Jo X", now })),
+    };
+    const picks = { [b]: { allSeason: false, days: [{ date: "2026-12-05", kind: "single_1" }, { date: "2026-12-05", kind: "single_2nd" }] } };
+    const r = await registerAllOrgTeams(deps(), jo, org, pid, false, [a, b], pay, picks);
+    expect(r).toMatchObject({ ok: true, payer: "org", paymentId: expect.any(String) });
+    await openCheckout(deps(), paymentId, BASE, "/x");
+    expect(s.checkouts[0].lines.map((l) => l.cents).sort()).toEqual([25000, 5500].sort());
+    const cs = s.checkouts[0].id;
+    s.paid.add(cs);
+    expect(await confirmPayment(deps(), paymentId, cs)).toMatchObject({ registered: true });
+    expect((await teamPrograms(deps(), jo, org, b))!.programs[0].entry).toMatchObject({ allSeason: false, perDate: { "2026-12-05": 2 } });
+
+    // Into the cart together; one already spoken for is named, the others go in.
+    const [c, d] = [await team(), await team("3")];
+    await add(ann, c, ALL);
+    expect(await addManyToCart(deps(), nat, pid, org, [{ id: d, choice: ALL }])).toMatchObject({ ok: false });
+    const many = await addManyToCart(deps(), jo, pid, org, [
+      { id: c, choice: ALL },
+      { id: d, choice: day("2026-12-12") },
+    ]);
+    expect(many).toEqual({ ok: true, added: 1, refused: [expect.stringContaining("already in Ann X's cart")] });
+    expect((await cart(jo)).groups[0].lines).toMatchObject([{ what: "Dec 12 1 game", cents: 3500 }]);
+
+    // ALL Season closed: each picks its dates.
+    await db.pool.query("update scenic_program_options set closes_on = '2026-11-20' where program_id = $1 and kind = 'all_season'", [pid]);
+    const late = await registerAllOrgTeams(deps(), jo, org, pid, true);
+    if (!late.ok) throw new Error(late.message);
+    expect(late.teams.map((t) => t.choice)).toEqual([null, null]);
+    expect(late.skipped).toEqual([]);
   });
 });

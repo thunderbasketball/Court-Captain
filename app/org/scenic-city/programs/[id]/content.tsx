@@ -254,7 +254,6 @@ export async function ProgramContent({
                   programId={p.id}
                   program={p.name}
                   count={p.canRegister.length}
-                  allSeason={p.kind === "League"}
                 />
               )}
             </div>

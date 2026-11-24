@@ -35,6 +35,7 @@ export default function RegisterChoices({
   saveLabel,
   onChange,
   paid,
+  initial,
 }: {
   options: ProgramOption[];
   gameDates: string[];
@@ -46,10 +47,11 @@ export default function RegisterChoices({
   saveLabel?: string; // the button (default Register, or Add to registration)
   paid?: boolean; // adding: whether what it already has is paid (shown beside it)
   onChange?: (choice: Choice) => void;
+  initial?: Choice; // already picked (changing it)
 }) {
   const had: Choice = entry ? { allSeason: entry.allSeason, days: entry.days } : { allSeason: false, days: [] };
-  const [all, setAllState] = useState(false);
-  const [days, setDaysState] = useState<Choice["days"]>([]);
+  const [all, setAllState] = useState(initial?.allSeason ?? false);
+  const [days, setDaysState] = useState<Choice["days"]>(initial?.days ?? []);
   // Each pick also goes up to the form (one of several teams).
   const setAll = (v: boolean) => {
     const nextDays = v ? days : keepValid(days, false); // a 2nd Game whose day no longer has a first game comes off

@@ -44,7 +44,7 @@ export async function registerTeam(org: string, teamId: string, programId: strin
 // all of them, registered once Stripe says it's paid (lib/stripe/registration).
 // `mode` (a Pay later organization): "later" registers now unpaid; otherwise (or "card") pays by card when the League takes it.
 // `inPage`: Stripe's form opens in the page (`payInPage`) instead of Stripe's own page.
-export async function registerAll(org: string, programId: string, preview?: boolean, only?: string[], mode?: "card" | "later", inPage = false) {
+export async function registerAll(org: string, programId: string, preview?: boolean, only?: string[], mode?: "card" | "later", inPage = false, choices?: Record<string, unknown>) {
   // Thunder's teams are its own kind; every other organization's are organization teams.
   const p = preview === true;
   const sd = stripeDeps();
@@ -58,8 +58,8 @@ export async function registerAll(org: string, programId: string, preview?: bool
       // Something to pay, no Pay later and no card payments: nothing is registered unpaid.
       const would =
         org === "thunder"
-          ? await thunderLeagues.registerAllThunderTeams(deps(), u, programId, true, only)
-          : await leagues.registerAllOrgTeams(deps(), u, org, programId, true, only);
+          ? await thunderLeagues.registerAllThunderTeams(deps(), u, programId, true, only, null, choices)
+          : await leagues.registerAllOrgTeams(deps(), u, org, programId, true, only, null, choices);
       if (!would.ok) return would;
       if (would.teams.some((t) => (t.cents ?? 0) > 0)) return { ok: false as const, message: NO_CARDS };
     }
@@ -69,8 +69,8 @@ export async function registerAll(org: string, programId: string, preview?: bool
     };
     const r =
       org === "thunder"
-        ? await thunderLeagues.registerAllThunderTeams(deps(), u, programId, p, only, pay)
-        : await leagues.registerAllOrgTeams(deps(), u, org, programId, p, only, pay);
+        ? await thunderLeagues.registerAllThunderTeams(deps(), u, programId, p, only, pay, choices)
+        : await leagues.registerAllOrgTeams(deps(), u, org, programId, p, only, pay, choices);
     if (r.ok && !r.paymentId && r.batchId) after(() => sendInvoice(programId, org, base)); // registered now: its invoice
     // Its confirmation offers Pay later beside paying now when the organization may (and cards are taken).
     if (r.ok && p) return { ...r, payLaterOk: later && !!to };

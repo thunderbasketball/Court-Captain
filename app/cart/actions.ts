@@ -24,6 +24,9 @@ async function guarded<T>(fn: (user: NonNullable<Awaited<ReturnType<typeof curre
 export async function addCartItem(programId: string, team: cart.CartTeam, choice?: unknown) {
   return guarded((u) => cart.addToCart(stripeDeps(), u, programId, team, choice));
 }
+export async function addCartItems(programId: string, org: string, items: { id: string; choice: unknown }[]) {
+  return guarded((u) => cart.addManyToCart(stripeDeps(), u, programId, org, items));
+}
 export async function removeCartItem(id: string) {
   return guarded((u) => cart.removeFromCart(stripeDeps(), u, id));
 }

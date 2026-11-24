@@ -7,8 +7,8 @@ import { registerAllScenicTeams } from "../org/scenic-city/actions";
 import { PopUp, Toast, useConfirm } from "../client-ui";
 import RegisterChoices from "../org/scenic-city/programs/RegisterChoices";
 import StripeInPage, { payInPage } from "../StripeInPage";
-import { addCartItem } from "../cart/actions";
-import { addLabel, addable, shortDate, type Choice, type ChoiceResult, type ProgramOption } from "@/lib/program-options";
+import { addCartItem, addCartItems } from "../cart/actions";
+import { addLabel, addable, closedReason, pickedLine, planChoice, shortDate, type Choice, type ChoiceResult, type ProgramOption } from "@/lib/program-options";
 import type { BatchResult, BatchTeam } from "@/lib/scenic-programs";
 import type { LastBatch } from "@/lib/register-batches";
 import TeamsIncluded from "../TeamsIncluded";
@@ -27,14 +27,12 @@ export function RegisterAllButton({
   programId,
   program,
   count,
-  allSeason = true,
   compact = false,
 }: {
   org: string;
   programId: string;
   program: string;
   count: number;
-  allSeason?: boolean;
   compact?: boolean; // just "Register ALL", beside the program's line (Home's Register ALL Teams)
 }) {
   const [msg, setMsg] = useState<string | null>(null);
@@ -42,7 +40,7 @@ export function RegisterAllButton({
   return (
     <div className={compact && !msg && !done ? "shrink-0" : "w-full space-y-2 sm:w-auto"}>
       <PopUp
-        label={compact ? "Register ALL" : `Register ALL unregistered (${count})${allSeason ? " · ALL Season" : ""}`}
+        label={compact ? "Register ALL" : `Register ALL unregistered (${count})`}
         title={`Register ALL in ${program}`}
         className={`${btn} bg-thunder-blue text-white`}
       >
@@ -56,6 +54,7 @@ export function RegisterAllButton({
               setDone({ ...r, at: Date.now() });
               setMsg(`${r.registered.length} registered in ${program}.`);
             }}
+            say={setMsg}
           />
         )}
       </PopUp>
@@ -90,20 +89,23 @@ export function RegisterAllButton({
 }
 
 // Inside Register all's pop-up: the preview (nothing registered yet), the teams grouped by grade (collapsed; a group's
-// check box takes all its teams in or out, expand it to uncheck single teams to leave out this time), then Register the
-// checked ones.
+// check box takes all its teams in or out, expand it to uncheck single teams to leave out this time). A League: each team
+// starts as ALL Season (or must pick its dates when that's closed) and can change to its own dates and 2nd Games; the checked
+// ones can be changed together. Then Register (and pay) the checked ones, or put them in the cart.
 function RegisterAllPreview({
   org,
   programId,
   program,
   close,
   done,
+  say,
 }: {
   org: string;
   programId: string;
   program: string;
   close: () => void;
   done: (r: BatchResult) => void;
+  say: (message: string) => void;
 }) {
   const router = useRouter();
   const [busy, start] = useTransition();
@@ -112,8 +114,10 @@ function RegisterAllPreview({
   const [left, setLeft] = useState<Set<string>>(new Set()); // unchecked: left out
   const [open, setOpen] = useState<Set<string>>(new Set()); // grade groups expanded (all collapsed at first)
   const [paying, setPaying] = useState<{ clientSecret: string; account: string } | null>(null);
-  const call = (preview: boolean, only?: string[], mode?: "card" | "later") =>
-    org === "scenic-city" ? registerAllScenicTeams(programId, preview, only) : registerAll(org, programId, preview, only, mode, payInPage);
+  const [choices, setChoices] = useState<Record<string, Choice>>({}); // changed from what each starts as
+  const [editing, setEditing] = useState<string | null>(null); // whose choice is open ("all": the checked ones together)
+  const call = (preview: boolean, only?: string[], mode?: "card" | "later", picks?: Record<string, Choice>) =>
+    org === "scenic-city" ? registerAllScenicTeams(programId, preview, only, picks) : registerAll(org, programId, preview, only, mode, payInPage, picks);
   useEffect(() => {
     let live = true;
     call(true).then((r) => {
@@ -128,10 +132,35 @@ function RegisterAllPreview({
   }, []);
   // Paying: Stripe's form right here; registered once it's paid. Cancel: back to the teams, nothing registered.
   if (paying) return <StripeInPage pay={paying} onCancel={() => setPaying(null)} />;
-  if (err) return <p className="text-sm text-red-600 dark:text-red-400">{err}</p>;
-  if (!plan) return <p className="text-sm text-zinc-500">Checking your teams…</p>;
+  if (!plan) return <p className={`text-sm ${err ? "text-red-600 dark:text-red-400" : "text-zinc-500"}`}>{err ?? "Checking your teams…"}</p>;
   const picked = plan.teams.filter((t) => !left.has(t.id));
-  const sub = picked.reduce((n, t) => n + (t.cents ?? 0), 0);
+  const terms = plan.terms ?? null;
+  // What each team registers for: what was changed here, else what it starts as (null: it must pick its dates).
+  const choiceOf = (t: BatchTeam): Choice | null => choices[t.id] ?? t.choice;
+  const optionsOf = (t: BatchTeam) => (t.level === "REC" ? (terms?.options ?? []).filter((o) => o.kind !== "single_2nd") : (terms?.options ?? [])); // REC: no 2nd Game
+  const NONE: Choice = { allSeason: false, days: [] };
+  // Its price, and why it can't register as picked (checked again on the server).
+  const costOf = (t: BatchTeam): { cents: number; problem: string | null } => {
+    if (!terms) return { cents: t.cents ?? 0, problem: null };
+    const c = choiceOf(t);
+    if (!c) return { cents: 0, problem: "Pick its dates." };
+    const p = planChoice(optionsOf(t), terms.gameDates, NONE, c);
+    if ("error" in p) return { cents: 0, problem: p.error };
+    return { cents: p.newFeeCents, problem: closedReason(optionsOf(t), terms.gameDates, NONE, c, terms.today) };
+  };
+  const sub = picked.reduce((n, t) => n + costOf(t).cents, 0);
+  const problems = picked.filter((t) => costOf(t).problem).length;
+  const changed = Object.fromEntries(picked.flatMap((t) => (choiceOf(t) && terms ? [[t.id, choiceOf(t)!] as const] : [])));
+  const cartable = !!terms && sub > 0 && org !== "thunder" && org !== "scenic-city";
+  const setChoice = (ids: string[], c: Choice) =>
+    setChoices((s) => ({
+      ...s,
+      ...Object.fromEntries(
+        plan.teams
+          .filter((t) => ids.includes(t.id))
+          .map((t) => [t.id, t.level === "REC" ? { ...c, days: c.days.filter((d) => d.kind !== "single_2nd") } : c]),
+      ),
+    }));
   const payLaterOk = "payLaterOk" in plan && plan.payLaterOk === true; // a Pay later organization may also pay later
   const payTotal = sub + (plan.payer === "team" ? cardFee(sub) : 0);
   const flip = (id: string) =>
@@ -162,7 +191,8 @@ function RegisterAllPreview({
     <div className="space-y-3 text-sm">
       {plan.teams.length > 0 && (
         <StepGuide name="register-all" step={1} total={plan.payer ? 2 : 1} title="Pick your teams">
-          Every team that can register is checked. Uncheck any to leave out, then tap Register at the bottom.
+          Every team that can register is checked. Uncheck any to leave out{terms ? ", change what any registers for" : ""}, then tap Register
+          {cartable ? " (or Add to cart)" : ""} at the bottom.
           {plan.payer ? ` Pay${payLaterOk ? " now" : ""} opens Stripe's secure card page (step 2).` : ""}
           {payLaterOk && plan.payer ? " Pay later registers them now and emails the invoice." : ""}
         </StepGuide>
@@ -178,7 +208,26 @@ function RegisterAllPreview({
       ) : (
         <p>No teams can be registered.</p>
       )}
-      {same && (plan.teams[0].dates.length > 0 || plan.teams[0].bracket) && (
+      {/* The checked teams together: the same picks for all of them. */}
+      {terms && picked.length > 1 && (
+        <div className="rounded-lg ring-1 ring-zinc-950/10 dark:ring-white/10">
+          <button
+            type="button"
+            aria-expanded={editing === "all"}
+            onClick={() => setEditing(editing === "all" ? null : "all")}
+            className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium text-thunder-blue dark:text-blue-400"
+          >
+            Change what all {picked.length} checked teams register for
+            <span className={`text-zinc-400 transition-transform ${editing === "all" ? "rotate-90" : ""}`}>›</span>
+          </button>
+          {editing === "all" && (
+            <div className="px-3 pb-3">
+              <RegisterChoices options={terms.options} gameDates={terms.gameDates} today={terms.today} entry={null} onChange={(c) => setChoice(picked.map((t) => t.id), c)} />
+            </div>
+          )}
+        </div>
+      )}
+      {!terms && same && (plan.teams[0].dates.length > 0 || plan.teams[0].bracket) && (
         <div>
           <p className="mb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">They play</p>
           {dates(plan.teams[0])}
@@ -254,9 +303,36 @@ function RegisterAllPreview({
                           <span className="min-w-0">
                             <span className={`block font-medium ${left.has(t.id) ? "line-through" : ""}`}>{t.name}</span>
                             <span className="block text-xs text-zinc-500">{left.has(t.id) ? "Left out this time" : t.division}</span>
-                            {!same && <span className="mt-1 block">{dates(t)}</span>}
+                            {!terms && !same && <span className="mt-1 block">{dates(t)}</span>}
                           </span>
                         </label>
+                        {terms && !left.has(t.id) && (
+                          <div className="pr-3 pb-2 pl-16">
+                            <div className="flex items-baseline justify-between gap-3 text-xs">
+                              <span className={costOf(t).problem ? "font-medium text-red-600 dark:text-red-400" : "text-zinc-600 dark:text-zinc-300"}>
+                                {costOf(t).problem ?? pickedLine(choiceOf(t)!)}
+                              </span>
+                              <span className="shrink-0 tabular-nums">
+                                {!costOf(t).problem && money(costOf(t).cents)}{" "}
+                                <button type="button" onClick={() => setEditing(editing === t.id ? null : t.id)} className="font-medium text-thunder-blue dark:text-blue-400">
+                                  {editing === t.id ? "Done" : choiceOf(t) ? "Change" : "Pick dates"}
+                                </button>
+                              </span>
+                            </div>
+                            {editing === t.id && (
+                              <div className="mt-2">
+                                <RegisterChoices
+                                  options={optionsOf(t)}
+                                  gameDates={terms.gameDates}
+                                  today={terms.today}
+                                  entry={null}
+                                  initial={choiceOf(t) ?? undefined}
+                                  onChange={(c) => setChoice([t.id], c)}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -292,7 +368,33 @@ function RegisterAllPreview({
         </p>
       )}
       {err && <p className="text-sm text-red-600 dark:text-red-400">{err}</p>}
-      <div className="flex justify-end gap-2">
+      {problems > 0 && (
+        <p className="text-sm font-medium text-red-600 dark:text-red-400">
+          {problems} checked team{problems === 1 ? "" : "s"} can&apos;t register as picked: open {problems === 1 ? "its" : "their"} grade to change or uncheck{" "}
+          {problems === 1 ? "it" : "them"}.
+        </p>
+      )}
+      <div className="flex flex-wrap justify-end gap-2">
+        {cartable && (
+          <button
+            type="button"
+            disabled={busy || !picked.length || problems > 0}
+            className="rounded-full px-3.5 py-1.5 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/40 disabled:opacity-50 dark:text-blue-400"
+            onClick={() =>
+              start(async () => {
+                const r = await addCartItems(programId, org, picked.map((t) => ({ id: t.id, choice: choiceOf(t) })));
+                if (!r.ok) return setErr(r.message);
+                close();
+                say(
+                  `${r.added} team${r.added === 1 ? "" : "s"} in your cart. Nothing is registered until you pay.${r.refused.length ? ` Not added: ${r.refused.join(" ")}` : ""}`,
+                );
+                router.refresh();
+              })
+            }
+          >
+            Add {picked.length} to cart
+          </button>
+        )}
         <button type="button" onClick={close} className="rounded-full px-3.5 py-1.5 text-sm font-medium text-zinc-600 ring-1 ring-zinc-950/10 dark:text-zinc-300 dark:ring-white/15">
           Cancel
         </button>
@@ -300,11 +402,11 @@ function RegisterAllPreview({
           // A Pay later organization: register now and pay later (its invoice says PAY LATER).
           <button
             type="button"
-            disabled={busy || !picked.length}
+            disabled={busy || !picked.length || problems > 0}
             className="rounded-full px-3.5 py-1.5 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/40 disabled:opacity-50"
             onClick={() =>
               start(async () => {
-                const r = await call(false, picked.map((t) => t.id), "later");
+                const r = await call(false, picked.map((t) => t.id), "later", changed);
                 if (!r.ok) return setErr(r.message);
                 close();
                 done(r);
@@ -318,11 +420,11 @@ function RegisterAllPreview({
         {plan.teams.length > 0 && (
           <button
             type="button"
-            disabled={busy || !picked.length}
+            disabled={busy || !picked.length || problems > 0}
             className="rounded-full bg-thunder-blue px-3.5 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
             onClick={() =>
               start(async () => {
-                const r = await call(false, picked.map((t) => t.id), payLaterOk ? "card" : undefined);
+                const r = await call(false, picked.map((t) => t.id), payLaterOk ? "card" : undefined, changed);
                 if (!r.ok) return setErr(r.message);
                 if ("payInPage" in r && r.payInPage) return setPaying(r.payInPage as { clientSecret: string; account: string }); // Stripe's form right here
                 if ("pay" in r && typeof r.pay === "string") {

@@ -325,6 +325,7 @@ export async function registerAllOrgTeams(
   preview = false,
   only?: unknown, // the teams left checked in the confirmation
   pay?: BatchPay | null, // the League takes cards: one payment for all, registered once it's paid
+  choices?: unknown, // what each registers for, when not ALL Season
 ): Promise<Result<BatchResult>> {
   if (!isId(programId)) return { ok: false, message: "Pick a program." };
   const o = await teamsManagerOf(deps.pool, viewer, org);
@@ -346,7 +347,7 @@ export async function registerAllOrgTeams(
       const now = deps.now();
       const r = await registerBatch(
         q,
-        { programId, org: o, viewer, now, preview, only, pay },
+        { programId, org: o, viewer, now, preview, only, pay, choices },
         teams.rows.map((t) => ({ id: t.id, name: t.name, teamId: () => copyOf(q, t.id, partnerId, by(viewer), now) })),
       );
       return { ok: true as const, ...r };

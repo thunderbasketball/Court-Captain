@@ -152,3 +152,40 @@ export function addable(options: ProgramOption[], gameDates: string[], had: Choi
 export function addLabel(a: { dates: boolean; second: boolean }): string | null {
   return a.dates && a.second ? "Add dates or a 2nd Game" : a.dates ? "Add dates" : a.second ? "Add a 2nd Game" : null;
 }
+
+// A picked choice from the browser, cleaned to its known fields (null: not a choice). The League's rules come after.
+const KINDS = new Set<string>(["single_1", "single_2", "single_2nd"]);
+export function cleanChoice(v: unknown): Choice | null {
+  if (!v || typeof v !== "object") return null;
+  const { allSeason, days } = v as { allSeason?: unknown; days?: unknown };
+  if (!Array.isArray(days) || days.length > 100) return null;
+  const out: Choice = { allSeason: allSeason === true, days: [] };
+  for (const d of days) {
+    const x = (d && typeof d === "object" ? d : {}) as { date?: unknown; kind?: unknown };
+    if (typeof x.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(x.date) || typeof x.kind !== "string" || !KINDS.has(x.kind)) return null;
+    out.days.push({ date: x.date, kind: x.kind as SingleKind });
+  }
+  return out;
+}
+
+// What's picked in words: "ALL Season · Dec 12 2nd Game".
+const DAY_WORDS: Record<SingleKind, string> = { single_1: "1 game", single_2: "2 games", single_2nd: "2nd Game" };
+export const pickedLine = (c: Choice) =>
+  [...(c.allSeason ? ["ALL Season"] : []), ...[...c.days].sort((a, b) => a.date.localeCompare(b.date)).map((d) => `${shortDate(d.date)} ${DAY_WORDS[d.kind]}`)].join(" · ");
+
+// What a new registration starts as: ALL Season while the League offers it and it isn't closed; else null (pick dates).
+export function startingChoice(options: ProgramOption[], gameDates: string[], today: string): Choice | null {
+  const all: Choice = { allSeason: true, days: [] };
+  const none: Choice = { allSeason: false, days: [] };
+  return !("error" in planChoice(options, gameDates, none, all)) && !closedReason(options, gameDates, none, all, today) ? all : null;
+}
+// The first single date still open (to check a team has a division when ALL Season isn't offered); null: nothing is open.
+export function firstOpenDate(options: ProgramOption[], gameDates: string[], today: string): Choice | null {
+  const none: Choice = { allSeason: false, days: [] };
+  for (const date of gameDates.filter((d) => d >= today))
+    for (const kind of ["single_1", "single_2"] as const) {
+      const c: Choice = { allSeason: false, days: [{ date, kind }] };
+      if (!("error" in planChoice(options, gameDates, none, c)) && !closedReason(options, gameDates, none, c, today)) return c;
+    }
+  return null;
+}

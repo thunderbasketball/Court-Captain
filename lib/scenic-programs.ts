@@ -10,7 +10,18 @@ import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { isOrgOwner, orgHasArea } from "./org-admin";
 import { logoType, type Logo } from "./org-signup";
-import { REG_OPTIONS, closedReason, planChoice, type Choice, type ChoiceResult, type ProgramOption, type SingleKind } from "./program-options";
+import {
+  REG_OPTIONS,
+  cleanChoice,
+  closedReason,
+  firstOpenDate,
+  planChoice,
+  startingChoice,
+  type Choice,
+  type ChoiceResult,
+  type ProgramOption,
+  type SingleKind,
+} from "./program-options";
 import { clubAbbr } from "./scenic-club-teams";
 import { cleanPlaceName } from "./scenic-partners";
 import { LEVELS, gradeLabel, gradeRange, teamsICanManage, type Level } from "./scenic-teams";
@@ -1109,6 +1120,7 @@ export async function registerAllScenicTeams(
   programId: unknown,
   preview = false,
   only?: unknown, // the teams left checked in the confirmation
+  choices?: unknown, // what each registers for, when not ALL Season
 ): Promise<Result<BatchResult>> {
   if (!isId(programId)) return { ok: false, message: "Pick a program." };
   return run(() =>
@@ -1131,7 +1143,7 @@ export async function registerAllScenicTeams(
         const teams = (await teamsICanManage(q, viewer)).filter((t) => !done.has(t.id));
         return registerBatch(
           q,
-          { programId, org: ORG, viewer, now: deps.now(), preview, only },
+          { programId, org: ORG, viewer, now: deps.now(), preview, only, choices },
           teams.map((t) => ({ id: t.id, name: t.name, teamId: async () => t.id })),
         );
       },
@@ -1143,12 +1155,24 @@ export async function registerAllScenicTeams(
 // ---- Register all: a preview first, then the registrations as one batch that can be undone ----
 
 // id: the team picked; cents: what it costs (ALL Season, or the program's fee)
-export type BatchTeam = { id: string; name: string; division: string; dates: string[]; bracket: boolean; cents?: number };
+// level: REC or COMP (a REC team has no 2nd Game). choice: what it registers as (a League; null: pick its dates).
+export type BatchTeam = {
+  id: string;
+  name: string;
+  level: string;
+  division: string;
+  dates: string[];
+  bracket: boolean;
+  cents?: number;
+  choice: Choice | null;
+};
 export type BatchResult = {
   registered: string[];
   skipped: string[];
   teams: BatchTeam[];
   batchId: string | null;
+  // A League's options and Game Days at this organization's prices, to pick each team's own (the preview).
+  terms?: { options: ProgramOption[]; gameDates: string[]; today: string } | null;
   payer?: "org" | "team" | null; // paid by card first (who pays the card fee); null: registers at once
   paymentId?: string; // paid by card: the payment to open Checkout for (the teams register once it's paid)
 };
@@ -1171,11 +1195,13 @@ class PreviewDone extends Error {
 // Register all's loop, for Scenic City, Thunder and every organization: each team as ALL Season, the dates it plays,
 // and the ones skipped (and why). `teamId` gives the team's Scenic City id (an organization's team is copied in first).
 // `only`: the teams the Director left checked in the confirmation (by `id`); the others aren't registered this time.
+// `choices` (a League): what each team registers for, by its id, when it isn't ALL Season; one that can't is refused (all or
+// none), not skipped.
 // The registrations are one batch (Undo takes them out). `preview`: everything is rolled back (see previewTx), so the
 // confirmation shows exactly what Register all will do.
 export async function registerBatch(
   q: PoolClient,
-  b: { programId: string; org: string; viewer: SessionUser; now: Date; preview: boolean; only?: unknown; pay?: BatchPay | null },
+  b: { programId: string; org: string; viewer: SessionUser; now: Date; preview: boolean; only?: unknown; pay?: BatchPay | null; choices?: unknown },
   all: { id: string; name: string; teamId: () => Promise<string> }[],
 ): Promise<BatchResult> {
   let teams = all;
@@ -1191,15 +1217,32 @@ export async function registerBatch(
   const ids: string[] = [];
   const toPay: { teamId: string; orgTeamId: string | null; choice: unknown; cents: number }[] = [];
   const prog = (await q.query<{ kind: string; fee_cents: number | null }>("select kind, fee_cents from scenic_programs where id = $1", [b.programId])).rows[0];
-  const allSeason = { allSeason: true, days: [] };
+  const today = easternDate(b.now);
+  const league = prog?.kind === "League";
+  const terms = league ? await leagueTerms(q, b.programId, b.org === ORG ? null : b.org) : null;
+  const picks = new Map<string, Choice>();
+  if (b.choices !== undefined && b.choices !== null) {
+    if (typeof b.choices !== "object" || Array.isArray(b.choices) || Object.keys(b.choices).length > 1000) throw new BatchError("Those picks weren't readable. Try again.");
+    for (const [id, v] of Object.entries(b.choices)) {
+      const c = cleanChoice(v);
+      if (!isId(id) || !c) throw new BatchError("Those picks weren't readable. Try again.");
+      picks.set(id, c);
+    }
+  }
+  // Without options (a plain League fee) or when nothing else is picked: ALL Season, as before. ALL Season closed or not
+  // offered: the preview checks each team's division with the first open date, and each then picks its own.
+  const start = !terms || !terms.options.length ? { allSeason: true, days: [] } : startingChoice(terms.options, terms.gameDates, today);
+  const probe = start ?? (terms && b.preview ? firstOpenDate(terms.options, terms.gameDates, today) : null) ?? { allSeason: true, days: [] };
   // Each team's copy in the League first (kept), then its registration (undone if it's paid by card first).
   const copies = [];
   for (const t of teams) copies.push({ ...t, copy: await t.teamId() });
   if (b.pay) await q.query("savepoint batch_pay");
   for (const t of copies) {
     const id = t.copy;
-    const placed = await saveChoice(q, b.programId, id, allSeason, by(b.viewer), b.now);
+    const choice = picks.get(t.id) ?? probe;
+    const placed = await saveChoice(q, b.programId, id, choice, by(b.viewer), b.now);
     if ("error" in placed) {
+      if (picks.has(t.id)) throw new BatchError(`${t.name}: ${placed.error}`);
       skipped.push(`${t.name}: ${placed.error}`);
       continue;
     }
@@ -1207,10 +1250,12 @@ export async function registerBatch(
     ids.push(id);
     const e = placed.entry;
     const cents = prog?.kind === "League" ? (e?.feeCents ?? 0) : (prog?.fee_cents ?? 0);
-    toPay.push({ teamId: id, orgTeamId: t.id, choice: allSeason, cents });
+    toPay.push({ teamId: id, orgTeamId: t.id, choice, cents });
     out.push({
       id: t.id,
       name: t.name,
+      level: (await q.query<{ level: string }>("select level from scenic_teams where id = $1", [id])).rows[0]?.level ?? "",
+      choice: league ? (picks.get(t.id) ?? start) : null,
       division: placed.division ?? "",
       dates: e ? Object.keys(e.perDate).sort() : [],
       bracket: !!e?.bracket,
@@ -1218,7 +1263,7 @@ export async function registerBatch(
     });
   }
   const paying = !!b.pay && toPay.some((t) => t.cents > 0);
-  const result: BatchResult = { registered, skipped, teams: out, batchId: null, payer: paying ? b.pay!.feePayer : null };
+  const result: BatchResult = { registered, skipped, teams: out, batchId: null, payer: paying ? b.pay!.feePayer : null, terms: terms && terms.options.length ? { ...terms, today } : null };
   if (b.preview) throw new PreviewDone(result);
   if (!ids.length) return result;
   if (paying) {
