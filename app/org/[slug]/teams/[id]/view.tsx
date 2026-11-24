@@ -1,3 +1,4 @@
+import { wrongBirthdate } from "@/lib/roster-match";
 import { teamCart } from "../../../../cart/teamCart";
 import InCartNote from "../../../../cart/InCartNote";
 import { inCarts } from "@/lib/cart";
@@ -125,6 +126,8 @@ async function TeamBody({
   // Typed-in rosters (no CourtPlayers) ask each player's birthdate; with CourtPlayers it comes from registrations.
   const typedRoster = !(await hasFeature(db, slug, "player-registration"));
   const noNumber = typedRoster ? (roster?.players ?? []).filter((p) => !p.jersey) : []; // every player needs a uniform number
+  const wrong = (p: { birthdate: string | null; grade: number }) => typedRoster && wrongBirthdate(p, easternDate(new Date())); // can't be right
+  const wrongDates = (roster?.players ?? []).filter(wrong).length;
   const noBirthdate = typedRoster ? (roster?.players ?? []).filter((p) => !p.birthdate).length : 0;
   const asked = sp.tab;
   const opened = typeof asked === "string" ? asked : "";
@@ -304,6 +307,7 @@ async function TeamBody({
           ...(t.waitingCoach || t.coaches.some((c) => c.role === "HeadCoach" && !c.email) ? (["COACH EMAIL"] as const) : []),
           ...(!t.players ? (["ROSTER"] as const) : []),
           ...(noBirthdate ? (["PLAYER BIRTHDATES"] as const) : []),
+          ...(wrongDates ? (["WRONG BIRTHDATES"] as const) : []),
           ...(noNumber.length ? (["PLAYER NUMBERS"] as const) : []),
         ]}
         edit={
@@ -366,6 +370,7 @@ async function TeamBody({
                 {p.grade === 0 ? "K" : `Grade ${p.grade}`}
                 {typedRoster && !p.jersey && <span className="font-semibold text-red-600 dark:text-red-400"> · no number</span>}
                 {typedRoster && !p.birthdate && <span className="font-semibold text-red-600 dark:text-red-400"> · no birthdate</span>}
+                {wrong(p) && <span className="font-semibold text-red-600 dark:text-red-400"> · check birthdate</span>}
               </>
             ),
             more: (
@@ -385,7 +390,7 @@ async function TeamBody({
               </div>
             ),
           })),
-          alert: !t.players || noBirthdate > 0 || noNumber.length > 0, // flashes until it has players, each with a birthdate and number
+          alert: !t.players || noBirthdate > 0 || wrongDates > 0 || noNumber.length > 0, // flashes until it has players, each with a birthdate and number
           note: typedRoster && (
             <MissingNumbers org={slug} teamId={t.id} players={noNumber} taken={players.flatMap((p) => (p.jersey ? [p.jersey] : []))} canEdit={!!roster?.canManage} />
           ),

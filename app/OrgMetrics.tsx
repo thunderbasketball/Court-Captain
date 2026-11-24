@@ -122,7 +122,7 @@ export default function OrgMetrics({
                   </li>
                 ))}
               </ul>
-              <p className="pt-2 text-xs text-zinc-500">Publish each on the Scheduler, with the toggle in front of its name.</p>
+              <p className="pt-2 text-xs text-zinc-500">The next few. Publish each on the Scheduler, with the toggle in front of its name.</p>
             </SubCard>
           )}
           {todo.conflicts > 0 && (

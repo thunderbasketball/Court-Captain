@@ -120,7 +120,7 @@ export default function WarningsForm({
             checked={s.birthdates.on}
             onChange={(e) => setS({ ...s, birthdates: { on: e.target.checked } })}
           />
-          Player birthdate missing
+          {parts.includes("numbers") ? "Player birthdate missing or can't be right" : "Player birthdate that can't be right"}
         </label>
       )}
       {parts.includes("numbers") && (

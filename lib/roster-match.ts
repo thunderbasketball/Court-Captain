@@ -118,6 +118,14 @@ export function rulesBroken(a: TeamFacts, b: TeamFacts): string[] {
   ];
 }
 
+// How many of these players have a birthdate that can't be right. `grade`: a number (K = 0), or text ("K", "4").
+export const wrongBirthdate = (p: { birthdate?: string | null; grade?: number | string | null }, today: string): boolean => {
+  const g = p.grade === null || p.grade === undefined || p.grade === "" ? null : /^k$/i.test(String(p.grade)) ? 0 : Number(p.grade);
+  return oddBirthdate(p.birthdate ?? null, g !== null && Number.isFinite(g) ? g : null, schoolYearOf(today)) !== null;
+};
+export const wrongBirthdates = (players: { birthdate?: string | null; grade?: number | string | null }[], today: string) =>
+  players.filter((p) => wrongBirthdate(p, today)).length;
+
 // What to tell someone entering it, or null. `today`: YYYY-MM-DD.
 export function birthdateWarning(dob: string | null, grade: number | null, today: string): string | null {
   const odd = oddBirthdate(dob, grade, schoolYearOf(today));

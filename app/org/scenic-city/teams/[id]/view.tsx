@@ -1,3 +1,4 @@
+import { wrongBirthdate } from "@/lib/roster-match";
 import { teamCart } from "../../../../cart/teamCart";
 import type { ReactNode } from "react";
 import { notFound, redirect } from "next/navigation";
@@ -45,6 +46,7 @@ export async function LeagueTeamView({ id, opened = "", embedded = false, edit }
     leagueStaff(db, [id]), // its whole staff, from where it's kept (Thunder's, its organization's, or here)
   ]);
   const today = easternDate(new Date());
+  const wrong = (p: { birthdate: string | null; grade: number | null }) => wrongBirthdate(p, today); // a birthdate that can't be right
   const published = games.filter((g) => g.published);
   const t = page.team;
   const schedule = requests && requests.length ? requests : null;
@@ -60,6 +62,7 @@ export async function LeagueTeamView({ id, opened = "", embedded = false, edit }
           ...(page.head ? [] : ["COACH INFO" as const]),
           ...(kept && !players.length ? ["ROSTER" as const] : []),
           ...(kept && players.some((p) => !p.birthdate) ? ["PLAYER BIRTHDATES" as const] : []),
+          ...(kept && players.some(wrong) ? ["WRONG BIRTHDATES" as const] : []),
           ...(kept && players.some((p) => !p.jersey) ? ["PLAYER NUMBERS" as const] : []),
         ]}
         next7={<NextSevenDays games={published} practices={[]} own={[]} now={new Date()} team={{ org: "scenic-city", teamId: t.id }} staff={false} mine={[]} rsvps={{}} />}
@@ -96,6 +99,7 @@ export async function LeagueTeamView({ id, opened = "", embedded = false, edit }
                 {!p.jersey && <span className="font-medium text-red-600 dark:text-red-400">no number · </span>}
                 {p.grade !== null && `${p.grade === 0 ? "K" : `Grade ${p.grade}`} · `}
                 {p.birthdate ? `Born ${Number(p.birthdate.slice(5, 7))}/${Number(p.birthdate.slice(8, 10))}/${p.birthdate.slice(0, 4)}` : <span className="font-medium text-red-600 dark:text-red-400">no birthdate</span>}
+                {wrong(p) && <span className="font-medium text-red-600 dark:text-red-400"> · check birthdate</span>}
               </span>
             ),
             more: (
@@ -108,7 +112,7 @@ export async function LeagueTeamView({ id, opened = "", embedded = false, edit }
               </div>
             ),
           })),
-          alert: kept && (!players.length || players.some((p) => !p.birthdate || !p.jersey)),
+          alert: kept && (!players.length || players.some((p) => !p.birthdate || !p.jersey || wrong(p))),
           cells: [],
           emails: [],
           chatKey: null,

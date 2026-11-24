@@ -1,3 +1,4 @@
+import { wrongBirthdate } from "@/lib/roster-match";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
@@ -76,8 +77,8 @@ export async function OrgTeamsContent({
   const [own, scrims, rosterRows] = await Promise.all([
     upcomingOwnForTeams({ pool: db, now: () => new Date() }, slug, ids),
     teamScrimmages({ pool: db, now: () => new Date() }, slug, ids),
-    db.query<{ team: string; first: string; last: string; jersey: string | null; birthdate: string | null }>(
-      `select team_id::text as team, first_name as first, last_name as last, jersey, to_char(birthdate, 'YYYY-MM-DD') as birthdate
+    db.query<{ team: string; first: string; last: string; jersey: string | null; birthdate: string | null; grade: number | null }>(
+      `select team_id::text as team, first_name as first, last_name as last, jersey, grade, to_char(birthdate, 'YYYY-MM-DD') as birthdate
          from org_team_players where team_id = any($1::bigint[])
         order by jersey::int nulls last, lower(last_name), lower(first_name)`,
       [ids],
@@ -85,8 +86,10 @@ export async function OrgTeamsContent({
   ]);
   // Typed-in rosters (no CourtPlayers) ask each player's birthdate: shown on the card, a warning while any is missing.
   const typedRoster = !(await hasFeature(db, slug, "player-registration"));
-  const rosters: Record<string, { first: string; last: string; jersey: string | null; birthdate?: string | null }[]> = {};
-  for (const { team, birthdate, ...p } of rosterRows.rows) (rosters[team] ??= []).push(typedRoster ? { ...p, birthdate } : p);
+  const rosters: Record<string, { first: string; last: string; jersey: string | null; birthdate?: string | null; wrong?: boolean }[]> = {};
+  for (const { team, birthdate, grade, ...p } of rosterRows.rows)
+    (rosters[team] ??= []).push(typedRoster ? { ...p, birthdate, wrong: wrongBirthdate({ birthdate, grade }, easternDate(new Date())) } : p);
+  const wrongDates = (id: string) => (rosters[id] ?? []).filter((p) => p.wrong).length;
   const noNumber = (id: string) => (typedRoster ? (rosters[id] ?? []).filter((p) => !p.jersey).length : 0);
   const noBirthdate = (id: string) => (typedRoster ? (rosters[id] ?? []).filter((p) => !p.birthdate).length : 0); // Owners and Admins: 👁 View as on each coach // a CourtSolo account: its one team, no Add or Import
 
@@ -154,6 +157,7 @@ export async function OrgTeamsContent({
               players: t.players,
               missingBirthdates: noBirthdate(t.id),
               missingNumbers: noNumber(t.id),
+              wrongBirthdates: wrongDates(t.id),
             })
           }
             row={(t) => (
@@ -174,6 +178,7 @@ export async function OrgTeamsContent({
               roster={{ count: t.players, list: <OrgRosterList players={rosters[t.id] ?? []} /> }}
               missingBirthdates={noBirthdate(t.id)}
               missingNumbers={noNumber(t.id)}
+              wrongBirthdates={wrongDates(t.id)}
               schedule={{
                 items: (schedules[t.id] ?? []).length + (own[t.id] ?? []).length + (scrims[t.id] ?? []).length,
                 list: <ScheduleList games={schedules[t.id] ?? []} practices={[]} own={own[t.id] ?? []} scrims={scrims[t.id] ?? []} today={today} />,

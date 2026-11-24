@@ -9,6 +9,7 @@ import { gradeLabel } from "@/lib/grades";
 import { listTeams, personOptions } from "@/lib/teams";
 import { AddTeamPanel } from "../../../AddTeam";
 import { listThunderImports } from "@/lib/thunder-team-import";
+import { wrongBirthdates } from "@/lib/roster-match";
 import { easternDate } from "@/lib/time";
 import { rosterIssue, schoolYearOf } from "@/lib/eligibility";
 import { orgGradeRules } from "@/lib/grade-rules";
@@ -126,6 +127,7 @@ export async function TeamsContent({
               waitingCoach: t.waitingCoach,
               needsEmail: t.staff.some((p) => p.role === "HeadCoach" && !p.email),
               players: t.players.length,
+              wrongBirthdates: wrongBirthdates(t.players, today),
               missingNumbers: uniformsOn ? t.players.filter((p) => !p.number).length : 0,
             })
           }
@@ -155,6 +157,7 @@ export async function TeamsContent({
               waitingCoach={t.waitingCoach && `${t.waitingCoach.first} ${t.waitingCoach.last}`}
               needsEmail={t.staff.some((p) => p.role === "HeadCoach" && !p.email)}
               players={t.players.length}
+              wrongBirthdates={wrongBirthdates(t.players, today)}
               missingNumbers={uniformsOn ? t.players.filter((p) => !p.number).length : 0}
               people={t.staff.map((p) => (
                 <ContactChip

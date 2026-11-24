@@ -3,7 +3,7 @@ export type WarningSettings = {
   roster: { on: boolean; min: number };
   idle: { on: boolean; days: number };
   uniforms: { on: boolean };
-  birthdates: { on: boolean }; // typed-in rosters: players without a birthdate
+  birthdates: { on: boolean }; // typed-in rosters: players without a birthdate; everyone: one that can't be right
   numbers: { on: boolean }; // typed-in rosters: players without a uniform number
 };
 export const DEFAULT_WARNINGS: WarningSettings = {

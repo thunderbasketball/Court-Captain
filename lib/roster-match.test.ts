@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchPlayers, oddBirthdate, oneOff, rulesBroken } from "./roster-match";
+import { matchPlayers, oddBirthdate, wrongBirthdates, oneOff, rulesBroken } from "./roster-match";
 
 const p = (first: string, last: string, dob: string | null = "2016-05-03") => ({ first, last, dob });
 const m = (a: ReturnType<typeof p>, b: ReturnType<typeof p>) => matchPlayers(a, b)?.strength ?? null;
@@ -53,5 +53,7 @@ describe("the same player on two rosters", () => {
     expect(oddBirthdate("2016-05-03", 4, 2026)).toBeNull();
     expect(oddBirthdate("2022-05-03", -1, 2026)).toBeNull(); // Pre-K
     expect(oddBirthdate(null, 4, 2026)).toBeNull();
+    const list = [{ birthdate: "2026-05-03", grade: 4 }, { birthdate: "2016-05-03", grade: "4" }, { birthdate: null, grade: 4 }, { birthdate: "2021-05-03", grade: "K" }, { birthdate: "2010-05-03", grade: "K" }, { birthdate: "2016-05-03", grade: null }];
+    expect(wrongBirthdates(list, "2026-11-24")).toBe(2);
   });
 });

@@ -1,12 +1,15 @@
 // Team warnings (SPEC.md section 14, Teams card → Warnings): each organization turns on the ones it wants and sets their
 // numbers in the organization gear's Warnings card (its Admins): rosters with fewer than n players, teams whose staff haven't used the
 // app in n days, (where uniforms are kept: Thunder) teams with uniform numbers or sizes missing, and (typed-in rosters:
-// organizations without CourtPlayers) teams with players missing a birthdate or a uniform number.
+// organizations without CourtPlayers) teams with players missing a birthdate or a uniform number; and (every
+// organization) teams with a birthdate that can't be right.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { hasFeature } from "./features";
 import { isOrgAdmin } from "./org-admin";
+import { wrongBirthdate } from "./roster-match";
 import type { Queryable } from "./sql";
+import { easternDate } from "./time";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result = { ok: true } | { ok: false; message: string };
@@ -25,6 +28,7 @@ export type TeamWarnings = {
   idle: WarnedTeam[] | null;
   uniforms: WarnedTeam[] | null;
   birthdates: WarnedTeam[] | null;
+  wrong: WarnedTeam[] | null; // birthdates that can't be right (with birthdates turned on)
   numbers: WarnedTeam[] | null;
   teams: number; // teams with any warning
 };
@@ -111,6 +115,25 @@ export async function orgTeamWarnings(q: Pick<Queryable, "query">, org: string, 
         ).rows.map((t) => ({ id: t.id, name: t.name, detail: `${t.n} player${t.n === 1 ? "" : "s"} missing` }))
       : null;
 
+  let wrong: WarnedTeam[] | null = null;
+  if (settings.birthdates.on) {
+    const rows = (
+      await q.query<{ id: string; name: string; birthdate: string; grade: string | null }>(
+        thunder
+          ? `select t.id::text, t.name, to_char(g.birthdate, 'YYYY-MM-DD') as birthdate, p.grade::text from teams t
+               join team_players p on p.team_id = t.id join registrations g on g.registrant_id = p.registrant_id
+              where g.birthdate is not null order by lower(t.name)`
+          : `select t.id::text, t.name, to_char(p.birthdate, 'YYYY-MM-DD') as birthdate, p.grade::text from org_teams t
+               join org_team_players p on p.team_id = t.id
+              where t.org = $1 and t.archived_at is null and p.birthdate is not null order by lower(t.name)`,
+        thunder ? [] : [org],
+      )
+    ).rows.filter((p) => wrongBirthdate(p, easternDate(now)));
+    const by = new Map<string, { id: string; name: string; n: number }>();
+    for (const p of rows) by.set(p.id, { id: p.id, name: p.name, n: (by.get(p.id)?.n ?? 0) + 1 });
+    wrong = [...by.values()].sort((a, b) => b.n - a.n).map((t) => ({ id: t.id, name: t.name, detail: `${t.n} player${t.n === 1 ? "" : "s"}` }));
+  }
+
   const numbers =
     settings.numbers.on && typedRosters && !thunder
       ? (
@@ -123,8 +146,8 @@ export async function orgTeamWarnings(q: Pick<Queryable, "query">, org: string, 
         ).rows.map((t) => ({ id: t.id, name: t.name, detail: `${t.n} player${t.n === 1 ? "" : "s"} missing` }))
       : null;
 
-  const ids = new Set([...(roster ?? []), ...(idle ?? []), ...(uniforms ?? []), ...(birthdates ?? []), ...(numbers ?? [])].map((t) => t.id));
-  return { settings, setBy, uniformsKept, typedRosters, roster, idle, uniforms, birthdates, numbers, teams: ids.size };
+  const ids = new Set([...(roster ?? []), ...(idle ?? []), ...(uniforms ?? []), ...(birthdates ?? []), ...(wrong ?? []), ...(numbers ?? [])].map((t) => t.id));
+  return { settings, setBy, uniformsKept, typedRosters, roster, idle, uniforms, birthdates, wrong, numbers, teams: ids.size };
 }
 
 // An organization's Admins (and Owners): which warnings are on, and their numbers.

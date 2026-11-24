@@ -1,3 +1,5 @@
+import { easternDate } from "@/lib/time";
+import { wrongBirthdate } from "@/lib/roster-match";
 import TeamsIncluded from "../../../TeamsIncluded";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -104,13 +106,14 @@ export async function ScenicTeamsContent({
     new Date(),
   );
   // League teams kept here (FastBreak, clubs, Solo): their rosters, with each player's birthdate (asked; missing: a warning).
-  const leaguePlayers = await db.query<{ team: string; first: string; last: string; jersey: string | null; birthdate: string | null }>(
-    `select team_id::text as team, first_name as first, last_name as last, jersey, to_char(birthdate, 'YYYY-MM-DD') as birthdate
+  const leaguePlayers = await db.query<{ team: string; first: string; last: string; jersey: string | null; birthdate: string | null; grade: number | null }>(
+    `select team_id::text as team, first_name as first, last_name as last, jersey, grade, to_char(birthdate, 'YYYY-MM-DD') as birthdate
        from scenic_team_players where team_id = any($1::bigint[]) order by jersey::int nulls last, lower(last_name), lower(first_name)`,
     [teams.map((t) => t.id)],
   );
-  const rosters: Record<string, { first: string; last: string; jersey: string | null; birthdate: string | null }[]> = {};
-  for (const { team, ...p } of leaguePlayers.rows) (rosters[team] ??= []).push(p);
+  const rosters: Record<string, { first: string; last: string; jersey: string | null; birthdate: string | null; wrong: boolean }[]> = {};
+  const now = easternDate(new Date());
+  for (const { team, ...p } of leaguePlayers.rows) (rosters[team] ??= []).push({ ...p, wrong: wrongBirthdate(p, now) });
   // Each team's whole staff, from where it's kept (Thunder's, its organization's, or here), with the verified ✓.
   const staff = await leagueStaff(
     db,
@@ -162,6 +165,7 @@ export async function ScenicTeamsContent({
         // A League team kept here: its roster on the card (👥), birthdates shown, a warning while any is missing.
         roster={t.canEdit || rosters[t.id] ? { count: t.players ?? 0, list: <OrgRosterList players={rosters[t.id] ?? []} /> } : undefined}
         missingBirthdates={(rosters[t.id] ?? []).filter((p) => !p.birthdate).length}
+        wrongBirthdates={(rosters[t.id] ?? []).filter((p) => p.wrong).length}
         missingNumbers={(rosters[t.id] ?? []).filter((p) => !p.jersey).length}
         // ↗ its team page opened right here (built only while open): Edit and Delete in its card, its games inside.
         page={{

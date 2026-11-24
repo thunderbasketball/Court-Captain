@@ -49,7 +49,7 @@ export type OrgMetrics = {
   // Each team's use of the app: its staff's page views in the last 30 days and their last visit (least used first).
   teamUse: { id: string; name: string; views: number; lastVisit: Date | null }[];
   waiting: { requests: number; newChats: number; workingChats: number };
-  // Its Leagues' Game Days still to come whose schedule isn't published (the Brackets once, on their first day).
+  // The next few of its Leagues' Game Days whose schedule isn't published (the Brackets once, on their first day).
   unpublished: { programId: string; program: string; day: string; bracket: boolean }[];
   // Its current Leagues' possible roster conflicts still to look at (a Conflict or Likely).
   rosterConflicts: { programId: string; program: string; n: number }[];
@@ -251,7 +251,7 @@ async function unpublishedEvents(q: Pick<Queryable, "query">, org: string, now: 
                       where pg.program_id = p.id group by pg.kind, case when pg.kind = 'bracket' then null else g.day end) e on true
       where p.org = $1 and p.kind = 'League' and e.day >= $2::date
         and not exists (select 1 from scenic_published_days d where d.program_id = p.id and d.day = e.day)
-      order by e.day, lower(p.name)`,
+      order by e.day, lower(p.name) limit 3`, // the next few
     [org, easternDate(now)],
   );
   return r.rows;

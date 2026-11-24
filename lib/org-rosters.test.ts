@@ -66,6 +66,12 @@ describe("typed-in rosters: birthdates", () => {
     expect(await setOrgPlayerBirthdate(deps(), jo, org, tid, noah.id, "")).toMatchObject({ ok: false });
     expect(await setOrgPlayerBirthdate(deps(), jo, org, tid, noah.id, "2015-12-01")).toEqual({ ok: true });
     expect((await orgTeamWarnings(db.pool, org, now)).birthdates).toEqual([]);
+    // One that can't be right (the year, or for the grade) is its own warning, until it's fixed.
+    expect((await orgTeamWarnings(db.pool, org, now)).wrong).toEqual([]);
+    await db.pool.query("update org_team_players set birthdate = '2026-05-03' where id = (select min(id) from org_team_players where team_id = $1)", [tid]);
+    const odd = await orgTeamWarnings(db.pool, org, now);
+    expect(odd.wrong).toEqual([{ id: tid, name: expect.any(String), detail: "1 player" }]);
+    expect(odd.birthdates).toEqual([]);
 
     // Columns chosen in the form, in any order (Full name split; checked on the server).
     const lined = "Zoe Hart II     3/20/2017    4   24\nEli Park    9/1/2017   4   5";
