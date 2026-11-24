@@ -41,7 +41,7 @@ describe("Admins and Director areas", () => {
   const deps = () => ({ pool: db.pool, now: () => new Date("2026-10-31T12:00:00Z") });
   beforeAll(async () => {
     db = await createTestDb();
-  }, 30_000);
+  }, 180_000);
   afterAll(async () => {
     await db?.drop();
   });

@@ -18,7 +18,7 @@ describe("uniform numbers on typed-in rosters", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   beforeAll(async () => {
     db = await createTestDb();
-  }, 30_000);
+  }, 180_000);
   afterAll(async () => db?.drop());
 
   it("whoever may change the roster fills them in: 0–99, unique on the team, all saved or none, who recorded", async () => {

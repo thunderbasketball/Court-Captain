@@ -1,5 +1,5 @@
-// Public League page (SPEC.md section 13): no login. Scenic City's Leagues with their Teams and, once a Director of
-// Programs publishes it, the Schedule. No contact information: team names, grades, levels, organizations' abbreviations,
+// Public League page (SPEC.md section 13): no login. Scenic City's Leagues with their Teams and the Schedule of each event
+// (Game Day, or the Brackets) a Director of Programs or Scheduling has published. No contact information: team names, grades, levels, organizations' abbreviations,
 // game dates, times, gyms and courts only. Simulated (DEV) teams and teams sitting out are left out.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
@@ -10,7 +10,7 @@ import { directionsUrl } from "./directions";
 import { takeSnapshots } from "./roster-snapshot";
 import { PROGRAM_LOGO_SQL } from "./scenic-programs";
 import { gradeLabel, gradeRange } from "./scenic-teams";
-import type { Queryable } from "./sql";
+import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
 
 type Deps = { pool: Pool; now: () => Date };
@@ -38,7 +38,7 @@ export type PublicLeagueSummary = {
 export async function publicPrograms(q: Pick<Queryable, "query">, now: Date, org?: string): Promise<PublicLeagueSummary[]> {
   const r = await q.query<PublicLeagueSummary>(
     `select id::text, kind, name, starts_on::text as "startsOn", ends_on::text as "endsOn",
-            schedule_published_at is not null as published, ${PROGRAM_LOGO_SQL} as logo,
+            exists (select 1 from scenic_published_days pd where pd.program_id = p.id) as published, ${PROGRAM_LOGO_SQL} as logo,
             reg_closes::text as "regCloses", reg_closes >= $1::date as registering,
             rec_limited_by is not null as "recLimited"
        from scenic_programs p
@@ -128,13 +128,13 @@ export async function publicLeague(q: Pick<Queryable, "query">, now: Date, id: u
   // Only a League has a schedule, once published.
   if (league.kind !== "League" || !league.published) return { ...league, groups, schedule: null };
 
-  const schedule = await programSchedule(q, id);
+  const schedule = await programSchedule(q, id, true);
   return { ...league, groups, schedule };
 }
 
-// A League's games by day (date, time, gym, court, group, home and away; DEV teams left out), for the public page once
-// published, and for Scenic City's own program page at any time (past programs too).
-export async function programSchedule(q: Pick<Queryable, "query">, id: string): Promise<PublicDay[]> {
+// A League's games by day (date, time, gym, court, group, home and away; DEV teams left out): `publishedOnly`, the events
+// published (the public page); all of them, for Scenic City's own program page at any time (past programs too).
+export async function programSchedule(q: Pick<Queryable, "query">, id: string, publishedOnly = false): Promise<PublicDay[]> {
   const games = await q.query<{
     date: string;
     starts: string | null;
@@ -163,6 +163,7 @@ export async function programSchedule(q: Pick<Queryable, "query">, id: string): 
        join scenic_divisions d on d.id = g.division_id
        ${PLACE_SQL}
       where m.program_id = $1 and ta.name not like '%(DEV)' and coalesce(tb.name, '') not like '%(DEV)'
+        ${publishedOnly ? "and exists (select 1 from scenic_published_days pd where pd.program_id = m.program_id and pd.day = m.day)" : ""}
       order by m.day, m.starts nulls last, lower(place.gym), lower(place.court), g.grade, lower(ta.name)`,
     [id],
   );
@@ -270,7 +271,7 @@ export async function followedTeams(q: Pick<Queryable, "query">, now: Date, ids:
     const mine = regs.rows.filter((r) => r.program === p.id);
     if (!mine.length) continue;
     const scheduled = p.kind === "League" && p.published;
-    if (scheduled && !schedules.has(p.id)) schedules.set(p.id, await programSchedule(q, p.id));
+    if (scheduled && !schedules.has(p.id)) schedules.set(p.id, await programSchedule(q, p.id, true));
     for (const r of mine) {
       let games: FollowedGame[] | null = null;
       if (scheduled) {
@@ -314,7 +315,7 @@ export async function orgPublicTeams(q: Pick<Queryable, "query">, now: Date, org
   for (const p of programs) {
     const mine = regs.rows.filter((r) => r.program === p.id);
     if (!mine.length) continue;
-    const schedule = p.kind === "League" && p.published ? await programSchedule(q, p.id) : null;
+    const schedule = p.kind === "League" && p.published ? await programSchedule(q, p.id, true) : null;
     for (const r of mine) {
       const t = teams.get(r.team) ?? { id: r.team, name: r.name, programs: [] };
       teams.set(r.team, t);
@@ -336,26 +337,40 @@ function gamesOf(schedule: PublicDay[], team: string): FollowedGame[] {
   return games;
 }
 
-// A Director of Programs or of Scheduling (on the Scheduler) publishes a League's schedule to the public page, or takes it back.
-export async function setSchedulePublished(deps: Deps, viewer: SessionUser, programId: unknown, on: boolean): Promise<Result> {
-  if (!isId(programId)) return { ok: false, message: "Pick a League." };
+// A Director of Programs or of Scheduling (on the Scheduler) publishes one event of a League's schedule (a Game Day; the
+// Brackets: all their days together) to the public page, its teams' pages and families, or takes it back.
+export async function setDayPublished(deps: Deps, viewer: SessionUser, programId: unknown, day: unknown, on: boolean): Promise<Result> {
+  if (!isId(programId) || typeof day !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return { ok: false, message: "Pick a Game Day." };
   if (!(await canPublish(deps.pool, viewer)))
     return { ok: false, message: "Only a Scenic City Director of Programs or Scheduling can do that." };
-  const r = await deps.pool.query(
-    `update scenic_programs set schedule_published_by = $2, schedule_published_at = $3 where id = $1 and kind = 'League'`,
-    [programId, on ? by(viewer) : null, on ? deps.now() : null],
-  );
-  return r.rowCount ? { ok: true } : { ok: false, message: "That League isn't there." };
+  return withTx(deps.pool, async (q) => {
+    if (!(await q.query("select 1 from scenic_programs where id = $1 and kind = 'League' for update", [programId])).rowCount)
+      return { ok: false as const, message: "That League isn't there." };
+    const days = await q.query<{ day: string; kind: string }>(
+      `select g.day::text, pg.kind from program_game_days pg join game_days g on g.id = pg.game_day_id where pg.program_id = $1
+       union select m.day::text, 'game' from scenic_matchups m
+        where m.program_id = $1 and not exists (select 1 from program_game_days pg join game_days g on g.id = pg.game_day_id where pg.program_id = $1 and g.day = m.day)`,
+      [programId],
+    );
+    const one = days.rows.find((d) => d.day === day);
+    if (!one) return { ok: false as const, message: "That isn't one of this League's Game Days." };
+    const event = one.kind === "bracket" ? days.rows.filter((d) => d.kind === "bracket").map((d) => d.day) : [day];
+    if (on)
+      await q.query(
+        `insert into scenic_published_days (program_id, day, published_by, published_at) select $1, d::date, $3, $4 from unnest($2::text[]) d
+         on conflict do nothing`,
+        [programId, event, by(viewer), deps.now()],
+      );
+    else await q.query("delete from scenic_published_days where program_id = $1 and day = any($2::date[])", [programId, event]);
+    return { ok: true as const };
+  });
 }
 
 export const canPublish = (q: Pick<Queryable, "query">, viewer: SessionUser) =>
   orgHasArea(q, viewer.coachId, "scenic-city", "programs", "scheduling");
 
-// Whether a League's schedule is on the public page, and who published it (the Scheduler).
-export async function schedulePublished(q: Pick<Queryable, "query">, programId: string): Promise<{ by: string } | null> {
-  const r = await q.query<{ by: string }>(
-    "select schedule_published_by as by from scenic_programs where id = $1 and schedule_published_at is not null",
-    [programId],
-  );
-  return r.rows[0] ?? null;
+// A League's published events: each day, and who published it (the Scheduler).
+export async function publishedDays(q: Pick<Queryable, "query">, programId: string): Promise<Map<string, string>> {
+  const r = await q.query<{ day: string; by: string }>("select day::text, published_by as by from scenic_published_days where program_id = $1", [programId]);
+  return new Map(r.rows.map((x) => [x.day, x.by]));
 }

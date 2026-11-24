@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
-import { card } from "./ui";
+import { card, yellowCard } from "./ui";
 
 const Chevron = () => (
   <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden className="size-5 shrink-0 text-zinc-400 transition-transform [details[open]>summary_&]:rotate-180">
@@ -31,6 +31,7 @@ export default function HomeCard({
   count,
   alert,
   action,
+  tint,
   open,
   children,
 }: {
@@ -40,6 +41,7 @@ export default function HomeCard({
   count?: ReactNode;
   alert?: boolean;
   action?: ReactNode;
+  tint?: "yellow"; // something in it waiting (the Cart)
   open: boolean; // the server built its contents (it's in the address)
   children: ReactNode; // null while closed
 }) {
@@ -97,7 +99,7 @@ export default function HomeCard({
     <div className={`relative ${want ? "lg:col-span-2" : ""}`}>
       <details
         id={id}
-        className={`${card} group overflow-hidden`}
+        className={`${tint ? yellowCard : card} group overflow-hidden`}
         open={want}
         onToggle={(e) => {
           const now = (e.currentTarget as HTMLDetailsElement).open;

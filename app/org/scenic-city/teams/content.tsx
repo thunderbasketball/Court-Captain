@@ -206,6 +206,7 @@ export async function ScenicTeamsContent({
               title={g.title}
               count={g.teams.length}
               gender={g.gender}
+              defaultOpen={false}
               // A team still missing something (coach cell or email, or a registered team's roster): flash it to drill down.
               alert={g.teams.some((t) => t.waitingCoach || (!!t.coachId && !t.coachEmail) || t.players === 0)}
             >

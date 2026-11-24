@@ -1,3 +1,6 @@
+import { teamCart } from "../../../../cart/teamCart";
+import InCartNote from "../../../../cart/InCartNote";
+import { inCarts } from "@/lib/cart";
 import { HeaderOutline, TeamOutline } from "../../../../PageOutline";
 import type { SessionUser } from "@/lib/auth/service";
 import { Suspense } from "react";
@@ -141,6 +144,8 @@ async function TeamBody({
   // Team chat (CourtPlayers): the team's coaches and the Directors, opened right here (who can open it is checked again).
   const teamChat = chatOn && (canManage || t.coaches.some((c) => c.id === user.coachId));
   const canOwn = practicesOn && mayChangeOwn;
+  // Whose cart it's in (not paid for yet): shown to whoever may register it or add dates.
+  const carts = progs?.canRegister || progs?.canAddDates ? await inCarts(db, new Date(), user, { orgTeamId: t.id }) : [];
   const [copy, requests] = await Promise.all([copyOf, requestsOf]); // already loading beside the rest
   const leagueRosterList = await leagueRosters({ pool: db, now: () => new Date() }, user, copy); // locked at its 1st game in a League
   const schedule = requests && requests.length ? requests : null;
@@ -234,6 +239,7 @@ async function TeamBody({
         ) : (
           <p className="text-zinc-500">Registration open until {day(p.regCloses)}</p>
         )}
+        <InCartNote list={carts.filter((c) => c.programId === p.id)} />
       </div>
       {/* Directors and Admins register and withdraw; the team's coaches add dates (and a 2nd Game) once it's registered. */}
       {(progs?.canRegister || (progs?.canAddDates && p.registered && p.kind === "League")) && p.status === "open" && (p.registered || p.fits) && (
@@ -249,6 +255,7 @@ async function TeamBody({
               today={today}
               entry={p.entry}
               paid={p.registered ? p.registered.paid : undefined}
+              noCart={!p.registered && carts.some((c) => c.programId === p.id && !c.mine)}
             />
           )}
           {progs?.canRegister && (p.registered || p.kind !== "League") && !(p.registered && onSchedule?.programId === p.id) && (
@@ -393,6 +400,7 @@ async function TeamBody({
           ),
           empty: roster?.canManage ? "No players yet. Tap the add icon (or import)." : "No players on the roster yet.",
         }}
+        cart={embedded ? null : await teamCart(user, slug)}
         leagueRosters={
           copy && leagueRosterList.length
             ? {

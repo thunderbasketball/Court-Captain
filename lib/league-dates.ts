@@ -9,9 +9,9 @@
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { hasFeature } from "./features";
-import { leagueEntry, payLater, saveChoice, teamOrgOf, type Entry } from "./scenic-programs";
+import { leagueEntry, owesMore, payLater, saveChoice, teamOrgOf, type Entry } from "./scenic-programs";
 import { whoForTeam } from "./schedule-requests";
-import { withTx } from "./sql";
+import { withTx, type Queryable } from "./sql";
 import type { StripeApi } from "./stripe/connect";
 import { dryRun, insertPayment, openCheckout, openCheckoutInPage, owed, payee, type InPage } from "./stripe/registration";
 
@@ -26,6 +26,17 @@ export type AddDatesResult = Result<
   | { pay?: undefined; payInPage?: undefined; entry: Entry | null; unpaid: boolean }
 >;
 
+// Why this person can't add dates to this League team (null: they can). A REC team's dates are added by its directors
+// only; a COMP team's coaches add them too; with CourtPlayers, its Directors.
+export async function mayNotAddDates(q: Pick<Queryable, "query">, viewer: SessionUser, teamId: string): Promise<string | null> {
+  const who = await whoForTeam(q, viewer, teamId);
+  if (who.director) return null;
+  const teamOrg = await teamOrgOf(q, teamId);
+  if (who.coach && teamOrg && (await hasFeature(q, teamOrg, "player-registration"))) return "Your Director handles registrations.";
+  if (who.coach && who.level !== "REC") return null;
+  return who.coach ? "A REC team's dates are added by its Director, Admin or Owner." : "Only the team's coaches and its directors can add dates.";
+}
+
 export async function addLeagueDates(
   deps: Deps,
   viewer: SessionUser,
@@ -36,16 +47,8 @@ export async function addLeagueDates(
   inPage = false, // Stripe's form opens in the page (the site has Stripe's publishable key)
 ): Promise<AddDatesResult> {
   if (!isId(programId) || !isId(teamId)) return { ok: false, message: "Pick a team and a League." };
-  // A REC team's dates are added by its directors only; a COMP team's coaches add them too.
-  const who = await whoForTeam(deps.pool, viewer, teamId);
-  const teamOrg = await teamOrgOf(deps.pool, teamId);
-  if (!who.director && who.coach && teamOrg && (await hasFeature(deps.pool, teamOrg, "player-registration")))
-    return { ok: false, message: "Your Director handles registrations." }; // CourtPlayers: its Directors add dates
-  if (!who.director && !(who.coach && who.level !== "REC"))
-    return {
-      ok: false,
-      message: who.coach ? "A REC team's dates are added by its Director, Admin or Owner." : "Only the team's coaches and its directors can add dates.",
-    };
+  const no = await mayNotAddDates(deps.pool, viewer, teamId);
+  if (no) return { ok: false, message: no };
   const registered = await deps.pool.query(
     `select 1 from scenic_registrations r join scenic_programs p on p.id = r.program_id
       where r.program_id = $1 and r.team_id = $2 and r.removed_at is null and p.kind = 'League'`,
@@ -97,11 +100,7 @@ export async function addLeagueDates(
     if ("error" in saved) return { ok: false as const, message: saved.error };
     const after = saved.entry?.feeCents ?? before;
     const unpaid = reg.rows[0].paid && after > before;
-    if (unpaid)
-      await q.query(
-        "update scenic_registrations set paid = false, paid_set_by = $3, paid_set_at = $4 where program_id = $1 and team_id = $2",
-        [programId, teamId, `${by(viewer)} (dates added)`, deps.now()],
-      );
+    if (unpaid) await owesMore(q, programId, teamId, after - before, by(viewer), deps.now());
     return { ok: true as const, entry: saved.entry, unpaid };
   });
 }

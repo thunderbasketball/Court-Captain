@@ -19,6 +19,9 @@ const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
 
 export { CARD_CENTS, CARD_PERCENT, cardFee } from "./card-fee";
 
+// Something to pay, and no card payments: nothing is registered (it waits in the cart).
+export const NO_CARDS = "Card payments aren't available right now, so nothing was registered or added. It can wait in your cart.";
+
 export type Payee = { account_id: string; fee_payer: "org" | "team"; live: boolean };
 
 // The League's Stripe account, when it can take payments, and who pays the card fee.
@@ -169,19 +172,6 @@ export async function registerOrPay(
   const to = await payee(deps.pool, deps.stripe);
   if (!to || !deps.stripe) {
     if (later) return registerOrgTeam(deps, viewer, o, orgTeamId, programId, choice); // Pay later: added now, on its invoice
-    // Adding to a registration it already has (dates, a 2nd Game): nothing is added unpaid while cards don't work (a
-    // Pay later organization is handled above). A first registration still registers (paid outside the app).
-    const copy = (await deps.pool.query<{ id: string }>("select id::text from scenic_teams where org_team_id = $1", [orgTeamId])).rows[0]?.id;
-    const had = copy
-      ? (await deps.pool.query("select 1 from scenic_registrations where program_id = $1 and team_id = $2 and removed_at is null", [programId, copy]))
-          .rowCount
-      : 0;
-    if (copy && had) {
-      const cost = await dryRun(deps.pool, (q) => owed(q, programId, copy, choice, by(viewer), deps.now()));
-      if ("error" in cost) return { ok: false, message: cost.error };
-      if (cost.cents > 0) return { ok: false, message: "Card payments aren't available right now, so nothing was added. Try again later." };
-    }
-    return registerOrgTeam(deps, viewer, o, orgTeamId, programId, choice);
   }
 
   // The team's copy in the League (kept: it's made on registering anyway), then what this would cost, nothing kept.
@@ -199,6 +189,8 @@ export async function registerOrPay(
   });
   if ("error" in check) return { ok: false, message: check.error };
   if (!check.cents) return registerOrgTeam(deps, viewer, o, orgTeamId, programId, choice);
+  // Something to pay and no card payments: nothing is registered unpaid (without Pay later it waits in the cart).
+  if (!to || !deps.stripe) return { ok: false, message: NO_CARDS };
   // Pay later organization, not yet asked: pay now by card, or later?
   if (later && mode !== "card") return { ok: true, choose: { cents: check.cents, card: to.fee_payer === "team" ? cardFee(check.cents) : 0 } };
 
@@ -244,8 +236,8 @@ export async function confirmPayment(deps: Deps, paymentId: unknown, sessionId: 
     );
     const p = r.rows[0];
     if (!p) return { ok: false as const, message: "That payment wasn't found.", teamPage: null };
-    const listed = await q.query<{ team_id: string | null; org_team_id: string | null; choice: unknown; team_name: string | null }>(
-      "select team_id::text, org_team_id::text, choice, team_name from registration_payment_teams where payment_id = $1 order by id",
+    const listed = await q.query<{ team_id: string | null; org_team_id: string | null; choice: unknown; team_name: string | null; fee_cents: number }>(
+      "select team_id::text, org_team_id::text, choice, team_name, fee_cents from registration_payment_teams where payment_id = $1 order by id",
       [paymentId],
     );
     const teams = listed.rows.length ? listed.rows : p.team_id ? [{ team_id: p.team_id, org_team_id: p.org_team_id, choice: p.choice }] : [];
@@ -272,7 +264,7 @@ export async function confirmPayment(deps: Deps, paymentId: unknown, sessionId: 
       // An open invoice paid: its teams still registered are marked Paid by card.
       const ids = teams.flatMap((t) => (t.team_id ? [t.team_id] : []));
       const done = await q.query(
-        `update scenic_registrations set paid = true, paid_set_by = 'Card (Stripe)', paid_set_at = $3
+        `update scenic_registrations set paid = true, paid_set_by = 'Card (Stripe)', paid_set_at = $3, paid_cents = null
           where program_id = $1 and team_id = any($2::bigint[])`,
         [p.program_id, ids, now],
       );
@@ -310,6 +302,13 @@ export async function confirmPayment(deps: Deps, paymentId: unknown, sessionId: 
         return { ok: false as const, message: `Paid, but not registered: ${why} Scenic City will refund it.`, teamPage };
       }
       division = placed.division;
+      // Added by card to a registration not paid yet (Pay later): that much of its fee is paid.
+      if (had && "fee_cents" in t)
+        await q.query("update scenic_registrations set paid_cents = coalesce(paid_cents, 0) + $3 where program_id = $1 and team_id = $2 and not paid", [
+          p.program_id,
+          t.team_id,
+          t.fee_cents,
+        ]);
       if (!had)
         await q.query(
           "update scenic_registrations set paid = true, paid_set_by = 'Card (Stripe)', paid_set_at = $3 where program_id = $1 and team_id = $2",
@@ -317,6 +316,13 @@ export async function confirmPayment(deps: Deps, paymentId: unknown, sessionId: 
         );
     }
     await q.query("update registration_payments set status = 'registered', registered_at = $2 where id = $1", [paymentId, now]);
+    // Paid from a cart (or an invoice requested from one): its items leave it, and the invoice is paid.
+    await q.query(
+      `update cart_invoices i set paid_by = 'Card (Stripe)', paid_at = $2, cancelled_by = null, cancelled_at = null
+         from registration_payments r where r.id = $1 and i.id = r.cart_invoice_id`,
+      [paymentId, now],
+    );
+    await q.query("delete from cart_items c using registration_payments r where r.id = $1 and c.id = any(r.cart_items)", [paymentId]);
     return {
       ok: true as const,
       registered: true,

@@ -1796,6 +1796,16 @@ export async function withdrawTeams(
 }
 
 // Scenic City's Owners only: mark a registration Paid or Unpaid (who and when are recorded).
+// More was added to a paid registration, to pay later: unpaid until the rest is paid (what was paid is kept, so its invoice
+// asks only for `cents`). Call after the addition is saved.
+export async function owesMore(q: Pick<Queryable, "query">, programId: string, teamId: string, cents: number, byName: string, now: Date): Promise<void> {
+  const total = (await leagueEntry(q, programId, teamId)).entry?.feeCents ?? cents;
+  await q.query(
+    "update scenic_registrations set paid = false, paid_set_by = $3, paid_set_at = $4, paid_cents = $5 where program_id = $1 and team_id = $2",
+    [programId, teamId, `${byName} (dates added)`, now, Math.max(0, total - cents)],
+  );
+}
+
 export async function setPaid(
   deps: Deps,
   viewer: SessionUser,
@@ -1806,7 +1816,7 @@ export async function setPaid(
   if (!isId(programId) || !isId(teamId)) return { ok: false, message: "Pick a team." };
   if (!(await isOrgOwner(deps.pool, viewer.coachId, ORG))) return { ok: false, message: "Only Scenic City's Owners can mark teams paid." };
   const r = await deps.pool.query(
-    "update scenic_registrations set paid = $3, paid_set_by = $4, paid_set_at = $5 where program_id = $1 and team_id = $2",
+    "update scenic_registrations set paid = $3, paid_set_by = $4, paid_set_at = $5, paid_cents = null where program_id = $1 and team_id = $2",
     [programId, teamId, paid === true, by(viewer), deps.now()],
   );
   return r.rowCount ? { ok: true } : { ok: false, message: "That team isn't registered." };

@@ -25,6 +25,9 @@ import PaymentsCard, { paymentsLabel } from "./PaymentsCard";
 import { paymentStatus } from "@/lib/stripe/connect";
 import { stripeApi } from "@/lib/stripe/client";
 
+// The automatic unread-chat emails are off (instrumentation.ts), so their setting isn't shown.
+const CHAT_EMAILS: boolean = false;
+
 // The gear after an organization's last tab, for its Admins only (checked here on the server): its name (Owners), login link, every
 // feature (what it has, since when, and what it can add: buying upgrades in the app is coming soon), its color and logo.
 export default async function OrgGear({ org, coachId, user }: { org: string; coachId: string; user?: SessionUser }) {
@@ -48,7 +51,7 @@ export default async function OrgGear({ org, coachId, user }: { org: string; coa
     clubActiveDays(db, org),
     hasFeature(db, org, "chat"),
   ]);
-  const chatSetting = chatOn ? await chatEmailSetting(db, org) : null;
+  const chatSetting = CHAT_EMAILS && chatOn ? await chatEmailSetting(db, org) : null;
   // Payments: Owners connect the organization's own Stripe account (a Director viewing as someone never does).
   const pay = owner && user && !user.actingBy ? await paymentStatus({ pool: db, stripe: stripeApi(), now: () => now }, user, org) : null;
   // Delete organization: its Owners, once it has no teams (Thunder and Scenic City never).

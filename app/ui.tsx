@@ -16,6 +16,8 @@ export const pillCls = (on: boolean) =>
       : "bg-zinc-100 text-zinc-600 hover:text-zinc-900 dark:bg-zinc-800 dark:text-zinc-300"
   }`;
 
+// A card with something waiting in it (the Cart): yellow.
+export const yellowCard = "rounded-2xl bg-amber-50 shadow-sm ring-1 ring-amber-300 dark:bg-amber-500/10 dark:ring-amber-500/40";
 export const card = "rounded-2xl bg-white shadow-sm ring-1 ring-zinc-950/5 dark:bg-zinc-900 dark:ring-white/10";
 
 type Tone = "blue" | "orange" | "green" | "amber" | "red" | "pink" | "zinc";
@@ -170,9 +172,11 @@ export function CollapseCard({
   open = false,
   alert = false,
   badge,
+  tint,
   actionPad = "pr-36",
   children,
 }: {
+  tint?: "yellow"; // something in it waiting (the Cart)
   title: string;
   actionPad?: string; // room kept for the title-line buttons, e.g. "pr-52" for several icons
   badge?: ReactNode; // e.g. a red "1 Too old" after the title
@@ -184,7 +188,7 @@ export function CollapseCard({
 }) {
   return (
     <div className="relative">
-      <details className={`${card} group overflow-hidden`} open={open}>
+      <details className={`${tint ? yellowCard : card} group overflow-hidden`} open={open}>
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
           <span className={`font-semibold ${alert ? "animate-pulse text-red-600 dark:text-red-400" : ""} ${action ? actionPad : ""}`}>
             {title}

@@ -22,7 +22,7 @@ describe("CourtPlaybook: ✨ Draft from description", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   beforeAll(async () => {
     db = await createTestDb();
-  }, 30_000);
+  }, 180_000);
   afterAll(async () => db?.drop());
   const now = new Date("2026-11-17T17:00:00Z");
   const coach = { coachId: "5550001", firstName: "P", lastName: "Coach", isDirector: false, thunderAreas: [] } as never;

@@ -16,7 +16,7 @@ import type { ReactNode } from "react";
 
 // The To Do items that need someone (each flashes red, and so do To Do and the Home card): players not on a team,
 // uniforms missing a number or size, teams missing something, teams whose staff haven't used the app in 30 days, and
-// what's waiting (join requests, Support chats).
+// what's waiting (join requests, Support chats), and its Leagues' events not published yet.
 export function todoCounts(m: Metrics) {
   const idle = m.teamUse.filter((t) => !t.views).length;
   const waiting = m.waiting.requests + m.waiting.newChats + m.waiting.workingChats;
@@ -26,6 +26,7 @@ export function todoCounts(m: Metrics) {
     missing: m.missing.length,
     idle,
     waiting,
+    unpublished: m.unpublished.length,
   };
   return { ...items, open: Object.values(items).filter((n) => n > 0).length };
 }
@@ -107,6 +108,22 @@ export default function OrgMetrics({
       <SubCard title="To Do" count={todo.open} alert={todo.open > 0}>
         <div className="space-y-2">
           {!todo.open && <p className="text-sm text-zinc-500">✓ Nothing to do right now.</p>}
+          {m.unpublished.length > 0 && (
+            <SubCard title="Schedules not published" count={m.unpublished.length} alert>
+              <ul className="divide-y divide-zinc-100 dark:divide-white/5">
+                {m.unpublished.map((e) => (
+                  <li key={`${e.programId} ${e.day}`} className="flex justify-between gap-3 py-1.5 text-sm">
+                    <span className="font-medium">{day(e.day)}</span>
+                    <span className="truncate text-xs text-zinc-500">
+                      {e.program}
+                      {e.bracket && " Brackets"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="pt-2 text-xs text-zinc-500">Publish each on the Scheduler, with the toggle in front of its name.</p>
+            </SubCard>
+          )}
           {m.notOnTeam && (
             <SubCard
               title="Not on a team"

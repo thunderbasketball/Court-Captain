@@ -20,8 +20,8 @@ export default defineConfig({
     exclude: ["node_modules/**", ".next/**", ".next-check/**", "mobile/**"],
     env,
     // Database tests talk to Supabase over the internet.
-    testTimeout: 20_000,
-    hookTimeout: 30_000,
+    testTimeout: 60_000,
+    hookTimeout: 180_000, // building a copy of the tables takes about 30 s
     // Each test file opens its own database connections; Supabase caps the total, so only a few files run at once.
     maxWorkers: 2,
     minWorkers: 1,

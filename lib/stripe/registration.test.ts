@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "../auth/service";
-import { registerAllOrgTeams, teamPrograms } from "../org-leagues";
+import { registerAllOrgTeams, registerOrgTeam, teamPrograms } from "../org-leagues";
 import { createOrganization } from "../org-signup";
 import { createOrgTeam } from "../org-teams";
 import { addDivision, deletePriceGroup, getProgram, leagueEntry, saveProgram, saveProgramDates, savePriceGroup, tagOrgs } from "../scenic-programs";
@@ -10,7 +10,7 @@ import type { StripeApi } from "./connect";
 import { cardFee, confirmPayment, insertPayment, openCheckout, payee, registerOrPay } from "./registration";
 import { handleStripeEvent } from "./webhook";
 import { cardPayments, refundPayment } from "./refunds";
-import { buildInvoice, invoiceEmail, invoiceFor, openInvoices, payInvoice } from "../invoices";
+import { buildInvoice, invoiceEmail, invoiceFor, invoiceStatus, openInvoices, pastDueInvoices, payInvoice, programInvoices } from "../invoices";
 import { deleteOrgTeam } from "../org-teams";
 
 const ALL = { allSeason: true, days: [] };
@@ -56,7 +56,7 @@ describe("paying to register", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   beforeAll(async () => {
     db = await createTestDb();
-  }, 30_000);
+  }, 180_000);
   afterAll(async () => db?.drop());
   const now = new Date("2026-11-02T15:00:00Z");
   let pid = "";
@@ -132,8 +132,8 @@ describe("paying to register", () => {
     await saveProgramDates(deps, dee, lp, { add: ["2027-03-06", "2027-03-13"], addBrackets: [], remove: [] });
     await addDivision(deps, dee, lp, { gender: "Boys", from: 3, to: 4, levels: ["REC"] });
     const tid = await team();
-    // Registered for Mar 6 with nothing to pay by card yet (Stripe off for this first step).
-    expect(await registerOrPay({ ...deps, stripe: null }, jo, org, tid, lp, { allSeason: false, days: [{ date: "2027-03-06", kind: "single_1" }] }, BASE)).toMatchObject({ ok: true });
+    // Registered for Mar 6 (as its payment would).
+    expect(await registerOrgTeam(deps, jo, org, tid, lp, { allSeason: false, days: [{ date: "2027-03-06", kind: "single_1" }] })).toMatchObject({ ok: true });
     const copy = (await db.pool.query<{ id: string }>("select id::text from scenic_teams where org_team_id = $1", [tid])).rows[0].id;
     const add13 = { allSeason: false, days: [{ date: "2027-03-13", kind: "single_1" }] };
     // In the page: Stripe's form (its client secret, on the League's account), nothing added yet either.
@@ -156,19 +156,21 @@ describe("paying to register", () => {
     });
   });
 
-  it("no Stripe ready: registers at once (paid outside the app)", async () => {
+  it("no Stripe ready: with a fee, nothing is registered (it waits in the cart); with none, it registers at once", async () => {
     const s = fakeStripe();
     const tid = await team();
-    expect(await registerOrPay({ pool: db.pool, stripe: null, now: () => now }, jo, org, tid, pid, ALL, BASE)).toMatchObject({
-      ok: true,
-      division: "Boys 3rd–4th · 4th REC · Pool A",
-    });
+    const no = { ok: false, message: expect.stringContaining("Card payments aren't available") };
+    expect(await registerOrPay({ pool: db.pool, stripe: null, now: () => now }, jo, org, tid, pid, ALL, BASE)).toMatchObject(no);
     // Connected but Stripe still needs details: the same.
     await db.pool.query(
       "insert into org_stripe (org, livemode, account_id, connected_by, charges_enabled) values ('scenic-city', false, 'acct_league', 'Dee X', false)",
     );
     const t2 = await team();
-    expect(await registerOrPay({ pool: db.pool, stripe: s.api, now: () => now }, jo, org, t2, pid, ALL, BASE)).toMatchObject({
+    expect(await registerOrPay({ pool: db.pool, stripe: s.api, now: () => now }, jo, org, t2, pid, ALL, BASE)).toMatchObject(no);
+    expect(await regOf(tid)).toBeNull();
+    await db.pool.query("update scenic_program_options set fee_cents = 0 where program_id = $1", [pid]);
+    await db.pool.query("update scenic_programs set fee_cents = 0 where id = $1", [pid]);
+    expect(await registerOrPay({ pool: db.pool, stripe: null, now: () => now }, jo, org, tid, pid, ALL, BASE)).toMatchObject({
       ok: true,
       division: "Boys 3rd–4th · 4th REC · Pool A",
     });
@@ -441,7 +443,28 @@ describe("paying to register", () => {
     const mail = (await invoiceEmail(db.pool, pid, org, "https://app.test"))!;
     expect(mail.to).toEqual(["jo@example.com"]);
     expect(mail.subject).toContain("PAY LATER");
+    // Pay later: due 30 days after it was registered (Nov 2), not now.
+    expect(mail.subject).toContain("due Dec 2");
+    expect(mail.text).toContain("Due: December 2, 2026");
+    expect(inv).toMatchObject({ dueOn: "2026-12-02", lines: [{ dueOn: "2026-12-02" }] });
     expect(mail.text).toContain(`Balance due: $120.00`);
+    // The League's Owners see every organization's on the program: DUE until its date, then PAST DUE (a warning on Home for
+    // them and for the organization); nobody else sees the list.
+    const owen = person("5550009", "Owen");
+    await db.pool.query("insert into users (coach_id, first_name, last_name, cell) values ('5550009', 'Owen', 'X', '4235550009')");
+    await grant(db.pool, "5550009 scenic-city Owner");
+    expect(await programInvoices(db.pool, jo, pid)).toBeNull();
+    expect(await programInvoices(db.pool, dee, pid)).toBeNull(); // an Admin, not an Owner
+    const list = (await programInvoices(db.pool, owen, pid))!;
+    expect(list).toMatchObject({ invoices: [{ org, dueCents: 12000 }], others: { teams: 0, unpaid: 0 } });
+    expect(invoiceStatus(list.invoices[0], "2026-12-02")).toBe("DUE"); // the day itself
+    expect(invoiceStatus(list.invoices[0], "2026-12-03")).toBe("PAST DUE");
+    const [dec2, dec3] = [new Date("2026-12-02T17:00:00Z"), new Date("2026-12-03T17:00:00Z")];
+    expect(await pastDueInvoices(db.pool, owen, "scenic-city", dec2)).toEqual([]);
+    expect(await pastDueInvoices(db.pool, owen, "scenic-city", dec3)).toMatchObject([{ org, dueOn: "2026-12-02" }]);
+    expect(await pastDueInvoices(db.pool, jo, org, dec3)).toMatchObject([{ org }]);
+    expect(await pastDueInvoices(db.pool, jo, "scenic-city", dec3)).toEqual([]); // not the League's Owner
+    expect(await pastDueInvoices(db.pool, person("5550088", "Nat"), org, dec3)).toEqual([]);
     expect(mail.text).toContain(`https://app.test/invoice/${org}/${pid}`);
 
     // Pay it by card: one Checkout for the unpaid team; marked Paid once Stripe says so.
@@ -458,8 +481,10 @@ describe("paying to register", () => {
       message: "Paid: the invoice is updated.",
       paidNow: { programId: pid, org },
     });
-    expect(await buildInvoice(db.pool, pid, org)).toMatchObject({ paidCents: 12000, dueCents: 0, lines: [{ paid: true, paidBy: "Card (Stripe)" }] });
+    expect(await buildInvoice(db.pool, pid, org)).toMatchObject({ paidCents: 12000, dueCents: 0, dueOn: null, lines: [{ paid: true, paidBy: "Card (Stripe)", dueOn: null }] });
     expect(await openInvoices(db.pool, jo, org)).toEqual([]);
+    expect(invoiceStatus((await programInvoices(db.pool, owen, pid))!.invoices[0], "2027-01-01")).toBe("PAID");
+    expect(await pastDueInvoices(db.pool, owen, "scenic-city", dec3)).toEqual([]);
     expect((await invoiceEmail(db.pool, pid, org, "https://app.test"))!.subject).toContain("PAID");
     expect(await payInvoice(deps, jo, pid, org, BASE)).toEqual({ ok: false, message: "Nothing is due on this invoice." });
   });

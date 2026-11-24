@@ -17,7 +17,7 @@ import {
   setGradeLevel,
   setRecLimit,
   setProgramGradeRules,
-  setSchedulePublished,
+  setDayPublished,
   setPaid,
   setProgramLogo,
   setProgramRules,
@@ -1120,57 +1120,55 @@ export function TeamMenu({
   );
 }
 
-// Publish schedule (Directors of Programs, Leagues): the schedule shows on the public League page, or is taken back.
-export function PublishSchedule({ programId, by, who }: { programId: string; by: string | null; who: boolean }) {
+// An event's Publish toggle (Directors of Programs or Scheduling), in front of its name on the Scheduler: on, its games show
+// on the public League page, its teams' pages and to families; off, they're taken back. Asks first. (It sits in the card's
+// title line, so tapping it doesn't open the card.)
+export function PublishToggle({ programId, day, label, on, left }: { programId: string; day: string; label: string; on: boolean; left: string | null }) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
   const [confirm, confirmDialog] = useConfirm();
-  const on = by !== null;
   return (
-    <div className="flex flex-wrap items-center gap-2 text-sm">
+    <span className="shrink-0" onClick={(e) => e.preventDefault()}>
       <button
         type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={`Publish ${label}`}
+        title={on ? "Published: tap to unpublish" : "Publish this event's schedule"}
         disabled={busy}
-        onClick={async () => {
+        onClick={async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
           if (
             !(await confirm(
               on
                 ? {
-                    title: "Unpublish the schedule?",
-                    message: "The public League page stops showing the schedule (teams still show).",
+                    title: `Unpublish ${label}?`,
+                    message: "Its games stop showing on the public page, team pages and to families. Other events stay as they are.",
                     confirmLabel: "Unpublish",
                   }
                 : {
-                    title: "Publish the schedule?",
-                    message:
-                      "Anyone with the League page link sees every game: dates, times, gyms and teams. No contact info.",
+                    title: `Publish ${label}?`,
+                    message: `${left ? `${left}. ` : ""}Anyone with the League page link sees its games: times, gyms and teams. No contact info. Teams and families see them too.`,
                     confirmLabel: "Publish",
                   },
             ))
           )
             return;
           start(async () => {
-            const r = await setSchedulePublished(programId, !on);
+            const r = await setDayPublished(programId, day, !on);
             if (r.ok) router.refresh();
             else setMsg(r.message);
           });
         }}
-        className={`rounded-full px-3 py-1.5 font-medium ring-1 disabled:opacity-50 ${
-          on
-            ? "bg-emerald-50 text-emerald-800 ring-emerald-600/30 dark:bg-emerald-500/10 dark:text-emerald-300"
-            : "text-zinc-700 ring-zinc-950/15 hover:bg-zinc-50 dark:text-zinc-200 dark:ring-white/20"
-        }`}
+        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${on ? "bg-emerald-600" : "bg-zinc-300 dark:bg-zinc-600"}`}
       >
-        {on ? "Schedule published ✓" : "Publish schedule"}
+        <span className={`inline-block size-5 rounded-full bg-white shadow transition-transform ${on ? "translate-x-[1.375rem]" : "translate-x-0.5"}`} />
       </button>
-      <a href={`/league/scenic-city?l=${programId}`} target="_blank" className="text-thunder-blue hover:underline">
-        Public page ↗
-      </a>
-      {on && who && <span className="text-xs text-zinc-400">by {by}</span>}
       {msg && <Toast key={msg} message={msg} />}
       {confirmDialog}
-    </div>
+    </span>
   );
 }
 

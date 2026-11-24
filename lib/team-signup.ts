@@ -531,6 +531,6 @@ export async function teamSignupGo(
     if (!r.ok) return err(r.message);
     slug = r.slug;
   }
-  const next = t.to === "register" ? `/org/${slug}?open=register#register` : `/org/${slug}?open=teams#teams`;
+  const next = t.to === "register" ? `/org/${slug}?open=register#teams` : `/org/${slug}?open=teams#teams`;
   return { step: "loggedIn", token: s.token, expiresAt: s.expiresAt, slug, next };
 }

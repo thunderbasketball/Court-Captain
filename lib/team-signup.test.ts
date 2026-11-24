@@ -25,7 +25,7 @@ describe("Register (an organization's teams, no login yet)", () => {
   let prog = "";
   beforeAll(async () => {
     db = await createTestDb();
-  }, 30_000);
+  }, 180_000);
   afterAll(async () => db?.drop());
 
   beforeEach(async () => {
@@ -267,7 +267,7 @@ describe("Register (an organization's teams, no login yet)", () => {
     expect(await teamSignupGo(deps, "4235550101", "1111", { to: "register", slug })).toMatchObject({ step: "error" });
     expect(await teamSignupGo(deps, "4235550101", "2468", { to: "register", slug })).toMatchObject({
       step: "loggedIn",
-      next: "/org/magic?open=register#register",
+      next: "/org/magic?open=register#teams",
     });
     expect(await teamSignupGo(deps, "4235550101", "2468", { to: "org", slug })).toMatchObject({ step: "error" }); // not an organization
     // Or a new organization alongside it (Magic stays as it is).

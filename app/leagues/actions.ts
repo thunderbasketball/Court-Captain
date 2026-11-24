@@ -7,7 +7,7 @@ import * as thunderLeagues from "@/lib/thunder-leagues";
 import * as batches from "@/lib/register-batches";
 import { requestRemoval } from "@/lib/schedule-removal";
 import { payLater, type BatchPay } from "@/lib/scenic-programs";
-import { insertPayment, openCheckout, openCheckoutInPage, payee, registerOrPay } from "@/lib/stripe/registration";
+import { NO_CARDS, insertPayment, openCheckout, openCheckoutInPage, payee, registerOrPay } from "@/lib/stripe/registration";
 import { after } from "next/server";
 import { actionBase, stripeDeps } from "../stripe/deps";
 import { sendInvoice } from "../stripe/invoice-mail";
@@ -54,6 +54,15 @@ export async function registerAll(org: string, programId: string, preview?: bool
     const later = await payLater(db, programId, org);
     const to = later && mode === "later" ? null : await payee(db, sd.stripe);
     const startedBy = `${u.firstName} ${u.lastName}`;
+    if (!to && !later) {
+      // Something to pay, no Pay later and no card payments: nothing is registered unpaid.
+      const would =
+        org === "thunder"
+          ? await thunderLeagues.registerAllThunderTeams(deps(), u, programId, true, only)
+          : await leagues.registerAllOrgTeams(deps(), u, org, programId, true, only);
+      if (!would.ok) return would;
+      if (would.teams.some((t) => (t.cents ?? 0) > 0)) return { ok: false as const, message: NO_CARDS };
+    }
     const pay: BatchPay | null = to && {
       feePayer: to.fee_payer,
       record: (q, teams) => insertPayment(q, to, { programId, teamOrg: org, teams, startedBy, now: new Date() }),
@@ -67,7 +76,7 @@ export async function registerAll(org: string, programId: string, preview?: bool
     if (r.ok && p) return { ...r, payLaterOk: later && !!to };
     if (!r.ok || !r.paymentId) return r;
     if (inPage === true) return { ...r, payInPage: await openCheckoutInPage(sd, r.paymentId, base) };
-    const cancel = `/org/${encodeURIComponent(org)}?open=register&paid=cancelled`;
+    const cancel = `/org/${encodeURIComponent(org)}?open=teams&paid=cancelled`;
     return { ...r, pay: await openCheckout(sd, r.paymentId, base, cancel) };
   });
 }

@@ -12,7 +12,7 @@ describe("the season guide email", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   beforeAll(async () => {
     db = await createTestDb();
-  }, 30_000);
+  }, 180_000);
   afterAll(async () => db?.drop());
 
   it("its Directors of Teams see every address first; test mode sends only to them (listing the addresses); live: To them, Cc staff, Bcc all team staff", async () => {

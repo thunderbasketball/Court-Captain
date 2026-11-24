@@ -13,7 +13,7 @@ describe("scores and the Power Index", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   beforeAll(async () => {
     db = await createTestDb();
-  }, 30_000);
+  }, 180_000);
   afterAll(async () => db?.drop());
 
   it("a Director of Scores of the gym's organization (or the League's) enters it on or after the day; PIs follow", async () => {

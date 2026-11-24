@@ -31,6 +31,7 @@ export default function RegisterChoices({
   today,
   entry,
   save,
+  cart,
   saveLabel,
   onChange,
   paid,
@@ -40,6 +41,8 @@ export default function RegisterChoices({
   today: string;
   entry: (Choice & ChoiceResult) | null;
   save?: (choice: Choice) => Promise<{ ok: true } | { ok: false; message: string }>;
+  // Add to cart, beside paying now (which the button then says when there's something to pay).
+  cart?: (choice: Choice) => Promise<{ ok: true } | { ok: false; message: string }>;
   saveLabel?: string; // the button (default Register, or Add to registration)
   paid?: boolean; // adding: whether what it already has is paid (shown beside it)
   onChange?: (choice: Choice) => void;
@@ -221,8 +224,28 @@ export default function RegisterChoices({
           })
         }
       >
-        {busy ? "Saving…" : (saveLabel ?? (entry ? "Add to registration" : "Register"))}
+        {busy
+          ? "Saving…"
+          : cart && !nothing && !("error" in plan) && plan.newFeeCents > 0
+            ? `Pay now · ${money(plan.newFeeCents)}`
+            : (saveLabel ?? (entry ? "Add to registration" : "Register"))}
       </button>
+      )}
+      {cart && (
+        <button
+          type="button"
+          className="w-full rounded-full px-4 py-2.5 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/40 disabled:opacity-50 dark:text-blue-400"
+          disabled={busy || nothing || "error" in plan}
+          onClick={() =>
+            start(async () => {
+              setError(null);
+              const r = await cart(add);
+              if (!r.ok) setError(r.message);
+            })
+          }
+        >
+          Add to cart
+        </button>
       )}
     </div>
   );

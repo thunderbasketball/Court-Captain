@@ -61,7 +61,12 @@ import { ScheduleAnalysis } from "./org/scenic-city/ScheduleAnalysis";
 import OrgPlaybookCard from "./OrgPlaybookCard";
 import RegisterPrograms from "./RegisterPrograms";
 import OpenInvoicesCard from "./OpenInvoicesCard";
-import { openInvoices } from "@/lib/invoices";
+import { openInvoices, pastDueInvoices } from "@/lib/invoices";
+import PastDueNotice from "./PastDueNotice";
+import { getCart } from "@/lib/cart";
+import { pendingInvoices } from "@/lib/cart-invoices";
+import PendingInvoices from "./cart/PendingInvoices";
+import CartList from "./cart/CartList";
 import { stripeApi } from "@/lib/stripe/client";
 import { payee } from "@/lib/stripe/registration";
 import PaidNotice from "./PaidNotice";
@@ -154,7 +159,10 @@ async function HomeCards({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
-  const openCard = typeof sp.open === "string" ? sp.open : null;
+  // Register ALL is in Teams now: an old link to it (?open=register) opens Teams, with it open.
+  const asked = typeof sp.open === "string" ? sp.open.split(",") : null;
+  const asksRegister = !!asked?.includes("register");
+  const openCard = asked?.map((k) => (k === "register" ? "teams" : k)).join(",") ?? null;
   const inner = Promise.resolve(innerParams(sp));
   const here = Promise.resolve({ slug: org });
   const now = new Date();
@@ -224,10 +232,25 @@ async function HomeCards({
       ? await thunderPrograms({ pool: db, now: () => now }, user)
       : await orgPrograms({ pool: db, now: () => now }, user, org);
   // League invoices with a balance due (its Open invoices card): only for those who manage its teams.
-  const invoices = clubTeams && org !== "scenic-city" ? await openInvoices(db, user, org) : [];
+  // Past due ones are a warning in the Home card (the League's Owners: every organization's).
+  const [invoices, pastDue, cart, pending] = await Promise.all([
+    clubTeams && org !== "scenic-city" ? openInvoices(db, user, org) : [],
+    (org === "scenic-city" ? owner : clubTeams) ? pastDueInvoices(db, user, org, now) : [],
+    getCart({ pool: db, stripe: stripeApi(), now: () => now }, user, org),
+    // Invoices requested from a cart, not paid yet (theirs, or their organization's); the League's are on its program.
+    org === "scenic-city" ? [] : pendingInvoices({ pool: db, stripe: stripeApi(), now: () => now }, user, { org }),
+  ]);
   // Each part's contents, by where its data is kept (see the imports).
+  const invoicesDue = invoices.some((i) => !i.dueOn || i.dueOn < easternDate(now));
+  const toRegister = regProgs?.programs.filter((p) => p.status === "open" && p.unregistered > 0).length ?? 0; // events with teams to register
   const teamsBody = (
     <div className="space-y-4">
+      {/* Register ALL Teams, at the top: only while an event is open and some of its teams aren't in it yet. */}
+      {toRegister > 0 && (
+        <SubCard title="Register ALL Teams" count={toRegister} warn open={asksRegister}>
+          <RegisterPrograms org={org} progs={regProgs!} />
+        </SubCard>
+      )}
       {clubTeams && (org === "thunder" ? <TeamsContent searchParams={inner} embedded /> : <OrgTeamsContent params={here} searchParams={inner} embedded />)}
       {leagueTeams && <ScenicTeamsContent searchParams={inner} embedded />}
     </div>
@@ -300,14 +323,16 @@ async function HomeCards({
         ]
       : []),
     // Home: uniform requests (Directors of Uniforms), the metrics (Owners and Admins), the schedule analysis (Scheduler).
-    ...(metrics || requests || scheduler
+    ...(metrics || requests || scheduler || pastDue.length
       ? [
           {
             key: "home",
             title: "Home",
-            alert: (todo?.open ?? 0) > 0 || (requests?.length ?? 0) > 0,
+            count: pastDue.length ? `${pastDue.length} invoice${pastDue.length === 1 ? "" : "s"} past due` : undefined,
+            alert: (todo?.open ?? 0) > 0 || (requests?.length ?? 0) > 0 || pastDue.length > 0,
             body: (
               <div className="space-y-3">
+                {pastDue.length > 0 && <PastDueNotice list={pastDue} mine={org !== "scenic-city"} />}
                 {requests && <UniformRequests list={requests} />}
                 {metrics && <OrgMetricsWithVisits user={user} org={org} m={metrics} base={`/org/${org}`} thunder={org === "thunder"} now={now} roster={teamsArea} />}
                 {scheduler && <Analysis user={user} />}
@@ -334,27 +359,36 @@ async function HomeCards({
           },
         ]
       : []),
-    // Register ALL Teams: the League's programs its teams register for, many at once (those who manage its teams).
-    // Open invoices: League invoices with a balance due (whoever manages its teams), with View and Pay.
-    ...(invoices.length
+    // Invoices: League invoices with a balance due (whoever manages its teams), with View and Pay. Cart: what this person
+    // picked to register here, not paid for yet (their own). The card is named for what's in it.
+    ...(invoices.length || pending.length || cart.count || cart.gone.length
       ? [
           {
             key: "invoices",
-            title: "Open invoices",
-            count: invoices.length,
-            alert: true,
-            body: <OpenInvoicesCard invoices={invoices} canPay={!user.actingBy && !!(await payee(db, stripeApi()))} />,
-          },
-        ]
-      : []),
-    // Only while an event is open and some of its teams aren't in it yet (Nov 22).
-    ...(regProgs && regProgs.programs.some((p) => p.status === "open" && p.unregistered > 0)
-      ? [
-          {
-            key: "register",
-            title: "Register ALL Teams",
-            count: regProgs.programs.filter((p) => p.status === "open" && p.unregistered > 0).length, // events with teams to register
-            body: <RegisterPrograms org={org} progs={regProgs} />,
+            title: (invoices.length || pending.length) && (cart.count || cart.gone.length) ? "Invoices & Cart" : invoices.length || pending.length ? "Invoices" : "Cart",
+            count: [...(invoices.length ? [`${invoices.length} due`] : []), ...(pending.length ? [`${pending.length} pending`] : []), ...(cart.count ? [`${cart.count} in cart`] : [])].join(" · ") || undefined,
+            // A Pay later invoice isn't due for 30 days: red only once it's past (others are due now).
+            alert: invoicesDue,
+            tint: cart.count ? ("yellow" as const) : undefined, // something in the cart
+            body: (
+              <div className="space-y-3">
+                {invoices.length > 0 && (
+                  <SubCard title="Invoices" count={invoices.length} alert={invoicesDue} open>
+                    <OpenInvoicesCard invoices={invoices} canPay={!user.actingBy && !!(await payee(db, stripeApi()))} today={easternDate(now)} />
+                  </SubCard>
+                )}
+                {pending.length > 0 && (
+                  <SubCard title="Pending invoices" count={pending.length} open>
+                    <PendingInvoices list={pending} canAct={!user.actingBy} />
+                  </SubCard>
+                )}
+                {(cart.count > 0 || cart.gone.length > 0) && (
+                  <SubCard title="Cart" count={cart.count || undefined} open>
+                    <CartList cart={cart} canPay={!user.actingBy} />
+                  </SubCard>
+                )}
+              </div>
+            ),
           },
         ]
       : []),

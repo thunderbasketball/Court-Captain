@@ -12,7 +12,7 @@ describe("League rosters: the snapshot at a team's 1st game", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   beforeAll(async () => {
     db = await createTestDb();
-  }, 30_000);
+  }, 180_000);
   afterAll(async () => db?.drop());
 
   it("saved before the first change after the 1st game (a forfeit counts); later changes don't touch it; a Director fixes it", async () => {
@@ -75,7 +75,7 @@ describe("League rosters: the snapshot at a team's 1st game", () => {
     // Not posted: nothing is played yet. Posted: A and B have played their 1st game, C and D haven't.
     await add(a, "Eve", "4");
     expect(await names(a)).toEqual([]);
-    await q("update scenic_programs set schedule_published_at = now(), schedule_published_by = 't'").catch(() => q("update scenic_programs set schedule_published_at = now()"));
+    await q("insert into scenic_published_days (program_id, day, published_by, published_at) select distinct program_id, day, 't', now() from scenic_matchups");
     // The first change after the 1st game saves the roster as it was first (Zed isn't on it), then changes freely.
     await add(a, "Zed", "1");
     await q("delete from scenic_team_players where team_id = $1 and first_name = 'Ava'", [a]);

@@ -1,3 +1,4 @@
+import { teamCart } from "../../../../cart/teamCart";
 import type { ReactNode } from "react";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
@@ -128,6 +129,7 @@ export async function LeagueTeamView({ id, opened = "", embedded = false, edit }
           ),
           empty: kept ? "No players yet." : `${t.from}: its roster is kept on its own team page.`,
         }}
+        cart={embedded ? null : await teamCart(user, "scenic-city")}
         leagueRosters={
           leagueRosterList.length
             ? {

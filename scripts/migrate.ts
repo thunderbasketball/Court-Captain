@@ -18,6 +18,9 @@ export async function migrate(client: pg.ClientBase, schema: string): Promise<st
     (await client.query("select name from schema_migrations")).rows.map((r) => r.name as string),
   );
   const applied: string[] = [];
+  // On the real database, never wait in line for a table someone has open: everyone else's reads of it would queue behind
+  // this. It stops after 3 seconds instead, with that file's changes undone; run it again. (Tests have their own copy.)
+  if (schema === "public") await client.query("set lock_timeout = '3s'");
   for (const file of files) {
     if (done.has(file)) continue;
     await client.query("begin");

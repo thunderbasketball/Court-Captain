@@ -22,7 +22,7 @@ describe("a team's own coaches and its staff; Thunder's Directors and its regist
   let db: Awaited<ReturnType<typeof createTestDb>>;
   beforeAll(async () => {
     db = await createTestDb();
-  }, 30_000);
+  }, 180_000);
   afterAll(async () => db?.drop());
   const deps = { pool: {} as Awaited<ReturnType<typeof createTestDb>>["pool"], now: () => new Date("2026-11-02T15:00:00Z") };
 

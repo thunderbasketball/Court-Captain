@@ -7,6 +7,7 @@ import { registerAllScenicTeams } from "../org/scenic-city/actions";
 import { PopUp, Toast, useConfirm } from "../client-ui";
 import RegisterChoices from "../org/scenic-city/programs/RegisterChoices";
 import StripeInPage, { payInPage } from "../StripeInPage";
+import { addCartItem } from "../cart/actions";
 import { addLabel, addable, shortDate, type Choice, type ChoiceResult, type ProgramOption } from "@/lib/program-options";
 import type { BatchResult, BatchTeam } from "@/lib/scenic-programs";
 import type { LastBatch } from "@/lib/register-batches";
@@ -280,14 +281,14 @@ function RegisterAllPreview({
           <strong>{money(payTotal)}</strong> by card {payLaterOk ? "now" : "next"}
           {plan.payer === "team" && sub > 0 ? ` (${money(sub)} + card processing)` : ""}. The teams are registered once it&apos;s
           paid.
-          {payLaterOk && ` Or Pay later: they register now and the invoice (${money(sub)}) is emailed (check Spam if you don't see it).`}
+          {payLaterOk && ` Or Pay later: they register now and the invoice (${money(sub)}, due in 30 days) is emailed (check Spam if you don't see it).`}
         </p>
       )}
       {/* No card payment now (Pay later, or the League isn't taking cards): the fees, and an invoice is emailed. */}
       {!plan.payer && picked.length > 0 && sub > 0 && (
         <p className="rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">
           Fees: <strong>{money(sub)}</strong> ({picked.length} team{picked.length === 1 ? "" : "s"}). The teams register now and you&apos;ll get an
-          invoice by email to pay later (check Spam if you don&apos;t see it; it&apos;s also under Open invoices on your Home).
+          invoice by email to pay later (check Spam if you don&apos;t see it; it&apos;s also under Invoices on your Home).
         </p>
       )}
       {err && <p className="text-sm text-red-600 dark:text-red-400">{err}</p>}
@@ -532,6 +533,7 @@ export function RegisterLeagueButton({
   today,
   entry,
   paid,
+  noCart = false,
 }: {
   org: string;
   teamId: string;
@@ -542,6 +544,7 @@ export function RegisterLeagueButton({
   today: string;
   entry: (Choice & ChoiceResult) | null;
   paid?: boolean; // what it already has is paid (shown when adding)
+  noCart?: boolean; // in someone else's cart already: pay now only
 }) {
   const router = useRouter();
   const [msg, setMsg] = useState<string | null>(null);
@@ -598,13 +601,13 @@ export function RegisterLeagueButton({
                     if (!r.ok) return setErr(r.message);
                     close();
                     setAsked(null);
-                    setMsg("Registered. The invoice (Pay later) is emailed (check Spam if you don't see it), and it's under Open invoices on your Home.");
+                    setMsg("Registered. The invoice (Pay later) is emailed (check Spam if you don't see it), and it's under Invoices on your Home.");
                     router.refresh();
                   })
                 }
                 className="w-full rounded-full px-4 py-2.5 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/40 disabled:opacity-50"
               >
-                Pay later (register now, invoice emailed)
+                Pay later (register now, due in 30 days)
               </button>
               <button type="button" onClick={() => setAsked(null)} className="w-full text-sm text-zinc-500">
                 ← Back to the options
@@ -615,7 +618,7 @@ export function RegisterLeagueButton({
             <div className="space-y-3">
             <StepGuide name="register-team" step={1} total={2} title={entry ? "Pick dates" : "Pick what to register for"}>
               {entry ? "Tap the Game Days to add, then tap Add to registration." : "Pick ALL Season or the Game Days you want, then tap Register."}{" "}
-              With a fee, you pay next (step 2).
+              With a fee, pay now (step 2) or add it to your cart and pay for several teams together.
             </StepGuide>
             <RegisterChoices
               options={options}
@@ -644,6 +647,18 @@ export function RegisterLeagueButton({
                 router.refresh();
                 return { ok: true as const };
               }}
+              cart={
+                noCart
+                  ? undefined
+                  : async (choice) => {
+                      const r = await addCartItem(programId, { org, orgTeamId: teamId }, choice);
+                      if (!r.ok) return r;
+                      close();
+                      setMsg(r.replaced ? "Your cart is updated. Nothing is registered until you pay." : "In your cart. Nothing is registered until you pay.");
+                      router.refresh();
+                      return { ok: true as const };
+                    }
+              }
             />
             </div>
           )

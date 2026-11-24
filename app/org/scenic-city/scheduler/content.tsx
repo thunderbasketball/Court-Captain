@@ -17,8 +17,9 @@ import { dayGrid, gameLength, gymBlocks, programGameLength, type DayGrid } from 
 import { gameDaySchedule, type DateTeam, type ScheduleDay } from "@/lib/scenic-programs";
 import AppHeader from "../../../AppHeader";
 import { CoachBadge, LevelTag, PageTitle, TeamName, card, type CoachTag } from "../../../ui";
-import { PublishSchedule, TeamOffButton } from "../programs/ProgramTools";
-import { canPublish, schedulePublished } from "@/lib/public-league";
+import { PublishToggle, TeamOffButton } from "../programs/ProgramTools";
+import { canPublish, publishedDays } from "@/lib/public-league";
+import { timeLabel } from "@/lib/time";
 import { MatchupBoard } from "./MatchupBoard";
 import { GamePlace, HomeAway } from "../../../LeagueGames";
 import type { ScheduledGame } from "@/lib/scenic-games";
@@ -96,9 +97,8 @@ export async function SchedulerContent({
     })
     .filter((d) => d.programs.length);
   const programLength = program ? await programGameLength({ pool: db, now: () => new Date() }, user, program.id) : null;
-  const publishing = program
-    ? { can: await canPublish(db, user), by: (await schedulePublished(db, program.id))?.by ?? null }
-    : { can: false, by: null };
+  // Each event is published on its own (Directors of Programs or Scheduling), with a toggle in front of its name.
+  const [mayPublish, published] = program ? await Promise.all([canPublish(db, user), publishedDays(db, program.id)]) : [false, new Map<string, string>()];
   const day = days.find((d) => d.date === q.day) ?? days.find((d) => d.date >= s.today) ?? days[0];
   const view: View = VIEWS.find((v) => v.key === q.view)?.key ?? "teams";
 
@@ -133,10 +133,9 @@ export async function SchedulerContent({
               )}
               <div className={`${programId ? "" : "mt-3 "}flex items-center justify-between gap-3`}>
                 <div className="flex flex-wrap items-center gap-2">
-                  {publishing.can && (
-                    // Publish schedule: the League's games on the public League page (Directors of Programs or Scheduling).
-                    <PublishSchedule programId={program.id} by={publishing.by} who={who} />
-                  )}
+                  <a href={`/league/scenic-city?l=${program.id}`} target="_blank" className="text-sm text-thunder-blue hover:underline dark:text-blue-400">
+                    Public page ↗
+                  </a>
                   {programLength && <span className="text-xs text-zinc-500">{programLength.minutes}-min games</span>}
                 </div>
                 {programLength && (
@@ -167,16 +166,44 @@ export async function SchedulerContent({
               {days.map((d) => {
                 const coaches = coachTags(d);
                 const here = d.date === day.date;
+                const on = published.has(d.date);
+                const m = dayMetrics(d);
                 return (
-                  <details key={d.date} id={`day-${d.date}`} className={`${card} group overflow-hidden`} open={here}>
+                  // A published event is tinted green, one not published red.
+                  <details
+                    key={d.date}
+                    id={`day-${d.date}`}
+                    className={`rounded-2xl shadow-sm ring-1 ${on ? "bg-emerald-50 ring-emerald-300 dark:bg-emerald-500/10 dark:ring-emerald-500/40" : "bg-red-50 ring-red-200 dark:bg-red-500/10 dark:ring-red-500/30"} group overflow-hidden`}
+                    open={here}
+                  >
                     <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 select-none [&::-webkit-details-marker]:hidden">
-                      <span className="min-w-0">
-                        <span className="block font-semibold">{weekday(d.date, true)}</span>
+                      {mayPublish && program && (
+                        <PublishToggle programId={program.id} day={d.date} label={weekday(d.date)} on={on} left={m.left} />
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-semibold">
+                          {weekday(d.date, true)}
+                          {on && (
+                            <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                              {" "}
+                              Published{who && ` by ${published.get(d.date)}`}
+                            </span>
+                          )}
+                        </span>
                         <span className="block text-xs text-zinc-500">
                           {d.programs.map((p) => (p.bracket ? `${p.programName} Brackets` : p.programName)).join(" · ")} ·{" "}
                           {d.programs.some((p) => p.bracket) ? "Brackets" : plural(d.playing, "team")}
                           {d.games > 0 && ` · ${plural(d.games, "game")} guaranteed`}
                         </span>
+                        {m.chips.length > 0 && (
+                          <span className="mt-1.5 flex flex-wrap gap-1.5">
+                            {m.chips.map((c) => (
+                              <span key={c.text} className={`rounded-full px-2 py-0.5 text-xs font-medium ${CHIP[c.tone]}`}>
+                                {c.text}
+                              </span>
+                            ))}
+                          </span>
+                        )}
                       </span>
                       <svg
                         viewBox="0 0 20 20"
@@ -191,7 +218,7 @@ export async function SchedulerContent({
                         />
                       </svg>
                     </summary>
-                    <div className="space-y-2 border-t border-zinc-100 px-3 py-3 dark:border-white/5">
+                    <div className="space-y-2 border-t border-zinc-950/5 px-3 py-3 dark:border-white/5">
                       <Suspense fallback={null}>
                         <DayLength user={user} date={d.date} label={weekday(d.date)} who={who} />
                       </Suspense>
@@ -221,6 +248,36 @@ export async function SchedulerContent({
       </div>
     </>
   );
+}
+
+const CHIP = {
+  good: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300",
+  todo: "bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200",
+  plain: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+} as const;
+
+// An event's numbers, shown while its card is closed: matchups made of those needed (games guaranteed, two teams a game),
+// games placed (a court and time), games still TBD, pairs that meet again, courts in use and the first and last start.
+// `left`: what isn't done yet (asked about when publishing), or null. The Brackets have none until they're made.
+function dayMetrics(d: ScheduleDay): { chips: { text: string; tone: keyof typeof CHIP }[]; left: string | null } {
+  if (d.programs.every((p) => p.bracket)) return { chips: [], left: null };
+  const list = d.programs.flatMap((p) => p.matchups);
+  const need = Math.max(Math.ceil(d.games / 2), list.length);
+  const placed = list.filter((m) => m.court && m.starts);
+  const tbd = list.filter((m) => !m.b).length;
+  const again = list.filter((m) => m.before.length).length;
+  const courts = new Set(placed.map((m) => m.court)).size;
+  const times = placed.map((m) => m.starts!).sort();
+  const chips: { text: string; tone: keyof typeof CHIP }[] = [
+    { text: `${list.length} of ${need} matchups`, tone: list.length >= need && need > 0 ? "good" : "todo" },
+    { text: `${placed.length} of ${need} scheduled`, tone: placed.length >= need && need > 0 ? "good" : "todo" },
+    ...(tbd ? [{ text: `${tbd} TBD`, tone: "todo" as const }] : []),
+    ...(again ? [{ text: `${plural(again, "repeat")}`, tone: "plain" as const }] : []),
+    ...(courts ? [{ text: plural(courts, "court"), tone: "plain" as const }] : []),
+    ...(times.length ? [{ text: `${timeLabel(times[0])} – ${timeLabel(times.at(-1)!)}`, tone: "plain" as const }] : []),
+  ];
+  const missing = need - placed.length;
+  return { chips, left: missing > 0 ? `${plural(missing, "game")} of ${need} ${missing === 1 ? "isn't" : "aren't"} scheduled yet` : null };
 }
 
 // A League's teams that day, grouped by division in the League's order (Boys then Girls, youngest first).

@@ -26,7 +26,7 @@ async function run(fn: () => Promise<Awaited<ReturnType<typeof signup.teamSignup
     // Next: Stripe Checkout when its teams are paid for now; else its organization (its Teams page shows where it's
     // registered).
     if ("payInPage" in s && s.payInPage)
-      return { step: "loggedIn", next: `/org/${encodeURIComponent(s.slug)}?open=register&paid=cancelled`, payInPage: s.payInPage };
+      return { step: "loggedIn", next: `/org/${encodeURIComponent(s.slug)}?open=teams&paid=cancelled`, payInPage: s.payInPage };
     const next = "pay" in s && s.pay ? s.pay : "slug" in s && s.slug ? `/switch?org=${s.slug}` : "/";
     return { step: "loggedIn", next };
   } catch (e) {

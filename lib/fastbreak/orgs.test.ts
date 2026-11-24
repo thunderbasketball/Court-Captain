@@ -20,7 +20,7 @@ describe("FastBreak page", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   beforeAll(async () => {
     db = await createTestDb();
-  }, 30_000);
+  }, 180_000);
   afterAll(async () => db?.drop());
   const now = () => new Date("2026-11-20T15:00:00Z");
   const deps = () => ({ pool: db.pool, now });

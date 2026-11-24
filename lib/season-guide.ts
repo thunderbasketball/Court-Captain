@@ -257,7 +257,7 @@ async function guide(
       "COMP teams: on your team page, + Add dates or + Add a 2nd Game. Pick the dates and pay by card right there; they're added once it's paid.",
     ),
     step("Your games", "Once the schedule is published, Next 10 days and Games show each game's time, gym and opponent. Check it before every Game Day."),
-    step("Invoices and payments", "Open invoices show on your Home with View invoice and Pay by card (card, Apple Pay or Google Pay)."),
+    step("Invoices and payments", "Your invoices with a balance due, and your cart, show on your Home with View invoice and Pay by card (card, Apple Pay or Google Pay)."),
     ...(chat ? [step("Chat", `Tap 💬 at the top to message ${name}'s Directors.`)] : []),
     step("Share with your parents", `${site}/login/${org}`, "Parents see the teams and games there without logging in, and tap ☆ to follow your team on their phone."),
     {

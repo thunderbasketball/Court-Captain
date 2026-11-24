@@ -11,7 +11,7 @@ let deps: Deps;
 
 beforeAll(async () => {
   db = await createTestDb();
-}, 30_000);
+}, 180_000);
 afterAll(async () => {
   await db?.drop();
 });

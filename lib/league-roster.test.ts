@@ -25,7 +25,7 @@ describe("a League team's roster and staff", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   beforeAll(async () => {
     db = await createTestDb();
-  }, 30_000);
+  }, 180_000);
   afterAll(async () => db?.drop());
   const deps = () => ({ pool: db.pool, now: () => new Date("2026-11-23T15:00:00Z") });
   let team = "";

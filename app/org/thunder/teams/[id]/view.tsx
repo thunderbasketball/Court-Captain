@@ -1,3 +1,4 @@
+import { teamCart } from "../../../../cart/teamCart";
 import { Suspense } from "react";
 import { HeaderOutline, TeamOutline } from "../../../../PageOutline";
 import type { SessionUser } from "@/lib/auth/service";
@@ -388,6 +389,7 @@ async function TeamBody({
             </div>
           ),
         }}
+        cart={embedded ? null : await teamCart(user, "thunder")}
         leagueRosters={
           copy && leagueRosterList.length
             ? {

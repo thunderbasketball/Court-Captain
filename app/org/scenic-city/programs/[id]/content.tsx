@@ -43,6 +43,12 @@ import { hasFeature } from "@/lib/features";
 import DirectionsLink from "../../../../DirectionsLink";
 import SubCard from "../../../../SubCard";
 import RegistrationsCard from "../../../../RegistrationsCard";
+import ProgramInvoices from "../../../../ProgramInvoices";
+import ProgramCarts from "../../../../cart/ProgramCarts";
+import { programCarts } from "@/lib/cart";
+import { pendingInvoices } from "@/lib/cart-invoices";
+import { stripeApi } from "@/lib/stripe/client";
+import { invoiceStatus, programInvoices } from "@/lib/invoices";
 import CardPayments from "../../../../CardPayments";
 import OrgPrices from "../OrgPrices";
 import { programPriceGroups, termsOrgChoices } from "@/lib/scenic-programs";
@@ -96,6 +102,14 @@ export async function ProgramContent({
   // Owners mark it, in each team's ⋯ menu (checked again on the server).
   const charges = manage && (!!fee || p.options.length > 0);
   const owner = await isOrgOwner(db, user.coachId, "scenic-city"); // the Registrations card's list
+  const [invoices, carts, pending] = owner
+    ? await Promise.all([
+        programInvoices(db, user, p.id),
+        programCarts(db, user, p.id, new Date()),
+        pendingInvoices({ pool: db, stripe: stripeApi(), now: () => new Date() }, user, { programId: p.id }),
+      ])
+    : [null, null, []];
+  const pastDue = invoices?.invoices.filter((i) => invoiceStatus(i, p.today) === "PAST DUE").length ?? 0;
   const marksPaid = charges && owner;
   const unpaid = (t: { paid: boolean; removedBy: string | null }) => charges && !t.paid && !t.removedBy;
   const shown = manage ? p.divisionList : p.divisionList.filter((d) => d.teams);
@@ -573,6 +587,26 @@ export async function ProgramContent({
               ) : (
                 <p className="text-sm text-zinc-500">Only Scenic City&apos;s Owners see the list of registered teams.</p>
               )}
+            </SubCard>
+          </div>
+        )}
+        {/* Invoices: each organization's, by where it stands (the League's Owners). */}
+        {invoices && (
+          <div className="mt-4">
+            <SubCard
+              title="Invoices"
+              count={pastDue ? `${pastDue} past due` : invoices.invoices.length + pending.length}
+              alert={pastDue > 0}
+            >
+              <ProgramInvoices invoices={invoices.invoices} pending={pending} others={invoices.others} today={p.today} canAct={!user.actingBy} />
+            </SubCard>
+          </div>
+        )}
+        {/* In carts: what people picked to register here and haven't paid for (the League's Owners). */}
+        {carts && (
+          <div className="mt-4">
+            <SubCard title="In carts" count={carts.length} warn={carts.length > 0}>
+              <ProgramCarts items={carts} canAct={!user.actingBy} />
             </SubCard>
           </div>
         )}

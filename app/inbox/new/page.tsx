@@ -33,7 +33,7 @@ async function NewAnnouncement({ searchParams }: { searchParams: PageProps<"/inb
           ← Announcements
         </Link>
         <div className="mt-2">
-          <PageTitle title="New announcement" subtitle="Shows in their inbox right away. Unread after 8 hours? They get it by email." />
+          <PageTitle title="New announcement" subtitle="Shows in their inbox right away." />
         </div>
         <ComposeForm choices={choices} />
       </main>

@@ -155,14 +155,21 @@ export async function refundPayment(
       "insert into registration_refunds (payment_id, cents, refund_id, refunded_by, refunded_at) values ($1, $2, $3, $4, $5) on conflict (refund_id) do nothing",
       [paymentId, cents, refundId, by(viewer), deps.now()],
     );
-    if (cents === left)
+    if (cents === left) {
       // Refunded in full: its teams still registered and marked Paid by card aren't paid now.
       await q.query(
-        `update scenic_registrations r set paid = false, paid_set_by = $3, paid_set_at = $4
+        `update scenic_registrations r set paid = false, paid_set_by = $3, paid_set_at = $4, paid_cents = null
            from registration_payment_teams x
           where x.payment_id = $1 and r.program_id = $2 and r.team_id = x.team_id and r.paid and r.paid_set_by = 'Card (Stripe)'`,
         [paymentId, p.program_id, `Refunded by ${by(viewer)}`, deps.now()],
       );
+      // A part paid by card toward a registration not paid yet: owed again.
+      await q.query(
+        `update scenic_registrations r set paid_cents = greatest(0, r.paid_cents - x.fee_cents) from registration_payment_teams x
+          where x.payment_id = $1 and r.program_id = $2 and r.team_id = x.team_id and not r.paid and r.paid_cents is not null`,
+        [paymentId, p.program_id],
+      );
+    }
     if (withdraw) {
       await q.query("delete from scenic_registrations where program_id = $1 and team_id = $2", [p.program_id, withdraw]);
       return { ok: true as const, left: left - cents, withdrawn: true };

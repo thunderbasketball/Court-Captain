@@ -15,7 +15,7 @@ describe("a player's parents, added or fixed in the app", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   beforeAll(async () => {
     db = await createTestDb();
-  }, 30_000);
+  }, 180_000);
   afterAll(async () => db?.drop());
 
   it("the team's staff add a missing one, Directors change any; kept through sheet syncs; the parent verifies that email", async () => {

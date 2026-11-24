@@ -8,7 +8,7 @@ describe("CourtPlaybook: each team's plays", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   beforeAll(async () => {
     db = await createTestDb();
-  }, 30_000);
+  }, 180_000);
   afterAll(async () => {
     await db?.drop();
   });

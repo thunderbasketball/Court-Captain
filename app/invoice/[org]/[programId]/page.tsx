@@ -5,12 +5,15 @@ import PaidNotice from "../../../PaidNotice";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { db } from "@/lib/db";
 import { invoiceFor } from "@/lib/invoices";
+import { easternDate } from "@/lib/time";
 import { teamsManagerOf } from "@/lib/org-teams";
 import { stripeApi } from "@/lib/stripe/client";
 import { payee } from "@/lib/stripe/registration";
 import { InvoiceActions } from "./InvoiceActions";
 
 const money = (c: number) => `$${(c / 100).toFixed(2)}`;
+const dueDay = (d: string, year = false) =>
+  new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: year ? "long" : "short", day: "numeric", ...(year ? { year: "numeric" } : {}), timeZone: "UTC" });
 
 // An organization's invoice for a League program (SPEC.md section 14): from the League, each team (division, what it
 // registered for, price, paid), the total, paid and balance due; Print / Save as PDF, and Pay by card when something is
@@ -32,6 +35,7 @@ async function Invoice({ params }: Params) {
   const inv = await invoiceFor(db, user, programId, decodeURIComponent(org));
   if (!inv) notFound();
   const canPay = !user.actingBy && inv.dueCents > 0 && !!(await teamsManagerOf(db, user, inv.org)) && !!(await payee(db, stripeApi()));
+  const overdue = !!inv.dueOn && inv.dueOn < easternDate(new Date());
   const issued = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "America/New_York" });
   return (
     <>
@@ -49,13 +53,18 @@ async function Invoice({ params }: Params) {
               <p className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Invoice</p>
               <h1 className="text-xl font-semibold">{inv.from}</h1>
               <p className="text-sm text-zinc-500">{issued}</p>
+              {inv.dueOn && (
+                <p className={`text-sm font-semibold ${overdue ? "text-red-600" : "text-zinc-700 dark:text-zinc-200 print:text-black"}`}>
+                  {overdue ? "Was due" : "Due"} {dueDay(inv.dueOn, true)}
+                </p>
+              )}
             </div>
             <span
               className={`rounded-full px-3 py-1 text-sm font-bold ${
-                inv.dueCents > 0 ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-800"
+                overdue ? "bg-red-100 text-red-800" : inv.dueCents > 0 ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-800"
               }`}
             >
-              {inv.dueCents > 0 ? (inv.payLater ? "PAY LATER" : "BALANCE DUE") : "PAID"}
+              {overdue ? "OVERDUE" : inv.dueCents > 0 ? (inv.payLater ? "PAY LATER" : "BALANCE DUE") : "PAID"}
             </span>
           </header>
           <div className="text-sm">
@@ -85,7 +94,9 @@ async function Invoice({ params }: Params) {
                     {l.paid ? (
                       <p className="text-xs font-semibold text-emerald-700">PAID{l.paidBy ? ` · ${l.paidBy}` : ""}</p>
                     ) : (
-                      <p className="text-xs font-semibold text-amber-700">Due</p>
+                      <p className="text-xs font-semibold text-amber-700">
+                        {l.paidCents > 0 && `${money(l.paidCents)} paid · ${money(l.cents - l.paidCents)} `}Due{l.dueOn ? ` ${dueDay(l.dueOn)}` : ""}
+                      </p>
                     )}
                   </td>
                 </tr>

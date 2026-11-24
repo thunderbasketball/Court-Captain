@@ -48,6 +48,8 @@ export type OrgMetrics = {
   // Each team's use of the app: its staff's page views in the last 30 days and their last visit (least used first).
   teamUse: { id: string; name: string; views: number; lastVisit: Date | null }[];
   waiting: { requests: number; newChats: number; workingChats: number };
+  // Its Leagues' events still to come whose schedule isn't published (the Brackets once, on their first day).
+  unpublished: { programId: string; program: string; day: string; bracket: boolean }[];
 };
 
 const count = async (q: Pick<Queryable, "query">, sql: string, params: unknown[] = []) =>
@@ -60,7 +62,7 @@ export async function orgMetrics(deps: Deps, viewer: SessionUser, org: string): 
   const has = await orgFeatures(q, org);
   const thunder = org === "thunder";
   const teamsOn = has.has("team-building");
-  const [registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse] = await Promise.all([
+  const [registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished] = await Promise.all([
     thunder && has.has("player-registration") ? registrationMetrics(q, now) : null,
     teamsOn ? teamCounts(q, org) : null,
     thunder && has.has("player-registration") ? notOnTeamMetrics(q) : null,
@@ -70,8 +72,9 @@ export async function orgMetrics(deps: Deps, viewer: SessionUser, org: string): 
     teamsOn ? coachLogins(q, org) : [],
     waitingOn(q, org),
     teamsOn ? teamUsage(q, org, now) : [],
+    has.has("programs") ? unpublishedEvents(q, org, now) : [],
   ]);
-  return { registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse };
+  return { registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished };
 }
 
 async function registrationMetrics(q: Pick<Queryable, "query">, now: Date): Promise<OrgMetrics["registrations"]> {
@@ -236,6 +239,20 @@ async function coachLogins(q: Pick<Queryable, "query">, org: string): Promise<Or
 }
 
 // Join requests (people waiting to be let in) and Support chats started in this organization.
+async function unpublishedEvents(q: Pick<Queryable, "query">, org: string, now: Date): Promise<OrgMetrics["unpublished"]> {
+  const r = await q.query<OrgMetrics["unpublished"][number]>(
+    `select p.id::text as "programId", p.name as program, e.day::text, e.bracket
+       from scenic_programs p
+       join lateral (select min(g.day) as day, pg.kind = 'bracket' as bracket from program_game_days pg join game_days g on g.id = pg.game_day_id
+                      where pg.program_id = p.id group by pg.kind, case when pg.kind = 'bracket' then null else g.day end) e on true
+      where p.org = $1 and p.kind = 'League' and e.day >= $2::date
+        and not exists (select 1 from scenic_published_days d where d.program_id = p.id and d.day = e.day)
+      order by e.day, lower(p.name)`,
+    [org, easternDate(now)],
+  );
+  return r.rows;
+}
+
 async function waitingOn(q: Pick<Queryable, "query">, org: string): Promise<OrgMetrics["waiting"]> {
   const [requests, chats] = await Promise.all([
     count(

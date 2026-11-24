@@ -1,3 +1,5 @@
+import InCartNote from "./cart/InCartNote";
+import { inCarts } from "@/lib/cart";
 import type { SessionUser } from "@/lib/auth/service";
 import type { LeagueTeamPage } from "@/lib/scenic-team-page";
 import { leagueEntry } from "@/lib/scenic-programs";
@@ -39,6 +41,8 @@ export default async function LeagueRegistrations({
           ),
         )
       : null;
+  // Whose cart it's in (not paid for yet): shown to whoever may add to it.
+  const carts = canAdd ? await inCarts(db, new Date(), user, { teamId }) : [];
   return (
     <div className="space-y-3 px-4 pb-3">
       {programs.map((p) => {
@@ -63,6 +67,7 @@ export default async function LeagueRegistrations({
               </p>
             )}
             <LeagueGames games={games.filter((g) => g.programId === p.id)} today={today} />
+            <InCartNote list={carts.filter((c) => c.programId === p.id)} />
             {t?.entry && (
               <AddLeagueDates programId={p.id} teamId={teamId} options={t.options} gameDates={t.gameDates} today={today} entry={t.entry} paid={p.paid} />
             )}

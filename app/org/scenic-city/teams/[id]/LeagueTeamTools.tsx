@@ -6,6 +6,7 @@ import { Toast } from "../../../../client-ui";
 import { addLabel, addable, type Choice, type ChoiceResult, type ProgramOption } from "@/lib/program-options";
 import RegisterChoices from "../../programs/RegisterChoices";
 import StripeInPage, { payInPage } from "../../../../StripeInPage";
+import { addCartItem } from "../../../../cart/actions";
 import { addDatesToLeagueTeam, addPlayerToLeagueTeam, removeLeagueTeamStaff, removePlayerFromLeagueTeam, saveLeagueTeamStaff } from "./actions";
 
 const field =
@@ -260,6 +261,14 @@ export function AddLeagueDates({
               }
               setOpen(false);
               setMsg("unpaid" in r && r.unpaid ? "Added. The fee went up, so it shows Unpaid until it's paid." : "Added to the registration.");
+              router.refresh();
+              return { ok: true as const };
+            }}
+            cart={async (choice) => {
+              const r = await addCartItem(programId, { teamId }, choice);
+              if (!r.ok) return r;
+              setOpen(false);
+              setMsg(r.replaced ? "Your cart is updated. Nothing is added until you pay." : "In your cart. Nothing is added until you pay.");
               router.refresh();
               return { ok: true as const };
             }}

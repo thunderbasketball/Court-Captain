@@ -14,7 +14,7 @@ describe("fixing a birthday in the app", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   beforeAll(async () => {
     db = await createTestDb();
-  }, 30_000);
+  }, 180_000);
   afterAll(async () => db?.drop());
   beforeEach(async () => db.reset());
   let t = new Date("2026-11-11T17:00:00Z");

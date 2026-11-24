@@ -8,6 +8,7 @@ export type MemberCard = {
   title: string;
   count?: ReactNode;
   alert?: boolean;
+  tint?: "yellow"; // something in it waiting (the Cart)
   action?: ReactNode;
   body: ReactNode;
 };
@@ -43,6 +44,7 @@ export default function MembersCards({
             count={c.count}
             alert={c.alert}
             action={c.action}
+            tint={c.tint}
             open={opened.has(c.key)}
           >
             {opened.has(c.key) && <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>{c.body}</Suspense>}

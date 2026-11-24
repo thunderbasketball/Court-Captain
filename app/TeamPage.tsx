@@ -83,6 +83,7 @@ export default function TeamPage(p: {
   games: ReactNode; // the Games card's inside
   gamesCount: number;
   programs?: { title: string; count: number; body: ReactNode } | null; // Current Registrations (under Register Team)
+  cart?: { count: number; body: ReactNode } | null; // this person's cart for its organization (nothing in it: no card)
   register?: { title: string; count: number; body: ReactNode } | null; // Register Team: programs it can still enter (under its name)
   uniforms?: { count: number; alert: boolean; body: ReactNode } | null;
   practices?: { count: number; action?: ReactNode; body: ReactNode } | null;
@@ -147,6 +148,12 @@ export default function TeamPage(p: {
           }
         >
           {p.register.body}
+        </CollapseCard>
+      )}
+
+      {p.cart && (
+        <CollapseCard title="Cart" count={p.cart.count} open={p.opened === "cart"} tint={p.cart.count ? "yellow" : undefined}>
+          <div className="px-4 pb-4">{p.cart.body}</div>
         </CollapseCard>
       )}
 

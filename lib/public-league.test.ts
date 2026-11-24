@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
 import { gamesOfTheWeek } from "./games-of-week";
-import { followedTeams, orgPublicTeams, publicLeague, publicLeagues, publicPrograms, setSchedulePublished } from "./public-league";
+import { followedTeams, orgPublicTeams, publicLeague, publicLeagues, publicPrograms, publishedDays, setDayPublished } from "./public-league";
 import { listPrograms, setProgramLogo } from "./scenic-programs";
 import { createTestDb, grant } from "./testing/db";
 
@@ -14,7 +14,7 @@ describe("public League page (no login)", () => {
   let prog = "";
   beforeAll(async () => {
     db = await createTestDb();
-  }, 30_000);
+  }, 180_000);
   afterAll(async () => db?.drop());
 
   beforeEach(async () => {
@@ -83,8 +83,8 @@ describe("public League page (no login)", () => {
     expect(JSON.stringify(before)).not.toMatch(/4235550|Sam|Lee/); // no coach names or cells
 
     // Only a Director of Programs publishes.
-    expect(await setSchedulePublished(deps(), user("5550003"), prog, true)).toMatchObject({ ok: false });
-    expect(await setSchedulePublished(deps(), user("9913694"), prog, true)).toEqual({ ok: true });
+    expect(await setDayPublished(deps(), user("5550003"), prog, "2026-12-05", true)).toMatchObject({ ok: false });
+    expect(await setDayPublished(deps(), user("9913694"), prog, "2026-12-05", true)).toEqual({ ok: true });
     const after = await publicLeague(db.pool, now, prog);
     expect(after?.schedule).toEqual([
       {
@@ -104,6 +104,20 @@ describe("public League page (no login)", () => {
         ],
       },
     ]);
+    // One event at a time: Dec 12 isn't published, so its games don't show; not a Game Day: refused.
+    await db.pool.query(
+      `insert into scenic_matchups (program_id, division_id, day, team_a, team_b, created_by)
+       select $1, (select id from scenic_divisions), '2026-12-12', least(a.id, b.id), greatest(a.id, b.id), 't'
+         from scenic_teams a, scenic_teams b where a.name = 'Magic' and b.name = 'HH 5B Fay'`,
+      [prog],
+    );
+    expect((await publicLeague(db.pool, now, prog))?.schedule?.map((d) => d.date)).toEqual(["2026-12-05"]);
+    expect(await setDayPublished(deps(), user("9913694"), prog, "2026-12-13", true)).toMatchObject({ ok: false });
+    expect(await setDayPublished(deps(), user("9913694"), prog, "2026-12-12", true)).toEqual({ ok: true });
+    expect((await publicLeague(db.pool, now, prog))?.schedule?.map((d) => d.date)).toEqual(["2026-12-05", "2026-12-12"]);
+    expect([...(await publishedDays(db.pool, prog)).keys()].sort()).toEqual(["2026-12-05", "2026-12-12"]);
+    expect(await setDayPublished(deps(), user("9913694"), prog, "2026-12-12", false)).toEqual({ ok: true });
+    await db.pool.query("delete from scenic_matchups where day = '2026-12-12'");
     // Games of the Week: the coming Game Day; none qualify before any scores (week 1).
     expect(await gamesOfTheWeek(db.pool, now, "scenic-city")).toEqual({ day: "2026-12-05", rec: [], comp: [] });
     // A scored game the week before (Magic won 30–22): both teams have records, so their Dec 5 rematch qualifies.
@@ -120,7 +134,7 @@ describe("public League page (no login)", () => {
     ]);
     expect(week?.rec).toEqual([]);
     await db.pool.query("delete from scenic_matchups where day = '2026-11-28'");
-    expect(await setSchedulePublished(deps(), user("9913694"), prog, false)).toEqual({ ok: true });
+    expect(await setDayPublished(deps(), user("9913694"), prog, "2026-12-05", false)).toEqual({ ok: true });
     expect((await publicLeague(db.pool, now, prog))?.schedule).toBeNull();
     expect(await publicLeague(db.pool, now, "999")).toBeNull();
   }, 60_000);
@@ -134,7 +148,7 @@ describe("public League page (no login)", () => {
       { id: id("Magic"), name: "Magic", roster: [], programs: [{ id: prog, name: "Winter", group: "5th Boys COMP", games: null }] },
       { id: id("HH 5B Fay"), name: "HH 5B Fay", roster: [], programs: [{ id: prog, name: "Winter", group: "5th Boys COMP", games: null }] },
     ]);
-    await setSchedulePublished(deps(), user("9913694"), prog, true);
+    await setDayPublished(deps(), user("9913694"), prog, "2026-12-05", true);
     const [magic, fay] = await followedTeams(db.pool, now, follow);
     expect(magic.programs[0].games).toEqual([
       { date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "HH 5B Fay", home: false },
@@ -194,7 +208,7 @@ describe("public League page (no login)", () => {
     expect(await orgPublicTeams(db.pool, now, "scenic-city")).toEqual([
       { id: fay, name: "HH 5B Fay", programs: [{ id: prog, name: "Winter", group: "5th Boys COMP", games: null }] },
     ]);
-    await setSchedulePublished(deps(), user("9913694"), prog, true);
+    await setDayPublished(deps(), user("9913694"), prog, "2026-12-05", true);
     const [t] = await orgPublicTeams(db.pool, now, "scenic-city");
     expect(t.programs[0].games).toEqual([{ date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "Magic", home: true }]);
     expect(JSON.stringify(t)).not.toMatch(/Ava|Lyons|4235550|\bBo\b|roster/);

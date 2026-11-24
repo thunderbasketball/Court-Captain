@@ -1,3 +1,6 @@
+// Off since Nov 24, 2026 (not started by instrumentation.ts; may be revisited). To turn it back on: call startNotifyEmails
+// there, and show the Chat emails setting again (app/OrgGear.tsx). Better as a scheduled job on the host: Netlify pauses a
+// timer like this partway.
 // Sends the "unread for 8 hours" summary emails (announcements and chat): checks every 15 minutes while the server runs
 // (started from instrumentation.ts).
 import { sendUnreadEmails } from "../announcements";
