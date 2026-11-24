@@ -85,47 +85,49 @@ const HOST_AREAS = "array['facilities']";
 // Roles in one organization, fresh from the database (for the viewer, or anyone when working out who gets an email).
 async function contextFor(q: Q, coachId: string, org: string = THUNDER): Promise<Ctx | null> {
   const S = scopeOf(org);
-  const u = await q.query<{ director: boolean; coach: boolean }>(
-    `select ${role(S, "coach_id", "Director")} as director, ${role(S, "coach_id", "Coach")} as coach from users where coach_id = $1 and active`,
-    [coachId],
-  );
-  if (!u.rows[0]) return null;
-  const t = await q.query<{ id: string; name: string; coach: boolean; head: boolean }>(
-    `select t.id::text, t.name, bool_or(s.role in ('HeadCoach', 'AsstCoach')) as coach, bool_or(s.role = 'HeadCoach') as head
-     from ${S.staff} s join ${S.teams} t on t.id = s.team_id where s.coach_id = $1
-     group by t.id, t.name, t.grade_sort order by t.grade_sort, lower(t.name)`,
-    [coachId],
-  );
-  const e =
-    org === THUNDER
-      ? await q.query<{ id: string }>("select event_id::text as id from event_staff where coach_id = $1", [coachId])
-      : { rows: [] };
-  const kids =
-    org === THUNDER
-      ? await q.query<{ id: string }>(
-          `select distinct p.team_id::text as id from team_players p join registrations g on g.registrant_id = p.registrant_id
-             join users u on u.coach_id = $1 where u.cell in (g.parent1_cell, g.parent2_cell)`,
-          [coachId],
-        )
-      : { rows: [] };
-  // CourtSync: this organization's approved hosts, and which side of each chat this person is on.
-  const sync = await q.query<{ host: string; syncer: boolean; host_ok: boolean }>(
-    `select p.host_org as host, ${areaSql("$1", "$2", SCHEDULER_AREAS)} as syncer, ${areaSql("$1", "p.host_org", HOST_AREAS)} as host_ok
-       from org_partnerships p where p.for_org = $2 and p.status = 'approved'`,
+  // One query (it runs on every page, for every organization with unread messages): null when the person isn't active.
+  const r = await q.query<{
+    director: boolean;
+    coach: boolean;
+    teams: { id: string; name: string; coach: boolean; head: boolean }[];
+    events: string[];
+    kids: string[];
+    sync: { host: string; syncer: boolean; host_ok: boolean }[];
+    programs: string[];
+  }>(
+    `select ${role(S, "u.coach_id", "Director")} as director, ${role(S, "u.coach_id", "Coach")} as coach,
+            coalesce((select json_agg(json_build_object('id', x.id, 'name', x.name, 'coach', x.coach, 'head', x.head) order by x.grade_sort, lower(x.name))
+                        from (select t.id::text as id, t.name, t.grade_sort, bool_or(s.role in ('HeadCoach', 'AsstCoach')) as coach,
+                                     bool_or(s.role = 'HeadCoach') as head
+                                from ${S.staff} s join ${S.teams} t on t.id = s.team_id where s.coach_id = $1
+                               group by t.id, t.name, t.grade_sort) x), '[]') as teams,
+            ${
+              org === THUNDER
+                ? `array(select event_id::text from event_staff where coach_id = $1) as events,
+            array(select distinct p.team_id::text from team_players p join registrations g on g.registrant_id = p.registrant_id
+                   where u.cell in (g.parent1_cell, g.parent2_cell)) as kids,`
+                : "array[]::text[] as events, array[]::text[] as kids,"
+            }
+            -- CourtSync: this organization's approved hosts, and which side of each chat this person is on.
+            coalesce((select json_agg(json_build_object('host', p.host_org, 'syncer', ${areaSql("$1", "$2", SCHEDULER_AREAS)}, 'host_ok', ${areaSql("$1", "p.host_org", HOST_AREAS)}))
+                        from org_partnerships p where p.for_org = $2 and p.status = 'approved'), '[]') as sync,
+            array(select distinct x.id::text from (${REGISTERED_SQL("$1", "$2")}) x) as programs
+       from users u where u.coach_id = $1 and u.active`,
     [coachId, org],
   );
-  const reg = await q.query<{ id: string }>(`select distinct x.id::text from (${REGISTERED_SQL("$1", "$2")}) x`, [coachId, org]);
+  const x = r.rows[0];
+  if (!x) return null;
   return {
     org,
     coachId,
-    programs: reg.rows.map((x) => x.id),
-    syncer: sync.rows.some((x) => x.syncer),
-    hostFor: sync.rows.filter((x) => x.host_ok).map((x) => x.host),
-    director: u.rows[0].director,
-    coach: u.rows[0].coach || t.rows.some((x) => x.coach) || reg.rows.length > 0,
-    teams: t.rows,
-    events: e.rows.map((x) => x.id),
-    parentOf: kids.rows.map((x) => x.id),
+    programs: x.programs,
+    syncer: x.sync.some((s) => s.syncer),
+    hostFor: x.sync.filter((s) => s.host_ok).map((s) => s.host),
+    director: x.director,
+    coach: x.coach || x.teams.some((t) => t.coach) || x.programs.length > 0,
+    teams: x.teams,
+    events: x.events,
+    parentOf: x.kids,
   };
 }
 
@@ -616,21 +618,29 @@ export async function chatBox(deps: Deps, viewer: SessionUser, org: string): Pro
 
 // Unread messages across the chats the viewer is a member of, in every organization (the header badge).
 export async function chatUnreadCount(deps: Deps, viewer: SessionUser): Promise<number> {
-  const ctxOf = contexts(deps.pool, viewer.coachId);
-  const keys: string[] = [];
-  for (const { conv, org } of await allConvs(deps.pool)) {
-    const f = parseFull(conv);
-    const ctx = f && f.org === org ? await ctxOf(org) : null;
-    if (f && ctx && access(ctx, f.k).member) keys.push(conv);
-  }
-  if (!keys.length) return 0;
-  const r = await deps.pool.query<{ n: number }>(
-    `select count(*)::int as n from chat_messages m
-     where m.conv = any($1) and m.sender_id <> $2
-       and m.created_at > coalesce((select last_read_at from chat_reads r where r.conv = m.conv and r.coach_id = $2), '-infinity')`,
-    [keys, viewer.coachId],
+  // The chats with messages this person hasn't read (one read, with how many); only then what they may see there: their
+  // roles in those organizations, once each, side by side.
+  const r = await deps.pool.query<{ conv: string; org: string; n: number }>(
+    `select m.conv, m.org, count(*)::int as n from chat_messages m left join chat_reads r on r.conv = m.conv and r.coach_id = $1
+      where m.sender_id <> $1 and m.created_at > coalesce(r.last_read_at, '-infinity') group by m.conv, m.org`,
+    [viewer.coachId],
   );
-  return r.rows[0].n;
+  const list = r.rows.flatMap((x) => {
+    const f = parseFull(x.conv);
+    return f && f.org === x.org ? [{ ...x, k: f.k }] : [];
+  });
+  const orgs = [...new Set(list.map((x) => x.org))];
+  const here = new Map(
+    await Promise.all(
+      orgs.map(async (org) => [org, await Promise.all([chatLevel(deps.pool, org), contextFor(deps.pool, viewer.coachId, org)])] as const),
+    ),
+  );
+  let n = 0;
+  for (const x of list) {
+    const [level, ctx] = here.get(x.org)!;
+    if (ctx && access(ctx, x.k).member && (await chatOn(deps.pool, x.org, x.k, level))) n += x.n;
+  }
+  return n;
 }
 
 // ---- One chat ----

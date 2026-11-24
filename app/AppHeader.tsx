@@ -86,20 +86,22 @@ export default async function AppHeader({
         ? context.split(":")[1]
         : "thunder";
   const thunder = !platform && org === "thunder" && user.hasThunderRole;
+  // Alerts first: the pop-ups are only read when something is unread.
+  const unreading = platform ? Promise.resolve(0) : unreadCount(deps, user); // alerts from every organization
   const [orgs, here, { contexts }, features, unread, myEvents, popups, chatUnread, articles, chats, featureRows] = await Promise.all([
     listOrgs(db),
     platform ? null : orgInfo(db, org),
     currentContexts(user),
     orgFeatures(db, org),
-    platform ? 0 : unreadCount(deps, user), // alerts from every organization
+    unreading,
     thunder && !user.isDirector ? checkInsFor(user) : 0,
     // Not while a Director is viewing as this person.
-    user.actingBy || platform ? [] : popupAnnouncements(deps, user),
+    user.actingBy || platform ? [] : unreading.then((n) => (n ? popupAnnouncements(deps, user) : [])),
     platform ? 0 : chatUnreadCount(deps, user), // chats in every organization
     // Support (the same everywhere): its questions and guides, this person's chats, and the chats they answer
     // (CourtCaptain staff: all; an organization's Owners and Admins: the ones started there).
-    listArticles(db),
-    supportChats(db, user, platform ? null : org),
+    teamTab ? listArticles(db) : [], // (its button is only in a team page's tab menu)
+    teamTab ? supportChats(db, user, platform ? null : org) : { mine: [], inbox: null },
     // Each organization's features, for grouping the logo menu (more than 4 organizations).
     db.query<{ org: string; features: string[] }>("select org, array_agg(feature) as features from org_features group by org"),
   ]);
@@ -125,8 +127,7 @@ export default async function AppHeader({
   const supportStaff = contexts.some((c) => c.key === "platform");
   // Chips for this organization only; the logo next to Log out switches organizations (SPEC section 14).
   const orgChips = platform ? [] : contexts.filter((c) => c.org === org);
-  // Each organization's features, for grouping the logo menu (more than 4 organizations).
-  const featuresOf = new Map(featureRows.rows.map((r) => [r.org, r.features]));
+  const featuresOf = new Map(featureRows.rows.map((r) => [r.org, r.features])); // for grouping the logo menu (more than 4 organizations)
   const switchTo = [
     ...(contexts.some((c) => c.key === "platform")
       ? [{ slug: PLATFORM, name: "CourtCaptain", logo: PLATFORM_BRAND.logo.src, group: "Platform" }]

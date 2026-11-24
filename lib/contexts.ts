@@ -31,13 +31,39 @@ const ROLE_LABEL: Record<Role, string> = {
 
 export async function userContexts(pool: Pick<Pool, "query">, viewer: SessionUser): Promise<RoleContext[]> {
   const out: RoleContext[] = [];
-  // CourtCaptain staff: Owner-level access to every organization, in the background (a way into each one).
-  const staff = await isPlatformAdmin(pool, viewer.coachId);
-  // Owners and Admins (who also hold the Director role) see "Owner" or "Admin" on their Director chip.
-  const admins = await pool.query<{ org: string; role: string }>(
-    "select org, role from org_roles where coach_id = $1 and role in ('Admin', 'Owner')",
-    [viewer.coachId],
-  );
+  // Everything is read side by side (this runs on every page); each piece is explained where it's used.
+  const [staff, admins, r, sc, onStaff, others] = await Promise.all([
+    // CourtCaptain staff: Owner-level access to every organization, in the background (a way into each one).
+    isPlatformAdmin(pool, viewer.coachId),
+    // Owners and Admins (who also hold the Director role) see "Owner" or "Admin" on their Director chip.
+    pool.query<{ org: string; role: string }>("select org, role from org_roles where coach_id = $1 and role in ('Admin', 'Owner')", [viewer.coachId]),
+    // Thunder's teams they're on the staff of, with their highest role on each.
+    pool.query<{ id: string; name: string; role: Role }>(
+      `select distinct on (t.id) t.id::text, t.name, s.role
+       from team_staff s join teams t on t.id = s.team_id
+       where s.coach_id = $1
+       order by t.id, array_position(array['HeadCoach','AsstCoach','Manager','TeamParent'], s.role)`,
+      [viewer.coachId],
+    ),
+    pool.query<{ role: ScenicRole }>(
+      `select role from org_roles where coach_id = $1 and org = 'scenic-city' and role = any($2::text[])
+       order by array_position($2::text[], role)`,
+      [viewer.coachId, SCENIC_ROLES],
+    ),
+    // Registered organizations' teams they're on the staff of.
+    pool.query<{ org: string; id: string; name: string; role: Role }>(
+      `select distinct on (t.id) t.org, t.id::text, t.name, c.role from org_team_coaches c join org_teams t on t.id = c.team_id
+        where c.coach_id = $1 and t.org <> all($2::text[]) and t.archived_at is null
+        order by t.id, array_position(array['HeadCoach','AsstCoach','Manager','TeamParent'], c.role)`,
+      [viewer.coachId, BUILT_IN],
+    ),
+    pool.query<{ org: string; name: string; role: string }>(
+      `select r.org, o.short_name as name, r.role from org_roles r join organizations o on o.slug = r.org
+       where r.coach_id = $1 and r.org <> all($2::text[]) and r.role in ('Owner', 'Admin', 'Director', 'Coach')
+       order by lower(o.short_name), array_position(array['Owner', 'Admin', 'Director', 'Coach'], r.role)`,
+      [viewer.coachId, BUILT_IN],
+    ),
+  ]);
   const top = (org: string) =>
     staff || admins.rows.some((r) => r.org === org && r.role === "Owner")
       ? "Owner"
@@ -47,13 +73,6 @@ export async function userContexts(pool: Pick<Pool, "query">, viewer: SessionUse
   // The Director chip opens Thunder's Home (a card for each part they can open), like every organization's.
   if (viewer.isDirector) out.push({ key: "director", org: "thunder", label: top("thunder"), href: "/org/thunder" });
   // One chip per team, showing the person's highest role there.
-  const r = await pool.query<{ id: string; name: string; role: Role }>(
-    `select distinct on (t.id) t.id::text, t.name, s.role
-     from team_staff s join teams t on t.id = s.team_id
-     where s.coach_id = $1
-     order by t.id, array_position(array['HeadCoach','AsstCoach','Manager','TeamParent'], s.role)`,
-    [viewer.coachId],
-  );
   const teams = r.rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   for (const t of teams)
     out.push({
@@ -66,11 +85,6 @@ export async function userContexts(pool: Pick<Pool, "query">, viewer: SessionUse
       role: t.role,
     });
   // One Scenic City chip per role (Director, Partner, Solo, Coach): each shows Scenic City as that role sees it.
-  const sc = await pool.query<{ role: ScenicRole }>(
-    `select role from org_roles where coach_id = $1 and org = 'scenic-city' and role = any($2::text[])
-     order by array_position($2::text[], role)`,
-    [viewer.coachId, SCENIC_ROLES],
-  );
   const scenicRoles = sc.rows.map((r) => r.role);
   if (staff && !scenicRoles.includes("Director")) scenicRoles.unshift("Director");
   for (const role of scenicRoles)
@@ -82,21 +96,9 @@ export async function userContexts(pool: Pick<Pool, "query">, viewer: SessionUse
       role,
     });
   // Registered organizations' team staff: one chip per team (its page), showing their highest role there, like Thunder's.
-  const onStaff = await pool.query<{ org: string; id: string; name: string; role: Role }>(
-    `select distinct on (t.id) t.org, t.id::text, t.name, c.role from org_team_coaches c join org_teams t on t.id = c.team_id
-      where c.coach_id = $1 and t.org <> all($2::text[]) and t.archived_at is null
-      order by t.id, array_position(array['HeadCoach','AsstCoach','Manager','TeamParent'], c.role)`,
-    [viewer.coachId, BUILT_IN],
-  );
   const staffTeams = onStaff.rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   // Registered organizations: a chip with the person's top role (Owner, Admin, Director; Coach only when they're on no
   // team's staff there, else their team chips are their way in).
-  const others = await pool.query<{ org: string; name: string; role: string }>(
-    `select r.org, o.short_name as name, r.role from org_roles r join organizations o on o.slug = r.org
-     where r.coach_id = $1 and r.org <> all($2::text[]) and r.role in ('Owner', 'Admin', 'Director', 'Coach')
-     order by lower(o.short_name), array_position(array['Owner', 'Admin', 'Director', 'Coach'], r.role)`,
-    [viewer.coachId, BUILT_IN],
-  );
   for (const r of others.rows)
     if (!out.some((c) => c.key === `org:${r.org}`) && !(r.role === "Coach" && staffTeams.some((t) => t.org === r.org)))
       out.push({ key: `org:${r.org}`, org: r.org, label: r.role, href: `/org/${r.org}` });
