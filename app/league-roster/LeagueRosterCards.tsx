@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { BirthdateWarning, WarningLines, useRosterWarning } from "../RosterWarning";
 import type { LeagueRoster, SnapshotPlayer } from "@/lib/roster-snapshot";
 import { addToLeagueRoster, setOnLeagueRoster } from "./actions";
 
@@ -83,6 +84,7 @@ function AddPlayer({ programId, teamId }: { programId: string; teamId: string })
   const [f, setF] = useState(blank);
   const [err, setErr] = useState<string | null>(null);
   const [busy, start] = useTransition();
+  const warning = useRosterWarning({ kind: "locked", programId, teamId }, f);
   const set = (k: keyof typeof blank) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
   if (!open)
     return (
@@ -97,6 +99,7 @@ function AddPlayer({ programId, teamId }: { programId: string; teamId: string })
         e.preventDefault();
         start(async () => {
           setErr(null);
+          if (!(await warning.clear())) return;
           const r = await addToLeagueRoster(programId, teamId, f);
           if (!r.ok) return setErr(r.message);
           setF(blank);
@@ -112,10 +115,12 @@ function AddPlayer({ programId, teamId }: { programId: string; teamId: string })
         <input className={field} placeholder="Jersey #" inputMode="numeric" maxLength={2} value={f.jersey} onChange={set("jersey")} />
         <input className={`${field} col-span-2`} placeholder="Birthdate (5/3/2014)" value={f.birthdate} onChange={set("birthdate")} />
       </div>
+      <BirthdateWarning birthdate={f.birthdate} grade={f.grade} />
+      <WarningLines lines={warning.lines} />
       {err && <p className="text-sm text-red-600 dark:text-red-400">{err}</p>}
       <div className="flex gap-2">
         <button disabled={busy} className="rounded-full bg-thunder-blue px-3.5 py-1.5 text-sm font-semibold text-white disabled:opacity-50">
-          {busy ? "Adding…" : "Add player"}
+          {busy ? "Adding…" : warning.lines.length ? "Add anyway" : "Add player"}
         </button>
         <button type="button" onClick={() => setOpen(false)} className="text-sm text-zinc-500">
           Cancel

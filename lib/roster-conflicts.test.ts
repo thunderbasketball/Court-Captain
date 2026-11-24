@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
 import { openConflicts, reviewConflict, rosterConflicts } from "./roster-conflicts";
+import { previewPlayerRows } from "./org-rosters";
+import { rosterAddWarnings } from "./roster-warnings";
 import { createTestDb, grant } from "./testing/db";
 
 const person = (coachId: string, firstName: string): SessionUser =>
@@ -111,10 +113,48 @@ describe("roster conflicts in a League", () => {
     expect(r.conflicts.map((c) => c.strength)).toEqual(["Conflict", "Conflict"]);
     expect(r.reviewed).toEqual([]);
 
+    // Warned before adding: only whoever may change that roster, and another organization's team isn't named.
+    await q("insert into org_team_coaches (team_id, coach_id, role, added_by) values ($1, '5550101', 'HeadCoach', 't')", [a6.ot]); // Kim coaches A6
+    const t6 = { kind: "org" as const, org: "aaa", teamId: a6.ot };
+    const typed = (first: string, last: string, birthdate: string) => [{ first, last, grade: "4", birthdate }];
+    const warn = (who: SessionUser, target: Parameters<typeof rosterAddWarnings>[2], p: unknown) => rosterAddWarnings(deps, who, target, p);
+    const b4Max = [...typed("Max", "Mix", "1/2/2016")];
+    expect(await warn(kim, t6, b4Max)).toEqual(["Max Mix is on ARec (Boys 4th–5th REC) in Winter. A player can't be on a REC and a COMP team."]);
+    expect(await warn(kim, t6, typed("Zoe", "Two", "7/7/2017"))).toEqual([
+      "Zoe Two may be on another organization's team in Winter. A player can be on teams in only one organization.",
+    ]);
+    expect(await warn(kim, t6, typed("Tim", "Twin", "8/8/2016"))).toEqual([]); // allowed: the same organization, another division
+    expect(await warn(kim, t6, typed("Nia", "None", ""))).toEqual([]); // a maybe in another organization isn't said
+    expect(await warn(kim, t6, typed("New", "Kid", "8/8/2016"))).toEqual([]);
+    expect(await warn(tia, t6, b4Max)).toEqual([]); // not their roster
+    expect(await warn(kim, { ...t6, teamId: b4.ot }, b4Max)).toEqual([]); // another organization's team
+    expect(await warn(kim, { ...t6, org: "bbb", teamId: b4.ot }, b4Max)).toEqual([]);
+    expect(await warn(kim, { kind: "league", teamId: a6.st }, b4Max)).toEqual([]);
+    expect(await warn(kim, { kind: "thunder", teamId: "1" }, ["x"])).toEqual([]);
+    expect(await warn(kim, { kind: "locked", programId: prog, teamId: a6.st }, b4Max)).toEqual([]);
+    expect(await warn(kim, { ...t6, teamId: "x" }, b4Max)).toEqual([]);
+    // An import's Preview says it on the row, with birthdates that can't be right; it can still be added.
+    const pre = await previewPlayerRows(deps, kim, "aaa", a6.ot, [
+      { first: "Max", last: "Mix", grade: "6", jersey: "", birthdate: "1/2/2016" },
+      { first: "New", last: "Kid", grade: "6", jersey: "", birthdate: "5/3/2026" },
+      { first: "Fine", last: "Kid", grade: "6", jersey: "", birthdate: "5/3/2014" },
+    ]);
+    expect(pre.ok && pre.rows.map((x) => [x.status, x.warnings?.length])).toEqual([
+      ["new", 1],
+      ["new", 1],
+      ["new", 0],
+    ]);
+    expect(pre.ok && pre.rows[1].warnings).toEqual(["Born 2026: that can't be right. Check the birthdate."]);
+
     // A locked League roster is what counts, not the roster now. A team taken out doesn't count.
     await q("insert into scenic_roster_snapshots (program_id, team_id, first_game_at) values ($1, $2, now())", [prog, b4.st]);
     await q("insert into scenic_snapshot_players (program_id, team_id, first_name, last_name, grade, birthdate) values ($1, $2, 'Nia', 'None', '4', null)", [prog, b4.st]);
     expect(brief((await look()).conflicts)).toEqual([["Conflict", ["REC and COMP", "Same division"], ["A4", "ARec"]]]);
+    // A locked League roster being fixed: its own check, for the League's Directors of Teams.
+    expect(await warn(tia, { kind: "locked", programId: prog, teamId: b4.st }, typed("Zoe", "Two", "7/7/2016"))).toEqual([
+      "Zoe Two is on another organization's team in Winter. A player can be on teams in only one organization. A player can't be on two teams in the same division.",
+    ]);
+    expect(await warn(dee, { kind: "locked", programId: prog, teamId: b4.st }, typed("Zoe", "Two", "7/7/2016"))).toEqual([]); // Programs, not Teams
     await q("update scenic_registrations set removed_by = 't', removed_at = now() where team_id = $1", [aRec.st]);
     expect((await look()).conflicts).toEqual([]);
     expect(await openConflicts(db.pool, "scenic-city", now)).toEqual([]);

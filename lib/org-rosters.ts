@@ -6,10 +6,16 @@
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { cleanName } from "./auth/validate";
+import { birthdateOf, gradeOf } from "./birthdate-text";
+import { addWarnings, type AddTo } from "./roster-conflicts";
 import { DEFAULT_COLUMNS, checkColumns, rowsToPlayers, splitRows, type ColumnKind } from "./roster-columns";
 import { canManageTeams, teamsManagerOf } from "./org-teams";
 import { hasFeature } from "./features";
+import { birthdateWarning } from "./roster-match";
+import { easternDate } from "./time";
 import { withTx, type Queryable } from "./sql";
+
+export { birthdateOf, gradeOf };
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -29,34 +35,6 @@ export type OrgPlayer = {
   addedBy: string;
 };
 
-// "2014-05-03", "5/3/2014" or "05-03-2014" → "2014-05-03" (a real date, a year from 1990 on); "" → null; else undefined.
-export function birthdateOf(v: unknown): string | null | undefined {
-  const s = typeof v === "string" ? v.trim() : "";
-  if (!s) return null;
-  let y: number, m: number, d: number;
-  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
-  const us = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/.exec(s);
-  if (iso) [y, m, d] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
-  else if (us) [m, d, y] = [Number(us[1]), Number(us[2]), Number(us[3])];
-  else return undefined;
-  const t = new Date(Date.UTC(y, m - 1, d));
-  if (t.getUTCFullYear() !== y || t.getUTCMonth() !== m - 1 || t.getUTCDate() !== d || y < 1990 || y > 2035) return undefined;
-  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-}
-
-// "3", "3rd", "K", "Kindergarten" → 0 … 12.
-export function gradeOf(v: unknown): number | null {
-  if (typeof v === "number") return Number.isInteger(v) && v >= 0 && v <= 12 ? v : null;
-  if (typeof v !== "string") return null;
-  const s = v
-    .toLowerCase()
-    .replace(/grade/g, "")
-    .trim()
-    .replace(/(st|nd|rd|th)$/, "")
-    .trim();
-  if (s === "k" || s === "kindergarten") return 0;
-  return /^\d{1,2}$/.test(s) && Number(s) <= 12 ? Number(s) : null;
-}
 const jerseyOf = (v: unknown) => {
   const s = typeof v === "string" ? v.trim().replace(/^#/, "") : typeof v === "number" ? String(v) : "";
   return s === ""
@@ -289,7 +267,7 @@ export function parsePlayerRows(text: string, layout?: ImportLayout): PlayerImpo
   });
 }
 
-export type PreviewRow = PlayerImportRow & { status: "new" | "exists" | "error" };
+export type PreviewRow = PlayerImportRow & { status: "new" | "exists" | "error"; warnings?: string[] };
 
 // Rows sent back from the Preview after being fixed one by one: the same five fields, checked again here.
 export function checkImportRows(v: unknown): PlayerImportRow[] | string {
@@ -319,7 +297,20 @@ async function previewRows(deps: Deps, viewer: SessionUser, org: unknown, teamId
       )
     ).rows.map((r) => r.k),
   );
-  return { ok: true, rows: importStatus(parsed, have) };
+  return { ok: true, rows: await withWarnings(deps, { orgTeamId: teamId }, importStatus(parsed, have)) };
+}
+
+// Each new row's warnings (shown, never stopped): maybe on another team against the rule, or a birthdate that can't be right.
+export async function withWarnings(deps: Deps, to: AddTo, rows: PreviewRow[]): Promise<PreviewRow[]> {
+  const fresh = rows.filter((r) => r.status === "new");
+  const entries = fresh.map((r) => ({ first: r.first, last: r.last, dob: birthdateOf(r.birthdate) ?? null, grade: gradeOf(r.grade) }));
+  const found = await addWarnings(deps.pool, to, entries, deps.now());
+  return rows.map((r) => {
+    const i = fresh.indexOf(r);
+    if (i < 0) return r;
+    const odd = birthdateWarning(entries[i].dob, entries[i].grade, easternDate(deps.now()));
+    return { ...r, warnings: [...(odd ? [odd] : []), ...found[i]] };
+  });
 }
 
 // `have`: the names on the team ("ava smith"). Also for a League team's import (lib/league-roster).

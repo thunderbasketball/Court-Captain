@@ -6,6 +6,8 @@
 //   Check     the same birthdate and one of the names; or the same name with a birthdate missing
 // The same name with two clearly different birthdates is two players.
 
+import { schoolYearOf } from "./eligibility";
+
 export type Strength = "Conflict" | "Likely" | "Check";
 export type Entry = { first: string; last: string; dob: string | null }; // dob: YYYY-MM-DD
 
@@ -114,6 +116,12 @@ export function rulesBroken(a: TeamFacts, b: TeamFacts): string[] {
     ...(a.orgKey !== b.orgKey ? ["Different organizations"] : []),
     ...(a.divisionId === b.divisionId ? ["Same division"] : []),
   ];
+}
+
+// What to tell someone entering it, or null. `today`: YYYY-MM-DD.
+export function birthdateWarning(dob: string | null, grade: number | null, today: string): string | null {
+  const odd = oddBirthdate(dob, grade, schoolYearOf(today));
+  return odd ? `${odd}: that can't be right. Check the birthdate.` : null;
 }
 
 // A birthdate that can't be right for the grade (K = 0): more than 3 years off the usual age, or no such player yet. Null:

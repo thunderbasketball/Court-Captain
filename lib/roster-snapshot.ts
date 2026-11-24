@@ -54,6 +54,16 @@ export async function leagueRosters(deps: Deps, viewer: SessionUser, teamId: str
   return r.rows;
 }
 
+// Whether the viewer may fix this team's League roster.
+export async function mayFixSnapshot(q: Pick<Queryable, "query">, viewer: SessionUser, programId: unknown, teamId: unknown): Promise<boolean> {
+  if (!isId(programId) || !isId(teamId)) return false;
+  const r = await q.query<{ may: boolean }>(
+    `select ${FIXER} as may from scenic_roster_snapshots s join scenic_programs p on p.id = s.program_id where s.program_id = $1 and s.team_id = $3`,
+    [programId, viewer.coachId, teamId],
+  );
+  return r.rows[0]?.may === true;
+}
+
 const notAllowed = { ok: false as const, message: "Only the League's Owners, Admins and Directors of Teams can fix a League roster." };
 
 export async function addSnapshotPlayer(

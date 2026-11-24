@@ -373,7 +373,7 @@ async function TeamBody({
                 {typedRoster && roster?.canManage && <PlayerInfo key={`${p.first} ${p.last} ${p.grade}`} org={slug} teamId={t.id} player={p} />}
                 {typedRoster && roster?.canManage && <PlayerNumber key={p.jersey ?? ""} org={slug} teamId={t.id} id={p.id} number={p.jersey} />}
                 {typedRoster && (
-                  <PlayerBirthdate org={slug} teamId={t.id} playerId={p.id} birthdate={p.birthdate} canEdit={!!roster?.canManage} />
+                  <PlayerBirthdate org={slug} teamId={t.id} playerId={p.id} birthdate={p.birthdate} grade={p.grade} canEdit={!!roster?.canManage} />
                 )}
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-zinc-400">

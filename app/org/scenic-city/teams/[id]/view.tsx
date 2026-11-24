@@ -101,7 +101,7 @@ export async function LeagueTeamView({ id, opened = "", embedded = false, edit }
             more: (
               <div className="space-y-1 text-sm text-zinc-600 dark:text-zinc-300">
                 {manage && kept && <PlayerInfo key={`${p.first} ${p.last} ${p.grade}`} org={null} teamId={t.id} player={p} />}
-                <PlayerBirthdate org={null} teamId={t.id} playerId={p.id} birthdate={p.birthdate} canEdit={manage && kept} />
+                <PlayerBirthdate org={null} teamId={t.id} playerId={p.id} birthdate={p.birthdate} grade={p.grade} canEdit={manage && kept} />
                 {who && <p className="text-xs text-zinc-500">Added by {p.addedBy}</p>}
                 {manage && kept && <PlayerNumber key={p.jersey ?? ""} org={null} teamId={t.id} id={p.id} number={p.jersey} />}
                 {manage && <RemoveLeaguePlayer id={p.id} name={`${p.first} ${p.last}`} />}

@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { rosterWarnings } from "../../../roster-warnings";
 import { gradeLabel } from "@/lib/grades";
 import type { BoardPlayer, RosterBoard } from "@/lib/rosters";
 import { Alert, CloseButton, Toast, dialogCls } from "../../../client-ui";
@@ -58,6 +59,10 @@ export default function RosterBoardButton({ gender, grade }: { gender: "Boys" | 
     if (!r.ok) {
       setToast(`${player.firstName} ${player.lastName}: ${r.message}`);
       await load();
+    } else if (!(to === FREE)) {
+      // Moved. Said if they now look like they're on two League teams against the rule.
+      const [warning] = await rosterWarnings({ kind: "thunder", teamId: to }, [id]);
+      if (warning) setToast(`⚠ ${warning}`);
     }
   }
 

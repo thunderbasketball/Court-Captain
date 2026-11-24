@@ -8,6 +8,8 @@ import { birthdayLabel } from "@/lib/eligibility";
 import type { RosterCandidate } from "@/lib/rosters";
 import { Alert, CloseButton, Toast, dialogCls, useConfirm } from "../../../../client-ui";
 import { primaryBtn } from "../../../../ui";
+import { WarningLines } from "../../../../RosterWarning";
+import { rosterWarnings } from "../../../../roster-warnings";
 import { addPlayers, removePlayer } from "../actions";
 
 // Director: pick registered players to put on the team. Players eligible for the team (gender, grade and age control
@@ -155,6 +157,18 @@ export function AddPlayersButton({
                   tone: "warning",
                 }));
               if (canSecond && onTeams.length > 0 && !second) return;
+              // Anyone who looks like they're on another League team against the rule: said first.
+              const warnings = await rosterWarnings({ kind: "thunder", teamId }, picked);
+              if (
+                warnings.length &&
+                !(await confirm({
+                  title: "Check these players",
+                  message: <WarningLines lines={warnings} />,
+                  confirmLabel: "Add anyway",
+                  tone: "warning",
+                }))
+              )
+                return;
               start(async () => {
                 const r = await addPlayers(teamId, picked, second === true);
                 if (!r.ok) return setError(r.message);

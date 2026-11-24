@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { BirthdateWarning } from "../../../RosterWarning";
 import { fixBirthdateAction } from "./actions";
 
 const show = (d: string) =>
@@ -12,10 +13,12 @@ const show = (d: string) =>
 export default function BirthdateFix({
   registrantId,
   birthdate,
+  grade,
   fix,
 }: {
   registrantId: string;
   birthdate: string | null;
+  grade: string | null;
   fix: { setBy: string; sheetBirthdate: string | null } | null;
 }) {
   const router = useRouter();
@@ -54,6 +57,7 @@ export default function BirthdateFix({
             aria-label="Birthday"
             className="rounded-lg bg-white px-3 py-1.5 text-base ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/15"
           />
+          <BirthdateWarning birthdate={day} grade={grade} />
           <button
             type="button"
             disabled={busy || !day || day === birthdate}

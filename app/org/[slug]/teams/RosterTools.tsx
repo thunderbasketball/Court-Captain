@@ -7,6 +7,7 @@ import { COLUMN_KINDS, COLUMN_LABEL, guessColumns, splitRows, type ColumnKind } 
 import { Alert, PopUp, Toast, useConfirm } from "../../../client-ui";
 import { fieldLabel, inputCls, primaryBtn } from "../../../ui";
 import { addPlayer, importPlayers, previewPlayers, recheckPlayers, removePlayer, setPlayerBirthdate, setPlayerInfo } from "./actions";
+import { BirthdateWarning, WarningLines, useRosterWarning } from "../../../RosterWarning";
 import { AddPlayersIcon, ImportIcon, addIconBtn, iconBtn } from "../../../CardIcons";
 
 
@@ -17,6 +18,7 @@ export function AddPlayerButton({ org, teamId }: { org: string; teamId: string }
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [busy, start] = useTransition();
+  const warning = useRosterWarning({ kind: "org", org, teamId }, p);
   return (
     <PopUp label={<AddPlayersIcon />} ariaLabel="Add a player" title="Add a player" className={addIconBtn}>
       {() => (
@@ -26,6 +28,8 @@ export function AddPlayerButton({ org, teamId }: { org: string; teamId: string }
             e.preventDefault();
             start(async () => {
               setError(null);
+              setDone(null);
+              if (!(await warning.clear())) return;
               const r = await addPlayer(org, teamId, p);
               if (!r.ok) return setError(r.message);
               setDone(`${p.first} ${p.last} added. Add another, or close.`);
@@ -67,6 +71,7 @@ export function AddPlayerButton({ org, teamId }: { org: string; teamId: string }
                 onChange={(e) => setP({ ...p, birthdate: e.target.value })}
                 required
               />
+              <BirthdateWarning birthdate={p.birthdate} grade={p.grade} />
             </label>
             <label className="block">
               <span className={fieldLabel}>Jersey # (optional)</span>
@@ -79,10 +84,11 @@ export function AddPlayerButton({ org, teamId }: { org: string; teamId: string }
               />
             </label>
           </div>
+          <WarningLines lines={warning.lines} />
           {error && <Alert tone="red">{error}</Alert>}
           {done && <Alert tone="green">{done}</Alert>}
           <button type="submit" disabled={busy} className={`${primaryBtn} w-full`}>
-            {busy ? "Adding…" : "Add player"}
+            {busy ? "Adding…" : warning.lines.length ? "Add anyway" : "Add player"}
           </button>
         </form>
       )}
@@ -99,6 +105,7 @@ type Row = {
   birthdate: string;
   errors: string[];
   status: "new" | "exists" | "error";
+  warnings?: string[];
 };
 
 const plain = ({ line, first, last, grade, jersey, birthdate }: Row) => ({ line, first, last, grade, jersey, birthdate });
@@ -154,6 +161,7 @@ function RowEditor({
         <label className="col-span-2 block">
           <span className={fieldLabel}>Birthdate</span>
           <input className={inputCls} placeholder="5/3/2016" value={p.birthdate} onChange={(e) => setP({ ...p, birthdate: e.target.value })} />
+          <BirthdateWarning birthdate={p.birthdate} grade={p.grade} />
         </label>
       </div>
       <div className="flex items-center gap-3">
@@ -246,6 +254,11 @@ function ImportForm({ org, teamId, onDone }: { org: string | null; teamId: strin
                     {r.birthdate ? ` · born ${r.birthdate}` : " · no birthdate"}
                   </span>
                   {r.errors.length > 0 && <span className="block text-xs font-normal text-red-600 dark:text-red-400">{r.errors.join(" · ")}</span>}
+                  {r.warnings?.map((w) => (
+                    <span key={w} className="block text-xs font-medium text-amber-700 dark:text-amber-400">
+                      ⚠ {w}
+                    </span>
+                  ))}
                 </span>
                 <span
                   className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
@@ -426,6 +439,7 @@ export function PlayerBirthdate({
   teamId,
   playerId,
   birthdate,
+  grade,
   canEdit,
 }: {
   org: string | null; // null: a League team kept by the League
@@ -433,6 +447,7 @@ export function PlayerBirthdate({
   teamId: string;
   playerId: string;
   birthdate: string | null;
+  grade: number | null;
   canEdit: boolean;
 }) {
   const router = useRouter();
@@ -464,6 +479,7 @@ export function PlayerBirthdate({
         onChange={(e) => setValue(e.target.value)}
         className="rounded-lg border border-zinc-300 bg-white px-2 py-1 dark:border-white/15 dark:bg-zinc-900"
       />
+      <BirthdateWarning birthdate={value} grade={grade} />
       <button
         type="button"
         disabled={busy || !value}

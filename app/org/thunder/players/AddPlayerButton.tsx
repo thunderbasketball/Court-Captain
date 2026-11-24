@@ -6,6 +6,7 @@ import type { AddedPlayerInput } from "@/lib/added-players";
 import { SIZES } from "@/lib/uniform-fields";
 import { Alert, PopUp, Toast, useConfirm } from "../../../client-ui";
 import { fieldLabel, inputCls, primaryBtn } from "../../../ui";
+import { BirthdateWarning } from "../../../RosterWarning";
 import { addPlayerAction, removeAddedPlayerAction } from "./actions";
 
 const GRADES = ["K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
@@ -102,7 +103,10 @@ function AddPlayerForm({ onDone }: { onDone: (name: string) => void }) {
           </select>
         </label>
       </div>
-      {field("birthdate", "Birthdate (optional)", { type: "date" })}
+      <div>
+        {field("birthdate", "Birthdate (optional)", { type: "date" })}
+        <BirthdateWarning birthdate={v.birthdate} grade={v.grade} />
+      </div>
       <div className="grid grid-cols-2 gap-3">
         {field("parentFirst", "Parent first name", { required: true })}
         {field("parentLast", "Parent last name", { required: true })}

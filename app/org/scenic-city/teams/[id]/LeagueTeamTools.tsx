@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { BirthdateWarning, WarningLines, useRosterWarning } from "../../../../RosterWarning";
 import { Toast } from "../../../../client-ui";
 import { addLabel, addable, type Choice, type ChoiceResult, type ProgramOption } from "@/lib/program-options";
 import RegisterChoices from "../../programs/RegisterChoices";
@@ -24,6 +25,7 @@ export function AddLeaguePlayer({ teamId }: { teamId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, start] = useTransition();
+  const warning = useRosterWarning({ kind: "league", teamId }, f);
   const set = (k: keyof typeof blank) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
   if (!open)
     return (
@@ -41,6 +43,7 @@ export function AddLeaguePlayer({ teamId }: { teamId: string }) {
         e.preventDefault();
         start(async () => {
           setError(null);
+          if (!(await warning.clear())) return;
           const r = await addPlayerToLeagueTeam(teamId, f);
           if (!r.ok) return setError(r.message);
           setMsg(`Added ${f.first} ${f.last}.`);
@@ -56,10 +59,12 @@ export function AddLeaguePlayer({ teamId }: { teamId: string }) {
         <input className={field} placeholder="Jersey #" inputMode="numeric" maxLength={2} value={f.jersey} onChange={set("jersey")} />
         <input className={`${field} col-span-2`} placeholder="Birthdate (5/3/2014)" value={f.birthdate} onChange={set("birthdate")} />
       </div>
+      <BirthdateWarning birthdate={f.birthdate} grade={f.grade} />
+      <WarningLines lines={warning.lines} />
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
       <div className="flex gap-2">
         <button disabled={busy} className={primary}>
-          {busy ? "Adding…" : "Add player"}
+          {busy ? "Adding…" : warning.lines.length ? "Add anyway" : "Add player"}
         </button>
         <button type="button" onClick={() => setOpen(false)} className="text-sm text-zinc-500">
           Done

@@ -76,7 +76,7 @@ export default async function PlayersPart({ user }: { user: SessionUser }) {
         {p.birthdate && <> · born {birthday(p.birthdate)} (age {ageOn(p.birthdate, today)})</>}
         {p.team && <> · {p.team}</>}
       </p>
-      {canAdd && <BirthdateFix registrantId={p.registrantId} birthdate={p.birthdate} fix={fixes.get(p.registrantId) ?? null} />}
+      {canAdd && <BirthdateFix registrantId={p.registrantId} birthdate={p.birthdate} grade={p.grade} fix={fixes.get(p.registrantId) ?? null} />}
       {p.address && <p>{p.address}</p>}
       {(p.uniformSize || p.uniformNumber) && (
         <p>

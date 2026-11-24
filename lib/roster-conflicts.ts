@@ -52,7 +52,7 @@ export type RosterReport = {
 
 const gradeOf = (g: string | null): number | null => (g === null || g === "" ? null : /^k$/i.test(g) ? 0 : /^pre-?k$/i.test(g) ? -1 : /^-?\d{1,2}$/.test(g) ? Number(g) : null);
 
-async function playersOf(q: Pick<Queryable, "query">, programId: string): Promise<{ teams: number; players: Player[] }> {
+async function playersOf(q: Pick<Queryable, "query">, programId: string): Promise<{ teams: number; players: Player[]; facts: Map<string, TeamFacts> }> {
   const r = await q.query<{
     team_id: string;
     team: string;
@@ -95,6 +95,7 @@ async function playersOf(q: Pick<Queryable, "query">, programId: string): Promis
   );
   return {
     teams: r.rows.length,
+    facts: new Map(r.rows.map((t) => [t.team_id, { teamId: t.team_id, orgKey: t.org_key, divisionId: t.division_id, level: t.level }])),
     players: r.rows.flatMap((t) =>
       t.players.map((p) => ({
         teamId: t.team_id,
@@ -215,4 +216,59 @@ export async function openConflicts(q: Pick<Queryable, "query">, org: string, no
     r.rows.map(async (p) => ({ programId: p.id, program: p.name, n: (await rosterReport(q, p.id, now)).conflicts.filter((c) => c.strength !== "Check").length })),
   );
   return out.filter((x) => x.n > 0);
+}
+
+// ---- Warnings while adding players (SPEC.md section 13): the same match and rule, before they're saved ----
+
+export type AddTo = { orgTeamId: string } | { thunderTeamId: string } | { teamId: string } | { teamId: string; programId: string };
+export type AddEntry = { first: string; last: string; dob: string | null; grade: number | null };
+const RULE: Record<string, string> = {
+  "REC and COMP": "A player can't be on a REC and a COMP team.",
+  "Different organizations": "A player can be on teams in only one organization.",
+  "Same division": "A player can't be on two teams in the same division.",
+};
+
+// Each entry's warnings (one list per entry): a player who looks the same on another team of a League this team is
+// registered in, against the rule. Another organization's team and player aren't named. With `programId` only that League
+// (its locked roster is being fixed); else Leagues not ended where the team's roster isn't locked yet. The caller has
+// checked who may change the roster. Never stops anything.
+export async function addWarnings(q: Pick<Queryable, "query">, to: AddTo, entries: AddEntry[], now: Date): Promise<string[][]> {
+  const out: string[][] = entries.map(() => []);
+  if (!entries.length) return out;
+  const [col, id] = "orgTeamId" in to ? ["org_team_id", to.orgTeamId] : "thunderTeamId" in to ? ["thunder_team_id", to.thunderTeamId] : ["id", to.teamId];
+  const only = "programId" in to ? to.programId : null;
+  const regs = await q.query<{ programId: string; program: string; teamId: string }>(
+    `select p.id::text as "programId", p.name as program, t.id::text as "teamId"
+       from scenic_teams t join scenic_registrations r on r.team_id = t.id and r.removed_at is null
+       join scenic_programs p on p.id = r.program_id and p.kind = 'League'
+      where t.${col} = $1
+        and case when $2::bigint is null then p.ends_on >= $3::date
+                   and not exists (select 1 from scenic_roster_snapshots s where s.program_id = p.id and s.team_id = t.id)
+                 else p.id = $2::bigint end
+      order by p.starts_on`,
+    [id, only, easternDate(now)],
+  );
+  for (const g of regs.rows) {
+    const { players, facts } = await playersOf(q, g.programId);
+    const mine = facts.get(g.teamId);
+    if (!mine) continue;
+    entries.forEach((e, i) => {
+      for (const p of players) {
+        if (p.teamId === g.teamId) continue;
+        const m = matchPlayers(e, p);
+        const sameOrg = p.orgKey === mine.orgKey;
+        // A maybe is only worth saying for the same name in the same organization, with a birthdate missing.
+        if (!m || (m.strength === "Check" && !(sameOrg && (!e.dob || !p.dob)))) continue;
+        const broken = rulesBroken(mine, p);
+        if (!broken.length) continue;
+        const who = `${e.first} ${e.last}`.trim();
+        const is = m.strength === "Conflict" ? "is on" : "may be on";
+        const line = sameOrg
+          ? `${who} ${is} ${p.team} (${p.division} ${p.level}) in ${g.program}. ${broken.map((b) => RULE[b] ?? b).join(" ")}`
+          : `${who} ${is} another organization's team in ${g.program}. ${broken.map((b) => RULE[b] ?? b).join(" ")}`;
+        if (!out[i].includes(line)) out[i].push(line);
+      }
+    });
+  }
+  return out;
 }

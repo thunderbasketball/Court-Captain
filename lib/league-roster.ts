@@ -7,7 +7,7 @@ import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { cleanEmail, cleanName } from "./auth/validate";
 import { isOrgAdmin, orgHasArea } from "./org-admin";
-import { cleanInfo, saveInfo, birthdateOf, checkImportRows, cleanPlayer, gradeOf, importStatus, parsePlayerRows, type ImportLayout, type PlayerImportRow, type PreviewRow } from "./org-rosters";
+import { cleanInfo, saveInfo, birthdateOf, checkImportRows, cleanPlayer, gradeOf, importStatus, parsePlayerRows, withWarnings, type ImportLayout, type PlayerImportRow, type PreviewRow } from "./org-rosters";
 import { normalizeCell } from "./phone";
 import { TEAM_COACHES } from "./scenic-programs";
 import { dropScenicCoachIfIdle } from "./scenic-teams";
@@ -90,7 +90,7 @@ async function leaguePreview(deps: Deps, viewer: SessionUser, teamId: unknown, p
   if (!isId(teamId) || !(await mayManageLeagueTeam(deps.pool, viewer, teamId))) return { ok: false, message: notAllowed };
   if (typeof parsed === "string") return { ok: false, message: parsed };
   const have = await deps.pool.query<{ k: string }>("select lower(first_name) || ' ' || lower(last_name) as k from scenic_team_players where team_id = $1", [teamId]);
-  return { ok: true, rows: importStatus(parsed, new Set(have.rows.map((r) => r.k))) };
+  return { ok: true, rows: await withWarnings(deps, { teamId }, importStatus(parsed, new Set(have.rows.map((r) => r.k)))) };
 }
 export async function previewLeagueImport(deps: Deps, viewer: SessionUser, teamId: unknown, text: unknown, layout?: ImportLayout) {
   if (typeof text !== "string" || !text.trim() || text.length > 50_000) return { ok: false as const, message: "Paste your players or choose a CSV file." };
