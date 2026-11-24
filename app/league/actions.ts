@@ -17,7 +17,7 @@ export async function loadPublicProgram(org: string, id: string) {
   const today = easternDate(now);
   const p = await publicly(`program:${today}:${org}:${id}`, () => publicLeague(db, now, String(id), org)); // only that organization's programs
   if (!p) return { ok: false as const, message: "That program isn't public right now." };
-  return { ok: true as const, groups: p.groups, schedule: p.schedule, today };
+  return { ok: true as const, groups: p.groups, schedule: p.schedule, soon: p.soon, today };
 }
 
 // My Teams on the login page: the teams a device follows (ids kept on the device; nothing stored here). The same public

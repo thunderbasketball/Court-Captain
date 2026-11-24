@@ -48,6 +48,7 @@ function TeamRow({ org, team, today }: { org: string; team: OrgPublicTeam; today
     .sort((a, b) => a.date.localeCompare(b.date) || (a.starts ?? "99").localeCompare(b.starts ?? "99"));
   const next = games.find((g) => g.date >= today);
   const posted = team.programs.some((p) => p.games !== null);
+  const soon = [...new Set(team.programs.filter((p) => p.soon).map((p) => p.level))];
   return (
     <li className="py-2.5">
       <div className="flex items-start gap-1.5">
@@ -55,7 +56,7 @@ function TeamRow({ org, team, today }: { org: string; team: OrgPublicTeam; today
           <span className="block truncate font-semibold">{team.name}</span>
           <span className="block truncate text-xs text-zinc-500">{team.programs.map((p) => `${p.name} · ${p.group}`).join(" / ")}</span>
           <span className="block text-xs text-zinc-500">
-            {!posted ? "Schedule not posted yet" : next ? "Next game below" : "No more games"}
+            {soon.length > 0 && !next ? `${soon.join(" and ")} Schedule will be published soon` : !posted ? "Schedule not posted yet" : next ? "Next game below" : "No more games"}
             {posted && <span className="text-thunder-blue dark:text-blue-400"> · {open ? "Hide games" : `All games (${games.length})`}</span>}
           </span>
         </button>

@@ -50,7 +50,7 @@ export type OrgMetrics = {
   teamUse: { id: string; name: string; views: number; lastVisit: Date | null }[];
   waiting: { requests: number; newChats: number; workingChats: number };
   // The next few of its Leagues' Game Days whose schedule isn't published (the Brackets once, on their first day).
-  unpublished: { programId: string; program: string; day: string; bracket: boolean }[];
+  unpublished: { programId: string; program: string; day: string; bracket: boolean; levels: string[] }[];
   // Its current Leagues' possible roster conflicts still to look at (a Conflict or Likely).
   rosterConflicts: { programId: string; program: string; n: number }[];
 };
@@ -245,12 +245,16 @@ async function coachLogins(q: Pick<Queryable, "query">, org: string): Promise<Or
 // Join requests (people waiting to be let in) and Support chats started in this organization.
 async function unpublishedEvents(q: Pick<Queryable, "query">, org: string, now: Date): Promise<OrgMetrics["unpublished"]> {
   const r = await q.query<OrgMetrics["unpublished"][number]>(
-    `select p.id::text as "programId", p.name as program, e.day::text, e.bracket
+    `select p.id::text as "programId", p.name as program, e.day::text, e.bracket, array_agg(l.level order by l.level desc) as levels
        from scenic_programs p
        join lateral (select min(g.day) as day, pg.kind = 'bracket' as bracket from program_game_days pg join game_days g on g.id = pg.game_day_id
                       where pg.program_id = p.id group by pg.kind, case when pg.kind = 'bracket' then null else g.day end) e on true
+       -- the levels its teams play at, not published that day
+       join lateral (select distinct g.level from scenic_registrations r join scenic_pools o on o.id = r.pool_id join scenic_grade_groups g on g.id = o.group_id
+                      where r.program_id = p.id and r.removed_by is null) l on true
       where p.org = $1 and p.kind = 'League' and e.day >= $2::date
-        and not exists (select 1 from scenic_published_days d where d.program_id = p.id and d.day = e.day)
+        and not exists (select 1 from scenic_published_schedules d where d.program_id = p.id and d.day = e.day and d.level = l.level)
+      group by p.id, p.name, e.day, e.bracket
       order by e.day, lower(p.name) limit 3`, // the next few
     [org, easternDate(now)],
   );

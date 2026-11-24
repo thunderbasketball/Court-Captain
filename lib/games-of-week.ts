@@ -57,7 +57,7 @@ export async function gamesOfTheWeek(q: Pick<Queryable, "query">, now: Date, org
   // Each league's coming published Game Day (with games): the week's day is the earliest.
   const next = await q.query<{ day: string | null }>(
     `select min(m.day)::text as day from scenic_matchups m where m.program_id = any($1::bigint[]) and m.day >= $2::date
-       and exists (select 1 from scenic_published_days pd where pd.program_id = m.program_id and pd.day = m.day)`,
+       and scenic_game_published(m.program_id, m.day, m.team_a)`,
     [ids, today],
   );
   const day = next.rows[0]?.day ?? null;
@@ -102,7 +102,7 @@ export async function gamesOfTheWeek(q: Pick<Queryable, "query">, now: Date, org
        join scenic_divisions d on d.id = g.division_id
        ${PLACE_SQL}
       where m.program_id = any($1::bigint[]) and m.day = $2::date
-        and exists (select 1 from scenic_published_days pd where pd.program_id = m.program_id and pd.day = m.day) and ta.name not like '%(DEV)' and tb.name not like '%(DEV)'`,
+        and scenic_game_published(m.program_id, m.day, m.team_a) and ta.name not like '%(DEV)' and tb.name not like '%(DEV)'`,
     [ids, day],
   );
   const all = games.rows.map((m) => {

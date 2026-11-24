@@ -71,6 +71,9 @@ export default function FindMyPlayer({ today }: { today: string }) {
                     ))}
                   </ul>
                 )}
+                {p.team.soon.length > 0 && (
+                  <p className="text-sm font-medium text-amber-700 dark:text-amber-300">{p.team.soon.join(" and ")} Schedule will be published soon.</p>
+                )}
                 <ScheduleList
                   games={p.team.games}
                   practices={p.team.practices}

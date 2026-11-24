@@ -125,10 +125,10 @@ async function League({
             )}
             {/* Division → REC / COMP → Grade (Standings, then its Schedule by date). */}
             <SubCard title="Teams" count={league.groups.reduce((n, g) => n + g.teams.length, 0)} open={tab === "teams"}>
-              <ProgramDivisions org={org} groups={league.groups} schedule={league.schedule} today={today} />
+              <ProgramDivisions org={org} groups={league.groups} schedule={league.schedule} today={today} soon={league.soon} />
             </SubCard>
             <SubCard title="Schedule" count={league.schedule ? undefined : "not posted yet"} open={tab === "schedule"}>
-              <ProgramSchedule days={league.schedule} today={today} />
+              <ProgramSchedule days={league.schedule} today={today} soon={league.soon} />
             </SubCard>
             <SubCard title="Find my player's team" open={tab === "find"}>
               <FindMyPlayer today={today} />

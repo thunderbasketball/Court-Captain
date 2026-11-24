@@ -9,18 +9,30 @@ import DirectionsLink from "./DirectionsLink";
 const weekday = (iso: string) =>
   new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 
+// "REC Schedule will be published soon."
+export function ScheduleSoon({ levels, className = "" }: { levels: string[]; className?: string }) {
+  if (!levels.length) return null;
+  return <p className={`text-sm font-medium text-amber-700 dark:text-amber-300 ${className}`}>{levels.join(" and ")} Schedule will be published soon.</p>;
+}
+
 // Game days, the next one open (past ones closed), games by time then gym and court. null: not published yet.
-export function ProgramSchedule({ days, today }: { days: PublicDay[] | null; today: string }) {
-  if (days === null)
-    return (
+export function ProgramSchedule({ days, today, soon }: { days: PublicDay[] | null; today: string; soon: string[] }) {
+  if (days === null || !days.length)
+    return soon.length ? (
+      <div className={`${card} p-5`}>
+        <ScheduleSoon levels={soon} />
+      </div>
+    ) : days ? (
+      <p className={`${card} p-5 text-sm text-zinc-600 dark:text-zinc-300`}>No games scheduled yet.</p>
+    ) : (
       <p className={`${card} p-5 text-sm text-zinc-600 dark:text-zinc-300`}>
         The schedule isn&apos;t posted yet. Check back soon.
       </p>
     );
-  if (!days.length) return <p className={`${card} p-5 text-sm text-zinc-600 dark:text-zinc-300`}>No games scheduled yet.</p>;
   const next = days.find((d) => d.date >= today)?.date ?? days.at(-1)?.date;
   return (
     <div className="space-y-3">
+      <ScheduleSoon levels={soon} className="px-1" />
       {days.map((d) => (
         <details key={d.date} className={`${card} group overflow-hidden`} open={d.date === next}>
           <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 font-semibold [&::-webkit-details-marker]:hidden">
@@ -31,6 +43,7 @@ export function ProgramSchedule({ days, today }: { days: PublicDay[] | null; tod
               ▶
             </span>
           </summary>
+          <ScheduleSoon levels={d.soon} className="border-t border-zinc-100 px-4 py-2 dark:border-white/5" />
           <ul className="divide-y divide-zinc-100 border-t border-zinc-100 text-sm dark:divide-white/5 dark:border-white/5">
             {d.games.map((g, i) => (
               <li key={i} className="flex gap-3 px-4 py-2.5">
@@ -64,7 +77,22 @@ const summaryCls = "flex cursor-pointer list-none items-center justify-between g
 
 // A program by Division, then REC and COMP, then Grade (each a card that opens in place). A grade's card: Standings on top
 // (its teams by Power Index, with wins, losses and PI; ☆ to follow), then its Schedule by date (once published).
-export function ProgramDivisions({ org, groups, schedule, today }: { org: string; groups: PublicGroup[]; schedule: PublicDay[] | null; today: string }) {
+// `follow` false: no ☆ (an organization's view of another's League; its own teams have theirs on its Teams card).
+export function ProgramDivisions({
+  org,
+  groups,
+  schedule,
+  today,
+  soon,
+  follow = true,
+}: {
+  org: string;
+  groups: PublicGroup[];
+  schedule: PublicDay[] | null;
+  today: string;
+  soon: string[];
+  follow?: boolean;
+}) {
   if (!groups.length) return <p className={`${card} p-5 text-sm text-zinc-600 dark:text-zinc-300`}>No teams registered yet.</p>;
   const divisions: { name: string; levels: { level: string; grades: PublicGroup[] }[] }[] = [];
   for (const g of groups) {
@@ -107,7 +135,7 @@ export function ProgramDivisions({ org, groups, schedule, today }: { org: string
                 </summary>
                 <div className="space-y-2 border-t border-zinc-100 p-2 dark:border-white/5">
                   {l.grades.map((g) => (
-                    <GradeCard key={g.label} org={org} g={g} schedule={schedule} today={today} />
+                    <GradeCard key={g.label} org={org} g={g} schedule={schedule} today={today} soon={soon.includes(g.level)} follow={follow} />
                   ))}
                 </div>
               </details>
@@ -119,7 +147,7 @@ export function ProgramDivisions({ org, groups, schedule, today }: { org: string
   );
 }
 
-function GradeCard({ org, g, schedule, today }: { org: string; g: PublicGroup; schedule: PublicDay[] | null; today: string }) {
+function GradeCard({ org, g, schedule, today, soon, follow }: { org: string; g: PublicGroup; schedule: PublicDay[] | null; today: string; soon: boolean; follow: boolean }) {
   const days = schedule?.map((d) => ({ ...d, games: d.games.filter((x) => x.group === g.label) })).filter((d) => d.games.length) ?? null;
   return (
     <details className="overflow-hidden rounded-lg bg-zinc-50/60 ring-1 ring-zinc-950/5 dark:bg-white/5 dark:ring-white/10">
@@ -152,7 +180,7 @@ function GradeCard({ org, g, schedule, today }: { org: string; g: PublicGroup; s
                   <td className="px-1 text-center tabular-nums">{t.l}</td>
                   <td className="px-1 text-center font-semibold tabular-nums">{t.pi}</td>
                   <td className="px-1 text-right">
-                    <FollowStar org={org} id={t.id} name={t.name} />
+                    {follow && <FollowStar org={org} id={t.id} name={t.name} />}
                   </td>
                 </tr>
               ))}
@@ -165,11 +193,12 @@ function GradeCard({ org, g, schedule, today }: { org: string; g: PublicGroup; s
         </section>
         <section>
           <h4 className="px-2 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Schedule</h4>
-          {days === null ? (
+          {soon && <ScheduleSoon levels={[g.level]} className="px-2 pb-1" />}
+          {days === null ? (soon ? null : (
             <p className="px-2 text-sm text-zinc-600 dark:text-zinc-300">The schedule isn&apos;t posted yet. Check back soon.</p>
-          ) : !days.length ? (
+          )) : !days.length ? (soon ? null : (
             <p className="px-2 text-sm text-zinc-600 dark:text-zinc-300">No games scheduled yet.</p>
-          ) : (
+          )) : (
             <ul className="space-y-2">
               {days.map((d) => (
                 <li key={d.date} className={`rounded-lg bg-white ring-1 ring-zinc-950/5 dark:bg-zinc-900 dark:ring-white/10 ${d.date < today ? "opacity-60" : ""}`}>

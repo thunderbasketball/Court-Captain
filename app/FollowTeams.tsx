@@ -160,6 +160,7 @@ function TeamCard({ org, team, today }: { org: string; team: FollowedTeam; today
     .sort((a, b) => a.date.localeCompare(b.date) || (a.starts ?? "99").localeCompare(b.starts ?? "99"));
   const soon = all.filter((g) => g.date >= today && g.date <= until);
   const posted = team.programs.some((p) => p.games !== null);
+  const later = [...new Set(team.programs.filter((p) => p.soon).map((p) => p.level))];
   const show = (p: "roster" | "schedule") => setPanel((x) => (x === p ? null : p));
 
   return (
@@ -190,7 +191,7 @@ function TeamCard({ org, team, today }: { org: string; team: FollowedTeam; today
           </ul>
         ) : (
           <p className="text-xs text-zinc-500">
-            {posted ? `No games in the next ${SOON_DAYS} days.` : team.programs.length ? "Schedule not posted yet." : ""}
+            {later.length ? `${later.join(" and ")} Schedule will be published soon.` : posted ? `No games in the next ${SOON_DAYS} days.` : team.programs.length ? "Schedule not posted yet." : ""}
           </p>
         )}
       </div>
@@ -225,7 +226,8 @@ function TeamCard({ org, team, today }: { org: string; team: FollowedTeam; today
                   <p className="mb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
                     {p.name} · {p.group}
                   </p>
-                  {p.games === null ? (
+                  {p.soon && <p className="text-sm font-medium text-amber-700 dark:text-amber-300">{p.level} Schedule will be published soon.</p>}
+                  {p.games === null ? p.soon ? null : (
                     <p className="text-sm text-zinc-500">Schedule not posted yet.</p>
                   ) : p.games.length ? (
                     <ul className="space-y-1.5 text-sm">

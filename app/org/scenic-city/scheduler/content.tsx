@@ -18,7 +18,7 @@ import { gameDaySchedule, type DateTeam, type ScheduleDay } from "@/lib/scenic-p
 import AppHeader from "../../../AppHeader";
 import { CoachBadge, LevelTag, PageTitle, TeamName, card, type CoachTag } from "../../../ui";
 import { PublishToggle, TeamOffButton } from "../programs/ProgramTools";
-import { canPublish, publishedDays } from "@/lib/public-league";
+import { canPublish, publishedLevels } from "@/lib/public-league";
 import { timeLabel } from "@/lib/time";
 import { MatchupBoard } from "./MatchupBoard";
 import { GamePlace, HomeAway } from "../../../LeagueGames";
@@ -97,8 +97,8 @@ export async function SchedulerContent({
     })
     .filter((d) => d.programs.length);
   const programLength = program ? await programGameLength({ pool: db, now: () => new Date() }, user, program.id) : null;
-  // Each Game Day (and the Brackets) is published on its own (Directors of Programs or Scheduling), with a toggle in front of its name.
-  const [mayPublish, published] = program ? await Promise.all([canPublish(db, user), publishedDays(db, program.id)]) : [false, new Map<string, string>()];
+  // Each Game Day (and the Brackets) publishes REC and COMP each on its own (Directors of Programs or Scheduling).
+  const [mayPublish, published] = program ? await Promise.all([canPublish(db, user), publishedLevels(db, program.id)]) : [false, new Map<string, string>()];
   const day = days.find((d) => d.date === q.day) ?? days.find((d) => d.date >= s.today) ?? days[0];
   const view: View = VIEWS.find((v) => v.key === q.view)?.key ?? "teams";
 
@@ -166,44 +166,65 @@ export async function SchedulerContent({
               {days.map((d) => {
                 const coaches = coachTags(d);
                 const here = d.date === day.date;
-                const on = published.has(d.date);
-                const m = dayMetrics(d);
+                // REC and COMP, each with its own Publish toggle and numbers, tinted green once published, red until then.
+                const levels = (["REC", "COMP"] as const).filter((l) => d.programs.some((p) => p.teams.some((t) => t.level === l)));
+                const on = levels.length > 0 && levels.every((l) => published.has(`${d.date} ${l}`));
+                const some = levels.some((l) => published.has(`${d.date} ${l}`));
                 return (
-                  // A published one is tinted green, one not published red.
+                  // All published: green; none: red; some: plain (each level is tinted inside).
                   <details
                     key={d.date}
                     id={`day-${d.date}`}
-                    className={`rounded-2xl shadow-sm ring-1 ${on ? "bg-emerald-50 ring-emerald-300 dark:bg-emerald-500/10 dark:ring-emerald-500/40" : "bg-red-50 ring-red-200 dark:bg-red-500/10 dark:ring-red-500/30"} group overflow-hidden`}
+                    className={`rounded-2xl shadow-sm ring-1 ${on ? "bg-emerald-50 ring-emerald-300 dark:bg-emerald-500/10 dark:ring-emerald-500/40" : some ? "bg-white ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10" : "bg-red-50 ring-red-200 dark:bg-red-500/10 dark:ring-red-500/30"} group overflow-hidden`}
                     open={here}
                   >
                     <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 select-none [&::-webkit-details-marker]:hidden">
-                      {mayPublish && program && (
-                        <PublishToggle programId={program.id} day={d.date} label={weekday(d.date)} on={on} left={m.left} />
-                      )}
                       <span className="min-w-0 flex-1">
                         <span className="block font-semibold">
                           {weekday(d.date, true)}
-                          {on && (
-                            <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-                              {" "}
-                              Published{who && ` by ${published.get(d.date)}`}
-                            </span>
-                          )}
                         </span>
                         <span className="block text-xs text-zinc-500">
                           {d.programs.map((p) => (p.bracket ? `${p.programName} Brackets` : p.programName)).join(" · ")} ·{" "}
                           {d.programs.some((p) => p.bracket) ? "Brackets" : plural(d.playing, "team")}
                           {d.games > 0 && ` · ${plural(d.games, "game")} guaranteed`}
                         </span>
-                        {m.chips.length > 0 && (
-                          <span className="mt-1.5 flex flex-wrap gap-1.5">
-                            {m.chips.map((c) => (
-                              <span key={c.text} className={`rounded-full px-2 py-0.5 text-xs font-medium ${CHIP[c.tone]}`}>
-                                {c.text}
+                        <span className="mt-2 grid gap-2 sm:grid-cols-2">
+                          {levels.map((l) => {
+                            const by = published.get(`${d.date} ${l}`);
+                            const m = dayMetrics(d, l);
+                            return (
+                              <span
+                                key={l}
+                                className={`flex items-start gap-2 rounded-xl p-2 ring-1 ${
+                                  by
+                                    ? "bg-emerald-100/70 ring-emerald-300 dark:bg-emerald-500/15 dark:ring-emerald-500/40"
+                                    : "bg-red-100/70 ring-red-200 dark:bg-red-500/15 dark:ring-red-500/40"
+                                }`}
+                              >
+                                {mayPublish && program && (
+                                  <PublishToggle programId={program.id} day={d.date} level={l} label={weekday(d.date)} on={!!by} left={m.left} />
+                                )}
+                                <span className="min-w-0 flex-1">
+                                  <span className="block text-sm font-semibold">
+                                    {l}{" "}
+                                    <span className={`text-xs ${by ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400"}`}>
+                                      {by ? `Published${who ? ` by ${by}` : ""}` : "Not published"}
+                                    </span>
+                                  </span>
+                                  {m.chips.length > 0 && (
+                                    <span className="mt-1 flex flex-wrap gap-1">
+                                      {m.chips.map((c) => (
+                                        <span key={c.text} className={`rounded-full px-2 py-0.5 text-xs font-medium ${CHIP[c.tone]}`}>
+                                          {c.text}
+                                        </span>
+                                      ))}
+                                    </span>
+                                  )}
+                                </span>
                               </span>
-                            ))}
-                          </span>
-                        )}
+                            );
+                          })}
+                        </span>
                       </span>
                       <svg
                         viewBox="0 0 20 20"
@@ -226,11 +247,11 @@ export async function SchedulerContent({
                         <Teams day={d} coaches={coaches} who={who} />
                       </SubCard>
                       <SubCard title="Matchups" count={d.games || undefined} open={here && view === "matchups"}>
-                        <Matchups day={d} coaches={coaches} who={who} />
+                        <Matchups day={d} coaches={coaches} who={who} published={levels.filter((l) => published.has(`${d.date} ${l}`))} />
                       </SubCard>
                       <SubCard title="Scheduling" open={here && view === "grid"}>
                         <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>
-                          <DayGridCard user={user} day={d} coaches={coaches} />
+                          <DayGridCard user={user} day={d} coaches={coaches} published={levels.filter((l) => published.has(`${d.date} ${l}`))} />
                         </Suspense>
                       </SubCard>
                       <SubCard title="Bindings" open={here && view === "bindings"}>
@@ -256,13 +277,18 @@ const CHIP = {
   plain: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
 } as const;
 
-// A Game Day's (or the Brackets') numbers, shown while its card is closed: matchups made of those needed (games guaranteed, two teams a game),
+// A Game Day's numbers for a level, shown while its card is closed: matchups made of those needed (games guaranteed, two teams a game),
 // games placed (a court and time), games still TBD, pairs that meet again, courts in use and the first and last start.
 // `left`: what isn't done yet (asked about when publishing), or null. The Brackets have none until they're made.
-function dayMetrics(d: ScheduleDay): { chips: { text: string; tone: keyof typeof CHIP }[]; left: string | null } {
+function dayMetrics(d: ScheduleDay, level: string): { chips: { text: string; tone: keyof typeof CHIP }[]; left: string | null } {
   if (d.programs.every((p) => p.bracket)) return { chips: [], left: null };
-  const list = d.programs.flatMap((p) => p.matchups);
-  const need = Math.max(Math.ceil(d.games / 2), list.length);
+  const plays = new Set(d.programs.flatMap((p) => p.teams.filter((t) => t.level === level).map((t) => t.teamId)));
+  const list = d.programs.flatMap((p) => p.matchups).filter((m) => plays.has(m.a)); // REC never plays COMP
+  const games = d.programs
+    .filter((p) => !p.bracket)
+    .flatMap((p) => p.teams.filter((t) => t.level === level && !t.removedBy && !t.out).map((t) => Number(t.entry?.perDate[p.date] ?? 0)))
+    .reduce((n: number, g) => n + g, 0);
+  const need = Math.max(Math.ceil(games / 2), list.length);
   const placed = list.filter((m) => m.court && m.starts);
   const tbd = list.filter((m) => !m.b).length;
   const again = list.filter((m) => m.before.length).length;
@@ -308,10 +334,10 @@ async function DayLength({ user, date, label, who }: { user: SessionUser; date: 
 }
 
 // A Game Day's grid, loaded in the background.
-async function DayGridCard({ user, day, coaches }: { user: SessionUser; day: ScheduleDay; coaches: Map<string, CoachTag> }) {
+async function DayGridCard({ user, day, coaches, published }: { user: SessionUser; day: ScheduleDay; coaches: Map<string, CoachTag>; published: string[] }) {
   const grid = await dayGrid({ pool: db, now: () => new Date() }, user, day.date);
   return grid ? (
-    <Grid day={day} grid={grid} coaches={coaches} />
+    <Grid day={day} grid={grid} coaches={coaches} published={published} />
   ) : (
     <p className="py-6 text-center text-sm text-zinc-500">This Game Day&apos;s grid isn&apos;t available.</p>
   );
@@ -562,7 +588,7 @@ function Teams({ day, coaches, who }: { day: ScheduleDay; coaches: Map<string, C
 // Matchups: each League's divisions playing that day, expandable. Each has Create matchups (Admins and Directors of
 // Scheduling; the page is theirs only), its games (a vs b, by grade group), pairs that also meet on another Game Day,
 // and teams still short of their games guaranteed.
-function Matchups({ day, coaches, who }: { day: ScheduleDay; coaches: Map<string, CoachTag>; who: boolean }) {
+function Matchups({ day, coaches, who, published }: { day: ScheduleDay; coaches: Map<string, CoachTag>; who: boolean; published: string[] }) {
   const leagues = day.programs.filter((p) => !p.bracket);
   if (!leagues.length) return <p className="py-6 text-center text-sm text-zinc-500">The Brackets are set up separately.</p>;
   return (
@@ -636,6 +662,7 @@ function Matchups({ day, coaches, who }: { day: ScheduleDay; coaches: Map<string
                         return m.home === "b" ? { a: b, b: a, home: "a" as const } : { a, b, home: "a" as const };
                       })}
                       otherDays={p.otherDays}
+                      published={published}
                     />
                     {who && games.length > 0 && <p className="mt-2 text-xs text-zinc-500">Last saved by {games[0].createdBy}</p>}
                   </div>
@@ -695,7 +722,7 @@ function TeamGames({ team, date, games, who }: { team: DateTeam; date: string; g
 // Grid: the game length at the top, then each gym open that Game Day (collapsed: host, courts, hours, games).
 // Expanded: rows of game blocks from when the gym opens, a column per court; a court's blocks outside its hours are
 // closed.
-function Grid({ day, grid, coaches }: { day: ScheduleDay; grid: DayGrid; coaches: Map<string, CoachTag> }) {
+function Grid({ day, grid, coaches, published }: { day: ScheduleDay; grid: DayGrid; coaches: Map<string, CoachTag>; published: string[] }) {
   // The day's games (both teams still playing), each League's divisions in order, with their slot on the grid.
   const team = (t: DateTeam) => ({
     id: t.teamId,
@@ -732,6 +759,7 @@ function Grid({ day, grid, coaches }: { day: ScheduleDay; grid: DayGrid; coaches
             league: day.programs.length > 1 ? p.programName : null,
             court: m.court,
             starts: m.starts,
+            locked: !!m.court && published.includes(a.level), // published: it stays where it is
           },
         ];
       });

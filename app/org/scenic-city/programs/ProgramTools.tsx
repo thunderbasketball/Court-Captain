@@ -1120,10 +1120,10 @@ export function TeamMenu({
   );
 }
 
-// A Game Day's (or the Brackets') Publish toggle (Directors of Programs or Scheduling), in front of its name on the Scheduler: on, its games show
+// A Game Day's (or the Brackets') REC or COMP Publish toggle (Directors of Programs or Scheduling) on the Scheduler: on, its games show
 // on the public League page, its teams' pages and to families; off, they're taken back. Asks first. (It sits in the card's
 // title line, so tapping it doesn't open the card.)
-export function PublishToggle({ programId, day, label, on, left }: { programId: string; day: string; label: string; on: boolean; left: string | null }) {
+export function PublishToggle({ programId, day, level, label, on, left }: { programId: string; day: string; level: "REC" | "COMP"; label: string; on: boolean; left: string | null }) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
@@ -1134,8 +1134,8 @@ export function PublishToggle({ programId, day, label, on, left }: { programId: 
         type="button"
         role="switch"
         aria-checked={on}
-        aria-label={`Publish ${label}`}
-        title={on ? "Published: tap to unpublish" : "Publish this schedule"}
+        aria-label={`Publish ${level}, ${label}`}
+        title={on ? "Published: tap to unpublish" : `Publish the ${level} schedule`}
         disabled={busy}
         onClick={async (e) => {
           e.preventDefault();
@@ -1144,20 +1144,20 @@ export function PublishToggle({ programId, day, label, on, left }: { programId: 
             !(await confirm(
               on
                 ? {
-                    title: `Unpublish ${label}?`,
-                    message: "Its games stop showing on the public page, team pages and to families. The other days stay as they are.",
+                    title: `Unpublish ${level} for ${label}?`,
+                    message: `Its ${level} games stop showing on the public page, team pages and to families, and can be moved again. Everything else stays as it is.`,
                     confirmLabel: "Unpublish",
                   }
                 : {
-                    title: `Publish ${label}?`,
-                    message: `${left ? `${left}. ` : ""}Anyone with the League page link sees its games: times, gyms and teams. No contact info. Teams and families see them too.`,
+                    title: `Publish ${level} for ${label}?`,
+                    message: `${left ? `${left}. ` : ""}Anyone with the League page link sees its ${level} games: times, gyms and teams. No contact info. Teams and families see them too. Published games can't be moved until you unpublish them.`,
                     confirmLabel: "Publish",
                   },
             ))
           )
             return;
           start(async () => {
-            const r = await setDayPublished(programId, day, !on);
+            const r = await setDayPublished(programId, day, level, !on);
             if (r.ok) router.refresh();
             else setMsg(r.message);
           });

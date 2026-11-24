@@ -16,20 +16,21 @@ export type ProgramCard = {
   logo: string | null;
   recLimited: boolean;
   register: boolean; // Register button (registration open and Team Registrations on)
+  org?: string; // another organization's program (its teams are in it): read there, no ☆, with a link to its page
   openable: boolean; // taps open its Teams (and a League's Schedule); a player program (season) just shows
 };
 
-type Loaded = { groups: PublicGroup[]; schedule: PublicDay[] | null; today: string };
+type Loaded = { groups: PublicGroup[]; schedule: PublicDay[] | null; soon: string[]; today: string };
 
 
 // The organization's programs on its login page, no login needed (SPEC.md section 14): open for registration, under
 // way, or ended in the last 30 days. Tap one to open it right here: Division → REC / COMP → Grade (Standings, Schedule).
-export default function PublicPrograms({ org, programs }: { org: string; programs: ProgramCard[] }) {
+export default function PublicPrograms({ org, programs, title = "Programs" }: { org: string; programs: ProgramCard[]; title?: string }) {
   if (!programs.length) return null;
   return (
     <>
       <section className="mt-4 space-y-2 lg:mt-0">
-      <h2 className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Programs</h2>
+      <h2 className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">{title}</h2>
       <ul className="space-y-2">
         {programs.map((p) => (
           <Program key={p.id} org={org} p={p} />
@@ -52,7 +53,7 @@ function Program({ org, p }: { org: string; p: ProgramCard }) {
     if (next && !data)
       start(async () => {
         setError(null);
-        const r = await loadPublicProgram(org, p.id);
+        const r = await loadPublicProgram(p.org ?? org, p.id);
         if (r.ok) setData(r);
         else setError(r.message);
       });
@@ -106,7 +107,12 @@ function Program({ org, p }: { org: string; p: ProgramCard }) {
         <div className="mt-3">
           {loading && !data && <p className="p-2 text-sm text-zinc-500">Loading…</p>}
           {error && <p className="p-2 text-sm text-red-600">{error}</p>}
-          {data && <ProgramDivisions org={org} groups={data.groups} schedule={data.schedule} today={data.today} />}
+          {data && <ProgramDivisions org={p.org ?? org} groups={data.groups} schedule={data.schedule} today={data.today} soon={data.soon} follow={!p.org} />}
+          {data && p.org && (
+            <Link href={`/league/${p.org}?l=${p.id}`} className="mt-2 block px-1 text-sm font-medium text-thunder-blue hover:underline dark:text-blue-400">
+              Public view of the League →
+            </Link>
+          )}
         </div>
       )}
     </li>

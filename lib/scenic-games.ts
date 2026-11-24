@@ -60,7 +60,7 @@ export async function scheduledGames(q: Pick<Pool, "query">, teamIds: string[]):
             coalesce(o.name, 'TBD') as opponent, coalesce(m.home_side, 'a') = x.side as home,
             gg.grade, gg.level, place.gym, place.court, place.address, place.map_lat, place.map_lng, place.map_place,
             to_char(m.starts, 'HH24:MI') as starts,
-            exists (select 1 from scenic_published_days pd where pd.program_id = m.program_id and pd.day = m.day) as published
+            scenic_game_published(m.program_id, m.day, m.team_a) as published
        from scenic_matchups m
        cross join lateral (values (m.team_a, m.team_b, 'a'), (m.team_b, m.team_a, 'b')) x (me, other, side)
        join scenic_programs p on p.id = m.program_id

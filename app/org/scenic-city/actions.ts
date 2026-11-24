@@ -143,8 +143,8 @@ export async function withdrawTeams(programId: string, teamIds: string[]) {
 export async function setPaid(programId: string, teamId: string, paid: boolean) {
   return guarded((u) => programs.setPaid(deps, u, programId, teamId, paid === true), "programs");
 }
-export async function setDayPublished(programId: string, day: string, on: boolean) {
-  return guarded((u) => publicLeague.setDayPublished(deps, u, programId, day, on === true), "programs");
+export async function setDayPublished(programId: string, day: string, level: string, on: boolean) {
+  return guarded((u) => publicLeague.setDayPublished(deps, u, programId, day, level, on === true), "programs");
 }
 export async function copyDivisions(programId: string, fromProgramId: string) {
   return guarded((u) => programs.copyDivisions(deps, u, programId, fromProgramId), "programs");

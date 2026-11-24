@@ -13,7 +13,7 @@ import LoginFlow from "../LoginFlow";
 import { card } from "../../ui";
 import { followRename } from "@/lib/org-rename";
 import { hasFeature } from "@/lib/features";
-import { orgPublicTeams, publicPrograms } from "@/lib/public-league";
+import { orgLeagues, orgPublicTeams, publicPrograms } from "@/lib/public-league";
 import OrgTeams from "./OrgTeams";
 import { easternDate } from "@/lib/time";
 import { publicly } from "@/lib/public-cache";
@@ -111,6 +111,19 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
       }))
     : [];
   programs.push(...seasons);
+  // The Leagues (another organization's programs) its teams are in: the same public view, opened right here.
+  const leagues: ProgramCard[] = (await publicly(`leagues:${today}:${org}`, () => orgLeagues(db, now, org))).map((p) => ({
+    id: p.id,
+    name: p.name,
+    kind: p.kind,
+    dates: `${shortDate(p.startsOn)} – ${shortDate(p.endsOn)}`,
+    status: p.startsOn > today ? `Starts ${shortDate(p.startsOn)}` : `Under way · ends ${shortDate(p.endsOn)}`,
+    logo: p.logo,
+    recLimited: false,
+    register: false,
+    org: p.org,
+    openable: p.org === "scenic-city", // the League page is Scenic City's for now
+  }));
   const recruiting = await recruitingOn(db, org);
   return (
     <div className="lg:grid lg:grid-cols-[22rem_minmax(0,1fr)] lg:items-start lg:gap-8">
@@ -162,6 +175,7 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
       {/* Right on a wide screen: Programs (Divisions, Standings, schedules), its teams, Parents, Officials. */}
       <div className="lg:pt-1">
       <PublicPrograms org={org} programs={programs} />
+      <PublicPrograms org={org} programs={leagues} title="League" />
       {/* Its teams in a current event, with their League games; ☆ follows one on this device. Names and games only. */}
       <OrgTeams org={org} teams={await publicly(`teams:${today}:${org}`, () => orgPublicTeams(db, now, org))} today={today} />
       {/* A parent: their player's team, practices and games (a code to the email on the registration; no login). */}

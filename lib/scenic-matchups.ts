@@ -8,7 +8,7 @@
 import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { getProgram, isScheduler, teamsByDate, type DateTeam } from "./scenic-programs";
-import { withTx } from "./sql";
+import { withTx, type Queryable } from "./sql";
 import { coachGroups } from "./coach-groups";
 
 type Deps = { pool: Pool; now: () => Date };
@@ -228,6 +228,7 @@ async function history(
   divisionId: string,
   teams: DateTeam[],
   skip: string[] = [],
+  locked: ReadonlySet<string> = new Set(), // teams whose games that day are published: they stay, so they count
 ) {
   const club = new Map(teams.map((t) => [t.teamId, t.from]));
   const coach = coachesOf(teams);
@@ -250,7 +251,7 @@ async function history(
   for (const r of rows) {
     const side = r.side ?? "a";
     if (r.day === day) {
-      if (r.division === divisionId || skip.includes(r.division)) continue;
+      if ((r.division === divisionId || skip.includes(r.division)) && !locked.has(r.a)) continue;
       // A coach's teams already set in other divisions that day: home or away, and against which organizations.
       for (const [id, s, other] of [
         [r.a, "a", r.b],
@@ -291,6 +292,16 @@ async function history(
   }
   return { met, metOn, tbdOn, home, today, coach, coachSide, coachOpp };
 }
+
+// The levels published that day: their matchups stay as they are until they're unpublished.
+async function publishedOn(q: Pick<Queryable, "query">, programId: string, day: string): Promise<Set<string>> {
+  const r = await q.query<{ level: string }>("select level from scenic_published_schedules where program_id = $1 and day = $2::date", [programId, day]);
+  return new Set(r.rows.map((x) => x.level));
+}
+const publishedMessage = (levels: Iterable<string>) => {
+  const l = [...levels].sort().reverse().join(" and ");
+  return `That day's ${l} schedule is published: its games can't be changed. Unpublish ${l} for that day first.`;
+};
 
 // Teams playing that day (not taken out) that share a coach, Head or Assistant: team id → its group (lib/coach-groups).
 export function coachesOf(teams: DateTeam[]): Map<string, string> {
@@ -348,15 +359,19 @@ export async function createMatchups(
   if (!event) return { ok: false, message: "That isn't one of this League's Game Days." };
   const division = p.divisionList.find((d) => d.id === divisionId);
   if (!division) return { ok: false, message: "That division isn't in this League." };
-  const teams = playingTeams(event.teams, divisionId);
-  if (!teams.length) return { ok: false, message: `${division.label} has no teams playing that day.` };
+  const everyone = playingTeams(event.teams, divisionId);
+  if (!everyone.length) return { ok: false, message: `${division.label} has no teams playing that day.` };
   const by = `${viewer.firstName} ${viewer.lastName}`;
-  const name = new Map(teams.map((t) => [t.teamId, t.name]));
+  const name = new Map(everyone.map((t) => [t.teamId, t.name]));
 
   return withTx(deps.pool, async (q) => {
     // One Scheduler at a time per League, so two taps can't mix two plans.
     await q.query("select pg_advisory_xact_lock(hashtext('scenic-matchups:' || $1))", [programId]);
-    const h = await history(q, programId, day, divisionId, event.teams, skip);
+    // A level published that day keeps its games: only the others are paired.
+    const on = await publishedOn(q, programId, day);
+    const teams = everyone.filter((t) => !on.has(t.level));
+    if (!teams.length) return { ok: false as const, message: publishedMessage(new Set(everyone.map((t) => t.level))) };
+    const h = await history(q, programId, day, divisionId, event.teams, skip, new Set(event.teams.filter((t) => on.has(t.level)).map((t) => t.teamId)));
     const plan = planMatchups(
       teams.map((t) => ({
         id: t.teamId,
@@ -379,7 +394,7 @@ export async function createMatchups(
     ];
     const sides = assignHome(games, h.home, h.today, h.coachSide);
     const kept = await keepSlots(q, programId, day, divisionId);
-    await q.query("delete from scenic_matchups where program_id = $1 and day = $2::date and division_id = $3", [
+    await q.query("delete from scenic_matchups where program_id = $1 and day = $2::date and division_id = $3 and not scenic_game_published(program_id, day, team_a)", [
       programId,
       day,
       divisionId,
@@ -437,7 +452,7 @@ export async function saveMatchups(
   if (!p.divisionList.some((d) => d.id === divisionId)) return { ok: false, message: "That division isn't in this League." };
   const teams = new Map(playingTeams(event.teams, divisionId).map((t) => [t.teamId, t]));
   const seen = new Set<string>();
-  const list: { a: string; b: string | null }[] = [];
+  const games0: { a: string; b: string | null }[] = [];
   const count = new Map<string, number>();
   for (const g of games as unknown[]) {
     const [a, b] = Array.isArray(g) ? g : [];
@@ -456,7 +471,7 @@ export async function saveMatchups(
     if (seen.has(k))
       return { ok: false, message: b === null ? `${ta.name} plays TBD twice.` : `${ta.name} vs ${tb!.name} is in there twice.` };
     seen.add(k);
-    list.push({ a, b });
+    games0.push({ a, b });
     for (const t of tb ? [ta, tb] : [ta]) {
       count.set(t.teamId, (count.get(t.teamId) ?? 0) + 1);
       const gg = t.entry!.perDate[day];
@@ -467,8 +482,25 @@ export async function saveMatchups(
   const by = `${viewer.firstName} ${viewer.lastName}`;
   return withTx(deps.pool, async (q) => {
     await q.query("select pg_advisory_xact_lock(hashtext('scenic-matchups:' || $1))", [programId]);
+    const on = await publishedOn(q, programId, day);
+    const locked = new Set(event.teams.filter((t) => on.has(t.level)).map((t) => t.teamId));
+    if (locked.size) {
+      // Published games stay as they are: sent back changed (or without one), it's refused; unchanged, they're left out of the save.
+      const there = await q.query<{ a: string; b: string | null }>(
+        `select team_a::text as a, team_b::text as b from scenic_matchups
+          where program_id = $1 and day = $2::date and division_id = $3 and scenic_game_published(program_id, day, team_a)`,
+        [programId, day, divisionId],
+      );
+      const saved = new Set(there.rows.map((g) => (g.b === null ? `${g.a}-TBD` : key(g.a, g.b))));
+      const sent = new Set(games0.filter((g) => locked.has(g.a)).map((g) => (g.b === null ? `${g.a}-TBD` : key(g.a, g.b))));
+      const playing = (id: string | null) => id === null || teams.has(id);
+      const added = [...sent].some((k) => !saved.has(k) && !there.rows.some((g) => [g.a, g.b].some((id) => k === `${id}-TBD`)));
+      const gone = there.rows.some((g) => playing(g.a) && playing(g.b) && !sent.has(g.b === null ? `${g.a}-TBD` : key(g.a, g.b)));
+      if (added || gone) return { ok: false as const, message: publishedMessage(on) };
+    }
+    const list = games0.filter((g) => !locked.has(g.a));
     const kept = await keepSlots(q, programId, day, divisionId);
-    const h = await history(q, programId, day, divisionId, event.teams);
+    const h = await history(q, programId, day, divisionId, event.teams, [], locked);
     // A pair kept from before keeps its home side (stored with team_a the lower id).
     const fixed = list.map((g) => {
       const swap = g.b !== null && BigInt(g.b) < BigInt(g.a);
@@ -481,7 +513,7 @@ export async function saveMatchups(
       h.today,
       h.coachSide,
     );
-    await q.query("delete from scenic_matchups where program_id = $1 and day = $2::date and division_id = $3", [
+    await q.query("delete from scenic_matchups where program_id = $1 and day = $2::date and division_id = $3 and not scenic_game_published(program_id, day, team_a)", [
       programId,
       day,
       divisionId,
@@ -496,7 +528,7 @@ export async function saveMatchups(
       deps.now(),
     );
     await kept.restore();
-    return { ok: true as const, saved: list.length };
+    return { ok: true as const, saved: games0.length };
   });
 }
 
@@ -527,7 +559,9 @@ export async function createDayMatchups(
     const p = await getProgram(deps, viewer, id);
     const event = p && teamsByDate(p).find((e) => !e.bracket && e.date === day);
     if (!p || !event) continue;
-    const todo = p.divisionList.filter((d) => playingTeams(event.teams, d.id).length);
+    const on = await publishedOn(deps.pool, id, day); // a level published that day keeps its games
+    const todo = p.divisionList.filter((d) => playingTeams(event.teams, d.id).some((t) => !on.has(t.level)));
+    if (on.size) notes.push(`${[...on].sort().reverse().join(" and ")}: published, left as ${on.size > 1 ? "they are" : "it is"}`);
     for (const [i, d] of todo.entries()) {
       const r = await createMatchups(
         deps,

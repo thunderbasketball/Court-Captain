@@ -37,6 +37,7 @@ export function MatchupBoard({
   teams,
   initial,
   otherDays,
+  published,
 }: {
   programId: string;
   day: string;
@@ -45,6 +46,7 @@ export function MatchupBoard({
   teams: BoardTeam[];
   initial: BoardGame[]; // a TBD game (or one whose team was taken out) has one side empty
   otherDays: Record<string, string[]>;
+  published: string[]; // levels published that day: their games stay as they are
 }) {
   const router = useRouter();
   const start0 = initial.map((g, i) => ({ key: `g${i}`, ...g }));
@@ -60,6 +62,8 @@ export function MatchupBoard({
   const [busy, start] = useTransition();
   const [confirm, dialog] = useConfirm();
   const team = new Map(teams.map((t) => [t.id, t]));
+  const locked = (id: string | null | undefined) => !!id && published.includes(team.get(id)?.level ?? "");
+  const allLocked = teams.length > 0 && teams.every((t) => locked(t.id));
   const placed = (id: string) => games.reduce((n, g) => n + (g.a === id ? 1 : 0) + (g.b === id ? 1 : 0), 0);
   const sandbox = teams.filter((t) => placed(t.id) < t.need);
   const dirty = sign(games) !== sign(start0);
@@ -75,6 +79,9 @@ export function MatchupBoard({
     setPicked(null);
     setNote(null);
     if (p.from === to) return;
+    const into0 = to.includes(":") ? games.find((g) => g.key === to.split(":")[0]) : undefined;
+    if (locked(p.team) || locked(into0?.a) || locked(into0?.b))
+      return setNote({ tone: "red", lines: ["Those games are published, so they can't be changed. Unpublish that level for the day first."] });
     const fromSlot = p.from === "sandbox" ? null : (p.from.split(":") as [string, Side]);
     let list = games.map((g) => ({ ...g }));
     const slot = (k: string) => list.find((g) => g.key === k)!;
@@ -154,7 +161,7 @@ export function MatchupBoard({
     return (
       <button
         type="button"
-        draggable
+        draggable={!locked(id)}
         onDragStart={(e) => {
           e.dataTransfer.setData("text/plain", JSON.stringify({ team: id, from }));
           setDragging(id);
@@ -163,6 +170,7 @@ export function MatchupBoard({
         onClick={(e) => {
           e.stopPropagation();
           if (picked && picked.from !== from) return move(picked, from); // tap a team to swap with it
+          if (locked(id)) return;
           setPicked(on ? null : { team: id, from });
         }}
         className={`${from === "sandbox" ? "max-w-full" : "block h-full w-full"} cursor-grab rounded-md px-2 py-1 text-left text-sm shadow-sm active:cursor-grabbing ${
@@ -176,6 +184,7 @@ export function MatchupBoard({
         }`}
       >
         <span className="flex items-center gap-1 font-medium">
+          {locked(id) && <span aria-label="Published">🔒</span>}
           <span className="min-w-0 truncate">{t ? <TeamName name={t.name} /> : "A removed team"}</span>
           <CoachBadge tag={t?.coach} />
         </span>
@@ -234,6 +243,9 @@ export function MatchupBoard({
 
   return (
     <div className="space-y-3">
+      {published.length > 0 && teams.some((t) => locked(t.id)) && (
+        <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">🔒 {published.join(" and ")} published: those games stay as they are until you unpublish them.</p>
+      )}
       <p className="text-xs text-zinc-500">
         Drag a team to change a matchup (or tap it, then tap where it goes). Drop on a team to swap them. While you drag, teams it
         already plays light up: <span className="font-semibold text-amber-700 dark:text-amber-300">amber</span> on another Game
@@ -360,7 +372,7 @@ export function MatchupBoard({
             </button>
           </>
         )}
-        {!dirty && (
+        {!dirty && !allLocked && (
           <button
             type="button"
             disabled={busy}

@@ -114,7 +114,9 @@ export default function OrgMetrics({
               <ul className="divide-y divide-zinc-100 dark:divide-white/5">
                 {m.unpublished.map((e) => (
                   <li key={`${e.programId} ${e.day}`} className="flex justify-between gap-3 py-1.5 text-sm">
-                    <span className="font-medium">{day(e.day)}</span>
+                    <span className="font-medium">
+                      {day(e.day)} <span className="text-xs font-normal text-red-600 dark:text-red-400">{e.levels.join(" and ")}</span>
+                    </span>
                     <span className="truncate text-xs text-zinc-500">
                       {e.program}
                       {e.bracket && " Brackets"}
@@ -122,7 +124,7 @@ export default function OrgMetrics({
                   </li>
                 ))}
               </ul>
-              <p className="pt-2 text-xs text-zinc-500">The next few. Publish each on the Scheduler, with the toggle in front of its name.</p>
+              <p className="pt-2 text-xs text-zinc-500">The next few. Publish REC and COMP each on the Scheduler.</p>
             </SubCard>
           )}
           {todo.conflicts > 0 && (

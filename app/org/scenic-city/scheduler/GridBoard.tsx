@@ -27,6 +27,7 @@ export type GridGame = {
   league: string | null;
   court: string | null;
   starts: string | null;
+  locked: boolean; // published: it can't be moved
 };
 export type GridGymView = {
   key: string;
@@ -55,6 +56,7 @@ function GameLevel({ x }: { x: GridGame }) {
   if (levels.length === 1) return <LevelTag level={levels[0]} />;
   return <span className="inline-block rounded bg-orange-500 px-1 text-[10px] leading-4 font-bold text-white">REC/COMP</span>;
 }
+const LOCKED = "That game is published, so it can't be moved. Unpublish its level for that day first.";
 const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
 const label = (t: string) => {
   const [h, m] = t.split(":").map(Number);
@@ -132,6 +134,7 @@ export function GridBoard({
     setError(null);
     const g = games.find((x) => x.id === id);
     if (!g) return;
+    if (g.locked) return setError(LOCKED);
     if (slot && at(slot.court, slot.starts)) return setError("That slot already has a game. Move that game first.");
     if (slot && !fits(g, slot.court)) {
       const c = courts.get(slot.court)!;
@@ -159,7 +162,7 @@ export function GridBoard({
     setDragging(null);
     setSelected([]);
     setError(null);
-    const moving = games.filter((x) => list.includes(x.id)); // in the list's order: youngest first
+    const moving = games.filter((x) => list.includes(x.id) && !x.locked); // in the list's order: youngest first
     if (!moving.length) return;
     const plan = new Map<string, { court: string; starts: string } | null>();
     if (!slot) for (const g of moving) if (onGrid(g)) plan.set(g.id, null);
@@ -265,7 +268,7 @@ export function GridBoard({
       <button
         key={x.id}
         type="button"
-        draggable
+        draggable={!x.locked}
         onDragStart={(e) => {
           // A picked game drags all the picked ones with it.
           const group = selected.includes(x.id) && selected.length > 1 ? selected : null;
@@ -274,11 +277,12 @@ export function GridBoard({
           setDragging(x.id);
         }}
         onDragEnd={() => setDragging(null)}
-        {...touch.source(selected.includes(x.id) && selected.length > 1 ? selected.join(",") : x.id, `${h.name} vs ${v.name}`)}
-        title={`${h.name} vs ${v.name} · ${h.division} · ${h.group === v.group ? h.group : `${h.group}/${v.group}`}`}
+        {...(x.locked ? {} : touch.source(selected.includes(x.id) && selected.length > 1 ? selected.join(",") : x.id, `${h.name} vs ${v.name}`))}
+        title={`${x.locked ? "Published: can't be moved · " : ""}${h.name} vs ${v.name} · ${h.division} · ${h.group === v.group ? h.group : `${h.group}/${v.group}`}`}
         onClick={(e) => {
           e.stopPropagation();
           if (touch.justDropped()) return;
+          if (x.locked) return setError(LOCKED);
           if (e.shiftKey || e.metaKey || e.ctrlKey) {
             setPicked(null);
             const base = selected.length ? selected : picked ? [picked] : [];
@@ -288,11 +292,12 @@ export function GridBoard({
           setSelected([]);
           setPicked(on ? null : x.id);
         }}
-        className={`${full ? "block h-full w-full" : "max-w-full"} cursor-grab touch-manipulation rounded-md px-2 py-1.5 text-left text-xs shadow-sm ring-1 select-none [-webkit-touch-callout:none] active:cursor-grabbing ${
+        className={`${full ? "block h-full w-full" : "max-w-full"} ${x.locked ? "cursor-default" : "cursor-grab active:cursor-grabbing"} touch-manipulation rounded-md px-2 py-1.5 text-left text-xs shadow-sm ring-1 select-none [-webkit-touch-callout:none] ${
           on ? "bg-scenic-navy text-white ring-scenic-navy" : genderCls(x)
         }`}
       >
         <span className="block truncate">
+          {x.locked && <span aria-label="Published">🔒 </span>}
           <GameLevel x={x} /> <TeamName name={h.name} className="font-semibold" /> <CoachBadge tag={x.home?.coach} />
           {hostId && isHome(x, hostId) && (
             <span className={`font-semibold ${on ? "" : "text-emerald-700 dark:text-emerald-300"}`}> (H)</span>

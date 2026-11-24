@@ -187,13 +187,23 @@ async function retime(deps: Deps, viewer: SessionUser, day: unknown, change: (q:
     return { ok: false, message: "That isn't a Game Day." };
   }
   const by = `${viewer.firstName} ${viewer.lastName}`;
-  return withTx(deps.pool, async (q) => {
-    await q.query("select pg_advisory_xact_lock(hashtext('scenic-grid:' || $1))", [day]);
-    await change(q);
-    const after = (await dayGrid({ ...deps, pool: q as unknown as Pool }, viewer, day))!;
-    return { ok: true as const, ...(await rePlace(q, day, before, after, by, deps.now())) };
-  });
+  try {
+    return await withTx(deps.pool, async (q) => {
+      await q.query("select pg_advisory_xact_lock(hashtext('scenic-grid:' || $1))", [day]);
+      await change(q);
+      const after = (await dayGrid({ ...deps, pool: q as unknown as Pool }, viewer, day))!;
+      return { ok: true as const, ...(await rePlace(q, day, before, after, by, deps.now())) };
+    });
+  } catch (e) {
+    if (e instanceof Published) return { ok: false, message: e.message }; // nothing changed
+    throw e;
+  }
 }
+
+// A change that would move a published game: refused (it's unpublished first).
+class Published extends Error {}
+const dayName = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+const PUBLISHED = (day: string, level: string) => `${dayName(day)}'s ${level} schedule is published: its games can't be moved. Unpublish ${level} for that day first.`;
 
 // Each court's gym and that gym's blocks, for one version of the day's grid.
 function blocksByCourt(grid: DayGrid) {
@@ -214,9 +224,9 @@ function blocksByCourt(grid: DayGrid) {
 async function rePlace(q: Queryable, day: string, before: DayGrid, after: DayGrid, by: string, now: Date) {
   const old = blocksByCourt(before);
   const neu = blocksByCourt(after);
-  const placed = await q.query<{ id: string; court: string; starts: string; a: string; b: string | null; name: string }>(
+  const placed = await q.query<{ id: string; court: string; starts: string; a: string; b: string | null; name: string; published: boolean; level: string }>(
     `select m.id::text, m.court_key as court, to_char(m.starts, 'HH24:MI') as starts, m.team_a::text as a, m.team_b::text as b,
-            ta.name || ' vs ' || coalesce(tb.name, 'TBD') as name
+            scenic_game_published(m.program_id, m.day, m.team_a) as published, ta.level, ta.name || ' vs ' || coalesce(tb.name, 'TBD') as name
        from scenic_matchups m join scenic_teams ta on ta.id = m.team_a left join scenic_teams tb on tb.id = m.team_b
       where m.day = $1::date and m.court_key is not null
       order by m.starts, m.id`,
@@ -243,7 +253,9 @@ async function rePlace(q: Queryable, day: string, before: DayGrid, after: DayGri
           (k.court === g.court && k.start === start) ||
           ([k.a, k.b].some((t) => t !== null && (t === g.a || t === g.b)) && k.start < end && start < k.end),
       );
-    if (start === undefined || start < c.starts || end > c.ends || clash) off.push(g.name);
+    const comesOff = start === undefined || start < c.starts || end > c.ends || clash;
+    if (g.published && (comesOff || toTime(start) !== g.starts)) throw new Published(PUBLISHED(day, g.level));
+    if (comesOff) off.push(g.name);
     else kept.push({ id: g.id, court: g.court, start, end, a: g.a, b: g.b });
   }
   await q.query("update scenic_matchups set court_key = null, starts = null where id = any($1::bigint[])", [touched]);
@@ -352,7 +364,15 @@ export async function setProgramGameLength(
   let first = true;
   // One day at a time (each locked while its games move); the program changes with the first.
   for (const { day } of days.rows) {
+    const grid = await dayGrid(deps, viewer, day);
     const r = await retime(deps, viewer, day, async (q) => {
+      // A day with published games keeps its times: its own game length from now on.
+      const locked = await q.query(
+        "select 1 from scenic_matchups m where m.day = $1::date and m.court_key is not null and scenic_game_published(m.program_id, m.day, m.team_a) limit 1",
+        [day],
+      );
+      if (locked.rowCount && grid && !grid.override)
+        await q.query("update game_days set minutes_override = $2, override_by = $3 where day = $1::date", [day, grid.minutes, by]);
       if (first)
         await q.query("update scenic_programs set game_minutes = $2, game_minutes_set_by = $3 where id = $1", [programId, m, by]);
     });
@@ -375,7 +395,8 @@ const isMatchupId = (v: unknown): v is string => typeof v === "string" && /^\d{1
 
 // Place a matchup in a game slot (a court open that Game Day, at a start time when a whole game fits in the court's
 // hours), move it, or take it off the grid (`slot` null). Admins and Directors of Scheduling only. The slot must be
-// free, and neither team can be playing another game then (games overlap within the day's game length).
+// free, and neither team can be playing another game then (games overlap within the day's game length). A published game
+// with a slot stays there (one published without a slot can still get one).
 export async function placeGame(
   deps: Deps,
   viewer: SessionUser,
@@ -390,20 +411,23 @@ export async function placeGame(
     return { ok: false, message: "Pick a game slot." };
   if (!(await isScheduler(deps.pool, viewer)))
     return { ok: false, message: "Only a Scenic City Admin or Director of Scheduling can do that." };
-  const m = await deps.pool.query<{ day: string; a: string; b: string | null; division: string }>(
-    `select day::text, team_a::text as a, team_b::text as b, division_id::text as division
-       from scenic_matchups where id = $1`,
+  const m = await deps.pool.query<{ day: string; a: string; b: string | null; division: string; locked: boolean; level: string }>(
+    `select m.day::text, m.team_a::text as a, m.team_b::text as b, m.division_id::text as division, t.level,
+            m.court_key is not null and scenic_game_published(m.program_id, m.day, m.team_a) as locked
+       from scenic_matchups m join scenic_teams t on t.id = m.team_a where m.id = $1`,
     [matchupId],
   );
   const game = m.rows[0];
   if (!game) return { ok: false, message: "That game was changed. Reload the page." };
+  if (game.locked) return { ok: false, message: PUBLISHED(game.day, game.level) };
   const by = `${viewer.firstName} ${viewer.lastName}`;
   if (!slot) {
-    await deps.pool.query(
-      "update scenic_matchups set court_key = null, starts = null, placed_by = $2, placed_at = $3 where id = $1",
+    const off = await deps.pool.query(
+      `update scenic_matchups set court_key = null, starts = null, placed_by = $2, placed_at = $3
+        where id = $1 and (court_key is null or not scenic_game_published(program_id, day, team_a))`,
       [matchupId, by, deps.now()],
     );
-    return { ok: true };
+    return off.rowCount ? { ok: true } : { ok: false, message: PUBLISHED(game.day, game.level) };
   }
   const grid = await dayGrid(deps, viewer, game.day);
   const court = grid?.gyms.flatMap((g) => g.courts.map((c) => ({ ...c, gym: g.name }))).find((c) => c.id === slot.court);
@@ -469,14 +493,12 @@ export async function placeGame(
           ? `A team bound to this game (${coach.rows[0].name}) already plays then: bound teams never play at the same time.`
           : `${coach.rows[0].name} already coaches a game then (one coach, one game at a time).`,
       };
-    await q.query("update scenic_matchups set court_key = $2, starts = $3::time, placed_by = $4, placed_at = $5 where id = $1", [
-      matchupId,
-      slot.court,
-      starts,
-      by,
-      deps.now(),
-    ]);
-    return { ok: true as const };
+    const put = await q.query(
+      `update scenic_matchups set court_key = $2, starts = $3::time, placed_by = $4, placed_at = $5
+        where id = $1 and (court_key is null or not scenic_game_published(program_id, day, team_a))`,
+      [matchupId, slot.court, starts, by, deps.now()],
+    );
+    return put.rowCount ? { ok: true as const } : { ok: false as const, message: PUBLISHED(game.day, game.level) };
   });
 }
 

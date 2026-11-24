@@ -7,6 +7,7 @@ import { checkCode, issueCode, lockCell } from "./auth/service";
 import { cleanEmail } from "./auth/validate";
 import { normalizeCell } from "./phone";
 import { upcomingForTeam, type TeamPractice } from "./practice/schedule";
+import { teamSoon } from "./public-league";
 import { scheduledGames, type ScheduledGame } from "./scenic-games";
 import { withTx } from "./sql";
 import { upcomingOwnPractices, type OwnPractice } from "./team-practices";
@@ -19,6 +20,7 @@ export type FoundTeam = {
   name: string;
   staff: { role: string; name: string; cell: string }[];
   games: ScheduledGame[]; // published, today on
+  soon: string[]; // levels whose League schedule isn't published yet
   practices: TeamPractice[];
   own: OwnPractice[];
 };
@@ -110,7 +112,7 @@ export async function playersOf(deps: Pick<Deps, "pool" | "now">, cell: string):
 }
 
 async function teamOf(deps: Pick<Deps, "pool" | "now">, teamId: string, today: string): Promise<Omit<FoundTeam, "name">> {
-  const [staff, games, practices, own] = await Promise.all([
+  const [staff, league, practices, own] = await Promise.all([
     deps.pool.query<{ role: string; name: string; cell: string }>(
       `select s.role, u.first_name || ' ' || u.last_name as name, u.cell
          from team_staff s join users u on u.coach_id = s.coach_id where s.team_id = $1
@@ -121,14 +123,15 @@ async function teamOf(deps: Pick<Deps, "pool" | "now">, teamId: string, today: s
       .query<{ id: string }>("select id::text from scenic_teams where thunder_team_id = $1", [teamId])
       .then(async (x) => {
         const copy = x.rows[0]?.id;
-        return copy ? ((await scheduledGames(deps.pool, [copy]))[copy] ?? []) : [];
+        return copy ? { games: (await scheduledGames(deps.pool, [copy]))[copy] ?? [], soon: await teamSoon(deps.pool, copy, deps.now()) } : { games: [], soon: [] };
       }),
     upcomingForTeam(deps, teamId, 6),
     upcomingOwnPractices(deps, { org: "thunder", teamId }, 6),
   ]);
   return {
     staff: staff.rows.map((s) => ({ ...s, role: ROLE[s.role] ?? s.role })),
-    games: games.filter((g) => g.published && g.date >= today),
+    soon: league.soon,
+    games: league.games.filter((g) => g.published && g.date >= today),
     practices,
     own,
   };
