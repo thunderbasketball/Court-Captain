@@ -1,6 +1,8 @@
 import { inName } from "@/lib/team-names";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { dupLabel } from "@/lib/duplicate-numbers";
+import { dupNumbers, isDup } from "@/lib/uniform-fields";
 import { Chip, GroupCard, JerseyNumber, card, genderTint } from "./ui";
 import TeamRowMore, { type CardToggle } from "./TeamRowMore";
 import ChatPanel from "./ChatPanel";
@@ -8,7 +10,8 @@ import { BellIcon, NotifyPanel } from "./NotifyButton";
 import type { AudienceInput } from "@/lib/announcements";
 
 // What a team still needs, flashing red until it's done.
-export function MustBeEntered({ what }: { what: "COACH INFO" | "COACH CELL" | "COACH EMAIL" | "ROSTER" | "PLAYER BIRTHDATES" | "PLAYER NUMBERS" | "WRONG BIRTHDATES" }) {
+export function MustBeEntered({ what }: { what: "COACH INFO" | "COACH CELL" | "COACH EMAIL" | "ROSTER" | "PLAYER BIRTHDATES" | "PLAYER NUMBERS" | "WRONG BIRTHDATES" | `DUPLICATE NUMBERS: ${string}` }) {
+  if (what.startsWith("DUPLICATE")) return <span className="block animate-pulse text-sm font-semibold text-red-600 dark:text-red-400">{what}</span>;
   // Entered, but can't be right (the year, or for the grade).
   if (what === "WRONG BIRTHDATES")
     return <span className="block animate-pulse text-sm font-semibold text-red-600 dark:text-red-400">CHECK PLAYER BIRTHDATES: SOME CAN&apos;T BE RIGHT</span>;
@@ -44,9 +47,11 @@ export default function TeamRow({
   registrations,
   missingBirthdates = 0,
   missingNumbers = 0,
+  duplicateNumbers = [],
   wrongBirthdates = 0,
 }: {
   missingBirthdates?: number; // players without a birthdate (typed-in rosters): PLAYER BIRTHDATES MUST BE ENTERED
+  duplicateNumbers?: string[]; // numbers two players share: DUPLICATE NUMBERS: #12
   missingNumbers?: number; // players without a uniform number: PLAYER NUMBERS MUST BE ENTERED
   wrongBirthdates?: number; // players whose birthdate can't be right: CHECK PLAYER BIRTHDATES
   // ↗ the team's page opened right under the row (built on the server only while open); left out: ↗ goes to its page
@@ -153,7 +158,7 @@ export default function TeamRow({
             <span className="min-w-0">
               <span
                 className={`block truncate font-semibold ${
-                  issue || teamNeeds({ hasCoach, waitingCoach, needsEmail: !!needsEmail, players, missingBirthdates, missingNumbers, wrongBirthdates })
+                  issue || teamNeeds({ hasCoach, waitingCoach, needsEmail: !!needsEmail, players, missingBirthdates, missingNumbers, duplicateNumbers, wrongBirthdates })
                     ? "animate-pulse text-red-600 dark:text-red-400"
                     : ""
                 }`}
@@ -216,6 +221,7 @@ export default function TeamRow({
             {missingBirthdates > 0 && <MustBeEntered what="PLAYER BIRTHDATES" />}
             {wrongBirthdates > 0 && <MustBeEntered what="WRONG BIRTHDATES" />}
             {missingNumbers > 0 && <MustBeEntered what="PLAYER NUMBERS" />}
+            {duplicateNumbers.length > 0 && <MustBeEntered what={`DUPLICATE NUMBERS: ${dupLabel(duplicateNumbers)}`} />}
           </>
         }
       />
@@ -228,9 +234,9 @@ export default function TeamRow({
 // A grade card's title: red, with a ⚠ badge of how many of its teams have a problem.
 // Something a team must still enter (its MUST BE ENTERED lines): its grade, gender and level cards (and Home's Teams
 // card) flash red so you can drill down to it.
-export function teamNeeds(t: { hasCoach: boolean; waitingCoach: unknown; needsEmail: boolean; players: number | null; missingBirthdates?: number; missingNumbers?: number; wrongBirthdates?: number }): boolean {
+export function teamNeeds(t: { hasCoach: boolean; waitingCoach: unknown; needsEmail: boolean; players: number | null; missingBirthdates?: number; missingNumbers?: number; duplicateNumbers?: string[]; wrongBirthdates?: number }): boolean {
   // players null: no roster kept here; missingBirthdates: players without a birthdate (where it's asked)
-  return (!t.hasCoach && !t.waitingCoach) || !!t.waitingCoach || t.needsEmail || t.players === 0 || !!t.missingBirthdates || !!t.missingNumbers || !!t.wrongBirthdates;
+  return (!t.hasCoach && !t.waitingCoach) || !!t.waitingCoach || t.needsEmail || t.players === 0 || !!t.missingBirthdates || !!t.missingNumbers || !!t.duplicateNumbers?.length || !!t.wrongBirthdates;
 }
 
 function gradeTitle(label: string, bad: number) {
@@ -452,16 +458,18 @@ export function ChatIcon() {
 // birthdates are asked (`birthdate` given: null = missing; left out: not asked, e.g. CourtPlayers' rosters).
 export function OrgRosterList({ players }: { players: { first: string; last: string; jersey: string | null; birthdate?: string | null; wrong?: boolean }[] }) {
   if (!players.length) return <p className="text-sm text-zinc-500">No players on the roster yet.</p>;
+  const dups = dupNumbers(players.map((p) => p.jersey));
   const born = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}/${d.slice(0, 4)}`;
   return (
     <ul className="divide-y divide-zinc-100 rounded-xl bg-zinc-50 px-3 text-sm dark:divide-white/5 dark:bg-white/5">
       {players.map((p, i) => (
         <li key={i} className="flex items-center justify-between gap-2 py-1.5">
           <span className="min-w-0">
-            <JerseyNumber n={p.jersey} />
+            <JerseyNumber n={p.jersey} dup={isDup(p.jersey, dups)} />
             {p.first} <span className="font-semibold">{p.last}</span>
           </span>
           <span className="shrink-0 text-xs text-zinc-500">
+            {isDup(p.jersey, dups) && <span className="font-medium text-red-600 dark:text-red-400">duplicate number{p.birthdate !== undefined && " · "}</span>}
             {!p.jersey && <span className="font-medium text-red-600 dark:text-red-400">no number{p.birthdate !== undefined && " · "}</span>}
             {p.birthdate !== undefined &&
               (p.birthdate ? <span className={p.wrong ? "font-medium text-red-600 dark:text-red-400" : ""}>Born {born(p.birthdate)}{p.wrong && " · check"}</span> : <span className="font-medium text-red-600 dark:text-red-400">no birthdate</span>)}

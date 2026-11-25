@@ -176,7 +176,7 @@ export function heroFor(h: HeroInput): Hero {
     .filter((x) => x.value > 0)
     .slice(0, 4);
   const actions = [
-    ...(open ? [{ label: "Register a team", href: `/register-team/${h.org}?program=${open.id}` }] : []),
+    ...(open ? [{ label: "Register a new team", href: `/register-team/${h.org}?program=${open.id}` }] : []),
     ...(h.players ? [{ label: "Find my player's team", href: "#parents" }] : []),
     ...(h.openable ? [{ label: "Teams & standings", href: "#programs" }] : []),
     ...(h.teams ? [{ label: "Our teams", href: "#teams" }] : []),

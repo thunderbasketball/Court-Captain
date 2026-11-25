@@ -3,6 +3,7 @@ import { timeLabel } from "@/lib/time";
 import FinalScore from "../../FinalScore";
 import DirectionsLink from "../../DirectionsLink";
 import SubCard from "../../SubCard";
+import { genderBg, genderOf } from "../../ui";
 
 const weekday = (iso: string) =>
   new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
@@ -17,7 +18,7 @@ export default function OurGyms({ gyms, day }: { gyms: PublicGym[]; day: HostDay
         <SubCard title={`Games here ${weekday(day.date)}`} count={day.games.length} open>
           <ul className="divide-y divide-zinc-100 text-sm dark:divide-white/5">
             {day.games.map((g, i) => (
-              <li key={i} className="flex gap-3 px-1 py-2">
+              <li key={i} className={`flex gap-3 rounded-lg px-2 py-2 ${genderBg(genderOf(g.group))}`}>
                 <span className="w-16 shrink-0 font-medium tabular-nums">{g.starts ? timeLabel(g.starts) : "TBA"}</span>
                 <span className="min-w-0">
                   <span className="block">
@@ -39,7 +40,7 @@ export default function OurGyms({ gyms, day }: { gyms: PublicGym[]; day: HostDay
           <li key={g.name} className="rounded-xl bg-white p-3 ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10">
             <span className="block font-semibold">{g.name}</span>
             <span className="block text-xs text-zinc-500">
-              {g.address}
+              {g.address?.replace(/, USA$/, "")}
               <DirectionsLink href={g.map} />
             </span>
           </li>

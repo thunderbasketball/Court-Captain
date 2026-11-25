@@ -144,7 +144,7 @@ describe("teams for a registered organization", () => {
       "insert into scenic_registrations (program_id, team_id, pool_id, registered_by) select $1, id, (select id from scenic_pools), 't' from scenic_teams where org_team_id = $2",
       [p, made.id],
     );
-    expect(await edit({ level: "COMP", grades: ["5"] })).toMatchObject({ ok: false, message: expect.stringContaining("Withdraw it from Winter first") });
+    expect(await edit({ level: "COMP", grades: ["5"] })).toMatchObject({ ok: false, message: expect.stringContaining("is registered in Winter: only the League can change") });
     await db.pool.query("update scenic_registrations set removed_by = 'x'");
     expect(await edit({ level: "COMP", grades: ["5"] })).toEqual({ ok: true, name: "5B East Ridge TBD" });
   });

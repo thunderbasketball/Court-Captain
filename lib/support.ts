@@ -5,6 +5,9 @@ import type { SessionUser } from "./auth/service";
 import { isOrgSlug } from "./orgs";
 import { orgHasArea } from "./org-admin";
 import { isPlatformAdmin } from "./platform";
+import type { abilitiesFrom, syncPart } from "./features";
+import { AUDIENCES, LIBRARY, NEEDS, TOPICS } from "./support-library";
+import { AREAS } from "./org-admin";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -12,7 +15,20 @@ const by = (v: SessionUser) => `${v.firstName} ${v.lastName}`;
 const isId = (v: unknown): v is string => typeof v === "string" && /^\d{1,18}$/.test(v);
 const staffOnly = { ok: false as const, message: "Only CourtCaptain staff can do that." };
 
-export type SupportArticle = { id: string; kind: "faq" | "howto"; title: string; body: string; sort: number };
+export type SupportArticle = {
+  id: string; // a library article's key, or the number of one staff added
+  key: string | null; // in the library (lib/support-library.ts); null: staff added it
+  kind: "faq" | "howto";
+  topic: string;
+  title: string;
+  body: string;
+  sort: number;
+  audiences: string[];
+  features: string[]; // needs all of them
+  areas: string[];
+  changed: boolean; // staff's own version of a library article
+  hidden: boolean; // staff took it out: nobody sees it
+};
 
 // Plain text only (shown escaped). Titles up to 120 characters, answers and steps up to 4000.
 const text = (v: unknown, max: number) => {
@@ -20,12 +36,49 @@ const text = (v: unknown, max: number) => {
   return s && s.length <= max ? s : null;
 };
 
-export async function listArticles(pool: Pick<Pool, "query">): Promise<SupportArticle[]> {
-  const r = await pool.query<SupportArticle>(
-    "select id::text, kind, title, body, sort from support_articles order by kind, sort, lower(title)",
+// Every article: the library's (with staff's own versions in place of theirs) and the ones staff added, by topic. `hidden`:
+// the ones taken out too (CourtCaptain staff's list). The first articles (065, never changed) gave way to the library.
+export async function listArticles(pool: Pick<Pool, "query">, hidden = false): Promise<SupportArticle[]> {
+  const r = await pool.query<Omit<SupportArticle, "changed" | "topic"> & { topic: string | null }>(
+    `select id::text, key, kind, topic, title, body, sort, audiences, features, areas, hidden from support_articles
+      where key is not null or updated_by <> 'setup' order by sort, lower(title)`,
   );
-  return r.rows;
+  const own = new Map(r.rows.flatMap((a) => (a.key ? [[a.key, a] as const] : [])));
+  const library = LIBRARY.map((a, i): SupportArticle => {
+    const o = own.get(a.key);
+    const base = { id: a.key, key: a.key, sort: i, audiences: [...a.who] as string[], features: [...(a.needs ?? [])] as string[], areas: [...(a.areas ?? [])] as string[] };
+    return o
+      ? { ...base, kind: o.kind, topic: o.topic ?? a.topic, title: o.title, body: o.body, audiences: o.audiences, features: o.features, areas: o.areas, changed: true, hidden: o.hidden }
+      : { ...base, kind: a.kind, topic: a.topic, title: a.title, body: a.body, changed: false, hidden: false };
+  });
+  const added = r.rows.filter((a) => !a.key).map((a): SupportArticle => ({ ...a, topic: a.topic ?? "Finding your way", sort: 1000 + a.sort, changed: false }));
+  const rank = (t: string) => {
+    const n = (TOPICS as readonly string[]).indexOf(t);
+    return n < 0 ? TOPICS.length : n;
+  };
+  return [...library, ...added].filter((a) => hidden || !a.hidden).sort((a, b) => rank(a.topic) - rank(b.topic) || a.sort - b.sort);
 }
+
+// Someone, in one organization: who they are there, what it has, and a Director's areas ("*": every area).
+export type For = { who: Set<string>; has: Set<string>; areas: Set<string> };
+
+// Pure: what an organization has, as articles ask for it.
+export function needsMet(keys: ReadonlySet<string>, abilities: typeof abilitiesFrom, part: typeof syncPart): Set<string> {
+  const has = new Set<string>([...keys, ...abilities(keys, false)]);
+  if (keys.has("court-sync")) has.add(`sync-${{ Schedule: "scheduler", Host: "host", Officials: "officials" }[part(keys)]}`);
+  if (has.has("hosting-available")) has.add("sync-host");
+  if (has.has("team-building") && !has.has("player-registration")) has.add("typed-rosters");
+  return has;
+}
+
+// Pure: is an article for them? One of its people, all its features, and (only as a Director) one of its areas.
+export function isFor(a: Pick<SupportArticle, "audiences" | "features" | "areas">, f: For): boolean {
+  if (!a.features.every((x) => f.has.has(x))) return false;
+  const asDirector = a.areas.length === 0 || f.areas.has("*") || a.areas.some((x) => f.areas.has(x));
+  return a.audiences.some((w) => f.who.has(w) && (w !== "director" || asDirector));
+}
+
+export const articlesFor = (all: SupportArticle[], list: For[]): SupportArticle[] => all.filter((a) => list.some((f) => isFor(a, f)));
 
 // ---- Chats ----
 
@@ -211,38 +264,71 @@ export async function publishChat(
   return { ok: true };
 }
 
-// Add (id null) or change a ready-made question or How-to guide.
+// Add (id null) or change a ready-made question or How-to guide: its words, topic, and who sees it. Changing one of the
+// library's keeps staff's own version of it.
 export async function saveArticle(
   deps: Deps,
   viewer: SessionUser,
   id: unknown,
-  input: { kind: unknown; title: unknown; body: unknown; sort?: unknown },
+  input: { kind: unknown; title: unknown; body: unknown; topic?: unknown; audiences?: unknown; features?: unknown; areas?: unknown },
 ): Promise<Result> {
   if (!(await isPlatformAdmin(deps.pool, viewer.coachId))) return staffOnly;
   const kind = input.kind === "faq" || input.kind === "howto" ? input.kind : null;
   const title = text(input.title, 120);
   const body = text(input.body, 4000);
-  const sort = Number.isInteger(Number(input.sort)) ? Number(input.sort) : 100;
-  if (!kind || !title || !body)
-    return { ok: false, message: "Pick Question or How-to, and fill in the title and the answer or steps." };
+  const topic = (TOPICS as readonly unknown[]).includes(input.topic) ? String(input.topic) : null;
+  const pick = (v: unknown, from: readonly string[]) => (Array.isArray(v) ? [...new Set(v)].filter((x): x is string => from.includes(x as string)) : []);
+  const audiences = pick(input.audiences, AUDIENCES);
+  const features = pick(input.features, Object.keys(NEEDS));
+  const areas = pick(input.areas, AREAS.map((a) => a.key));
+  if (!kind || !title || !body) return { ok: false, message: "Pick Question or How-to, and fill in the title and the answer or steps." };
+  if (!topic) return { ok: false, message: "Pick a topic." };
+  if (!audiences.length) return { ok: false, message: "Pick who sees it." };
+  const values = [kind, title, body, topic, audiences, features, areas, by(viewer), deps.now()];
   if (id === null) {
     await deps.pool.query(
-      "insert into support_articles (kind, title, body, sort, updated_by, updated_at) values ($1, $2, $3, $4, $5, $6)",
-      [kind, title, body, sort, by(viewer), deps.now()],
+      "insert into support_articles (kind, title, body, topic, audiences, features, areas, updated_by, updated_at) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+      values,
+    );
+    return { ok: true };
+  }
+  if (LIBRARY.some((a) => a.key === id)) {
+    await deps.pool.query(
+      `insert into support_articles (kind, title, body, topic, audiences, features, areas, updated_by, updated_at, key) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       on conflict (key) do update set kind = $1, title = $2, body = $3, topic = $4, audiences = $5, features = $6, areas = $7, updated_by = $8, updated_at = $9, hidden = false`,
+      [...values, id],
     );
     return { ok: true };
   }
   if (!isId(id)) return { ok: false, message: "That item no longer exists." };
   const r = await deps.pool.query(
-    "update support_articles set kind = $2, title = $3, body = $4, sort = $5, updated_by = $6, updated_at = $7 where id = $1",
-    [id, kind, title, body, sort, by(viewer), deps.now()],
+    "update support_articles set kind = $1, title = $2, body = $3, topic = $4, audiences = $5, features = $6, areas = $7, updated_by = $8, updated_at = $9 where id = $10 and key is null",
+    [...values, id],
   );
   return r.rowCount ? { ok: true } : { ok: false, message: "That item no longer exists." };
 }
 
+// Remove: one staff added is deleted; one of the library's is hidden (Put back undoes it).
 export async function deleteArticle(deps: Deps, viewer: SessionUser, id: unknown): Promise<Result> {
   if (!(await isPlatformAdmin(deps.pool, viewer.coachId))) return staffOnly;
+  const lib = LIBRARY.find((a) => a.key === id);
+  if (lib) {
+    await deps.pool.query(
+      `insert into support_articles (kind, title, body, topic, audiences, features, areas, updated_by, updated_at, key, hidden) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true)
+       on conflict (key) do update set hidden = true, updated_by = $8, updated_at = $9`,
+      [lib.kind, lib.title, lib.body, lib.topic, [...lib.who], [...(lib.needs ?? [])], [...(lib.areas ?? [])], by(viewer), deps.now(), lib.key],
+    );
+    return { ok: true };
+  }
   if (!isId(id)) return { ok: false, message: "That item no longer exists." };
-  const r = await deps.pool.query("delete from support_articles where id = $1", [id]);
+  const r = await deps.pool.query("delete from support_articles where id = $1 and key is null", [id]);
   return r.rowCount ? { ok: true } : { ok: false, message: "That item no longer exists." };
+}
+
+// The library's own version again (staff's is dropped, or it's no longer hidden).
+export async function restoreArticle(deps: Deps, viewer: SessionUser, key: unknown): Promise<Result> {
+  if (!(await isPlatformAdmin(deps.pool, viewer.coachId))) return staffOnly;
+  if (typeof key !== "string") return { ok: false, message: "That item no longer exists." };
+  await deps.pool.query("delete from support_articles where key = $1", [key]);
+  return { ok: true };
 }

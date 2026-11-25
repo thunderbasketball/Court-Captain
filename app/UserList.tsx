@@ -376,9 +376,9 @@ export function sortUsers(users: UserListItem[]) {
     (u) => (!u.director || u.teams.length > 0) && (u.coach || u.teams.some((t) => /(Head|Asst) Coach$/.test(t))),
   );
   const helpers = active.filter((u) => (!u.director || u.teams.length > 0) && !coaches.includes(u) && u.teams.length > 0);
-  const others = active.filter((u) => !u.director && !requests.includes(u) && !coaches.includes(u) && !helpers.includes(u));
+  const others = active.filter((u) => !u.director && !u.family && !requests.includes(u) && !coaches.includes(u) && !helpers.includes(u)); // parents are under Families
   const inactive = users.filter((u) => !u.active && u.director);
-  const inactiveCoaches = users.filter((u) => !u.active && !u.director);
+  const inactiveCoaches = users.filter((u) => !u.active && !u.director && (!u.family || u.coach || u.teams.length > 0));
   return { requests, directors, coaches, helpers, others, inactive, inactiveCoaches };
 }
 

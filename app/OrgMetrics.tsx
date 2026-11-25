@@ -9,10 +9,22 @@ import RegistrationTrend from "./RegistrationTrend";
 import FeeTrend from "./FeeTrend";
 import SiteVisits from "./SiteVisits";
 import NotOnTeamBoard from "./org/thunder/players/NotOnTeamBoard";
+import { AssignerForm } from "./DirectorTools";
+import { ConflictGroups } from "./org/scenic-city/programs/RosterConflicts";
+import CoachUseTile from "./CoachUseTile";
+import OurConflicts from "./OurConflicts";
+import { CorrectList } from "./org/scenic-city/scheduler/GamesToCorrect";
+import { allowedCount, openCount } from "@/lib/roster-conflicts";
+import { dupLabel } from "@/lib/duplicate-numbers";
 import SubCard from "./SubCard";
 import TeamUseList from "./TeamUseList";
 import { ordinal } from "@/lib/grades";
 import type { ReactNode } from "react";
+
+const ROLE_NEEDED = {
+  scores: { name: "Director of Scores", why: "You host games, so you need at least one Director of Scores to enter the scores played at your gyms." },
+  scheduling: { name: "Director of Scheduling", why: "You run events, so you need at least one Director of Scheduling to make and publish the game schedule." },
+} as const;
 
 // The To Do items that need someone (each flashes red, and so do To Do and the Home card): players not on a team,
 // uniforms missing a number or size, teams missing something, teams whose staff haven't used the app in 30 days, and
@@ -27,7 +39,11 @@ export function todoCounts(m: Metrics) {
     idle,
     waiting,
     unpublished: m.unpublished.length,
-    conflicts: m.rosterConflicts.reduce((n, p) => n + p.n, 0),
+    roles: m.missingRoles.length,
+    corrections: m.corrections.length,
+    duplicates: m.duplicates.length,
+    conflicts: openCount(m.rosterConflicts),
+    ours: openCount(m.teamConflicts),
   };
   return { ...items, open: Object.values(items).filter((n) => n > 0).length };
 }
@@ -46,6 +62,7 @@ export default function OrgMetrics({
   thunder,
   now,
   roster = false,
+  canAct = false,
 }: {
   m: Metrics;
   visits: Record<VisitRange, VisitStats> | null;
@@ -53,6 +70,7 @@ export default function OrgMetrics({
   thunder: boolean;
   now: Date;
   roster?: boolean;
+  canAct?: boolean; // not in View as: conflicts can be marked
 }) {
   const todo = todoCounts(m);
   const day = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric" });
@@ -89,6 +107,7 @@ export default function OrgMetrics({
 
   return (
     <section aria-label="Metrics" className="space-y-2">
+      {m.coachUse && <CoachUseTile use={m.coachUse} />}
       {m.registrations && (
         <SubCard title="Registrations" count={m.registrations.total}>
           <p className="mb-2 text-xs text-zinc-500">
@@ -109,6 +128,37 @@ export default function OrgMetrics({
       <SubCard title="To Do" count={todo.open} alert={todo.open > 0}>
         <div className="space-y-2">
           {!todo.open && <p className="text-sm text-zinc-500">✓ Nothing to do right now.</p>}
+          {/* Director roles its features require that nobody holds: named right here. */}
+          {m.missingRoles.map((r) => (
+            <SubCard key={r.area} title={`No ${ROLE_NEEDED[r.area].name}`} alert open>
+              <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-300">{ROLE_NEEDED[r.area].why} It can be an Owner or Admin.</p>
+              {r.off ? (
+                <p className="text-sm font-medium text-red-600">The role is switched off: turn it on in the gear, Feature Settings → Director roles.</p>
+              ) : (
+                <AssignerForm org={base.split("/").pop()!} options={r.options} area={r.area} />
+              )}
+            </SubCard>
+          ))}
+          {m.corrections.length > 0 && (
+            <SubCard title="Games to correct" count={m.corrections.length} alert open>
+              <CorrectList list={m.corrections} canAct={canAct} />
+            </SubCard>
+          )}
+          {m.duplicates.length > 0 && (
+            <SubCard title="Duplicate uniform numbers" count={m.duplicates.length} alert>
+              <ul className="divide-y divide-zinc-100 dark:divide-white/5">
+                {m.duplicates.map((t) => (
+                  <li key={`${t.id}-${t.name}`} className="flex justify-between gap-3 py-1.5 text-sm">
+                    <Link href={`${base}/teams/${t.id}${thunder ? "?tab=uniforms" : "?tab=roster"}`} className="truncate font-medium hover:underline">
+                      {t.name}
+                    </Link>
+                    <span className="shrink-0 text-xs font-semibold text-red-600 dark:text-red-400">{dupLabel(t.numbers)}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="pt-2 text-xs text-zinc-500">Two players on the team have the same number.</p>
+            </SubCard>
+          )}
           {m.unpublished.length > 0 && (
             <SubCard title="Schedules not published" count={m.unpublished.length} alert>
               <ul className="divide-y divide-zinc-100 dark:divide-white/5">
@@ -127,17 +177,17 @@ export default function OrgMetrics({
               <p className="pt-2 text-xs text-zinc-500">The next few. Publish REC and COMP each on the Scheduler.</p>
             </SubCard>
           )}
-          {todo.conflicts > 0 && (
-            <SubCard title="Roster conflicts" count={todo.conflicts} alert>
-              <ul className="divide-y divide-zinc-100 dark:divide-white/5">
-                {m.rosterConflicts.map((p) => (
-                  <li key={p.programId} className="flex justify-between gap-3 py-1.5 text-sm">
-                    <span className="font-medium">{p.program}</span>
-                    <span className="text-xs text-zinc-500">{p.n} to look at</span>
-                  </li>
-                ))}
-              </ul>
-              <p className="pt-2 text-xs text-zinc-500">Players who look like they&rsquo;re on two teams: the League&rsquo;s card, Roster conflicts.</p>
+          {m.rosterConflicts.length > 0 && (
+            <SubCard title="Roster conflicts" count={todo.conflicts || `${allowedCount(m.rosterConflicts)} allowed`} alert={todo.conflicts > 0}>
+              <p className="mb-2 text-xs text-zinc-500">Players who look like they&rsquo;re on two teams. Mark each one that&rsquo;s against the rules; the League&rsquo;s Roster conflicts card has the maybes too.</p>
+              {m.rosterConflicts.map((p) => (
+                <ConflictGroups key={p.programId} p={p} canAct={canAct} />
+              ))}
+            </SubCard>
+          )}
+          {m.teamConflicts.length > 0 && (
+            <SubCard title={m.rosterConflicts.length ? "Our teams' roster conflicts" : "Roster conflicts"} count={todo.ours || `${allowedCount(m.teamConflicts)} allowed`} alert={todo.ours > 0}>
+              <OurConflicts list={m.teamConflicts} base={base} />
             </SubCard>
           )}
           {m.notOnTeam && (

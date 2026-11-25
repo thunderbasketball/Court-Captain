@@ -1,7 +1,11 @@
 import { inName } from "@/lib/team-names";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
+import TeamDoubles from "./TeamDoubles";
+import SupportCards from "./support/SupportCards";
 import { formatCell } from "@/lib/phone";
+import { dupLabel } from "@/lib/duplicate-numbers";
+import { dupNumbers, isDup } from "@/lib/uniform-fields";
 import { MustBeEntered } from "./TeamRow";
 import { ViewAsButton } from "./ViewAsButton";
 import { CardPanel, ChatIcon, EmailPanelIcon, PanelIcon, TextIcon } from "./CardIcons";
@@ -40,6 +44,7 @@ export type TeamRosterRow = {
 // lines are the same everywhere (💬 Text, 🗨️ Chat, ✉️ Email, add). Each address reads its team's data and passes it in.
 export default function TeamPage(p: {
   embedded?: boolean; // inside its row on the Teams list: no page frame
+  org: string; // the organization the page is in
   back: string | null; // ← Teams (for those who manage the teams)
   team: {
     id: string;
@@ -90,6 +95,8 @@ export default function TeamPage(p: {
   playbook?: { count: number; action?: ReactNode; body: ReactNode } | null; // CourtPlaybook: its coaches' plays
   footer?: ReactNode; // Delete team
 }) {
+  // Numbers two players share (wherever the roster is kept): warned on the team's card, the Roster card and each player.
+  const dups = dupNumbers(p.roster.rows.map((r) => r.number));
   const t = p.team;
   const hasHead = p.staff.list.some((s) => s.role === "HeadCoach");
   const staffEmails = [...new Set(p.staff.list.flatMap((s) => (s.email ? [s.email.toLowerCase()] : [])))];
@@ -127,9 +134,12 @@ export default function TeamPage(p: {
             </p>
             {t.practiceLocations.length > 0 && <p className="text-sm text-zinc-500 dark:text-zinc-400">Practices: {t.practiceLocations.join(", ")}</p>}
             {t.createdBy && <p className="mt-1 text-xs text-zinc-400">Created by {t.createdBy}</p>}
-            {p.musts.map((m) => (
+            {[...p.musts, ...(dups.length ? [`DUPLICATE NUMBERS: ${dupLabel(dups)}` as const] : [])].map((m) => (
               <MustBeEntered key={m} what={m} />
             ))}
+            <Suspense fallback={null}>
+              <TeamDoubles org={p.org} id={t.id} />
+            </Suspense>
           </div>
         </div>
         {p.edit}
@@ -258,7 +268,7 @@ export default function TeamPage(p: {
         title="Roster"
         count={p.roster.rows.length}
         open={p.opened === "roster"}
-        alert={p.roster.alert}
+        alert={p.roster.alert || dups.length > 0}
         badge={p.roster.badge}
         actionPad="pr-56"
         action={
@@ -284,6 +294,14 @@ export default function TeamPage(p: {
             <ChatPanel chatKey={p.roster.chatKey} />
           </CardPanel>
         )}
+        {dups.length > 0 && (
+          <p className="mx-4 mb-3 rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-700 ring-1 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/30">
+            Two players have {dupLabel(dups)}. Each player on the team needs their own number.
+          </p>
+        )}
+        <Suspense fallback={null}>
+          <TeamDoubles org={p.org} id={t.id} className="mx-4 mb-3" />
+        </Suspense>
         {p.roster.note}
         {!p.roster.rows.length && <p className="px-4 pb-4 text-sm text-zinc-500">{p.roster.empty}</p>}
         <ul className="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-white/5 dark:border-white/5">
@@ -295,7 +313,8 @@ export default function TeamPage(p: {
                 <>
                   <span className="flex min-w-0 flex-wrap items-center gap-1">
                     <span className="truncate font-medium">
-                      <JerseyNumber n={r.number} />
+                      <JerseyNumber n={r.number} dup={isDup(r.number, dups)} />
+                      {isDup(r.number, dups) && <span className="mr-1.5 text-xs font-semibold text-red-600 dark:text-red-400">duplicate</span>}
                       {r.first} <span className="font-semibold">{r.last}</span>
                     </span>
                     {r.chips}
@@ -338,6 +357,12 @@ export default function TeamPage(p: {
         </CollapseCard>
       )}
       {p.footer}
+      {/* What's New and Support, for everyone here. */}
+      {!p.embedded && (
+        <Suspense fallback={null}>
+          <SupportCards org={p.org} />
+        </Suspense>
+      )}
       </div>
       </div>
     </main>

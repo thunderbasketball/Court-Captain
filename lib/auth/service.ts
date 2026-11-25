@@ -292,6 +292,16 @@ export async function startSession(deps: Deps, q: PoolClient | Pool, coachId: st
     now,
     expiresAt,
   ]);
+  // A parent (their cell on a player's registration) whose email is verified is connected: Thunder's Family role, so they're
+  // under Families and see their players' teams. Not someone with a role or a place on a team there already.
+  await q.query(
+    `select set_role(u.coach_id, 'thunder', 'Family', true, 'registration') from users u
+      where u.coach_id = $1 and u.email is not null and lower(trim(u.email)) = lower(trim(coalesce(u.verified_email, '')))
+        and exists (select 1 from registrations g where u.cell in (g.parent1_cell, g.parent2_cell))
+        and not exists (select 1 from org_roles r where r.coach_id = u.coach_id and r.org = 'thunder')
+        and not exists (select 1 from team_staff s where s.coach_id = u.coach_id)`,
+    [coachId],
+  );
   return { step: "loggedIn", token, expiresAt };
 }
 

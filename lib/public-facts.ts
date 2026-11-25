@@ -2,7 +2,8 @@ import "server-only";
 // What an organization's public page shows, read once for the page and for its share pictures (kept 30 seconds; nothing
 // about a person). The same for every organization: its features decide.
 import { db } from "./db";
-import { hasFeature } from "./features";
+import { abilitiesFrom, hasFeature, orgFeatureKeys, syncPart } from "./features";
+import { isFor, listArticles, needsMet } from "./support";
 import { gamesOfTheWeek } from "./games-of-week";
 import { recruitingOn } from "./officials";
 import { orgInfo, orgShort } from "./org-registry";
@@ -42,6 +43,13 @@ export async function publicFacts(org: string, now: Date) {
   ]);
   return { today, teamSignup: showPrograms && signup, players, own, leagues, hosting: hosted.length > 0, teams, gyms, gymDay, seasons, recruiting, counts, week };
 }
+// The public page's Help: what's for parents and visitors, by this organization's features (no person).
+export async function publicHelp(org: string) {
+  const [all, keys] = await Promise.all([publicly("support", () => listArticles(db)), orgFeatureKeys(db, org)]);
+  const f = { who: new Set(["public"]), has: needsMet(keys, abilitiesFrom, syncPart), areas: new Set<string>() };
+  return all.filter((a) => isFor(a, f));
+}
+
 export type PublicFacts = Awaited<ReturnType<typeof publicFacts>>;
 
 async function publicSeasons(org: string, today: string) {

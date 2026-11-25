@@ -6,7 +6,7 @@ import { hasFeature } from "@/lib/features";
 import { db } from "@/lib/db";
 import { SIZES, jerseyName, listUniformOrders, type UniformOrder } from "@/lib/uniforms";
 import AppHeader from "../../../AppHeader";
-import { GroupCard, PageTitle } from "../../../ui";
+import { GroupCard, PageTitle, genderTint } from "../../../ui";
 import { hasArea } from "@/lib/org-admin";
 import { pastOrders, vendorView, type VendorRow } from "@/lib/uniform-vendor";
 import SubCard from "../../../SubCard";
@@ -14,6 +14,9 @@ import HowUniformsWork from "./HowUniformsWork";
 import { TZ } from "@/lib/time";
 import { CancelOrder, SendToVendor, VendorSettings } from "./VendorPanel";
 import { UniformSearch, type UniformHit } from "./UniformSearch";
+import OrderSpares, { WaitingSpares } from "./OrderSpares";
+import { dupLabel, orgDuplicates } from "@/lib/duplicate-numbers";
+import { SPARE_ITEMS, orderCounts, spareCount, spareSummary, type Spare } from "@/lib/spare-items";
 
 import { PageFrame } from "../../../ui";
 
@@ -35,7 +38,7 @@ export async function UniformsContent({
     redirect("/");
   }
 
-  const [rows, vendor, past, gaps] = await Promise.all([
+  const [rows, vendor, past, gaps, dups] = await Promise.all([
     listUniformOrders({ pool: db, now: () => new Date() }, user),
     vendorView({ pool: db }, user),
     pastOrders({ pool: db }, user),
@@ -51,17 +54,22 @@ export async function UniformsContent({
         where u.number is null or ((coalesce(g.uniform_needed, false) or u.needs_uniform_at is not null) and u.size is null)
         group by t.id, t.name, t.grade_sort order by t.grade_sort, lower(t.name)`,
     ),
+    orgDuplicates(db, "thunder"), // two players with one number
   ]);
   // The newest order each player went in, as sent (a player changed since then goes in the next order).
-  const sentIn = new Map<string, { orderNo: string; number: string | null; size: string | null }>();
+  // An order for a team they've left counts on their team now (lib/uniform-order).
+  const sentIn = new Map<string, { orderNo: string; number: string | null; size: string | null; team: string | null }>();
+  const teamsOf = new Map<string, Set<string>>();
+  for (const r of rows) teamsOf.set(r.registrantId, (teamsOf.get(r.registrantId) ?? new Set()).add(r.teamId));
   for (const o of (past ?? []).filter((o) => !o.cancelled))
     for (const p of o.players)
-      if (!sentIn.has(`${p.teamId}-${p.registrantId}`))
-        sentIn.set(`${p.teamId}-${p.registrantId}`, { orderNo: o.orderNo, number: p.number, size: p.size });
+      for (const teamId of teamsOf.get(p.registrantId)?.has(p.teamId) ? [p.teamId] : (teamsOf.get(p.registrantId) ?? []))
+        if (!sentIn.has(`${teamId}-${p.registrantId}`))
+          sentIn.set(`${teamId}-${p.registrantId}`, { orderNo: o.orderNo, number: p.number, size: p.size, team: teamId === p.teamId ? null : p.team });
   const orderLabel = (r: { teamId: string; registrantId: string; number: string | null; size: string | null }) => {
     const o = sentIn.get(`${r.teamId}-${r.registrantId}`);
     if (!o) return "Not sent yet";
-    return o.number === r.number && o.size === r.size ? `Order #${o.orderNo}` : `Changed since order #${o.orderNo} · goes in the next order`;
+    return o.number === r.number && o.size === r.size ? `Order #${o.orderNo}${o.team ? ` (for ${o.team})` : ""}` : `Changed since order #${o.orderNo} · goes in the next order`;
   };
   const teams = new Map<string, UniformOrder[]>();
   for (const r of rows) teams.set(r.teamId, [...(teams.get(r.teamId) ?? []), r]);
@@ -73,6 +81,21 @@ export async function UniformsContent({
       {!embedded && <AppHeader user={user} tab="uniforms" context="director" />}
       <PageFrame embedded={embedded} className="mx-auto w-full max-w-md flex-1 px-4 py-6">
         <PageTitle title="Uniforms" subtitle={`${rows.length} ordered by rostered players`} />
+        {dups.length > 0 && (
+          <div className="mb-4 space-y-1 rounded-xl bg-red-50 p-3 text-sm text-red-800 ring-1 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/30">
+            <p className="font-semibold">Duplicate numbers (two players on a team):</p>
+            <ul className="space-y-0.5">
+              {dups.map((d) => (
+                <li key={d.id}>
+                  <Link href={`/org/thunder/teams/${d.id}?tab=uniforms`} className="font-medium underline">
+                    {d.name}
+                  </Link>
+                  : {dupLabel(d.numbers)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {gaps.rows.length > 0 && (
           <div className="mb-4 space-y-1 rounded-xl bg-red-50 p-3 text-sm text-red-800 ring-1 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/30">
             <p className="font-semibold">Still needed (why this card is red):</p>
@@ -126,10 +149,13 @@ export async function UniformsContent({
               ]}
             />
             <section className="mb-4 space-y-2 rounded-xl p-3 text-sm ring-1 ring-zinc-950/10 dark:ring-white/10">
-              <p className="font-semibold">
+              <div className="flex items-start justify-between gap-3">
+              <p className="min-w-0 font-semibold">
                 Uniform vendor{vendor.email ? <span className="font-normal text-zinc-500"> · {vendor.email}</span> : null}
                 {vendor.cc.length > 0 && <span className="font-normal text-zinc-500"> · Cc {vendor.cc.length}</span>}
               </p>
+              {vendor.email && !user.actingBy && <OrderSpares />}
+              </div>
               <p className="text-zinc-600 dark:text-zinc-300">
                 {vendor.ready.length} new to send · {vendor.sentPlayers} already sent
                 {vendor.held.length > 0 && <span className="text-amber-700 dark:text-amber-400"> · {vendor.held.length} held back</span>}
@@ -145,12 +171,13 @@ export async function UniformsContent({
               )}
               {vendor.last && (
                 <p className="text-xs text-zinc-500">
-                  Last order #{vendor.last.orderNo}: {vendor.last.players} player{vendor.last.players === 1 ? "" : "s"}
+                  Last order #{vendor.last.orderNo}: {vendor.last.counts}
                   {vendor.last.everyone ? " (everyone)" : ""} to {vendor.last.to}, sent by {vendor.last.sentBy} on{" "}
                   {vendor.last.sentAt.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: TZ })}
                 </p>
               )}
-              <SendToVendor ready={vendor.ready.length} hasVendor={!!vendor.email} />
+              <WaitingSpares spares={vendor.spares} canEdit={!user.actingBy} />
+              <SendToVendor ready={vendor.ready.length} spares={spareCount(vendor.spares)} hasVendor={!!vendor.email} />
             </section>
             <div className="mb-4">
               <HowUniformsWork />
@@ -163,7 +190,7 @@ export async function UniformsContent({
                       <SubCard
                         key={o.orderNo}
                         title={`#${o.orderNo}`}
-                        count={`${o.players.length} player${o.players.length === 1 ? "" : "s"}${o.cancelled ? " · Cancelled" : ""}`}
+                        count={`${orderCounts(o.players.length, spareCount(o.spares))}${o.cancelled ? " · Cancelled" : ""}`}
                       >
                         <p className="mb-2 text-xs text-zinc-500">
                           Sent by {o.sentBy} on{" "}
@@ -182,7 +209,8 @@ export async function UniformsContent({
                             <CancelOrder orderNo={o.orderNo} to={o.to} />
                           </div>
                         )}
-                        <OrderRows players={o.players} />
+                        {o.players.length > 0 && <OrderRows players={o.players} />}
+                        {o.spares.length > 0 && <SpareRows rows={o.spares} />}
                       </SubCard>
                     ))}
                   </div>
@@ -238,6 +266,29 @@ export async function UniformsContent({
   );
 }
 
+// A spares order as sent: each kind, with its numbers and sizes.
+function SpareRows({ rows }: { rows: Spare[] }) {
+  return (
+    <div className="space-y-3 text-sm">
+      {SPARE_ITEMS.filter((i) => rows.some((r) => r.item === i.key)).map((i) => (
+        <div key={i.key}>
+          <p className="mt-3 mb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Spare {i.many}</p>
+          <ul className="grid gap-x-6 rounded-lg p-2 ring-1 ring-zinc-950/10 sm:grid-cols-3 dark:ring-white/10">
+            {rows
+              .filter((r) => r.item === i.key)
+              .map((r, n) => (
+                <li key={n} className="flex justify-between gap-3 py-0.5 tabular-nums">
+                  <span className="font-medium">{r.item === "shorts" ? r.size : `#${r.number}`}</span>
+                  <span>{r.item === "shorts" ? `× ${r.qty}` : r.size}</span>
+                </li>
+              ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // One past order's players as sent: GIRLS then BOYS, each team's players by jersey number.
 function OrderRows({ players }: { players: VendorRow[] }) {
   return (
@@ -248,7 +299,7 @@ function OrderRows({ players }: { players: VendorRow[] }) {
         return (
           <div key={g}>
             <p className="mb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">{g}</p>
-            <ul className="divide-y divide-zinc-100 rounded-lg ring-1 ring-zinc-950/10 dark:divide-white/5 dark:ring-white/10">
+            <ul className={`divide-y divide-zinc-100 rounded-lg ring-1 dark:divide-white/5 ${genderTint(g) ?? ""}`}>
               {list.map((p) => (
                 <li key={`${p.teamId}-${p.registrantId}`} className="grid grid-cols-[6rem_1fr_3rem_3rem] items-center gap-2 px-3 py-1.5">
                   <span className="truncate text-zinc-500">{p.team}</span>

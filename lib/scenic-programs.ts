@@ -443,6 +443,9 @@ export function teamsByDate(p: ProgramDetail): DateEvent[] {
   return days;
 }
 
+// A pair of teams' key, the lower id first ("12-TBD" against TBD).
+const pairOf = (a: string, b: string | null) => (b === null ? `${a}-TBD` : BigInt(a) < BigInt(b) ? `${a}-${b}` : `${b}-${a}`);
+
 export type ScheduleDay = {
   date: string; // YYYY-MM-DD
   playing: number; // teams still in, every League that day
@@ -453,6 +456,7 @@ export type ScheduleDay = {
     bracketDays: string[];
     matchups: Matchup[];
     otherDays: Record<string, string[]>; // pair "a-b" (lower id first) → the League's other Game Days they play
+    fills: Record<string, string[]>; // team → the Game Days it filled in for a TBD this season
     // Each team's matchups on every Game Day of the League (past ones too), soonest first.
     teamGames: Record<string, ScheduledGame[]>;
   })[];
@@ -463,6 +467,7 @@ export type Matchup = {
   divisionId: string;
   a: string;
   b: string | null; // null: TBD (no opponent yet)
+  fill: string | null; // b filled in for a TBD: an extra game for it (any level; the game's level is a's)
   home: "a" | "b"; // which side is home (TBD games: "b" means the team is away)
   before: string[]; // the League's other Game Days these two also play (YYYY-MM-DD)
   createdBy: string;
@@ -483,13 +488,13 @@ export async function gameDaySchedule(deps: Deps, viewer: SessionUser): Promise<
   // Every matchup in these Leagues (all days, to show pairs that also meet on another Game Day).
   const all = await deps.pool.query<Matchup & { programId: string; day: string }>(
     `select m.id::text, m.program_id::text as "programId", m.division_id::text as "divisionId", m.day::text,
-            m.team_a::text as a, m.team_b::text as b, coalesce(m.home_side, 'a') as home, m.created_by as "createdBy",
+            m.team_a::text as a, m.team_b::text as b, m.fill_team::text as fill, coalesce(m.home_side, 'a') as home, m.created_by as "createdBy",
             m.court_key as court, to_char(m.starts, 'HH24:MI') as starts, m.placed_by as "placedBy"
        from scenic_matchups m where m.program_id = any($1::bigint[])
       order by m.day, m.id`,
     [ids.rows.map((r) => r.id)],
   );
-  const pair = (m: { programId: string; a: string; b: string | null }) => `${m.programId}:${m.a}-${m.b ?? "TBD"}`;
+  const pair = (m: { programId: string; a: string; b: string | null }) => `${m.programId}:${pairOf(m.a, m.b)}`;
   const daysOf = new Map<string, string[]>();
   for (const m of all.rows) daysOf.set(pair(m), [...(daysOf.get(pair(m)) ?? []), m.day]);
   const byDay = new Map<string, ScheduleDay>();
@@ -509,11 +514,12 @@ export async function gameDaySchedule(deps: Deps, viewer: SessionUser): Promise<
         ? []
         : all.rows
             .filter((m) => m.programId === p.id && m.day === e.date)
-            .map(({ id, divisionId, a, b, home, createdBy, programId, court, starts, placedBy }) => ({
+            .map(({ id, divisionId, a, b, fill, home, createdBy, programId, court, starts, placedBy }) => ({
               id,
               divisionId,
               a,
               b,
+              fill,
               home,
               createdBy,
               court,
@@ -524,7 +530,9 @@ export async function gameDaySchedule(deps: Deps, viewer: SessionUser): Promise<
       const otherDays: Record<string, string[]> = {};
       if (!e.bracket)
         for (const m of all.rows)
-          if (m.programId === p.id && m.day !== e.date && m.b) (otherDays[`${m.a}-${m.b}`] ??= []).push(m.day);
+          if (m.programId === p.id && m.day !== e.date && m.b) (otherDays[pairOf(m.a, m.b)] ??= []).push(m.day);
+      const fills: Record<string, string[]> = {};
+      if (!e.bracket) for (const m of all.rows) if (m.programId === p.id && m.fill) (fills[m.fill] ??= []).push(m.day);
       day.programs.push({
         ...e,
         programId: p.id,
@@ -532,6 +540,7 @@ export async function gameDaySchedule(deps: Deps, viewer: SessionUser): Promise<
         bracketDays: e.bracket ? p.bracketDates : [],
         matchups,
         otherDays,
+        fills,
         teamGames: e.bracket ? {} : games,
       });
       day.playing += e.playing;
@@ -1074,7 +1083,7 @@ export async function moveTeam(
 // ---- Registering teams ----
 
 // The grade group's pool with the fewest teams (first by name on a tie), for a team of this gender, grade and level.
-async function poolFor(q: PoolClient, programId: string, t: { gender: string; grade: number; level: string }) {
+export async function poolFor(q: PoolClient, programId: string, t: { gender: string; grade: number; level: string }) {
   const r = await q.query<{ id: string; name: string; gender: string; gradeLow: number; gradeHigh: number }>(
     `select o.id::text, o.name, d.gender, d.grade_low as "gradeLow", d.grade_high as "gradeHigh"
      from scenic_divisions d join scenic_grade_groups g on g.division_id = d.id join scenic_pools o on o.group_id = g.id
@@ -1308,7 +1317,7 @@ export const recOpenSql = (program: string, level: string, partner: string) =>
   `(${level} <> 'REC' or (select rec_limited_by from scenic_programs where id = ${program}) is null
     or exists (select 1 from scenic_program_rec_partners x where x.program_id = ${program} and x.partner_id = ${partner}))`;
 
-async function recOpen(q: Pick<Queryable, "query">, programId: string, teamId: string): Promise<boolean> {
+export async function recOpen(q: Pick<Queryable, "query">, programId: string, teamId: string): Promise<boolean> {
   const r = await q.query<{ ok: boolean }>(
     `select ${recOpenSql("$1", "t.level", "t.partner_id")} as ok from scenic_teams t where t.id = $2`,
     [programId, teamId],

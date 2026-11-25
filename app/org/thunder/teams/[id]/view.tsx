@@ -30,7 +30,7 @@ import { getTeam, personOptions, rosterParentOptions } from "@/lib/teams";
 import EligibleChip, { bornLabel } from "../../../../EligibleChip";
 import { rosterIssue, schoolYearOf } from "@/lib/eligibility";
 import { orgGradeRules } from "@/lib/grade-rules";
-import { ViewAsButton } from "../../../../ViewAsButton";
+import ParentViewButton from "../../../../parent-view/ParentView";
 import { MAX_GROUP_TEXT } from "@/lib/group-text";
 import AppHeader from "../../../../AppHeader";
 import SubCard from "../../../../SubCard";
@@ -180,8 +180,9 @@ async function TeamBody({
   const leagueRosterList = await leagueRosters({ pool: db, now: () => new Date() }, user, copy); // locked at its 1st game in a League
   const regs = copy ? await leaguePrograms(db, copy) : []; // what it's registered in
   const published = games.filter((g) => g.published); // the Games card: only once its League's schedule is published
-  // Owners and Admins: 👁 View as on the team's staff and on players' parents who have a login (matched by cell), even
-  // while on the team's own chip; who they may view is checked again when they tap it.
+  // Owners and Admins: 👁 View as on the team's staff, even while on the team's own chip; who they may view is checked again
+  // when they tap it. Players' parents: 👁 what that parent sees, for the team's coaches and the organization's directors.
+  const seesParents = hasArea(user, "teams", "players") || team.myRoles.includes("HeadCoach") || team.myRoles.includes("AsstCoach");
   const admin = isThunderAdmin(user) && !user.actingBy;
   // One page: the team's card on top, then Staff, Players, Available players, Uniforms and Practices as cards that open
   // when tapped (no tabs). An old link with ?tab=roster (or uniforms, practices, staff) opens that card.
@@ -189,12 +190,7 @@ async function TeamBody({
   const week = typeof sp.week === "string" ? sp.week : undefined; // the Full schedule's week
   const opened = typeof requested === "string" ? requested : "";
   // The second round: what needs the first (players, practices, plays, Uniforms on), again side by side.
-  const [parentLogins, available, uniformsAndUnlock, library, formations, ownLocations, rsvps, parentOptions, parentsOf] = await Promise.all([
-    admin
-      ? db
-          .query<{ cell: string; coach_id: string }>("select cell, coach_id from users where active and cell = any($1)", [allParentCells])
-          .then((r): Record<string, string> => Object.fromEntries(r.rows.map((u) => [u.cell, u.coach_id])))
-      : ({} as Record<string, string>),
+  const [available, uniformsAndUnlock, library, formations, ownLocations, rsvps, parentOptions, parentsOf] = await Promise.all([
     // Available players: still eligible (not on any team), for the coaches to star and evaluate.
     mayEvaluate
       ? listEvaluations(deps, user, team.id).then((l) => (l ?? []).filter((c) => c.registered && !c.rosteredOn.length))
@@ -225,6 +221,7 @@ async function TeamBody({
   return (
     <>
       <SharedTeamPage
+        org="thunder"
         embedded={embedded}
         back={asDirector && !embedded ? "/org/thunder?open=teams#teams" : null}
         opened={opened}
@@ -335,9 +332,8 @@ async function TeamBody({
                 {p.parents.map((g, i) => (
                   <span key={i} className="flex flex-wrap items-baseline gap-x-2 text-xs">
                     <span className="text-zinc-600 dark:text-zinc-300">{g.name}</span>
-                    {g.cell && parentLogins[g.cell] && parentLogins[g.cell] !== user.coachId && (
-                      <ViewAsButton coachId={parentLogins[g.cell]} name={g.name} />
-                    )}
+                    {/* What this parent sees (its coaches and the organization's directors; a parent's whole login, inside it, for Admins). */}
+                    {seesParents && g.slot && <ParentViewButton registrantId={p.registrantId} slot={g.slot} name={g.name} />}
                     {g.cell && <PhoneLink cell={g.cell} label={formatCell(g.cell)} />}
                     {g.email && <EmailLink email={g.email} />}
                     {!g.cell && !g.email && <span className="text-zinc-400">no cell or email</span>}

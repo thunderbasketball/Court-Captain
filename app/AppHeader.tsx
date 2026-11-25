@@ -26,8 +26,7 @@ import { OrgSearchButton } from "./OrgSearch";
 import OrgGear from "./OrgGear";
 import HeaderPanels from "./HeaderPanels";
 import { directorAlerts } from "@/lib/director-alerts";
-import SupportButton from "./support/SupportButton";
-import { listArticles, supportChats } from "@/lib/support";
+import SupportDrop from "./support/SupportDrop";
 import { LogoutButton } from "./HomeActions";
 import ShareButton from "./ShareButton";
 
@@ -88,7 +87,7 @@ export default async function AppHeader({
   const thunder = !platform && org === "thunder" && user.hasThunderRole;
   // Alerts first: the pop-ups are only read when something is unread.
   const unreading = platform ? Promise.resolve(0) : unreadCount(deps, user); // alerts from every organization
-  const [orgs, here, { contexts }, features, unread, myEvents, popups, chatUnread, articles, chats, featureRows] = await Promise.all([
+  const [orgs, here, { contexts }, features, unread, myEvents, popups, chatUnread, featureRows] = await Promise.all([
     listOrgs(db),
     platform ? null : orgInfo(db, org),
     currentContexts(user),
@@ -98,10 +97,6 @@ export default async function AppHeader({
     // Not while a Director is viewing as this person.
     user.actingBy || platform ? [] : unreading.then((n) => (n ? popupAnnouncements(deps, user) : [])),
     platform ? 0 : chatUnreadCount(deps, user), // chats in every organization
-    // Support (the same everywhere): its questions and guides, this person's chats, and the chats they answer
-    // (CourtCaptain staff: all; an organization's Owners and Admins: the ones started there).
-    teamTab ? listArticles(db) : [], // (its button is only in a team page's tab menu)
-    teamTab ? supportChats(db, user, platform ? null : org) : { mine: [], inbox: null },
     // Each organization's features, for grouping the logo menu (more than 4 organizations).
     db.query<{ org: string; features: string[] }>("select org, array_agg(feature) as features from org_features group by org"),
   ]);
@@ -124,7 +119,6 @@ export default async function AppHeader({
   // Only the features this organization has (SPEC section 14); tabs with no feature are always there.
   const has = (t: { feature?: Feature }) => !t.feature || features.has(t.feature);
   const chatOn = features.has("chat") || features.has("hosting-available"); // a host-only organization: its CourtSync chats
-  const supportStaff = contexts.some((c) => c.key === "platform");
   // Chips for this organization only; the logo next to Log out switches organizations (SPEC section 14).
   const orgChips = platform ? [] : contexts.filter((c) => c.org === org);
   const featuresOf = new Map(featureRows.rows.map((r) => [r.org, r.features])); // for grouping the logo menu (more than 4 organizations)
@@ -333,12 +327,14 @@ export default async function AppHeader({
   // else's bell opens their inbox. Thunder keeps its own (all team staff) and its chat.
   const member = !platform && (thunder || orgChips.length > 0);
   // Asked together (they don't depend on each other), not one after another.
-  const [gear, search, alertSender] = await Promise.all([
+  const [gear, search, alertSender, schedulerView] = await Promise.all([
     !teamTab && !platform && !neutral && isOrgAdmin(db, user.coachId, org),
     !platform &&
       !neutral &&
       db.query<{ ok: boolean }>("select acts_as($1, $2, 'Director') as ok", [user.coachId, org]).then((r) => r.rows[0].ok),
     member && !thunder && sendsAlerts(deps, user, org),
+    // A League's Directors of Scheduling: the Scheduler on the whole screen.
+    !teamTab && !platform && !neutral && org === "scenic-city" && features.has("programs") && orgHasArea(db, user.coachId, org, "scheduling"),
   ]);
   const orgIcons = (
     <>
@@ -351,6 +347,10 @@ export default async function AppHeader({
         />
       )}
       {thunder && chatOn && !user.isDirector && (
+        <HeaderPanels className={headerBtn} chat={{ unread: chatUnread, icon: <HeaderIcon d={ICONS.chat} badge={chatUnread} /> }} />
+      )}
+      {/* A parent: their players' Parents chats. */}
+      {!platform && !context && org === "thunder" && user.isFamily && !user.hasThunderRole && chatOn && (
         <HeaderPanels className={headerBtn} chat={{ unread: chatUnread, icon: <HeaderIcon d={ICONS.chat} badge={chatUnread} /> }} />
       )}
       {alertSender && (
@@ -458,9 +458,16 @@ export default async function AppHeader({
         {/* The row under it: your name (My dashboard) on the left; Check-in, Chat, Alerts, the gear and 🔍 search on
           the right. */}
         <div className="mx-auto flex max-w-3xl lg:max-w-6xl items-center justify-between gap-3 px-4 pb-2">
-          <Link href="/me" className="min-w-0 truncate text-sm font-medium text-zinc-600 hover:underline dark:text-zinc-300">
-            {user.firstName} {user.lastName}
-          </Link>
+          <span className="flex min-w-0 items-center gap-2">
+            <Link href="/me" className="min-w-0 truncate text-sm font-medium text-zinc-600 hover:underline dark:text-zinc-300">
+              {user.firstName} {user.lastName}
+            </Link>
+            {schedulerView && (
+              <Link href="/org/scenic-city/scheduler-view" className="shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10">
+                Scheduler View
+              </Link>
+            )}
+          </span>
           <div className="flex shrink-0 items-center gap-1">
             {myEvents > 0 && (
               <Link
@@ -471,6 +478,8 @@ export default async function AppHeader({
               </Link>
             )}
             {orgIcons}
+            {/* ? Support, for everyone: on a page of no organization (My dashboard), all of theirs. */}
+            <SupportDrop org={platform || !context ? null : org} className="shrink-0 rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-100" />
             {gear && <OrgGear org={org} coachId={user.coachId} user={user} />}
             {search && <OrgSearchButton org={org} orgName={here?.short ?? brand.name} />}
           </div>
@@ -502,15 +511,6 @@ export default async function AppHeader({
                     {alerting(t.key) && <span className="sr-only"> (info missing)</span>}
                   </Link>
                 ))}
-                {/* Support, the same everywhere, last in the tab menu. */}
-                <SupportButton
-                  org={org}
-                  articles={articles}
-                  mine={chats.mine}
-                  inbox={chats.inbox}
-                  staff={supportStaff}
-                  className="rounded-full px-5 py-1.5 text-center text-sm font-medium whitespace-nowrap text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-                />
               </div>
             </div>
           </nav>
@@ -567,17 +567,8 @@ export default async function AppHeader({
             })}
           </div>
           {/* A strip under the tabs for the host's "Powered by" badge (bottom right), so it never covers a tab.
-            Also clears the iPhone home bar. Support fills the free left side. */}
-          <div className="flex h-[max(3.75rem,env(safe-area-inset-bottom))] items-center px-4">
-            <SupportButton
-              org={org}
-              articles={articles}
-              mine={chats.mine}
-              inbox={chats.inbox}
-              staff={supportStaff}
-              className="rounded-full px-3 py-1.5 text-xs font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 dark:text-blue-400"
-            />
-          </div>
+            Also clears the iPhone home bar. */}
+          <div className="h-[max(3.75rem,env(safe-area-inset-bottom))]" />
         </nav>
       )}
     </>

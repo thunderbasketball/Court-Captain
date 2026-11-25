@@ -17,6 +17,8 @@ import * as bindings from "@/lib/scenic-bindings";
 import * as fastbreak from "@/lib/fastbreak/orgs";
 import * as fbRegister from "@/lib/fastbreak/register";
 import * as rosterConflicts from "@/lib/roster-conflicts";
+import * as changes from "@/lib/league-team-change";
+import * as corrections from "@/lib/schedule-corrections";
 import * as publicLeague from "@/lib/public-league";
 import { fastbreakClient } from "@/lib/fastbreak/client";
 import { setProgramGradeRules as saveProgramGradeRules } from "@/lib/grade-rules";
@@ -77,8 +79,8 @@ export async function setContact(partnerId: string, coachId: string, on: boolean
 export async function createScenicTeam(input: teams.TeamInput) {
   return guarded((u) => teams.createScenicTeam(deps, u, input), "team-registration");
 }
-export async function updateScenicTeam(id: string, input: teams.TeamInput) {
-  return guarded((u) => teams.updateScenicTeam(deps, u, id, input), "team-registration");
+export async function updateScenicTeam(id: string, input: teams.TeamInput, anyway = false) {
+  return guarded((u) => teams.updateScenicTeam(deps, u, id, input, anyway === true), "team-registration");
 }
 export async function setScenicCoachEmail(id: string, email: string) {
   return guarded((u) => teams.setScenicCoachEmail(deps, u, id, String(email)), "team-registration");
@@ -125,8 +127,8 @@ export async function registerTeam(programId: string, teamId: string, choice?: u
 export async function registerAllScenicTeams(programId: string, preview?: boolean, only?: string[], choices?: Record<string, unknown>) {
   return guarded((u) => programs.registerAllScenicTeams(deps, u, programId, preview === true, only, choices), "programs");
 }
-export async function reviewRosterConflict(programId: string, pair: string, decision: "different" | "allowed" | null) {
-  return guarded((u) => rosterConflicts.reviewConflict(deps, u, programId, pair, decision), "programs");
+export async function reviewRosterConflict(programId: string, pair: string, decision: "different" | "allowed" | null, reason?: string) {
+  return guarded((u) => rosterConflicts.reviewConflict(deps, u, programId, pair, decision, reason), "programs");
 }
 export async function setTeamOff(programId: string, teamId: string, what: string, out: boolean) {
   return guarded((u) => programs.setTeamOff(deps, u, programId, teamId, what, out === true), "programs");
@@ -225,12 +227,30 @@ export async function registerFromFastbreak(fbId: number, opts: { part?: string;
 }
 
 // Scheduler: create (or create again) one division's matchups on a Game Day (Admins and Directors of Scheduling).
-export async function createMatchups(programId: string, day: string, divisionId: string) {
-  return guarded((u) => matchups.createMatchups(deps, u, programId, day, divisionId), "programs");
+export async function createMatchups(programId: string, day: string, divisionId: string, level: string) {
+  return guarded((u) => matchups.createMatchups(deps, u, programId, day, divisionId, [], level), "programs");
 }
-// Scheduler: Create all matchups for a Game Day (every League's divisions playing that day).
-export async function createDayMatchups(day: string, programId: string) {
-  return guarded((u) => matchups.createDayMatchups(deps, u, day, programId), "programs");
+// Scheduler: Create REC (or COMP) matchups for a Game Day, in every division playing that day.
+export async function createDayMatchups(day: string, programId: string, level: string) {
+  return guarded((u) => matchups.createDayMatchups(deps, u, day, programId, level), "programs");
+}
+// A registered team's gender, grade or level (League staff; an organization's or Thunder's team too).
+export async function leagueChangeTeam(id: string, input: { gender: string; grade: string; level: string }, anyway = false) {
+  return guarded((u) => changes.leagueChangeTeam(deps, u, id, input, anyway === true), "team-registration");
+}
+// Scheduler: a game to correct: TBD in a team's place (null: remove the game).
+export async function correctGame(matchupId: string, teamId: string | null) {
+  return guarded((u) => corrections.correctGame(deps, u, matchupId, teamId), "programs");
+}
+// Scheduler: clear a division's REC (or COMP) matchups that day (not those on the Grid); fill a TBD in with a team (null: back to TBD).
+export async function clearMatchups(programId: string, day: string, divisionId: string, level: string) {
+  return guarded((u) => matchups.clearMatchups(deps, u, programId, day, divisionId, level), "programs");
+}
+export async function addGame(programId: string, day: string, divisionId: string, a: string, b: string | null) {
+  return guarded((u) => matchups.addGame(deps, u, programId, day, divisionId, a, b), "programs");
+}
+export async function fillTbd(matchupId: string, teamId: string | null) {
+  return guarded((u) => matchups.fillTbd(deps, u, matchupId, teamId), "programs");
 }
 export async function saveMatchups(programId: string, day: string, divisionId: string, games: [string, string | null][]) {
   return guarded((u) => matchups.saveMatchups(deps, u, programId, day, divisionId, games), "programs");
@@ -251,6 +271,10 @@ export async function setProgramGameLength(programId: string, minutes: number) {
   return guarded((u) => grid.setProgramGameLength(deps, u, programId, minutes), "programs");
 }
 // Scheduler Grid: put a game in a slot (court and start time), move it, or take it off the grid (null).
+// Scheduler Grid: every game at a gym that day off the grid.
+export async function unscheduleGym(day: string, gymKey: string, programId: string) {
+  return guarded((u) => grid.unscheduleGym(deps, u, day, gymKey, programId), "programs");
+}
 export async function placeGame(matchupId: string, slot: { court: string; starts: string } | null) {
   return guarded((u) => grid.placeGame(deps, u, matchupId, slot), "programs");
 }

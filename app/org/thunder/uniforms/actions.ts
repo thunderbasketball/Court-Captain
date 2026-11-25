@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { sendMail } from "@/lib/email";
 import { featureRefusal } from "@/lib/features-server";
 import * as vendor from "@/lib/uniform-vendor";
+import { addSpares, removeSpare } from "@/lib/uniform-spares";
 
 // The Uniforms card's vendor gear and Email the vendor. Role checked again in lib/uniform-vendor.
 const deps = { pool: db, now: () => new Date(), sendMail };
@@ -36,6 +37,14 @@ export async function emailUniformVendor(everyone: boolean) {
 
 export async function previewUniformOrder(everyone: boolean) {
   return guarded((u) => vendor.previewVendorOrder(deps, u, everyone));
+}
+
+export async function addSparesToOrder(order: unknown) {
+  return guarded((u) => addSpares(deps, u, order));
+}
+
+export async function removeSpareFromOrder(id: string) {
+  return guarded((u) => removeSpare(deps, u, id));
 }
 
 export async function cancelUniformOrder(orderNo: string, notify: boolean) {

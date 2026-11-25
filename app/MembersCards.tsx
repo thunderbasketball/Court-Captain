@@ -9,6 +9,7 @@ export type MemberCard = {
   count?: ReactNode;
   alert?: boolean;
   tint?: "yellow"; // something in it waiting (the Cart)
+  wide?: boolean; // the full width on a wide screen, closed too (so nothing below it moves up past it)
   action?: ReactNode;
   body: ReactNode;
 };
@@ -45,6 +46,7 @@ export default function MembersCards({
             alert={c.alert}
             action={c.action}
             tint={c.tint}
+            wide={c.wide}
             open={opened.has(c.key)}
           >
             {opened.has(c.key) && <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>{c.body}</Suspense>}

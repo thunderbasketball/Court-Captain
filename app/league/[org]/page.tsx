@@ -6,7 +6,11 @@ import { db } from "@/lib/db";
 import { hasFeature } from "@/lib/features";
 import { orgMetadata } from "@/lib/org-metadata";
 import { orgInfo } from "@/lib/org-registry";
+import { isOrgSlug } from "@/lib/orgs";
+import { currentUser } from "@/lib/auth/server";
 import { publicLeague, publicLeagues } from "@/lib/public-league";
+import { leagueGyms } from "@/lib/league-gyms";
+import LeagueGyms from "../../LeagueGyms";
 import { publicly } from "@/lib/public-cache";
 import { REC_LIMITED, shortDate } from "@/lib/program-options";
 import { easternDate } from "@/lib/time";
@@ -18,6 +22,7 @@ import { openPrograms } from "@/lib/team-signup";
 import { card } from "../../ui";
 import SubCard from "../../SubCard";
 import ShareButton from "../../ShareButton";
+import TeamFinder from "../../TeamFinder";
 import FindMyPlayer from "../../find-player/FindMyPlayer";
 
 export async function generateMetadata({ params }: PageProps<"/league/[org]">): Promise<Metadata> {
@@ -33,6 +38,12 @@ export default function LeaguePage({ params, searchParams }: PageProps<"/league/
     </main>
   );
 }
+
+const HomeIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="size-5" aria-hidden>
+    <path d="M3 11.5 12 4l9 7.5M5.5 10v9a1 1 0 0 0 1 1H10v-5h4v5h3.5a1 1 0 0 0 1-1v-9" />
+  </svg>
+);
 
 // The public League page (SPEC.md section 13): no login, no contact information. Scenic City's Leagues, each with
 // its Teams and, once published by a Director of Programs, its Schedule, as cards that open in place (an old ?tab= link
@@ -55,27 +66,44 @@ async function League({
   // The League asked for, else the first one still going.
   const pickedId = typeof sp.l === "string" ? sp.l : (leagues.find((l) => l.endsOn >= today) ?? leagues[0])?.id;
   const league = leagues.some((l) => l.id === pickedId) ? await publicly(`league:${today}:${pickedId}`, () => publicLeague(db, now, pickedId)) : null;
+  const gyms = league ? await publicly(`league-gyms:${today}:${league.id}`, () => leagueGyms(db, now, league.id)) : [];
+  const players = await hasFeature(db, org, "player-registration");
   // Register tab while the League's registration is open and Team Registrations is on.
-  const canRegister = !!league?.registering && (await hasFeature(db, org, "team-registration"));
+  // Only on the League's own public page: not when they came from another organization's.
+  const fromOther = typeof sp.from === "string" && sp.from !== org;
+  const canRegister = !fromOther && !!league?.registering && (await hasFeature(db, org, "team-registration"));
   // Register opens right in its card: the organization's name, the person registering and each of its teams.
   const programs = canRegister ? await openPrograms(db, now) : [];
   const tab = typeof sp.tab === "string" ? sp.tab : "";
-  const href = (l: string) => `/league/${org}?l=${l}`;
+  // Where they came from (an organization's page), else the League's own page.
+  const asked = typeof sp.from === "string" && isOrgSlug(sp.from) ? await orgInfo(db, sp.from) : null;
+  const back = asked ?? o;
+  const user = await currentUser();
+  const href = (l: string) => `/league/${org}?l=${l}${asked ? `&from=${asked.slug}` : ""}`;
 
   return (
     <>
+      <Link href={`/login/${back.slug}`} className="mb-3 inline-block rounded-full px-3 py-1.5 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-white/5">
+        ← Back to {back.name}
+      </Link>
       <div className="mb-5 flex items-center gap-3">
         <OrgLogo src={o.logo} name={o.name} color={o.color} className="size-12 shrink-0 rounded-xl text-lg" />
         <div className="min-w-0 flex-1">
           <h1 className="text-xl font-semibold tracking-tight">{o.name}</h1>
-          <p className="text-sm text-zinc-500">League teams and schedule</p>
+          <p className="text-sm text-zinc-500">League teams, schedule and gyms</p>
         </div>
-        <ShareButton path={league ? href(league.id) : `/league/${org}`} title={league ? `${o.name}: ${league.name}` : o.name} />
+        <ShareButton path={league ? `/league/${org}?l=${league.id}` : `/league/${org}`} title={league ? `${o.name}: ${league.name}` : o.name} label={`Share ${league?.name ?? o.name}`} />
         <Link
-          href={`/login/${org}`}
-          className="shrink-0 rounded-full px-3.5 py-1.5 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/40 hover:bg-blue-50 dark:hover:bg-white/5"
+          href={user ? "/" : `/login/${org}`}
+          aria-label={user ? "My home" : "Log in"}
+          title={user ? "My home" : "Log in"}
+          className={
+            user
+              ? "grid size-8 shrink-0 place-items-center rounded-full text-thunder-blue hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-white/5"
+              : "shrink-0 rounded-full px-3.5 py-1.5 text-sm font-semibold text-thunder-blue ring-1 ring-thunder-blue/40 hover:bg-blue-50 dark:hover:bg-white/5"
+          }
         >
-          Log in
+          {user ? <HomeIcon /> : "Log in"}
         </Link>
       </div>
 
@@ -111,7 +139,7 @@ async function League({
           </div>
           <div className="space-y-2">
             {canRegister && (
-              <SubCard title="Register" count={`by ${shortDate(league.regCloses)}`} open={tab === "register"}>
+              <SubCard title="Register new teams" count={`by ${shortDate(league.regCloses)}`} open={tab === "register"}>
                 <div className="space-y-3">
                   <p className="text-sm text-zinc-600 dark:text-zinc-300">
                     {shortDate(league.startsOn)} – {shortDate(league.endsOn)} · register by {shortDate(league.regCloses)}
@@ -119,8 +147,13 @@ async function League({
                   {league.recLimited && (
                     <p className="text-sm font-medium text-amber-700 dark:text-amber-300">{REC_LIMITED}. COMP is open to all.</p>
                   )}
-                  <TeamSignupForm grades={GRADE_CHOICES} programs={programs} today={today} preset={league.id} />
+                  <TeamSignupForm org={org} grades={GRADE_CHOICES} programs={programs} today={today} preset={league.id} />
                 </div>
+              </SubCard>
+            )}
+            {fromOther && (
+              <SubCard title="Find your team" open={tab === "find"}>
+                <TeamFinder org={org} league={league.name} />
               </SubCard>
             )}
             {/* Division → REC / COMP → Grade (Standings, then its Schedule by date). */}
@@ -130,9 +163,16 @@ async function League({
             <SubCard title="Schedule" count={league.schedule ? undefined : "not posted yet"} open={tab === "schedule"}>
               <ProgramSchedule days={league.schedule} today={today} soon={league.soon} />
             </SubCard>
-            <SubCard title="Find my player's team" open={tab === "find"}>
-              <FindMyPlayer today={today} />
+            {/* Where its games are: each gym's address, Directions, host and coming published games. */}
+            <SubCard title="Gyms" count={gyms.length || undefined} open={tab === "gyms"}>
+              <LeagueGyms gyms={gyms} />
             </SubCard>
+            {/* Only an organization that registers players (CourtPlayers), as on its main page. */}
+            {players && (
+              <SubCard title="Find my player's team" open={tab === "find"}>
+                <FindMyPlayer today={today} />
+              </SubCard>
+            )}
           </div>
         </>
       )}

@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { OrgPublicTeam } from "@/lib/public-league";
 import { FollowStar, GameLine, useFollowed, type Game } from "../../FollowTeams";
 import SubCard from "../../SubCard";
+import { genderOf, genderTint } from "../../ui";
 
 // An organization's public page: its teams in a current event, each with a ☆ to follow it on this device (kept on the
 // phone, no login; starred teams first, under My teams) and its League games (once the League publishes its schedule),
@@ -32,7 +33,7 @@ export default function OrgTeams({ org, teams, today }: { org: string; teams: Or
 
 function TeamList({ org, teams, today }: { org: string; teams: OrgPublicTeam[]; today: string }) {
   return (
-    <ul className="grid gap-x-6 px-1 lg:grid-cols-2">
+    <ul className="grid items-start gap-2 lg:grid-cols-2">
       {teams.map((t) => (
         <TeamRow key={t.id} org={org} team={t} today={today} />
       ))}
@@ -51,7 +52,7 @@ function TeamRow({ org, team, today }: { org: string; team: OrgPublicTeam; today
   const posted = team.programs.some((p) => p.games !== null);
   const soon = [...new Set(team.programs.filter((p) => p.soon).map((p) => p.level))];
   return (
-    <li className="border-b border-zinc-100 py-2.5 dark:border-white/5">
+    <li className={`rounded-xl px-3 py-2.5 ring-1 ${genderTint(genderOf(team.programs[0]?.group)) ?? "ring-zinc-950/10 dark:ring-white/10"}`}>
       <div className="flex items-start gap-1.5">
         <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="min-w-0 flex-1 text-left">
           <span className="block truncate font-semibold">{team.name}</span>

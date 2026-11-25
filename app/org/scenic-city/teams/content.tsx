@@ -1,3 +1,4 @@
+import { leagueDuplicates } from "@/lib/duplicate-numbers";
 import { easternDate } from "@/lib/time";
 import { wrongBirthdate } from "@/lib/roster-match";
 import TeamsIncluded from "../../../TeamsIncluded";
@@ -22,7 +23,7 @@ import { StandardEmails } from "../../../season-guide/SeasonGuidePanel";
 import SubCard from "../../../SubCard";
 import { ImportTeamsPanel, UndoImportButton } from "../../../TeamImport";
 import { CollapseCard, GroupCard, PageTitle } from "../../../ui";
-import { DeleteTeam, TeamEditor } from "./TeamEditor";
+import { ChangeTeam, DeleteTeam, TeamEditor } from "./TeamEditor";
 import { addClubTeam, importClubTeams, previewClubImport, undoClubImport } from "../actions";
 
 import { PageFrame } from "../../../ui";
@@ -112,6 +113,8 @@ export async function ScenicTeamsContent({
     [teams.map((t) => t.id)],
   );
   const rosters: Record<string, { first: string; last: string; jersey: string | null; birthdate: string | null; wrong: boolean }[]> = {};
+  // Numbers two players share, wherever the team's roster is kept (Thunder's, its organization's, or here).
+  const dups = new Map((await leagueDuplicates(db, { ids: teams.map((t) => t.id) })).map((t) => [t.id, t.numbers]));
   const now = easternDate(new Date());
   for (const { team, ...p } of leaguePlayers.rows) (rosters[team] ??= []).push({ ...p, wrong: wrongBirthdate(p, now) });
   // Each team's whole staff, from where it's kept (Thunder's, its organization's, or here), with the verified ✓.
@@ -167,6 +170,7 @@ export async function ScenicTeamsContent({
         missingBirthdates={(rosters[t.id] ?? []).filter((p) => !p.birthdate).length}
         wrongBirthdates={(rosters[t.id] ?? []).filter((p) => p.wrong).length}
         missingNumbers={(rosters[t.id] ?? []).filter((p) => !p.jersey).length}
+        duplicateNumbers={dups.get(t.id)}
         // ↗ its team page opened right here (built only while open): Edit and Delete in its card, its games inside.
         page={{
           id: t.id,
@@ -175,11 +179,17 @@ export async function ScenicTeamsContent({
               id={t.id}
               embedded
               edit={
-                t.canEdit && (
+                t.canEdit ? (
                   <div className="mt-3 flex flex-wrap gap-2">
                     <TeamEditor grades={GRADE_CHOICES} team={t} />
                     <DeleteTeam id={t.id} name={t.name} />
                   </div>
+                ) : (
+                  t.canChange && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <ChangeTeam grades={GRADE_CHOICES} team={t} />
+                    </div>
+                  )
                 )
               }
             />
@@ -212,7 +222,7 @@ export async function ScenicTeamsContent({
               gender={g.gender}
               defaultOpen={false}
               // A team still missing something (coach cell or email, or a registered team's roster): flash it to drill down.
-              alert={g.teams.some((t) => t.waitingCoach || (!!t.coachId && !t.coachEmail) || t.players === 0)}
+              alert={g.teams.some((t) => t.waitingCoach || (!!t.coachId && !t.coachEmail) || t.players === 0 || dups.has(t.id))}
             >
               {view === "division"
                 ? // Inside a division: by Level (COMP, then REC), then by Grade, each with its own heading.

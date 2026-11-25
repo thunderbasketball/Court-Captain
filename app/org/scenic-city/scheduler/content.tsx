@@ -2,6 +2,8 @@ import type { SessionUser } from "@/lib/auth/service";
 import { Suspense, cache } from "react";
 import SubCard from "../../../SubCard";
 import RemovalRequests from "./RemovalRequests";
+import GamesToCorrect from "./GamesToCorrect";
+import { gamesToCorrect } from "@/lib/schedule-corrections";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
@@ -99,6 +101,8 @@ export async function SchedulerContent({
   const programLength = program ? await programGameLength({ pool: db, now: () => new Date() }, user, program.id) : null;
   // Each Game Day (and the Brackets) publishes REC and COMP each on its own (Directors of Programs or Scheduling).
   const [mayPublish, published] = program ? await Promise.all([canPublish(db, user), publishedLevels(db, program.id)]) : [false, new Map<string, string>()];
+  // Games to correct: a team's grade, level or gender changed after they were made (id → why).
+  const wrong: Wrong = new Map((program ? await gamesToCorrect(db, { programId: program.id }, new Date()) : []).map((g) => [g.id, g.why.join("; ")]));
   const day = days.find((d) => d.date === q.day) ?? days.find((d) => d.date >= s.today) ?? days[0];
   const view: View = VIEWS.find((v) => v.key === q.view)?.key ?? "teams";
 
@@ -152,6 +156,7 @@ export async function SchedulerContent({
           {/* Teams asking to come off this League's schedule (Directors of Scheduling; flashes while any wait). */}
           {program && (
             <Suspense fallback={null}>
+              <GamesToCorrect programId={program.id} />
               <RemovalRequests programId={program.id} />
             </Suspense>
           )}
@@ -191,7 +196,7 @@ export async function SchedulerContent({
                         <span className="mt-2 grid gap-2 sm:grid-cols-2">
                           {levels.map((l) => {
                             const by = published.get(`${d.date} ${l}`);
-                            const m = dayMetrics(d, l);
+                            const m = dayMetrics(d, l, wrong);
                             return (
                               <span
                                 key={l}
@@ -247,11 +252,11 @@ export async function SchedulerContent({
                         <Teams day={d} coaches={coaches} who={who} />
                       </SubCard>
                       <SubCard title="Matchups" count={d.games || undefined} open={here && view === "matchups"}>
-                        <Matchups day={d} coaches={coaches} who={who} published={levels.filter((l) => published.has(`${d.date} ${l}`))} />
+                        <Matchups day={d} coaches={coaches} who={who} published={levels.filter((l) => published.has(`${d.date} ${l}`))} wrong={wrong} />
                       </SubCard>
                       <SubCard title="Scheduling" open={here && view === "grid"}>
                         <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>
-                          <DayGridCard user={user} day={d} coaches={coaches} published={levels.filter((l) => published.has(`${d.date} ${l}`))} />
+                          <DayGridCard user={user} day={d} coaches={coaches} published={levels.filter((l) => published.has(`${d.date} ${l}`))} wrong={wrong} />
                         </Suspense>
                       </SubCard>
                       <SubCard title="Bindings" open={here && view === "bindings"}>
@@ -271,16 +276,156 @@ export async function SchedulerContent({
   );
 }
 
+// Scheduler View (Directors of Scheduling; the link by their name): one Game Day on the whole screen. A slim bar (League, Game
+// Days, each level's numbers and Publish), then the day's lists at the left, which fold away, and every gym's courts side by
+// side. A phone stacks them. The same rules, checks and saves as the Scheduler.
+export async function SchedulerView({ searchParams }: { searchParams: PageProps<"/org/scenic-city/scheduler-view">["searchParams"] }) {
+  const user = await currentUser();
+  if (!user) redirect(devBypass ? "/dev-login" : "/login");
+  await requireFeature("scenic-city", "programs");
+  const s = await gameDaySchedule({ pool: db, now: () => new Date() }, user); // null: not a Director of Scheduling (or Admin)
+  if (!s) redirect("/org/scenic-city");
+  const [who, q] = await Promise.all([seesWho(db, user, "scenic-city"), searchParams]);
+  const programs = [...new Map(s.days.flatMap((d) => d.programs.map((p) => [p.programId, { id: p.programId, name: p.programName }] as const))).values()];
+  const program = programs.find((p) => p.id === q.program) ?? programs[0];
+  const days = s.days
+    .map((d) => {
+      const mine = d.programs.filter((p) => p.programId === program?.id);
+      return { ...d, programs: mine, playing: mine.reduce((n, p) => n + p.playing, 0), games: mine.reduce((n, p) => n + p.games, 0) };
+    })
+    .filter((d) => d.programs.length);
+  const [mayPublish, published] = program ? await Promise.all([canPublish(db, user), publishedLevels(db, program.id)]) : [false, new Map<string, string>()];
+  // Games to correct: a team's grade, level or gender changed after they were made (id → why).
+  const wrong: Wrong = new Map((program ? await gamesToCorrect(db, { programId: program.id }, new Date()) : []).map((g) => [g.id, g.why.join("; ")]));
+  const day = days.find((d) => d.date === q.day) ?? days.find((d) => d.date >= s.today) ?? days[0];
+  const levelsOf = (d: ScheduleDay) => (["REC", "COMP"] as const).filter((l) => d.programs.some((p) => p.teams.some((t) => t.level === l)));
+  const href = (program: string, date?: string) => `/org/scenic-city/scheduler-view?program=${program}${date ? `&day=${date}` : ""}`;
+  const coaches = day ? coachTags(day) : new Map<string, CoachTag>();
+  const levels = day ? levelsOf(day) : [];
+  const done = day ? levels.filter((l) => published.has(`${day.date} ${l}`)) : [];
+  return (
+    <div className="flex flex-1 flex-col lg:h-dvh lg:flex-none lg:overflow-hidden">
+      <header className="space-y-1.5 border-b border-zinc-950/10 bg-white px-3 py-2 dark:border-white/10 dark:bg-zinc-900">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          <Link href="/org/scenic-city" className="text-sm font-medium text-thunder-blue hover:underline dark:text-blue-400">
+            ← Home
+          </Link>
+          <h1 className="text-base font-semibold">Scheduler View</h1>
+          {user.actingBy && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">Viewing as {user.firstName} · view only</span>}
+          <nav aria-label="Program" className="flex gap-1 overflow-x-auto">
+            {programs.map((p) => (
+              <Link
+                key={p.id}
+                href={href(p.id)}
+                aria-current={p.id === program?.id ? "page" : undefined}
+                className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${p.id === program?.id ? "bg-scenic-navy text-white" : "text-zinc-500 ring-1 ring-zinc-950/10 dark:ring-white/15"}`}
+              >
+                {p.name}
+              </Link>
+            ))}
+          </nav>
+          {day && (
+            <Suspense fallback={null}>
+              <DayLength user={user} date={day.date} label={weekday(day.date)} who={who} />
+            </Suspense>
+          )}
+        </div>
+        {/* Game Days: green once all published, amber when some, red until then. */}
+        <nav aria-label="Game Days" className="flex gap-2 overflow-x-auto p-1">
+          {days.map((d) => {
+            const ls = levelsOf(d);
+            const n = ls.filter((l) => published.has(`${d.date} ${l}`)).length;
+            const tone =
+              ls.length > 0 && n === ls.length
+                ? "bg-emerald-50 text-emerald-800 ring-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300"
+                : n
+                  ? "bg-amber-50 text-amber-900 ring-amber-300 dark:bg-amber-500/15 dark:text-amber-200"
+                  : "bg-red-50 text-red-800 ring-red-200 dark:bg-red-500/15 dark:text-red-300";
+            return (
+              <Link
+                key={d.date}
+                href={href(program!.id, d.date)}
+                aria-current={d.date === day?.date ? "page" : undefined}
+                className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 ${tone} ${d.date === day?.date ? "outline-2 outline-offset-1 outline-scenic-navy dark:outline-white" : ""}`}
+              >
+                {weekday(d.date)}
+                {d.programs.some((p) => p.bracket) && " · Brackets"}
+              </Link>
+            );
+          })}
+        </nav>
+        {day && levels.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {levels.map((l) => {
+              const by = published.get(`${day.date} ${l}`);
+              const m = dayMetrics(day, l, wrong);
+              return (
+                <span key={l} className={`flex flex-wrap items-center gap-1.5 rounded-xl px-2 py-1 ring-1 ${by ? "bg-emerald-50 ring-emerald-300 dark:bg-emerald-500/10" : "bg-red-50 ring-red-200 dark:bg-red-500/10"}`}>
+                  {mayPublish && <PublishToggle programId={program!.id} day={day.date} level={l} label={weekday(day.date)} on={!!by} left={m.left} />}
+                  <span className="text-sm font-semibold">{l}</span>
+                  {m.chips.map((c) => (
+                    <span key={c.text} className={`rounded-full px-2 py-0.5 text-xs font-medium ${CHIP[c.tone]}`}>
+                      {c.text}
+                    </span>
+                  ))}
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </header>
+      {!day ? (
+        <p className="p-4 text-sm text-zinc-500">No upcoming Game Days. A Director of Programs adds them on each League&apos;s page.</p>
+      ) : (
+        <main className="flex flex-col gap-3 p-3 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[auto_minmax(0,1fr)]">
+          <details open className="group/list min-w-0 lg:min-h-0 lg:overflow-y-auto lg:open:w-[26rem]">
+            <summary className="mb-2 cursor-pointer list-none text-sm font-semibold text-thunder-blue select-none dark:text-blue-400 [&::-webkit-details-marker]:hidden">
+              <span className="group-open/list:hidden">» Lists</span>
+              <span className="hidden group-open/list:inline">« Hide the lists</span>
+            </summary>
+            <div className="space-y-2">
+              {program && (
+                <Suspense fallback={null}>
+                  <GamesToCorrect programId={program.id} />
+                  <RemovalRequests programId={program.id} />
+                </Suspense>
+              )}
+              <SubCard title="Matchups" count={day.games || undefined} open>
+                <Matchups day={day} coaches={coaches} who={who} published={done} wrong={wrong} />
+              </SubCard>
+              <SubCard title="Teams" count={day.playing}>
+                <Teams day={day} coaches={coaches} who={who} />
+              </SubCard>
+              <SubCard title="Bindings">
+                <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>
+                  <DayBindings user={user} day={day} coaches={coaches} who={who} />
+                </Suspense>
+              </SubCard>
+            </div>
+          </details>
+          <section aria-label="Gyms" className="min-w-0 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-zinc-950/10 lg:min-h-0 lg:overflow-y-auto dark:bg-zinc-900 dark:ring-white/10">
+            <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>
+              <DayGridCard key={day.date} user={user} day={day} coaches={coaches} published={done} wrong={wrong} wide />
+            </Suspense>
+          </section>
+        </main>
+      )}
+    </div>
+  );
+}
+
 const CHIP = {
   good: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300",
   todo: "bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200",
   plain: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+  bad: "bg-red-600 text-white",
 } as const;
 
 // A Game Day's numbers for a level, shown while its card is closed: matchups made of those needed (games guaranteed, two teams a game),
 // games placed (a court and time), games still TBD, pairs that meet again, courts in use and the first and last start.
 // `left`: what isn't done yet (asked about when publishing), or null. The Brackets have none until they're made.
-function dayMetrics(d: ScheduleDay, level: string): { chips: { text: string; tone: keyof typeof CHIP }[]; left: string | null } {
+type Wrong = Map<string, string>;
+function dayMetrics(d: ScheduleDay, level: string, wrong: Wrong): { chips: { text: string; tone: keyof typeof CHIP }[]; left: string | null } {
   if (d.programs.every((p) => p.bracket)) return { chips: [], left: null };
   const plays = new Set(d.programs.flatMap((p) => p.teams.filter((t) => t.level === level).map((t) => t.teamId)));
   const list = d.programs.flatMap((p) => p.matchups).filter((m) => plays.has(m.a)); // REC never plays COMP
@@ -303,7 +448,13 @@ function dayMetrics(d: ScheduleDay, level: string): { chips: { text: string; ton
     ...(times.length ? [{ text: `${timeLabel(times[0])} – ${timeLabel(times.at(-1)!)}`, tone: "plain" as const }] : []),
   ];
   const missing = need - placed.length;
-  return { chips, left: missing > 0 ? `${plural(missing, "game")} of ${need} ${missing === 1 ? "isn't" : "aren't"} scheduled yet` : null };
+  const bad = d.programs.flatMap((p) => p.matchups).filter((m) => wrong.has(m.id) && plays.has(m.a)).length;
+  if (bad) chips.unshift({ text: `⚠ ${plural(bad, "game")} to correct`, tone: "bad" });
+  const left = [
+    ...(bad ? [`${plural(bad, "game")} need${bad === 1 ? "s" : ""} correcting (a team changed grade or level)`] : []),
+    ...(missing > 0 ? [`${plural(missing, "game")} of ${need} ${missing === 1 ? "isn't" : "aren't"} scheduled yet`] : []),
+  ];
+  return { chips, left: left.length ? left.join(", and ") : null };
 }
 
 // A League's teams that day, grouped by division in the League's order (Boys then Girls, youngest first).
@@ -334,10 +485,10 @@ async function DayLength({ user, date, label, who }: { user: SessionUser; date: 
 }
 
 // A Game Day's grid, loaded in the background.
-async function DayGridCard({ user, day, coaches, published }: { user: SessionUser; day: ScheduleDay; coaches: Map<string, CoachTag>; published: string[] }) {
+async function DayGridCard({ user, day, coaches, published, wrong, wide = false }: { user: SessionUser; day: ScheduleDay; coaches: Map<string, CoachTag>; published: string[]; wrong: Wrong; wide?: boolean }) {
   const grid = await dayGrid({ pool: db, now: () => new Date() }, user, day.date);
   return grid ? (
-    <Grid day={day} grid={grid} coaches={coaches} published={published} />
+    <Grid day={day} grid={grid} coaches={coaches} published={published} wrong={wrong} wide={wide} />
   ) : (
     <p className="py-6 text-center text-sm text-zinc-500">This Game Day&apos;s grid isn&apos;t available.</p>
   );
@@ -588,7 +739,7 @@ function Teams({ day, coaches, who }: { day: ScheduleDay; coaches: Map<string, C
 // Matchups: each League's divisions playing that day, expandable. Each has Create matchups (Admins and Directors of
 // Scheduling; the page is theirs only), its games (a vs b, by grade group), pairs that also meet on another Game Day,
 // and teams still short of their games guaranteed.
-function Matchups({ day, coaches, who, published }: { day: ScheduleDay; coaches: Map<string, CoachTag>; who: boolean; published: string[] }) {
+function Matchups({ day, coaches, who, published, wrong }: { day: ScheduleDay; coaches: Map<string, CoachTag>; who: boolean; published: string[]; wrong: Wrong }) {
   const leagues = day.programs.filter((p) => !p.bracket);
   if (!leagues.length) return <p className="py-6 text-center text-sm text-zinc-500">The Brackets are set up separately.</p>;
   return (
@@ -597,7 +748,10 @@ function Matchups({ day, coaches, who, published }: { day: ScheduleDay; coaches:
         day={day.date}
         programId={day.programs[0].programId}
         label={weekday(day.date)}
-        created={leagues.some((p) => p.matchups.length > 0)}
+        levels={("REC COMP".split(" ") as ("REC" | "COMP")[]).flatMap((level) => {
+          const ids = new Set(leagues.flatMap((p) => p.teams.filter((t) => t.level === level).map((t) => t.teamId)));
+          return ids.size ? [{ level, created: leagues.some((p) => p.matchups.some((m) => ids.has(m.a))), published: published.includes(level) }] : [];
+        })}
       />
       {leagues.map((p) => (
         <div key={p.programId}>
@@ -614,15 +768,16 @@ function Matchups({ day, coaches, who, published }: { day: ScheduleDay; coaches:
             {byDivision(p.teams).map(([division, teams]) => {
               const divisionId = teams[0].divisionId;
               const team = new Map(teams.map((t) => [t.teamId, t]));
+              const anywhere = new Map(p.teams.map((t) => [t.teamId, t]));
               const games = p.matchups
                 .filter((m) => m.divisionId === divisionId)
-                .map((m) => ({ ...m, ta: team.get(m.a), tb: m.b ? team.get(m.b) : undefined }))
+                .map((m) => ({ ...m, ta: team.get(m.a), tb: m.b ? (team.get(m.b) ?? (m.fill ? anywhere.get(m.b) : undefined)) : undefined }))
                 .sort(
                   (x, y) =>
                     (x.ta?.groupGrade ?? 99) - (y.ta?.groupGrade ?? 99) || (x.ta?.name ?? "").localeCompare(y.ta?.name ?? ""),
                 );
               const playing = teams.filter((t) => !t.removedBy && !t.out);
-              const count = (id: string) => games.filter((m) => m.a === id || m.b === id).length;
+              const count = (id: string) => games.filter((m) => (m.a === id || m.b === id) && m.fill !== id).length; // a fill-in game is an extra one
               const short = games.length ? playing.filter((t) => count(t.teamId) < t.entry!.perDate[p.date]) : [];
               const status = !games.length
                 ? "Not created"
@@ -642,7 +797,7 @@ function Matchups({ day, coaches, who, published }: { day: ScheduleDay; coaches:
                   </summary>
                   <div className="px-3 py-3">
                     <MatchupBoard
-                      key={games.map((m) => m.id).join(",") || "none"}
+                      key={games.map((m) => `${m.id}:${m.b ?? ""}`).join(",") || "none"}
                       programId={p.programId}
                       day={p.date}
                       divisionId={divisionId}
@@ -655,13 +810,18 @@ function Matchups({ day, coaches, who, published }: { day: ScheduleDay; coaches:
                         coach: coaches.get(t.teamId),
                         need: t.entry!.perDate[p.date],
                       }))}
+                      everyone={p.teams
+                        .filter((t) => !t.removedBy && !t.out)
+                        .map((t) => ({ id: t.teamId, name: t.name, group: t.group, level: t.level, coach: coaches.get(t.teamId), need: 0, division: t.divisionName }))}
                       // The home team always on the left (a TBD game whose team is away: TBD on the left).
                       initial={games.map((m) => {
                         const a = m.ta && !m.ta.removedBy && !m.ta.out ? m.a : null;
-                        const b = m.tb && !m.tb.removedBy && !m.tb.out ? m.b : null;
-                        return m.home === "b" ? { a: b, b: a, home: "a" as const } : { a, b, home: "a" as const };
+                        const b = m.tb && !m.tb.removedBy && !m.tb.out ? m.b : null; // a fill-in may be from another division
+                        const own = { id: m.id, fill: b ? m.fill : null, placed: !!m.court, tbd: m.b === null, wrong: wrong.get(m.id) ?? null };
+                        return m.home === "b" ? { ...own, a: b, b: a, home: "a" as const } : { ...own, a, b, home: "a" as const };
                       })}
                       otherDays={p.otherDays}
+                      fills={p.fills}
                       published={published}
                     />
                     {who && games.length > 0 && <p className="mt-2 text-xs text-zinc-500">Last saved by {games[0].createdBy}</p>}
@@ -685,7 +845,7 @@ function TeamGames({ team, date, games, who }: { team: DateTeam; date: string; g
     <ul className="mt-1.5 mb-1 ml-4 space-y-1 border-l-2 border-zinc-200 pl-3 text-xs dark:border-white/10">
       {days.map((d) => {
         const on = games.filter((g) => g.date === d);
-        const missing = Math.max(0, (team.entry?.perDate[d] ?? 0) - on.length);
+        const missing = Math.max(0, (team.entry?.perDate[d] ?? 0) - on.filter((g) => !g.extra).length);
         const off = team.off[d];
         return (
           <li key={d} className={`flex gap-2 ${d === date ? "font-semibold" : ""}`}>
@@ -722,7 +882,7 @@ function TeamGames({ team, date, games, who }: { team: DateTeam; date: string; g
 // Grid: the game length at the top, then each gym open that Game Day (collapsed: host, courts, hours, games).
 // Expanded: rows of game blocks from when the gym opens, a column per court; a court's blocks outside its hours are
 // closed.
-function Grid({ day, grid, coaches, published }: { day: ScheduleDay; grid: DayGrid; coaches: Map<string, CoachTag>; published: string[] }) {
+function Grid({ day, grid, coaches, published, wrong, wide }: { day: ScheduleDay; grid: DayGrid; coaches: Map<string, CoachTag>; published: string[]; wrong: Wrong; wide: boolean }) {
   // The day's games (both teams still playing), each League's divisions in order, with their slot on the grid.
   const team = (t: DateTeam) => ({
     id: t.teamId,
@@ -759,15 +919,19 @@ function Grid({ day, grid, coaches, published }: { day: ScheduleDay; grid: DayGr
             league: day.programs.length > 1 ? p.programName : null,
             court: m.court,
             starts: m.starts,
+            level: a.level,
+            wrong: wrong.get(m.id) ?? null,
             locked: !!m.court && published.includes(a.level), // published: it stays where it is
           },
         ];
       });
     })
-    // Youngest grade first (K, 1st, 2nd…), Boys before Girls (their division names start with it), then the grade group (COMP, REC) and the home team's name.
+    // The order they're placed in: REC first, youngest to oldest (K, 1st, 2nd…), then COMP, youngest to oldest; Boys before Girls
+    // (their division names start with it), then the home team's name.
     .sort((x, y) => {
       const [p, q] = [(x.home ?? x.away)!, (y.home ?? y.away)!];
       return (
+        Number(x.level === "COMP") - Number(y.level === "COMP") ||
         p.grade - q.grade ||
         p.division.localeCompare(q.division) ||
         p.group.localeCompare(q.group) ||
@@ -788,9 +952,11 @@ function Grid({ day, grid, coaches, published }: { day: ScheduleDay; grid: DayGr
       )}
       <GridBoard
         day={day.date}
+        programId={day.programs[0].programId}
         gyms={gyms}
         games={games}
         minutes={grid.minutes}
+        wide={wide}
         divisions={Object.fromEntries(
           day.programs.flatMap((p) =>
             p.teams.map((t) => [t.divisionId, day.programs.length > 1 ? `${t.divisionName} (${p.programName})` : t.divisionName]),

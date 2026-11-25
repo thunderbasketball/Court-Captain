@@ -20,6 +20,7 @@ import {
   startTeamSignup,
 } from "./actions";
 import { Alert } from "../../client-ui";
+import TeamFinder from "../../TeamFinder";
 import { fieldLabel, inputCls, pillCls, primaryBtn } from "../../ui";
 import StripeInPage, { payInPage } from "../../StripeInPage";
 
@@ -73,12 +74,15 @@ export function TeamSignupForm({
   programs,
   today,
   preset,
+  org,
 }: {
   grades: Choice[];
   programs: OpenProgram[];
   today: string;
   preset?: string; // the event picked on the login page
+  org: string; // whose League it is
 }) {
+  const [isNew, setIsNew] = useState(false); // past "New teams only"
   const [screen, setScreen] = useState<"cell" | "pin" | "reset" | "choose" | "form" | "code" | "pay">("cell");
   const [existing, setExisting] = useState(false);
   // A returning coach's CourtSolo accounts and organizations (what they came to do is asked first).
@@ -233,6 +237,8 @@ export function TeamSignupForm({
         <StripeInPage pay={paying.pay} onCancel={() => window.location.assign(paying.cancel)} />
       </div>
     );
+  // First: is it new? A team already in the League is found (and left to its organization).
+  if (screen === "cell" && !isNew) return <TeamFinder org={org} league={fixed?.name ?? "the League"} onNew={() => setIsNew(true)} />;
   if (screen === "cell")
     return (
       <form
@@ -244,7 +250,11 @@ export function TeamSignupForm({
       >
         {step(1, "Log in", "Type your cell number and tap Next. It's your login. New here? We'll set you up as you go.")}
         <p className="text-sm text-zinc-600 dark:text-zinc-300">
-          Register your teams with Scenic City. Start with your cell: it&apos;s your login.
+          Register your <b>new</b> teams with Scenic City. Start with your cell: it&apos;s your login.
+        {" "}
+          <button type="button" className="font-medium text-thunder-blue hover:underline dark:text-blue-400" onClick={() => setIsNew(false)}>
+            ← Find my team instead
+          </button>
         </p>
         <Field label="Your cell">
           <input

@@ -15,6 +15,8 @@ import MembersCards from "../MembersCards";
 import { formatCell } from "@/lib/phone";
 import { AddOwner, AddStaff, DeleteOrganization, FeatureSwitch, FeaturesGear, FeaturesPanel, RemoveOwner, RemoveStaff } from "./PlatformTools";
 import SupportAdmin from "./SupportAdmin";
+import Versions from "./Versions";
+import { VERSION } from "@/lib/whats-new";
 import { listArticles } from "@/lib/support";
 
 const AREA_NAMES = Object.fromEntries(AREAS.map((a) => [a.key, a.name])) as Record<string, string>;
@@ -57,6 +59,7 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
           cards={[
             { key: "orgs", title: "Organizations", count: data.orgs.length, body: orgsBody },
             { key: "staff", title: "Staff", count: data.platformAdmins.length, body: staffBody },
+            { key: "versions", title: "Versions", count: VERSION, body: <Versions /> },
             { key: "support", title: "Support", body: <SupportBody /> },
           ]}
         />
@@ -142,11 +145,11 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
                               </div>
                             ))}
                           </dl>
-                          {o.stats.coaches > 0 && (
+                          {o.stats.coachUse && (
                             <p className="mt-1.5 text-xs text-zinc-500">
-                              Coaches logged in this week:{" "}
+                              Coaches using the app, last 7 days:{" "}
                               <span className="font-medium text-zinc-800 dark:text-zinc-100">
-                                {o.stats.coachesThisWeek} of {o.stats.coaches}
+                                {o.stats.coachUse.percent}% ({o.stats.coachUse.using} of {o.stats.coachUse.total})
                               </span>
                             </p>
                           )}
@@ -274,5 +277,5 @@ async function Platform({ searchParams }: { searchParams: PageProps<"/platform">
 
 // Support: its questions and guides (built only when the card is open).
 async function SupportBody() {
-  return <SupportAdmin articles={await listArticles(db)} />;
+  return <SupportAdmin articles={await listArticles(db, true)} />;
 }

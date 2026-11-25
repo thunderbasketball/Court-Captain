@@ -1,58 +1,40 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import type { ChatStatus, SupportArticle, SupportChat } from "@/lib/support";
-import { Alert, PopUp } from "../client-ui";
+import { Alert } from "../client-ui";
+import type { MyRelease } from "@/lib/whats-new-seen";
+import WhatsNew from "./WhatsNew";
 import { inputCls, pillCls, primaryBtn } from "../ui";
 import { ask, publish, reply, resolve } from "./actions";
 
-type Tab = "faq" | "howto" | "chats" | ChatStatus;
+type Tab = "faq" | "howto" | "news" | "chats" | ChatStatus;
 
-// Support, the same in every organization. Everyone: Questions (tap for the answer), How to (step by step) and Chats
-// (their own chats with support; start a new one). Those who answer (CourtCaptain staff: every chat; an organization's
-// Owners and Admins: the chats started there) open on New, Working and Resolved. `inbox` is null for everyone else.
-export default function SupportButton({
-  org,
-  articles,
-  mine,
-  inbox,
-  staff,
-  className,
-}: {
-  org: string;
-  articles: SupportArticle[];
-  mine: SupportChat[];
-  inbox: SupportChat[] | null;
-  staff: boolean;
-  className: string;
-}) {
-  const waiting = inbox?.filter((c) => c.status === "new").length ?? 0;
-  return (
-    <PopUp
-      label={waiting ? `Support (${waiting})` : "Support"}
-      title="Support"
-      className={`${className} ${waiting ? "animate-pulse text-red-600! dark:text-red-400!" : ""}`}
-    >
-      {() => <SupportPanel org={org} articles={articles} mine={mine} inbox={inbox} staff={staff} />}
-    </PopUp>
-  );
-}
-
+// Support: Questions (tap for the answer), How to (step by step) and Chats (their own with support; start a new one), each
+// person only what's for them. Those who answer (CourtCaptain staff: every chat; an organization's Owners, Admins and
+// Directors of Support: the chats started there) have New, Working and Resolved. `inbox` is null for everyone else.
 export function SupportPanel({
   org,
   articles,
   mine,
   inbox,
   staff,
+  others = [],
+  news,
+  version,
 }: {
-  org: string;
-  articles: SupportArticle[];
+  news?: { releases: MyRelease[]; fresh: string[] };
+  version?: string;
+  org: string | null;
+  articles: SupportArticle[]; // only theirs (lib/support-panel.ts)
   mine: SupportChat[];
   inbox: SupportChat[] | null;
   staff: boolean;
+  others?: { key: string; label: string; articles: SupportArticle[] }[]; // those who answer: what coaches, parents… see
 }) {
-  const [tab, setTab] = useState<Tab>(inbox ? "new" : "faq");
+  const [whose, setWhose] = useState("me");
+  const [tab, setTab] = useState<Tab>(inbox?.some((c) => c.status === "new") ? "new" : "faq");
   const [open, setOpen] = useState<string | null>(null);
   const [find, setFind] = useState("");
   const count = (s: ChatStatus) => inbox?.filter((c) => c.status === s).length ?? 0;
@@ -66,6 +48,7 @@ export function SupportPanel({
       : []),
     ["faq", "Questions"],
     ["howto", "How to"],
+    ...(news ? ([["news", news.fresh.length ? "What's New ✨" : "What's New"]] as [Tab, string][]) : []),
     ...(inbox ? [] : ([["chats", `Chats${mine.length ? ` (${mine.length})` : ""}`]] as [Tab, string][])),
   ];
   const all = [...(inbox ?? []), ...mine.filter((m) => !inbox?.some((c) => c.id === m.id))];
@@ -73,7 +56,8 @@ export function SupportPanel({
   if (chat) return <ChatView chat={chat} staff={staff} canAnswer={!!inbox} onBack={() => setOpen(null)} />;
 
   const words = find.toLowerCase().split(/\s+/).filter(Boolean);
-  const shown = articles.filter((a) => a.kind === tab && words.every((w) => `${a.title} ${a.body}`.toLowerCase().includes(w)));
+  const list = others.find((o) => o.key === whose)?.articles ?? articles;
+  const shown = list.filter((a) => a.kind === tab && words.every((w) => `${a.title} ${a.body} ${a.topic}`.toLowerCase().includes(w)));
   const chats = tab === "chats" ? mine : (inbox ?? []).filter((c) => c.status === tab);
 
   return (
@@ -94,46 +78,37 @@ export function SupportPanel({
       {(tab === "faq" || tab === "howto") && (
         <>
           <input className={inputCls} placeholder="Search…" value={find} onChange={(e) => setFind(e.target.value)} />
-          <ul className="max-h-[55vh] divide-y divide-zinc-100 overflow-y-auto rounded-xl ring-1 ring-zinc-950/10 dark:divide-white/5 dark:ring-white/10">
-            {shown.map((a) => (
-              <li key={a.id}>
-                <details className="group px-3 py-2.5">
-                  <summary className="flex cursor-pointer list-none items-start justify-between gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
-                    {a.title}
-                    <span className="text-zinc-400 transition-transform [details[open]>summary_&]:rotate-90">›</span>
-                  </summary>
-                  {a.kind === "howto" ? (
-                    <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-zinc-600 dark:text-zinc-300">
-                      {a.body
-                        .split("\n")
-                        .filter((s) => s.trim())
-                        .map((s, i) => (
-                          <li key={i}>{s}</li>
-                        ))}
-                    </ol>
-                  ) : (
-                    <p className="mt-2 text-sm whitespace-pre-line text-zinc-600 dark:text-zinc-300">{a.body}</p>
-                  )}
-                </details>
-              </li>
-            ))}
-            {!shown.length && (
-              <li className="px-3 py-3 text-sm text-zinc-500">
+          {others.length > 0 && (
+            <label className="flex items-center gap-2 text-xs text-zinc-500">
+              Help for
+              <select className="rounded-lg bg-white px-2 py-1 text-sm ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/15" value={whose} onChange={(e) => setWhose(e.target.value)}>
+                <option value="me">Me</option>
+                {others.map((o) => (
+                  <option key={o.key} value={o.key}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <ArticleList articles={shown} empty={
+              <>
                 Nothing matches.{" "}
                 {!inbox && (
                   <button type="button" className="font-medium text-thunder-blue hover:underline" onClick={() => setTab("chats")}>
                     Chat with us
                   </button>
                 )}
-              </li>
-            )}
-          </ul>
+              </>
+            } />
         </>
       )}
 
+      {tab === "news" && news && <WhatsNew releases={news.releases} fresh={news.fresh} seen={news.fresh.length > 0} />}
+
       {tab === "chats" && <NewChat org={org} onStarted={(id) => setOpen(id)} />}
 
-      {tab !== "faq" && tab !== "howto" && (
+      {tab !== "faq" && tab !== "howto" && tab !== "news" && (
         <ul className="max-h-[50vh] divide-y divide-zinc-100 overflow-y-auto rounded-xl ring-1 ring-zinc-950/10 dark:divide-white/5 dark:ring-white/10">
           {chats.map((c) => (
             <li key={c.id}>
@@ -158,6 +133,50 @@ export function SupportPanel({
           {!chats.length && <li className="px-3 py-3 text-sm text-zinc-500">No chats here.</li>}
         </ul>
       )}
+      {version && <p className="px-1 text-xs text-zinc-400">CourtCaptain version {version}</p>}
+    </div>
+  );
+}
+
+// Questions or guides under their topics (no hooks: the public page's Help uses it too).
+export function ArticleList({ articles, empty }: { articles: SupportArticle[]; empty: ReactNode }) {
+  const topics = [...new Set(articles.map((a) => a.topic))];
+  if (!articles.length) return <p className="px-1 py-2 text-sm text-zinc-500">{empty}</p>;
+  return (
+    <div className="grid max-h-[60vh] items-start gap-3 overflow-y-auto lg:grid-cols-2">
+      {topics.map((t) => (
+        <section key={t}>
+          <h3 className="px-1 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">{t}</h3>
+          <ul className="divide-y divide-zinc-100 rounded-xl ring-1 ring-zinc-950/10 dark:divide-white/5 dark:ring-white/10">
+            {articles
+              .filter((a) => a.topic === t)
+              .map((a) => (
+                <li key={a.id}>
+                  <details className="px-3 py-2.5">
+                    <summary className="flex cursor-pointer list-none items-start justify-between gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
+                      {a.title}
+                      <span aria-hidden className="text-zinc-400 transition-transform [details[open]>summary_&]:rotate-90">
+                        ›
+                      </span>
+                    </summary>
+                    {a.kind === "howto" ? (
+                      <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-zinc-600 dark:text-zinc-300">
+                        {a.body
+                          .split("\n")
+                          .filter((s) => s.trim())
+                          .map((s, i) => (
+                            <li key={i}>{s}</li>
+                          ))}
+                      </ol>
+                    ) : (
+                      <p className="mt-2 text-sm whitespace-pre-line text-zinc-600 dark:text-zinc-300">{a.body}</p>
+                    )}
+                  </details>
+                </li>
+              ))}
+          </ul>
+        </section>
+      ))}
     </div>
   );
 }
@@ -172,7 +191,7 @@ function StatusChip({ status }: { status: ChatStatus }) {
   return <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone}`}>{label}</span>;
 }
 
-function NewChat({ org, onStarted }: { org: string; onStarted: (id: string) => void }) {
+function NewChat({ org, onStarted }: { org: string | null; onStarted: (id: string) => void }) {
   const router = useRouter();
   const [question, setQuestion] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -184,7 +203,7 @@ function NewChat({ org, onStarted }: { org: string; onStarted: (id: string) => v
         e.preventDefault();
         start(async () => {
           setError(null);
-          const r = await ask(org, question);
+          const r = await ask(org ?? "", question);
           if (!r.ok) return setError(r.message);
           setQuestion("");
           router.refresh();

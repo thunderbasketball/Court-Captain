@@ -31,7 +31,7 @@ export type MemberPlayer = PlayerListItem & {
   parent2Cell: string | null;
   parent2Email: string | null;
   address: string | null; // "12 Main St, Chattanooga 37411"
-  uniformSize: string | null;
+  uniformSize: string | null; // "YL", or "YL asked for" until their team sets it
   uniformNumber: string | null;
   totalFees: string | null; // "185.00"
   amountRemaining: string | null;
@@ -69,7 +69,9 @@ export async function listPlayersByGrade(
             nullif(trim(coalesce(r.parent2_first, '') || ' ' || coalesce(r.parent2_last, '')), '') as "parent2Name",
             r.parent2_cell as "parent2Cell", r.parent2_email as "parent2Email",
             nullif(concat_ws(', ', nullif(trim(r.address), ''), nullif(trim(concat_ws(' ', nullif(trim(r.city), ''), nullif(trim(r.zip), ''))), '')), '') as address,
-            nullif(trim(r.uniform_size), '') as "uniformSize", nullif(trim(r.uniform_number), '') as "uniformNumber",
+            -- The real size and number (their team's Uniforms); until set, what they asked for at registration, saying so.
+            coalesce(un.size, nullif(trim(r.uniform_size), '') || ' asked for') as "uniformSize",
+            coalesce(un.number, nullif(trim(r.uniform_number), '') || ' asked for') as "uniformNumber",
             r.total_fees::text as "totalFees", r.amount_remaining::text as "amountRemaining",
             r.added_by as "addedBy", r.fees_waived_by as "feesWaivedBy",
             t.id::text as "teamId", t.name as team, t.grade_sort as "teamGrade", t.grades as "teamGrades",
@@ -79,6 +81,7 @@ export async function listPlayersByGrade(
      left join lateral (select p.team_id from team_players p join teams x on x.id = p.team_id
                         where p.registrant_id = r.registrant_id order by x.name limit 1) tp on true
      left join teams t on t.id = tp.team_id
+     left join team_uniforms un on un.team_id = tp.team_id and un.registrant_id = r.registrant_id
      order by lower(r.last_name), lower(r.first_name)`,
   );
   const groups = new Map<string, GradeGroup & { sort: number }>();

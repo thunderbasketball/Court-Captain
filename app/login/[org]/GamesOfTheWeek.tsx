@@ -5,6 +5,7 @@ import type { GamesOfTheWeek as Week, GotwGame, GotwTeam } from "@/lib/games-of-
 import { GOTW_RULES } from "@/lib/games-of-week";
 import { timeLabel } from "@/lib/time";
 import DirectionsLink from "../../DirectionsLink";
+import { genderBg, genderOf } from "../../ui";
 
 const weekday = (iso: string) =>
   new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
@@ -67,7 +68,7 @@ function GotwCard({ level, games, day }: { level: "REC" | "COMP"; games: GotwGam
       {games.length ? (
         <ol className="mt-2 divide-y divide-zinc-100 text-sm dark:divide-white/5">
           {games.map((g, i) => (
-            <li key={i} className="flex gap-3 py-2">
+            <li key={i} className={`-mx-1 flex gap-3 rounded-lg px-1 py-2 ${genderBg(genderOf(g.group))}`}>
               <span className="w-5 shrink-0 pt-0.5 text-center font-semibold text-zinc-400">{i + 1}</span>
               <span className="min-w-0 flex-1">
                 <span className="block">

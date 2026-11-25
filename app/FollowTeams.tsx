@@ -6,6 +6,7 @@ import { timeLabel } from "@/lib/time";
 import { loadFollowedTeams } from "./league/actions";
 import FinalScore from "./FinalScore";
 import DirectionsLink from "./DirectionsLink";
+import { genderOf, genderTint } from "./ui";
 
 // Following teams with no login (SPEC.md section 14): the followed team ids live on this device only (browser storage,
 // one list per organization), never on the server. A private window or cleared site data forgets them.
@@ -121,6 +122,28 @@ export function MyTeams({ org }: { org: string }) {
   );
 }
 
+// One team's public view (no login): its event and group, record of games, roster and schedule, and ☆.
+export function PublicTeam({ org, id }: { org: string; id: string }) {
+  const [data, setData] = useState<{ team: FollowedTeam | null; today: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [, start] = useTransition();
+  useEffect(() => {
+    start(async () => {
+      const r = await loadFollowedTeams(org, [id]).catch(() => null);
+      if (r?.ok) setData({ team: r.teams[0] ?? null, today: r.today });
+      else setError(r?.message ?? "The team didn't load. Please try again.");
+    });
+  }, [org, id]);
+  if (error) return <p className="text-sm text-red-600">{error}</p>;
+  if (!data) return <p className="text-sm text-zinc-500">Loading…</p>;
+  if (!data.team) return <p className="text-sm text-zinc-500">That team isn&apos;t in a program now.</p>;
+  return (
+    <ul>
+      <TeamCard org={org} team={data.team} today={data.today} />
+    </ul>
+  );
+}
+
 export type Game = FollowedGame & { program: string; team: string; group: string };
 
 export function GameLine({ g, past = false }: { g: Game; past?: boolean }) {
@@ -167,7 +190,7 @@ function TeamCard({ org, team, today }: { org: string; team: FollowedTeam; today
   const show = (p: "roster" | "schedule") => setPanel((x) => (x === p ? null : p));
 
   return (
-    <li className="rounded-xl bg-white ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10">
+    <li className={`rounded-xl ring-1 ${genderTint(genderOf(team.programs[0]?.group)) ?? "bg-white ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10"}`}>
       <div className="flex items-center gap-1.5 p-3 pb-1">
         <span className="min-w-0 flex-1">
           <span className="block truncate font-semibold">{team.name}</span>

@@ -14,6 +14,8 @@ import PlayerEvalButton from "../../players/PlayerEvalButton";
 import BirthdateFix from "../../players/BirthdateFix";
 import { birthdateFixes } from "@/lib/birthdate-fix";
 import { parentSlots } from "@/lib/player-parents";
+import { guardianLogins } from "@/lib/guardian-logins";
+import GuardianLogin from "../../../../GuardianLogin";
 import PlayerParents from "../../players/PlayerParents";
 import { Chip, EmailLink, GroupCard, Notice, PageTitle, PersonRow, PhoneLink, genderTint } from "../../../../ui";
 import { PlayerTeamButton } from "../../../../ViewAsButton";
@@ -37,7 +39,11 @@ export default async function PlayersPart({ user }: { user: SessionUser }) {
   const canAdd = hasArea(user, "players"); // Owners, Admins and Directors of Players add players (fees can be waived)
   const fixes = await birthdateFixes(db); // birthdays fixed in the app (kept through sheet syncs)
   // Each player's two parents, to add or fix (kept through sheet syncs, like birthdays).
-  const parents = await parentSlots(db, user, groups.flatMap((g) => [...g.unrostered, ...g.teams.flatMap((t) => t.players)].map((p) => p.registrantId)));
+  const everyone = groups.flatMap((g) => [...g.unrostered, ...g.teams.flatMap((t) => t.players)]);
+  const [parents, logins] = await Promise.all([
+    parentSlots(db, user, everyone.map((p) => p.registrantId)),
+    guardianLogins(db, user, everyone.flatMap((p) => [p.parentCell, p.parent2Cell])),
+  ]);
 
   const today = easternDate(new Date());
   const schoolYear = schoolYearOf(today);
@@ -100,11 +106,12 @@ export default async function PlayersPart({ user }: { user: SessionUser }) {
       ]
         .filter((g) => g.name || g.cell || g.email)
         .map((g, i) => (
-          <p key={i} className="flex flex-wrap gap-x-2">
+          <div key={i} className="flex flex-wrap items-center gap-x-2">
             <span className="font-medium text-zinc-700 dark:text-zinc-200">{g.name ?? "Parent"}</span>
             {g.cell && g.cell.length === 10 && <PhoneLink cell={g.cell} label={formatCell(g.cell)} />}
             {g.email && <EmailLink email={g.email} />}
-          </p>
+            <GuardianLogin login={g.cell ? logins.get(g.cell) : undefined} name={g.name ?? "Parent"} />
+          </div>
         ))}
       <PlayerParents registrantId={p.registrantId} slots={parents.get(p.registrantId) ?? []} who={who} />
       {!rostered && p.interestedTeams.length > 0 && (

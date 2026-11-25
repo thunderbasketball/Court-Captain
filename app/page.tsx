@@ -3,6 +3,7 @@ import Splash from "./Splash";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { currentContexts } from "@/lib/contexts-server";
+import SupportCards from "./support/SupportCards";
 import AppHeader from "./AppHeader";
 import Link from "next/link";
 import { Notice, card } from "./ui";
@@ -35,6 +36,11 @@ async function HomeContent() {
         ) : (
           <GetStarted firstName={user.firstName} />
         )}
+        <div className="mt-6 space-y-3">
+          <Suspense fallback={null}>
+            <SupportCards org={null} />
+          </Suspense>
+        </div>
       </main>
     </>
   );

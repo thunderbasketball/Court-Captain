@@ -32,9 +32,11 @@ export default function HomeCard({
   alert,
   action,
   tint,
+  wide = false,
   open,
   children,
 }: {
+  wide?: boolean; // the full width, closed too
   id: string;
   param: string;
   title: ReactNode;
@@ -96,7 +98,7 @@ export default function HomeCard({
   };
   return (
     // On a wide screen the cards sit two across; an open card takes the full width (MembersCards' grid).
-    <div className={`relative ${want ? "lg:col-span-2" : ""}`}>
+    <div className={`relative ${want || wide ? "lg:col-span-2" : ""}`}>
       <details
         id={id}
         className={`${tint ? yellowCard : card} group overflow-hidden`}

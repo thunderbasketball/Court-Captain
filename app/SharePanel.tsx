@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
+import { ShareIcon, shareIconBtn } from "./ShareButton";
 
 const btn = "rounded-full px-3.5 py-2 text-sm font-semibold ring-1 ring-zinc-950/15 hover:bg-zinc-50 dark:ring-white/20 dark:hover:bg-white/5";
 const never = () => () => {};
@@ -97,9 +98,11 @@ export function ShareToggle(p: { at: string; v: string; text: string; file: stri
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((x) => !x)}
-        className="rounded-full px-2.5 py-1 text-xs font-semibold text-thunder-blue ring-1 ring-thunder-blue/40 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-white/5"
+        aria-label={open ? "Close" : `Share: ${p.text}`}
+        title={open ? "Close" : "Share"}
+        className={`${shareIconBtn} ${open ? "bg-blue-50 dark:bg-white/10" : ""}`}
       >
-        {open ? "Close" : "Share"}
+        <ShareIcon />
       </button>
       {open && <SharePanel {...p} />}
     </span>

@@ -14,6 +14,7 @@ import { gradesFor, kindLabel, whoLine } from "@/lib/program-kinds";
 import { GearIcon } from "./OrgSettings";
 import { PLUS_BTN } from "./PageMenus";
 import { ProgramContent } from "./org/scenic-city/programs/[id]/content";
+import { gamesToCorrect } from "@/lib/schedule-corrections";
 import { SchedulerContent } from "./org/scenic-city/scheduler/content";
 import SubCard from "./SubCard";
 import NewProgramPanel from "./programs/NewProgramPanel";
@@ -262,6 +263,8 @@ export default async function ProgramsCard({
         ).rows.map((r) => [r.program_id, r.n]),
       )
     : new Map<string, number>();
+  // And its games to correct (a team changed grade or level after they were made).
+  if (scheduler) for (const g of await gamesToCorrect(db, { org }, now)) removals.set(g.programId, (removals.get(g.programId) ?? 0) + 1);
   // Team programs are made in Scenic City for now (its Directors of Programs); every organization later (step 5).
   const teams = teamsOn && org === "scenic-city" && teamsDirector;
   const sources = players ? await seasonSources(db, now) : [];

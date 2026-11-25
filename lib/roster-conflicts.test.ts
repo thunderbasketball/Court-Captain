@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
-import { openConflicts, reviewConflict, rosterConflicts } from "./roster-conflicts";
+import { openConflicts, orgConflicts, teamDoubles, reviewConflict, rosterConflicts } from "./roster-conflicts";
 import { previewPlayerRows } from "./org-rosters";
 import { rosterAddWarnings } from "./roster-warnings";
+import { orgTeamWarnings } from "./team-warnings";
 import { createTestDb, grant } from "./testing/db";
 
 const person = (coachId: string, firstName: string): SessionUser =>
@@ -91,7 +92,26 @@ describe("roster conflicts in a League", () => {
     expect(brief(r.allowed)).toEqual([["Conflict", [], ["A4", "A6"]]]);
     expect(r).toMatchObject({ teams: 4, withRoster: 4, missing: 1, reviewed: [] });
     expect(r.birthdates).toMatchObject([{ name: "Zoe Two", why: "Born 2026", team: "B4" }]);
-    expect(await openConflicts(db.pool, "scenic-city", now)).toEqual([{ programId: prog, program: "Winter", n: 2 }]);
+    expect(await openConflicts(db.pool, "scenic-city", now)).toEqual([{ programId: prog, program: "Winter", conflicts: r.conflicts, allowed: r.allowed }]);
+    expect(r.allowed[0].allowed).toBe("Within the rules: same organization, different divisions, both COMP");
+    expect(r.conflicts.map((c) => c.allowed)).toEqual([null, null]);
+
+    // Its organizations see theirs, the other organization's player and team not named; not the League itself.
+    const ours = (await orgConflicts(db.pool, "bbb", now))[0];
+    expect(ours).toMatchObject({ program: "Winter", allowed: [], conflicts: [{ a: { team: "B4", name: "Zoe Two" }, b: { name: "Another player", team: "Another organization's team", dob: null } }] });
+    expect(JSON.stringify(ours)).not.toContain("A4");
+    const theirs = (await orgConflicts(db.pool, "aaa", now))[0];
+    expect(theirs.conflicts.map((c) => [c.a.team, c.b.team].sort())).toEqual([["A4", "ARec"], ["A4", "Another organization's team"]]);
+    expect(theirs.allowed.map((c) => [c.a.team, c.b.team].sort())).toEqual([["A4", "A6"]]);
+    expect(await orgConflicts(db.pool, "scenic-city", now)).toEqual([]);
+    expect(await orgConflicts(db.pool, "thunder", now)).toEqual([]);
+    expect((await orgTeamWarnings(db.pool, "bbb", now)).conflicts).toHaveLength(1);
+    // On each team's page.
+    const doubles = async (id: string) => (await teamDoubles(db.pool, { orgTeamId: id }, now)).map((d) => [d.name, d.other, !!d.allowed]).sort();
+    expect(await doubles(a6.ot)).toEqual([["Ava Up", "A4", true]]);
+    expect(await doubles(b4.ot)).toEqual([["Zoe Two", "another organization's team", false]]);
+    expect(await doubles(a4.ot)).toEqual([["Ava Up", "A6", true], ["Max Mix", "ARec", false], ["Zoe Two", "another organization's team", false]]);
+    expect(await teamDoubles(db.pool, { orgTeamId: a4.ot }, new Date("2029-01-01"))).toEqual([]); // over
 
     // Decided: kept with who, only by a Director of Programs; changed or taken back.
     const pair = r.conflicts[1].pair;
@@ -99,12 +119,15 @@ describe("roster conflicts in a League", () => {
     expect(await reviewConflict(deps, tia, prog, pair, "different")).toMatchObject({ ok: false });
     expect(await reviewConflict(deps, dee, prog, "nope", "different")).toMatchObject({ ok: false });
     expect(await reviewConflict(deps, dee, prog, pair, "deleted")).toMatchObject({ ok: false });
-    expect(await reviewConflict(deps, dee, prog, pair, "allowed")).toEqual({ ok: true });
+    expect(await reviewConflict(deps, dee, prog, pair, "allowed")).toMatchObject({ ok: false }); // why?
+    expect(await reviewConflict(deps, dee, prog, pair, "allowed", "  Board vote\n Nov 20 ")).toEqual({ ok: true });
+    expect((await look()).reviewed[0].allowed).toBe("The League allowed it: Board vote Nov 20 (Dee X)");
+    expect(await doubles(b4.ot)).toEqual([["Zoe Two", "another organization's team", true]]);
     expect(await reviewConflict(deps, dee, prog, pair, "different")).toEqual({ ok: true });
     r = await look();
     expect(r.conflicts).toHaveLength(1);
     expect(r.reviewed).toMatchObject([{ pair, review: { decision: "different", by: "Dee X" } }]);
-    expect(await openConflicts(db.pool, "scenic-city", now)).toMatchObject([{ n: 1 }]);
+    expect(await openConflicts(db.pool, "scenic-city", now)).toMatchObject([{ conflicts: [{ strength: "Conflict" }] }]);
     expect(await reviewConflict(deps, dee, prog, pair, null)).toEqual({ ok: true });
     expect((await look()).conflicts).toHaveLength(2);
     await reviewConflict(deps, dee, prog, pair, "different");
@@ -157,6 +180,6 @@ describe("roster conflicts in a League", () => {
     expect(await warn(dee, { kind: "locked", programId: prog, teamId: b4.st }, typed("Zoe", "Two", "7/7/2016"))).toEqual([]); // Programs, not Teams
     await q("update scenic_registrations set removed_by = 't', removed_at = now() where team_id = $1", [aRec.st]);
     expect((await look()).conflicts).toEqual([]);
-    expect(await openConflicts(db.pool, "scenic-city", now)).toEqual([]);
+    expect((await openConflicts(db.pool, "scenic-city", now)).flatMap((p) => p.conflicts)).toEqual([]); // only an allowed pair is left
   });
 });

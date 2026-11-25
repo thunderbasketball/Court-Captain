@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useTransition, type ReactNode } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { ConflictSide, RosterConflict, RosterReport } from "@/lib/roster-conflicts";
+import type { ConflictSide, LeagueConflicts, RosterConflict, RosterReport } from "@/lib/roster-conflicts";
 import SubCard from "../../../SubCard";
 import { reviewRosterConflict } from "../actions";
 
@@ -16,13 +17,9 @@ const dob = (d: string | null) => (d ? `${Number(d.slice(5, 7))}/${Number(d.slic
 // A League program's Roster conflicts card (its Owners, Admins and Directors of Programs): players who look like they're on
 // two of its teams against the rules, by how sure it is. Each is marked as different players or allowed (who did is kept).
 export default function RosterConflicts({ programId, report: r, canAct }: { programId: string; report: RosterReport; canAct: boolean }) {
-  const list = (items: RosterConflict[]) => (
-    <ul className="space-y-2">
-      {items.map((c) => (
-        <Pair key={c.pair} programId={programId} c={c} canAct={canAct} />
-      ))}
-    </ul>
-  );
+  const list = (items: RosterConflict[]) => <ConflictList programId={programId} items={items} canAct={canAct} />;
+  const allowed = [...r.allowed, ...r.reviewed.filter((c) => c.allowed)];
+  const different = r.reviewed.filter((c) => !c.allowed);
   const group = (title: string, count: number, about: string, body: ReactNode, tone?: "alert" | "warn") =>
     count > 0 && (
       <SubCard title={title} count={count} alert={tone === "alert"} warn={tone === "warn"}>
@@ -41,8 +38,8 @@ export default function RosterConflicts({ programId, report: r, canAct }: { prog
         const items = r.conflicts.filter((c) => c.strength === s);
         return <div key={s}>{group(s, items.length, ABOUT[s], list(items), s === "Conflict" ? "alert" : s === "Likely" ? "warn" : undefined)}</div>;
       })}
-      {group("Allowed", r.allowed.length, "On two teams, within the rules.", list(r.allowed))}
-      {group("Reviewed", r.reviewed.length, "Comes back if a team, name or birthdate changes.", list(r.reviewed))}
+      {group("Allowed", allowed.length, "On two rosters and allowed, each with why.", list(allowed))}
+      {group("Different players", different.length, "Comes back if a team, name or birthdate changes.", list(different))}
       {group(
         "Birthdates that can't be right",
         r.birthdates.length,
@@ -68,16 +65,61 @@ export default function RosterConflicts({ programId, report: r, canAct }: { prog
   );
 }
 
-function Side({ s }: { s: ConflictSide }) {
+// Home's To Do, Teams → Warnings: a League's pairs in the same cards, Conflict (red), Likely (amber) and Allowed (noted, with why).
+export function ConflictGroups({ p, canAct, base }: { p: LeagueConflicts; canAct: boolean; base?: string }) {
+  return (
+    <div className="mb-2 space-y-2">
+      <p className="text-sm font-medium">{p.program}</p>
+      {(["Conflict", "Likely"] as const).map((s) => {
+        const items = p.conflicts.filter((c) => c.strength === s);
+        return (
+          items.length > 0 && (
+            <SubCard key={s} title={s} count={items.length} alert={s === "Conflict"} warn={s === "Likely"} open>
+              <p className="mb-2 text-xs text-zinc-500">{ABOUT[s]}</p>
+              <ConflictList programId={p.programId} items={items} canAct={canAct} base={base} />
+            </SubCard>
+          )
+        );
+      })}
+      {p.allowed.length > 0 && (
+        <SubCard title="Allowed" count={p.allowed.length}>
+          <p className="mb-2 text-xs text-zinc-500">On two rosters and allowed, each with why.</p>
+          <ConflictList programId={p.programId} items={p.allowed} canAct={canAct} base={base} />
+        </SubCard>
+      )}
+    </div>
+  );
+}
+
+// Pairs, side by side on a PC, each with its two buttons (Home's To Do shows them too).
+// `base`: an organization's own address, to open its teams.
+export function ConflictList({ programId, items, canAct, base }: { programId: string; items: RosterConflict[]; canAct: boolean; base?: string }) {
+  return (
+    <ul className="space-y-2">
+      {items.map((c) => (
+        <Pair key={c.pair} programId={programId} c={c} canAct={canAct} base={base} />
+      ))}
+    </ul>
+  );
+}
+
+function Side({ s, base }: { s: ConflictSide; base?: string }) {
+  const team = [s.org, s.team].filter(Boolean).join(" · ");
   return (
     <div className="min-w-0 rounded-lg bg-zinc-50 px-2.5 py-1.5 dark:bg-white/5">
       <p className="font-semibold">{s.name}</p>
       <p className="text-xs text-zinc-500">
-        {dob(s.dob)}
+        {s.orgKey && dob(s.dob)}
         {s.grade && ` · ${s.grade}`}
       </p>
       <p className="text-xs">
-        {s.org} · {s.team}
+        {base && s.sourceId ? (
+          <Link href={`${base}/teams/${s.sourceId}`} className="font-medium text-thunder-blue hover:underline dark:text-blue-400">
+            {team}
+          </Link>
+        ) : (
+          team
+        )}
       </p>
       <p className="text-xs text-zinc-500">
         {s.division}
@@ -87,15 +129,17 @@ function Side({ s }: { s: ConflictSide }) {
   );
 }
 
-function Pair({ programId, c, canAct }: { programId: string; c: RosterConflict; canAct: boolean }) {
+function Pair({ programId, c, canAct, base }: { programId: string; c: RosterConflict; canAct: boolean; base?: string }) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [err, setErr] = useState<string | null>(null);
-  const decide = (d: "different" | "allowed" | null) =>
+  const [why, setWhy] = useState<string | null>(null); // "Allow it" asks why
+  const decide = (d: "different" | "allowed" | null, reason?: string) =>
     start(async () => {
       setErr(null);
-      const r = await reviewRosterConflict(programId, c.pair, d);
+      const r = await reviewRosterConflict(programId, c.pair, d, reason);
       if (!r.ok) return setErr(r.message);
+      setWhy(null);
       router.refresh();
     });
   const btn = "rounded-full px-3 py-1 text-xs font-semibold text-thunder-blue ring-1 ring-thunder-blue/40 disabled:opacity-50 dark:text-blue-400";
@@ -106,14 +150,11 @@ function Pair({ programId, c, canAct }: { programId: string; c: RosterConflict; 
         {c.broken.length > 0 && <span className="font-semibold text-red-600 dark:text-red-400"> · {c.broken.join(", ")}</span>}
       </p>
       <div className="grid gap-1.5 sm:grid-cols-2">
-        <Side s={c.a} />
-        <Side s={c.b} />
+        <Side s={c.a} base={base} />
+        <Side s={c.b} base={base} />
       </div>
-      {c.review && (
-        <p className="text-xs text-zinc-500">
-          {c.review.decision === "different" ? "Different players" : "Allowed"} · {c.review.by}
-        </p>
-      )}
+      {c.allowed && <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">✓ {c.allowed}</p>}
+      {c.review?.decision === "different" && <p className="text-xs text-zinc-500">Different players · {c.review.by}</p>}
       {canAct && (c.review || c.broken.length > 0) && (
         <div className="flex flex-wrap gap-2">
           {c.review ? (
@@ -125,12 +166,33 @@ function Pair({ programId, c, canAct }: { programId: string; c: RosterConflict; 
               <button type="button" disabled={busy} onClick={() => decide("different")} className={btn}>
                 Different players
               </button>
-              <button type="button" disabled={busy} onClick={() => decide("allowed")} className={btn}>
+              <button type="button" disabled={busy} onClick={() => setWhy(why === null ? "" : null)} className={btn}>
                 Allow it
               </button>
             </>
           )}
         </div>
+      )}
+      {canAct && why !== null && !c.review && (
+        <form
+          className="flex flex-wrap gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            decide("allowed", why);
+          }}
+        >
+          <input
+            value={why}
+            onChange={(e) => setWhy(e.target.value)}
+            maxLength={200}
+            autoFocus
+            placeholder="Why is it allowed? The teams see this."
+            className="min-w-0 flex-1 rounded-lg bg-white px-3 py-1.5 text-base ring-1 ring-zinc-950/15 sm:text-sm dark:bg-zinc-900 dark:ring-white/15"
+          />
+          <button type="submit" disabled={busy || why.trim().length < 3} className={btn}>
+            Save
+          </button>
+        </form>
       )}
       {err && <p className="text-xs text-red-600 dark:text-red-400">{err}</p>}
     </li>

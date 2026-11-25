@@ -142,8 +142,8 @@ describe("rosters", () => {
     const seen = await listRoster(deps(), head, team);
     expect(seen?.length).toBe(1);
     expect(seen![0].parents).toEqual([
-      { name: "Pam Ames", cell: "4235557777", email: "pam@x.com" },
-      { name: "Jo", cell: null, email: null },
+      { name: "Pam Ames", cell: "4235557777", email: "pam@x.com", slot: 1 },
+      { name: "Jo", cell: null, email: null, slot: 2 },
     ]);
     expect(await listRoster(deps(), stranger, team)).toBeNull();
     expect(await addPlayers(deps(), head, team, ["r2"])).toEqual({
@@ -175,7 +175,7 @@ describe("rosters", () => {
     expect(await movePlayer(deps(), director, "r1", other)).toEqual({ ok: true });
     expect(names(await rosterBoard(deps(), director, "Girls", "4"))).toEqual({ free: ["Bea"], teams: ["4G B: Ava", "4G A: "] });
     expect((await listRoster(deps(), director, other))![0]).toMatchObject({ registrantId: "r1", rosteredBy: "Earl X" });
-    // A player who somehow ended up on two teams is left on just the one they're moved to; their uniform elsewhere goes too.
+    // A player who somehow ended up on two teams is left on just the one they're moved to; their number comes with them.
     await db.pool.query(
       `insert into team_players (team_id, registrant_id, first_name, last_name, gender, grade, grade_sort, rostered_by, rostered_at)
        values ($1, 'r1', 'Ava', 'Zed', 'Girls', '4', 4, 'x', now())`,
@@ -187,7 +187,7 @@ describe("rosters", () => {
     );
     expect(await movePlayer(deps(), director, "r1", other)).toEqual({ ok: true });
     expect(names(await rosterBoard(deps(), director, "Girls", "4")).teams).toEqual(["4G B: Ava", "4G A: "]);
-    expect((await db.pool.query("select 1 from team_uniforms where registrant_id = 'r1'")).rows).toHaveLength(0);
+    expect((await db.pool.query("select team_id::text as team, number from team_uniforms where registrant_id = 'r1'")).rows).toEqual([{ team: other, number: "7" }]);
     expect(await movePlayer(deps(), director, "r1", null)).toEqual({ ok: true });
     expect(names(await rosterBoard(deps(), director, "Girls", "4")).free).toEqual(["Bea", "Ava"]);
     // Only teams named for the grade; their free players are that grade and one below (a 3rd grader shows on the 4th grade board).

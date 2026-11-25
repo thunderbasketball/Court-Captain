@@ -183,8 +183,7 @@ describe("CourtCaptain Admin", () => {
       people: 2, // Bo and Cy; not Ada (CourtCaptain staff)
       teams: 1,
       players: 1,
-      coaches: 1, // Head and Assistant Coaches only
-      coachesThisWeek: 1,
+      coachUse: { using: 1, total: 1, percent: 100 }, // Head and Assistant Coaches only
       visitsToday: 2,
       visitsWeek: 5,
     });

@@ -33,6 +33,7 @@ Secrets live only in `.env.local` (never committed, never pasted into chat). The
 - Email goes through Gmail (`GMAIL_USER` + `GMAIL_APP_PASSWORD`, a Google app password) or else Resend (`lib/email.ts`). With neither set, emails (and their codes) print in the `npm run dev` terminal. `npm run email:test -- <address>` sends a test email.
 
 ## How I like to work
+- **Every change people would notice goes in What's New** (`lib/whats-new.ts`): an item in the coming version with who it's for, what it's for and how to use it (a new minor version once the newest one is live; major only when Earl says), package.json's version to match; and Support's articles (`lib/support-library.ts`) updated with it.
 - Work one step at a time. After each change, tell me exactly how to test it, then wait for my OK.
 - Write tests for the login flow and the booking limits. Run them before telling me something works.
 - Keep explanations short and plain. I'm the organization's director, not a full-time developer.

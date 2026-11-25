@@ -14,6 +14,7 @@ export type UserListItem = {
   request: boolean;
   coach: boolean;
   director: boolean;
+  family: boolean; // a parent: listed under Families, not Staff
   teams: string[]; // e.g. "4G Epps · Manager", sorted by team name
   teamLinks: TeamLink[]; // the same, each with its team (its page, and grouping by grade)
   scenicCity: boolean; // Scenic City also uses this person
@@ -33,6 +34,8 @@ export async function listUsers(viewer: SessionUser): Promise<UserListItem[]> {
             (email is not null and lower(trim(email)) = lower(trim(coalesce(verified_email, '')))) as verified,
             active, has_role(coach_id, 'thunder', 'Request') as request, has_role(coach_id, 'thunder', 'Coach') as coach,
             has_role(coach_id, 'thunder', 'Director') as director,
+            (has_role(coach_id, 'thunder', 'Family')
+             or exists (select 1 from registrations g where users.cell in (g.parent1_cell, g.parent2_cell))) as family,
             coalesce((select array_agg(t.name || ' · ' || case s.role when 'HeadCoach' then 'Head Coach' when 'AsstCoach' then 'Asst Coach'
                                                      when 'Manager' then 'Manager' else 'Team Parent' end order by t.name)
                       from team_staff s join teams t on t.id = s.team_id where s.coach_id = users.coach_id), '{}') as teams,

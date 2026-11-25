@@ -1,6 +1,8 @@
 import { familiesOf, type Family } from "@/lib/families";
 import { ordinal } from "@/lib/grades";
 import { hasArea, seesWho } from "@/lib/org-admin";
+import { guardianLogins } from "@/lib/guardian-logins";
+import GuardianLogin from "../../../../GuardianLogin";
 import { db } from "@/lib/db";
 import { formatCell } from "@/lib/phone";
 import { easternDate } from "@/lib/time";
@@ -25,6 +27,7 @@ export default async function FamiliesPart({ user }: { user: SessionUser }) {
   const today = easternDate(new Date());
   const connected = families.filter((f) => f.connected);
   const others = families.filter((f) => !f.connected);
+  const logins = await guardianLogins(db, user, families.flatMap((f) => f.guardians.map((g) => g.cell)));
 
   // Paid in full: green; still owed: yellow.
   const feeChip = (f: Family) =>
@@ -57,7 +60,7 @@ export default async function FamiliesPart({ user }: { user: SessionUser }) {
                 <span className="font-medium">{g.name}</span>
                 {g.cell && g.cell.length === 10 && <PhoneLink cell={g.cell} label={formatCell(g.cell)} />}
                 {g.email && <EmailLink email={g.email} />}
-                {g.login && <Chip tone="green">Login</Chip>}
+                <GuardianLogin login={g.cell ? logins.get(g.cell) : undefined} name={g.name} />
               </li>
             ))}
           </ul>

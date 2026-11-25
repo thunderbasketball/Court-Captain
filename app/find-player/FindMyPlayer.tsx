@@ -2,10 +2,9 @@
 
 import { useState, useTransition } from "react";
 import type { FoundPlayer } from "@/lib/find-player";
-import { formatCell } from "@/lib/phone";
-import { ScheduleList } from "../LeagueGames";
+import FoundPlayers from "../FoundPlayers";
 import { sendFindCode, showMyPlayers } from "./actions";
-import { PhoneLink, inputCls, primaryBtn } from "../ui";
+import { inputCls, primaryBtn } from "../ui";
 
 // Find my player's team (public pages, no login): the parent's cell, then the code emailed to the parent's email on the
 // registration, then each of their players with their team, its staff, and its coming practices and published games.
@@ -46,47 +45,7 @@ export default function FindMyPlayer({ today }: { today: string }) {
     return (
       <div className="space-y-3">
         {!players.length && <p className="text-sm text-zinc-500">No current registrations with that cell.</p>}
-        {players.map((p) => (
-          <div key={p.id} className="space-y-2 rounded-xl p-3 ring-1 ring-zinc-950/10 dark:ring-white/10">
-            <div>
-              <p className="font-semibold">{p.name}</p>
-              <p className="text-xs text-zinc-500">
-                {p.grade} · {p.org}
-                {p.program ? ` · ${p.program}` : ""}
-              </p>
-            </div>
-            {p.team ? (
-              <>
-                <p className="text-sm">
-                  Team: <span className="font-semibold">{p.team.name}</span>
-                </p>
-                {p.team.staff.length > 0 && (
-                  <ul className="space-y-0.5 text-sm">
-                    {p.team.staff.map((s) => (
-                      <li key={`${s.role}-${s.name}`} className="flex flex-wrap gap-x-2">
-                        <span className="text-zinc-500">{s.role}</span>
-                        <span>{s.name}</span>
-                        <PhoneLink cell={s.cell} label={formatCell(s.cell)} />
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {p.team.soon.length > 0 && (
-                  <p className="text-sm font-medium text-amber-700 dark:text-amber-300">{p.team.soon.join(" and ")} Schedule will be published soon.</p>
-                )}
-                <ScheduleList
-                  games={p.team.games}
-                  practices={p.team.practices}
-                  own={p.team.own}
-                  today={today}
-                  empty="No practices booked or games published yet."
-                />
-              </>
-            ) : (
-              <p className="text-sm text-zinc-500">Not on a team yet. Check back once teams are made.</p>
-            )}
-          </div>
-        ))}
+        <FoundPlayers players={players} today={today} />
         <button type="button" onClick={again} className="text-sm font-medium text-thunder-blue dark:text-blue-400">
           Look up another number
         </button>

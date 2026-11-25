@@ -54,17 +54,17 @@ export function shareCards(h: ShareInput): ShareCard[] {
     out.push({
       ...base,
       key: "register",
-      label: "Register a team",
+      label: "Register a new team",
       kicker: open.name,
-      title: "Team registration is open",
+      title: "New team registration is open",
       lines: [
         line("Season", `${shortDate(open.startsOn)} – ${shortDate(open.endsOn)}`),
         line("Register by", shortDate(open.regCloses)),
         ...(open.recLimited ? [line("COMP", "Open to all"), line("REC", "Invited organizations")] : []),
       ],
-      foot: "Register your team",
+      foot: "Register a new team",
       href: `/register-team/${h.org}?program=${open.id}`,
-      text: `${h.name}: ${open.name} team registration is open through ${shortDate(open.regCloses)}.`,
+      text: `${h.name}: ${open.name} new team registration is open through ${shortDate(open.regCloses)}.`,
     });
     if (open.divisions.length)
       out.push({
@@ -74,7 +74,7 @@ export function shareCards(h: ShareInput): ShareCard[] {
         kicker: open.name,
         title: "Find your division",
         lines: open.divisions.map((d) => line(d)),
-        foot: "Register your team",
+        foot: "Register a new team",
         href: `/register-team/${h.org}?program=${open.id}`,
         text: `${h.name} ${open.name} divisions: ${open.divisions.join(", ")}.`,
       });

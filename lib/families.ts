@@ -14,7 +14,9 @@ async function allFamilies(): Promise<Family[]> {
             r.gender, r.grade, r.grade_sort as "gradeSort", to_char(r.birthdate, 'YYYY-MM-DD') as birthdate,
             (select t.name from team_players p join teams t on t.id = p.team_id where p.registrant_id = r.registrant_id
              order by t.name limit 1) as team,
-            r.uniform_size as "uniformSize", r.uniform_number as "uniformNumber",
+            -- The real size and number (their team's Uniforms); until set, what they asked for at registration, saying so.
+            coalesce(un.size, nullif(trim(r.uniform_size), '') || ' asked for') as "uniformSize",
+            coalesce(un.number, nullif(trim(r.uniform_number), '') || ' asked for') as "uniformNumber",
             json_build_array(
               json_build_object('first', r.parent1_first, 'last', r.parent1_last, 'cell', r.parent1_cell, 'email', r.parent1_email),
               json_build_object('first', r.parent2_first, 'last', r.parent2_last, 'cell', r.parent2_cell, 'email', r.parent2_email)
@@ -24,7 +26,10 @@ async function allFamilies(): Promise<Family[]> {
             r.registered_at::text as "registeredAt",
             r.total_fees::float8 as "totalFees", r.amount_paid::float8 as "amountPaid", r.amount_remaining::float8 as "amountRemaining",
             r.added_by as "addedBy", r.fees_waived_by as "feesWaivedBy"
-     from registrations r`,
+     from registrations r
+     left join lateral (select p.team_id from team_players p join teams t on t.id = p.team_id
+                        where p.registrant_id = r.registrant_id order by t.name limit 1) tp on true
+     left join team_uniforms un on un.team_id = tp.team_id and un.registrant_id = r.registrant_id`,
   );
   const logins = await db.query<{ cell: string; name: string }>(
     "select cell, first_name || ' ' || last_name as name from users where active",

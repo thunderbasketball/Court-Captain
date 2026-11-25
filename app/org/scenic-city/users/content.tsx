@@ -77,6 +77,7 @@ export async function ScenicUsersContent({
                 canManageAdmins={panel.canManageAdmins}
                 adminOptions={panel.adminOptions}
                 ownerOptions={panel.ownerOptions}
+                staff={panel.directors}
               />
             </AddMenu>
           )}

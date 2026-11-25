@@ -5,6 +5,7 @@ import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { FEATURES, READY_FOR_ANY_ORG, featuresChanged, syncPart, type FeatureKey } from "./features";
 import { memo } from "./request-memo";
+import { coachUse, type CoachUse } from "./coach-use";
 import { listDirectors, type DirectorRow } from "./org-admin";
 import { BUILT_IN, isOrgSlug, type OrgSlug } from "./orgs";
 import { listOrgs, orgInfo, orgName } from "./org-registry";
@@ -72,18 +73,15 @@ export type OrgStats = {
   people: number; // with a role there or a place on one of its teams (CourtCaptain staff not counted)
   teams: number;
   players: number | null; // Thunder: registered; others: on their teams' rosters
-  coaches: number; // active Head and Assistant Coaches
-  coachesThisWeek: number; // …who logged in in the last 7 days
+  coachUse: CoachUse | null; // its coaches who used the app in the last 7 days
   visitsToday: number; // page views (lib/site-visits.ts), Eastern days; the week starts Monday
   visitsWeek: number;
 };
 
 async function orgStats(q: Pick<Queryable, "query">, org: OrgSlug, now: Date): Promise<OrgStats> {
   const thunder = org === "thunder";
-  const coaches = thunder
-    ? "select coach_id from team_staff where role in ('HeadCoach', 'AsstCoach')"
-    : "select c.coach_id from org_team_coaches c join org_teams t on t.id = c.team_id where t.org = $1";
-  const r = await q.query<OrgStats>(
+  const use = await coachUse(q, org, now);
+  const r = await q.query<Omit<OrgStats, "coachUse">>(
     `select
        (select count(*)::int from users u
         where not exists (select 1 from platform_admins p where p.coach_id = u.coach_id)
@@ -105,16 +103,13 @@ async function orgStats(q: Pick<Queryable, "query">, org: OrgSlug, now: Date): P
              ? "null::int"
              : "(select count(*)::int from org_team_players p join org_teams t on t.id = p.team_id where t.org = $1)"
        } as players,
-       (select count(*)::int from users u where u.active and u.coach_id in (${coaches})) as coaches,
-       (select count(*)::int from users u where u.active and u.coach_id in (${coaches})
-          and u.last_login_at > $2::timestamptz - interval '7 days') as "coachesThisWeek",
        (select coalesce(sum(views), 0)::int from site_visits
         where org = $1 and hour >= date_trunc('day', $2::timestamptz at time zone $3) at time zone $3) as "visitsToday",
        (select coalesce(sum(views), 0)::int from site_visits
         where org = $1 and hour >= date_trunc('week', $2::timestamptz at time zone $3) at time zone $3) as "visitsWeek"`,
     [org, now, TZ],
   );
-  return r.rows[0];
+  return { ...r.rows[0], coachUse: use };
 }
 
 // Everything on the CourtCaptain page; null for anyone who isn't an admin.

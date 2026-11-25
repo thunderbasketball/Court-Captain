@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CardPanel, PanelIcon, iconBtn } from "../../../CardIcons";
 import { GearIcon } from "../../../OrgSettings";
+import { piecesLabel } from "@/lib/spare-items";
 import { fieldLabel, inputCls } from "../../../ui";
 import { cancelUniformOrder, emailUniformVendor, previewUniformOrder, saveUniformVendor } from "./actions";
 
@@ -57,7 +58,7 @@ export function VendorSettings({ email, cc, setBy }: { email: string | null; cc:
   );
 }
 
-type Draft = {
+export type Draft = {
   to: string;
   cc: string[];
   senderCopied: boolean;
@@ -65,12 +66,56 @@ type Draft = {
   subject: string;
   text: string;
   filename: string;
-  players: number;
 };
 
-// Email the vendor (the new players): first a preview of the email right here (To, Cc with the
+// An order's email before it's sent (To, Cc with the sender copied, subject, the list, the spreadsheet), with Send and Cancel.
+export function OrderPreview({
+  draft,
+  busy,
+  onSend,
+  onCancel,
+  cancelLabel = "Cancel",
+}: {
+  draft: Draft;
+  busy: boolean;
+  onSend: () => void;
+  onCancel: () => void;
+  cancelLabel?: string;
+}) {
+  return (
+    <div className="space-y-2 rounded-xl bg-zinc-50 p-3 dark:bg-white/5">
+      <p className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Preview</p>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+        <dt className="text-zinc-500">To</dt>
+        <dd className="min-w-0 break-words">{draft.to}</dd>
+        <dt className="text-zinc-500">Cc</dt>
+        <dd className="min-w-0 break-words">
+          {draft.cc.length ? draft.cc.join(", ") : "No one"}
+          {!draft.senderCopied && <span className="block text-xs text-amber-700 dark:text-amber-400">You have no email on file, so you won&apos;t get a copy.</span>}
+        </dd>
+        <dt className="text-zinc-500">Subject</dt>
+        <dd className="min-w-0 break-words font-medium">{draft.subject}</dd>
+        <dt className="text-zinc-500">Attached</dt>
+        <dd className="min-w-0 break-words">📎 {draft.filename}</dd>
+      </dl>
+      <pre className="max-h-80 overflow-auto rounded-lg bg-white p-3 font-sans text-sm whitespace-pre-wrap ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10">
+        {draft.text}
+      </pre>
+      <div className="flex items-center gap-3">
+        <button type="button" disabled={busy} onClick={onSend} className="rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+          {busy ? "Sending…" : `Send order #${draft.orderNo}`}
+        </button>
+        <button type="button" disabled={busy} onClick={onCancel} className="text-sm font-medium text-zinc-500">
+          {cancelLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Email the vendor (the new players, and any spares waiting): first a preview of the email right here (To, Cc with the
 // sender copied, subject, the list and the attached spreadsheet), then Send or Cancel.
-export function SendToVendor({ ready, hasVendor }: { ready: number; hasVendor: boolean }) {
+export function SendToVendor({ ready, spares, hasVendor }: { ready: number; spares: number; hasVendor: boolean }) {
   const router = useRouter();
   const [preview, setPreview] = useState<{ everyone: boolean; draft: Draft } | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -87,49 +132,23 @@ export function SendToVendor({ ready, hasVendor }: { ready: number; hasVendor: b
       if (!preview) return;
       const r = await emailUniformVendor(preview.everyone);
       setPreview(null);
-      setMsg(r.ok ? { ok: true, text: `Order #${r.orderNo} sent: ${r.players} player${r.players === 1 ? "" : "s"} ✓` } : { ok: false, text: r.message });
+      setMsg(r.ok ? { ok: true, text: `Order #${r.orderNo} sent: ${r.counts} ✓` } : { ok: false, text: r.message });
       if (r.ok) router.refresh();
     });
   if (!hasVendor) return <p className="text-sm text-zinc-500">Set the vendor&apos;s email in the gear (top right) to email the order.</p>;
   return (
     <div className="space-y-2">
       {preview ? (
-        <div className="space-y-2 rounded-xl bg-zinc-50 p-3 dark:bg-white/5">
-          <p className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Preview</p>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-            <dt className="text-zinc-500">To</dt>
-            <dd className="min-w-0 break-words">{preview.draft.to}</dd>
-            <dt className="text-zinc-500">Cc</dt>
-            <dd className="min-w-0 break-words">
-              {preview.draft.cc.length ? preview.draft.cc.join(", ") : "No one"}
-              {!preview.draft.senderCopied && <span className="block text-xs text-amber-700 dark:text-amber-400">You have no email on file, so you won&apos;t get a copy.</span>}
-            </dd>
-            <dt className="text-zinc-500">Subject</dt>
-            <dd className="min-w-0 break-words font-medium">{preview.draft.subject}</dd>
-            <dt className="text-zinc-500">Attached</dt>
-            <dd className="min-w-0 break-words">📎 {preview.draft.filename}</dd>
-          </dl>
-          <pre className="max-h-80 overflow-auto rounded-lg bg-white p-3 font-sans text-sm whitespace-pre-wrap ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10">
-            {preview.draft.text}
-          </pre>
-          <div className="flex items-center gap-3">
-            <button type="button" disabled={busy} onClick={send} className="rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-              {busy ? "Sending…" : `Send order #${preview.draft.orderNo}`}
-            </button>
-            <button type="button" disabled={busy} onClick={() => setPreview(null)} className="text-sm font-medium text-zinc-500">
-              Cancel
-            </button>
-          </div>
-        </div>
+        <OrderPreview draft={preview.draft} busy={busy} onSend={send} onCancel={() => setPreview(null)} />
       ) : (
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            disabled={!ready || busy}
+            disabled={(!ready && !spares) || busy}
             onClick={() => open(false)}
             className="rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
           >
-            {busy ? "Loading…" : `Email the vendor${ready ? ` (${ready} new)` : ""}`}
+            {busy ? "Loading…" : `Email the vendor${ready || spares ? ` (${[ready && `${ready} new`, spares && piecesLabel(spares)].filter(Boolean).join(" + ")})` : ""}`}
           </button>
         </div>
       )}
@@ -155,8 +174,7 @@ export function CancelOrder({ orderNo, to }: { orderNo: string; to: string }) {
     <div className="space-y-2 rounded-xl bg-red-50 p-3 text-sm ring-1 ring-red-200 dark:bg-red-500/10 dark:ring-red-500/30">
       <p className="font-semibold">Cancel order #{orderNo}?</p>
       <p className="text-zinc-600 dark:text-zinc-300">
-        Its players go back to Not sent yet, so you can fix them and send a corrected order (with a new number). The order stays
-        listed as Cancelled.
+        Its players go back to Not sent yet and its spares wait for the next order, so you can fix them and send a corrected order (with a new number). The order stays listed as Cancelled.
       </p>
       <label className="flex items-start gap-2">
         <input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} className="mt-0.5 size-4" />

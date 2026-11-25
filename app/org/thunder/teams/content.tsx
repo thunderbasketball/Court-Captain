@@ -1,3 +1,4 @@
+import { dupNumbers } from "@/lib/uniform-fields";
 import { redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
 import { requireFeature } from "@/lib/features-server";
@@ -129,6 +130,7 @@ export async function TeamsContent({
               players: t.players.length,
               wrongBirthdates: wrongBirthdates(t.players, today),
               missingNumbers: uniformsOn ? t.players.filter((p) => !p.number).length : 0,
+              duplicateNumbers: dupNumbers(t.players.map((p) => p.number)),
             })
           }
           // Roster players (with player registration): the grade's roster board, on its card's title line.
@@ -159,6 +161,7 @@ export async function TeamsContent({
               players={t.players.length}
               wrongBirthdates={wrongBirthdates(t.players, today)}
               missingNumbers={uniformsOn ? t.players.filter((p) => !p.number).length : 0}
+              duplicateNumbers={dupNumbers(t.players.map((p) => p.number))}
               people={t.staff.map((p) => (
                 <ContactChip
                   key={p.role}

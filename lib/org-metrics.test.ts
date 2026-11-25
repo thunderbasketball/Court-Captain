@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { startSession, type SessionUser } from "./auth/service";
+import { coachUse } from "./coach-use";
 import { orgMetrics } from "./org-metrics";
 import { createOrganization } from "./org-signup";
 import { createOrgTeam } from "./org-teams";
@@ -134,6 +135,27 @@ describe("Home metrics", () => {
       ["Bo Coach", ["5B Coach"], "2026-11-02T15:00:00.000Z"],
     ]);
     expect(m.waiting).toEqual({ requests: 1, newChats: 1, workingChats: 0 });
+
+    // Coaches using the app: a login or a page in the last 7 days; team helpers and inactive logins don't count.
+    expect(m.coachUse).toEqual({ using: 1, total: 2, percent: 50 });
+    await db.pool.query("insert into site_visits (org, hour, coach_id) values ('thunder', '2026-10-25T15:00:00Z', '5550003')"); // too long ago
+    expect((await orgMetrics(deps(), admin, "thunder"))!.coachUse!.percent).toBe(50);
+    await db.pool.query("insert into site_visits (org, hour, coach_id) values ('scenic-city', '2026-11-01T15:00:00Z', '5550003')"); // anywhere
+    await db.pool.query("insert into team_staff (team_id, coach_id, role, added_by) values ($1, '5550002', 'Manager', 'x')", [t1]);
+    expect((await orgMetrics(deps(), admin, "thunder"))!.coachUse).toEqual({ using: 2, total: 2, percent: 100 });
+    await db.pool.query("update users set active = false where coach_id = '5550003'");
+    expect((await orgMetrics(deps(), admin, "thunder"))!.coachUse).toEqual({ using: 1, total: 1, percent: 100 });
+    // The League: the coaches of its registered teams (the Thunder team's, here).
+    const q = async (sql: string, p: unknown[] = []) => (await db.pool.query<{ id: string }>(sql, p)).rows[0]?.id;
+    expect(await coachUse(db.pool, "scenic-city", NOW)).toBeNull();
+    const prog = await q("insert into scenic_programs (kind, name, starts_on, ends_on, reg_opens, reg_closes, created_by, updated_by) values ('League', 'W', '2026-12-05', '2027-02-28', '2026-10-01', '2027-01-31', 't', 't') returning id::text");
+    const div = await q("insert into scenic_divisions (program_id, gender, grade_low, grade_high) values ($1, 'Boys', 5, 5) returning id::text", [prog]);
+    const g = await q("insert into scenic_grade_groups (division_id, grade, level) values ($1, 5, 'COMP') returning id::text", [div]);
+    const pool = await q("insert into scenic_pools (group_id, name) values ($1, 'A') returning id::text", [g]);
+    const st = await q("insert into scenic_teams (name, gender, grade_low, grade, level, coach_id, owner_coach_id, thunder_team_id, created_by, updated_by) values ('5B', 'Boys', 5, 5, 'COMP', '5550004', '5550004', $1, 't', 't') returning id::text", [t1]);
+    await q("insert into scenic_registrations (program_id, team_id, pool_id, registered_by) values ($1, $2, $3, 't')", [prog, st, pool]);
+    expect(await coachUse(db.pool, "scenic-city", NOW)).toEqual({ using: 1, total: 1, percent: 100 });
+    expect(await coachUse(db.pool, "scenic-city", new Date("2027-04-01"))).toBeNull(); // over
   });
 
   it("another organization: only what its features have (teams and coaches; no registrations, uniforms or practices)", async () => {

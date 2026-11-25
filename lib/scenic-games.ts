@@ -17,6 +17,7 @@ export type ScheduledGame = {
   address: string | null;
   map: string | null; // Directions (the Scheduler's pin, else the host's pin or Google place)
   starts: string | null; // "HH:MM" Eastern
+  extra?: boolean; // an extra game for this team: it filled in for a TBD
   published: boolean; // its League's schedule is published (a Director of Programs or Scheduling did)
 };
 
@@ -60,7 +61,7 @@ export async function scheduledGames(q: Pick<Pool, "query">, teamIds: string[]):
             coalesce(o.name, 'TBD') as opponent, coalesce(m.home_side, 'a') = x.side as home,
             gg.grade, gg.level, place.gym, place.court, place.address, place.map_lat, place.map_lng, place.map_place,
             to_char(m.starts, 'HH24:MI') as starts,
-            scenic_game_published(m.program_id, m.day, m.team_a) as published
+            scenic_game_published(m.program_id, m.day, m.team_a) as published, coalesce(m.fill_team = x.me, false) as extra
        from scenic_matchups m
        cross join lateral (values (m.team_a, m.team_b, 'a'), (m.team_b, m.team_a, 'b')) x (me, other, side)
        join scenic_programs p on p.id = m.program_id

@@ -7,6 +7,7 @@ import { gradeLabel } from "@/lib/grades";
 import { TZ } from "@/lib/time";
 import { Toast } from "../../client-ui";
 import { setPracticeStatus, setStatus } from "../actions";
+import { genderOf, genderTint } from "../../ui";
 
 const NEXT: Record<Status, Status> = { unknown: "here", here: "absent", absent: "unknown" };
 const LOOK: Record<Status, { mark: string; cls: string; label: string }> = {
@@ -124,7 +125,7 @@ export default function CheckIn({ target, players }: { target: { kind: "event" |
         {groups.map((g) => (
           <section key={g.key}>
             <h2 className="mb-1 text-xs font-bold tracking-wide text-zinc-500 uppercase">{g.title}</h2>
-            <ul className="divide-y divide-zinc-100 overflow-hidden rounded-xl bg-white ring-1 ring-zinc-950/5 dark:divide-white/5 dark:bg-zinc-900 dark:ring-white/10">
+            <ul className={`divide-y divide-zinc-100 overflow-hidden rounded-xl ring-1 dark:divide-white/5 ${genderTint(genderOf(g.title)) ?? "bg-white ring-zinc-950/5 dark:bg-zinc-900 dark:ring-white/10"}`}>
               {g.players.map((p) => {
                 const s = statusOf(p);
                 const saved = !(p.registrantId in pending);

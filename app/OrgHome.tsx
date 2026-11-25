@@ -16,6 +16,8 @@ import { gymsWithoutOfficials, officiatesGames, officiatingRequests } from "@/li
 import { officiatingSummary } from "@/lib/officiating-schedule";
 import { managesOfficials } from "@/lib/officials";
 import { directorAlerts } from "@/lib/director-alerts";
+import { gamesToCorrect } from "@/lib/schedule-corrections";
+import { openCount, orgConflicts } from "@/lib/roster-conflicts";
 import { scheduleAnalysis } from "@/lib/scenic-analysis";
 import { uniformRequests } from "@/lib/uniforms";
 import AppHeader from "./AppHeader";
@@ -29,11 +31,15 @@ import ProgramsCard, { programCount } from "./ProgramsCard";
 import SubCard from "./SubCard";
 import { CardsOutline, HeaderOutline } from "./PageOutline";
 import SupportCard from "./SupportCard";
+import WhatsNew from "./support/WhatsNew";
+import { supportFor } from "@/lib/support-audience";
+import { newsFor } from "@/lib/whats-new-seen";
 import OwnerRemovalCard from "./OwnerRemovalCard";
 import { myOwnerRemovals } from "@/lib/owner-removal";
 import ScoresList from "./scores/ScoresList";
 import { easternDate } from "@/lib/time";
 import { scoreGames } from "@/lib/scores";
+import { leagueDuplicates, orgDuplicates } from "@/lib/duplicate-numbers";
 import OfficialsCard from "./officials/OfficialsCard";
 import GamesToOfficiateCard from "./officiating/GamesToOfficiateCard";
 // Each part's contents (several still read the data where that organization keeps it today: Thunder's own teams,
@@ -220,10 +226,13 @@ async function HomeCards({
   const scoresLeft = scoreList?.filter((g) => g.homeScore === null && !g.forfeit).length ?? 0;
   const officiatingWait = officiating?.filter((r) => r.status === "pending").length ?? 0;
   const teamAlert =
-    org === "thunder"
+    // Its players on two teams against a League's rules: flashes to whoever manages its teams.
+    (clubTeams && openCount(metrics ? metrics.teamConflicts : teamsArea ? await orgConflicts(db, org, now) : []) > 0) ||
+    (org === "thunder"
       ? !!alerts?.teams
-      : (metrics ? metrics.missing.length : clubTeams ? (await teamsMissing(db, org)).length : 0) > 0 ||
-        (leagueTeams && (await leagueTeamsMissing(now)));
+      : (metrics ? metrics.duplicates.length : (await Promise.all([clubTeams ? orgDuplicates(db, org) : [], leagueTeams && teamsArea ? leagueDuplicates(db, { org, today: easternDate(now) }) : []])).flat().length) > 0 || // two players with one number
+        (metrics ? metrics.missing.length : clubTeams ? (await teamsMissing(db, org)).length : 0) > 0 ||
+        (leagueTeams && (await leagueTeamsMissing(now))));
 
   // The League programs its teams register for (Register ALL Teams; null unless they manage its teams).
   const regProgs = !clubTeams
@@ -310,6 +319,7 @@ async function HomeCards({
 
   // Asked to be removed as an Owner here: their own approval (never while viewing as them).
   const ownerRemovals = user.actingBy ? [] : (await myOwnerRemovals(db, user.coachId)).filter((x) => x.org === org);
+  const news = await newsFor({ pool: db, now: () => now }, user.coachId, (await supportFor(user, org)).list);
   const cards: MemberCard[] = [
     ...(ownerRemovals.length
       ? [
@@ -334,7 +344,7 @@ async function HomeCards({
               <div className="space-y-3">
                 {pastDue.length > 0 && <PastDueNotice list={pastDue} mine={org !== "scenic-city"} />}
                 {requests && <UniformRequests list={requests} />}
-                {metrics && <OrgMetricsWithVisits user={user} org={org} m={metrics} base={`/org/${org}`} thunder={org === "thunder"} now={now} roster={teamsArea} />}
+                {metrics && <OrgMetricsWithVisits user={user} org={org} m={metrics} base={`/org/${org}`} thunder={org === "thunder"} now={now} roster={teamsArea} canAct={!user.actingBy} />}
                 {scheduler && <Analysis user={user} />}
               </div>
             ),
@@ -401,10 +411,11 @@ async function HomeCards({
             key: "programs",
             title: "Programs",
             count: await programCount(org),
-            // Its Scheduler: teams asking to come off a League's schedule.
+            // Its Scheduler: teams asking to come off a League's schedule, and games to correct.
             alert:
               !!scheduler &&
-              !!(await db.query("select 1 from scenic_schedule_removals where decision is null limit 1")).rowCount,
+              (!!(await db.query("select 1 from scenic_schedule_removals where decision is null limit 1")).rowCount ||
+                (metrics ? metrics.corrections : await gamesToCorrect(db, { org }, now)).length > 0),
             body: <ProgramsCard org={org} user={user} scheduler={scheduler} />,
           },
         ]
@@ -502,7 +513,21 @@ async function HomeCards({
           },
         ]
       : []),
-    { key: "support", title: "Support", alert: (metrics?.waiting.newChats ?? 0) > 0, body: <SupportCard user={user} org={org} /> },
+    // What's New: highlighted from their next login until they open it, then for the rest of that login; after that it's in
+    // Support. (Viewing as someone shows what they'd see, and marks nothing.)
+    ...(news.show
+      ? [
+          {
+            key: "news",
+            title: "✨ What's New",
+            count: news.highlight ? `Version ${news.fresh[0]}` : undefined,
+            tint: news.highlight ? ("yellow" as const) : undefined,
+            wide: true,
+            body: <WhatsNew releases={news.highlight ? news.releases.filter((r) => news.fresh.includes(r.version)) : news.releases.slice(0, 1)} fresh={news.fresh} seen />,
+          },
+        ]
+      : []),
+    { key: "support", title: "Support", wide: news.show, alert: (metrics?.waiting.newChats ?? 0) > 0, body: <SupportCard user={user} org={org} /> },
   ];
 
   return <MembersCards cards={cards} open={openCard} heading={null} />;

@@ -54,6 +54,7 @@ export async function LeagueTeamView({ id, opened = "", embedded = false, edit }
   return (
     <>
       <TeamPage
+        org="scenic-city"
         embedded={embedded}
         back={page.manage && !embedded ? "/org/scenic-city/teams" : null}
         edit={edit}

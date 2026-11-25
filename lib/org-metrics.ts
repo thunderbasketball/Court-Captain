@@ -6,10 +6,13 @@ import { memo } from "./request-memo";
 import type { SessionUser } from "./auth/service";
 import { orgFeatures } from "./features";
 import { ordinal } from "./grades";
-import { isOrgAdmin } from "./org-admin";
+import { leagueDuplicates, orgDuplicates } from "./duplicate-numbers";
+import { directorsPanel, isOrgAdmin, schedulerCount, scorerCount } from "./org-admin";
 import type { Queryable } from "./sql";
 import { TZ, easternDate, weekOf } from "./time";
-import { openConflicts } from "./roster-conflicts";
+import { coachUse, type CoachUse } from "./coach-use";
+import { gamesToCorrect, type GameToCorrect } from "./schedule-corrections";
+import { openConflicts, orgConflicts, type LeagueConflicts } from "./roster-conflicts";
 import { feeTrend, type FeeDay, type FeeRow } from "./fee-trend";
 
 type Deps = { pool: Pick<Queryable, "query">; now: () => Date };
@@ -45,14 +48,24 @@ export type OrgMetrics = {
     nextWeek: { booked: number; open: number };
     blackoutDays: number;
   } | null;
+  coachUse: CoachUse | null; // its coaches who used the app in the last 7 days
   coaches: { id: string; name: string; teams: string[]; lastLogin: Date | null }[]; // never first, then longest ago
   // Each team's use of the app: its staff's page views in the last 30 days and their last visit (least used first).
   teamUse: { id: string; name: string; views: number; lastVisit: Date | null }[];
   waiting: { requests: number; newChats: number; workingChats: number };
   // The next few of its Leagues' Game Days whose schedule isn't published (the Brackets once, on their first day).
   unpublished: { programId: string; program: string; day: string; bracket: boolean; levels: string[] }[];
+  // Its Leagues' games to correct (a team changed grade or level after they were made).
+  corrections: GameToCorrect[];
   // Its current Leagues' possible roster conflicts still to look at (a Conflict or Likely).
-  rosterConflicts: { programId: string; program: string; n: number }[];
+  rosterConflicts: LeagueConflicts[];
+  // Its own teams' conflicts in someone else's Leagues (warned; the League decides).
+  teamConflicts: LeagueConflicts[];
+  // Required Director roles nobody holds by name, each with who could (its staff only, the viewer first) and whether it's switched off:
+  // Director of Scores (it hosts games and has gyms) and Director of Scheduling (CourtEvents).
+  missingRoles: { area: "scores" | "scheduling"; options: { id: string; name: string; me?: boolean }[]; off: boolean }[];
+  // Teams with two players sharing a number: its own, and (its Leagues') the ones registered.
+  duplicates: { id: string; name: string; numbers: string[] }[];
 };
 
 const count = async (q: Pick<Queryable, "query">, sql: string, params: unknown[] = []) =>
@@ -65,7 +78,7 @@ export async function orgMetrics(deps: Deps, viewer: SessionUser, org: string): 
   const has = await orgFeatures(q, org);
   const thunder = org === "thunder";
   const teamsOn = has.has("team-building");
-  const [registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished, rosterConflicts] = await Promise.all([
+  const [registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished, rosterConflicts, missingRoles, duplicates, teamConflicts, corrections, use] = await Promise.all([
     thunder && has.has("player-registration") ? registrationMetrics(q, now) : null,
     teamsOn ? teamCounts(q, org) : null,
     thunder && has.has("player-registration") ? notOnTeamMetrics(q) : null,
@@ -77,8 +90,25 @@ export async function orgMetrics(deps: Deps, viewer: SessionUser, org: string): 
     teamsOn ? teamUsage(q, org, now) : [],
     has.has("programs") ? unpublishedEvents(q, org, now) : [],
     has.has("programs") ? openConflicts(q, org, now) : [],
+    rolesNeeded(deps, viewer, org),
+    Promise.all([
+      teamsOn ? orgDuplicates(q, org) : [],
+      has.has("programs") ? leagueDuplicates(q, { org, today: easternDate(now) }) : [],
+    ]).then((x) => x.flat()),
+    teamsOn ? orgConflicts(q, org, now) : [],
+    has.has("programs") ? gamesToCorrect(q, { org }, now) : [],
+    coachUse(q, org, now),
   ]);
-  return { registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished, rosterConflicts };
+  return { registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished, rosterConflicts, missingRoles, duplicates, teamConflicts, corrections, coachUse: use };
+}
+
+async function rolesNeeded(deps: Deps, viewer: SessionUser, org: string): Promise<OrgMetrics["missingRoles"]> {
+  const [scores, scheduling] = await Promise.all([scorerCount(deps.pool, org), schedulerCount(deps.pool, org)]);
+  const need = [...(scores === 0 ? (["scores"] as const) : []), ...(scheduling === 0 ? (["scheduling"] as const) : [])];
+  if (!need.length) return [];
+  const p = await directorsPanel(deps, viewer, org);
+  const options = (p?.directors ?? []).map((d) => ({ id: d.id, name: d.name, me: d.me })).sort((a, b) => Number(b.me) - Number(a.me));
+  return need.map((area) => ({ area, options, off: !(p?.areas ?? []).some((a) => a.key === area) }));
 }
 
 async function registrationMetrics(q: Pick<Queryable, "query">, now: Date): Promise<OrgMetrics["registrations"]> {

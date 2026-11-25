@@ -183,29 +183,60 @@ export async function assignerCount(q: Pick<Queryable, "query">, org: OrgSlug): 
   return r.rows[0].n;
 }
 
-// Admins: make someone (a Director, or an Admin or Owner too) an Assigner, or not. A Director left with no areas stops
+// An organization that can host games (CourtSync Host) with gyms of its own needs at least one Director of Scores, named (a
+// Director, or an Owner or Admin given it by name). How many it has; null when it doesn't host or has no gyms. Switched off
+// (its gear) counts as none. None: Home's To Do warns its Owners and Admins.
+export async function scorerCount(q: Pick<Queryable, "query">, org: OrgSlug): Promise<number | null> {
+  if (!(await orgFeatures(q, org)).has("hosting-available")) return null;
+  const gyms = await q.query("select 1 from gyms where org = $1 and active limit 1", [org]);
+  return gyms.rowCount ? namedCount(q, org, "scores") : null;
+}
+
+// CourtEvents needs at least one Director of Scheduling, named the same way. Null without CourtEvents.
+export async function schedulerCount(q: Pick<Queryable, "query">, org: OrgSlug): Promise<number | null> {
+  return (await orgFeatures(q, org)).has("programs") ? namedCount(q, org, "scheduling") : null;
+}
+
+async function namedCount(q: Pick<Queryable, "query">, org: OrgSlug, area: "scores" | "scheduling"): Promise<number> {
+  const r = await q.query<{ n: number }>(
+    `select count(*)::int as n from active_director_areas a join users u on u.coach_id = a.coach_id and u.active
+      where a.org = $1 and a.area = $2 and (has_role(a.coach_id, a.org, 'Director') or has_role(a.coach_id, a.org, 'Admin'))`,
+    [org, area],
+  );
+  return r.rows[0].n;
+}
+
+// The roles given by name to anyone on staff, Owners and Admins too: the Officials Assigner (CourtOfficials), the Director of
+// Scores (an organization that hosts games or runs Leagues) and the Director of Scheduling (CourtEvents).
+const NAMED = {
+  officials: { offered: async (q: Pick<Queryable, "query">, org: OrgSlug) => (await orgFeatureKeys(q, org)).has("court-officials"), no: "Assigners come with CourtOfficials." },
+  scores: { offered: async (q: Pick<Queryable, "query">, org: OrgSlug) => (await orgAreas(q, org)).some((a) => a.key === "scores"), no: "Your organization doesn't have a Director of Scores (or it's switched off in Feature Settings)." },
+  scheduling: { offered: async (q: Pick<Queryable, "query">, org: OrgSlug) => (await orgAreas(q, org)).some((a) => a.key === "scheduling"), no: "Your organization doesn't have a Director of Scheduling (or it's switched off in Feature Settings)." },
+} as const;
+export type NamedArea = keyof typeof NAMED;
+
+// Admins: make someone (a Director, or an Admin or Owner too) an Assigner, Director of Scores or Director of Scheduling, or not. A Director left with no areas stops
 // being a Director; an Admin keeps every area either way.
-export async function setAssigner(deps: Deps, viewer: SessionUser, org: unknown, coachId: unknown, on: boolean): Promise<Result> {
-  if (!isOrgSlug(org) || !isCoachId(coachId)) return { ok: false, message: "Pick a person." };
+export async function setAssigner(deps: Deps, viewer: SessionUser, org: unknown, coachId: unknown, on: boolean, area: unknown = "officials"): Promise<Result> {
+  if (!isOrgSlug(org) || !isCoachId(coachId) || (area !== "officials" && area !== "scores" && area !== "scheduling")) return { ok: false, message: "Pick a person." };
   return withTx(deps.pool, async (q) => {
     if (!(await isOrgAdmin(q, viewer.coachId, org)))
       return { ok: false as const, message: `Only a ${await orgShort(q, org)} Admin can do that.` };
-    if (!(await orgFeatureKeys(q, org)).has("court-officials"))
-      return { ok: false as const, message: "Assigners come with CourtOfficials." };
+    if (!(await NAMED[area].offered(q, org))) return { ok: false as const, message: NAMED[area].no };
     const u = await q.query("select 1 from users where coach_id = $1 and active for update", [coachId]);
     if (!u.rowCount) return { ok: false as const, message: "That person isn't an active user." };
     const admin = await isOrgAdmin(q, coachId, org);
     if (on) {
       await q.query(
-        `insert into director_areas (coach_id, org, area, granted_by, granted_at) values ($1, $2, 'officials', $3, $4)
+        `insert into director_areas (coach_id, org, area, granted_by, granted_at) values ($1, $2, $5, $3, $4)
          on conflict do nothing`,
-        [coachId, org, by(viewer), deps.now()],
+        [coachId, org, by(viewer), deps.now(), area],
       );
       if (!admin)
         await q.query("select set_role($1, $2, 'Director', true, $3), set_role($1, $2, 'Request', false, $3)", [coachId, org, by(viewer)]);
       return { ok: true as const };
     }
-    await q.query("delete from director_areas where coach_id = $1 and org = $2 and area = 'officials'", [coachId, org]);
+    await q.query("delete from director_areas where coach_id = $1 and org = $2 and area = $3", [coachId, org, area]);
     if (!admin) {
       const left = await q.query("select 1 from director_areas where coach_id = $1 and org = $2", [coachId, org]);
       if (!left.rowCount) await q.query("select set_role($1, $2, 'Director', false, $3)", [coachId, org, by(viewer)]);
@@ -247,25 +278,26 @@ export async function directorAreas(pool: Pick<Queryable, "query">, coachId: str
 export type DirectorRow = { id: string; name: string; cell: string; owner: boolean; admin: boolean; areas: Area[] };
 
 // An organization's Admins and Directors (by last name) with their areas.
-export async function listDirectors(pool: Pick<Queryable, "query">, org: OrgSlug): Promise<DirectorRow[]> {
+// `me` (CourtCaptain staff who hold a role here themselves) sees their own row; nobody else does.
+export async function listDirectors(pool: Pick<Queryable, "query">, org: OrgSlug, me: string | null = null): Promise<DirectorRow[]> {
   const r = await pool.query<DirectorRow>(
     `select u.coach_id as id, u.first_name || ' ' || u.last_name as name, u.cell,
             has_role(u.coach_id, $1, 'Owner') as owner, has_role(u.coach_id, $1, 'Admin') as admin,
             array(select area from director_areas a where a.coach_id = u.coach_id and a.org = $1) as areas
      from users u
      where (has_role(u.coach_id, $1, 'Director') or has_role(u.coach_id, $1, 'Admin'))
-       and not exists (select 1 from platform_admins p where p.coach_id = u.coach_id) -- CourtCaptain staff stay in the background
+       and (u.coach_id = $2 or not exists (select 1 from platform_admins p where p.coach_id = u.coach_id)) -- CourtCaptain staff stay in the background
      order by lower(u.last_name), lower(u.first_name)`,
-    [org],
+    [org, me],
   );
   return r.rows;
 }
 
 // What an organization's Users page shows to its Admins: Directors, the areas on offer, and who can be added.
-export async function directorsPanel(deps: Deps, viewer: SessionUser, org: OrgSlug) {
+export async function directorsPanel(deps: { pool: Pick<Queryable, "query">; now?: () => Date }, viewer: SessionUser, org: OrgSlug) {
   if (!(await isOrgAdmin(deps.pool, viewer.coachId, org))) return null;
   const [directors, areas, people, owner, directorsOn, removals] = await Promise.all([
-    listDirectors(deps.pool, org),
+    listDirectors(deps.pool, org, viewer.coachId),
     orgAreas(deps.pool, org),
     deps.pool.query<{ id: string; name: string }>(
       `select coach_id as id, first_name || ' ' || last_name as name from users

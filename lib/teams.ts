@@ -21,7 +21,7 @@ import {
 import { hasArea } from "./org-admin";
 import { syncThunderCopy } from "./thunder-leagues";
 import { matchOrCreateUser } from "./user-match";
-import { scheduledRefusal } from "./team-guards";
+import { scheduledRefusal, leagueOnly, registeredLeague } from "./team-guards";
 
 export { GRADES, LEVELS, teamName } from "./team-names";
 
@@ -466,7 +466,7 @@ export async function createTeam(deps: Deps, viewer: SessionUser, input: CreateT
 
 export type UpdateTeamInput = { gender: unknown; grades: unknown; level: unknown; practiceLocations: unknown; altName?: unknown };
 
-// Director only. The name follows the new grades/gender.
+// Director only. Once it's registered in a League, only the League changes its gender, grades or level. The name follows the new grades/gender.
 export async function updateTeam(
   deps: Deps,
   viewer: SessionUser,
@@ -478,6 +478,14 @@ export async function updateTeam(
     const f = cleanTeamFields(input);
     const locations = cleanLocations(input.practiceLocations);
     return withTx(deps.pool, async (q) => {
+      // Registered in a League: only the League changes its gender, grade or level.
+      const cur = (await q.query<{ name: string; gender: string; grades: string[]; level: string }>("select name, gender, grades, level from teams where id = $1 for update", [id])).rows[0];
+      if (!cur) throw new UserError("That team no longer exists.");
+      if (cur.gender !== f.gender || cur.level !== f.level || [...cur.grades].sort().join() !== [...f.grades].sort().join()) {
+        const copies = await q.query<{ id: string }>("select id::text from scenic_teams where thunder_team_id = $1", [id]);
+        const league = await registeredLeague(q, copies.rows.map((c) => c.id), deps.now());
+        if (league) throw new UserError(leagueOnly(cur.name, league));
+      }
       const r = await q.query(
         `update teams set gender = $2, grades = $3, grade_sort = $4, level = $5, practice_locations = $6,
                 practice_locations_by = case when practice_locations is distinct from $6 then $9 else practice_locations_by end,
@@ -488,7 +496,9 @@ export async function updateTeam(
          `${viewer.firstName} ${viewer.lastName}`, deps.now()],
       );
       if (!r.rowCount) throw new UserError("That team no longer exists.");
-      return { name: await rename(q, id) };
+      const name = await rename(q, id);
+      await syncThunderCopy(q, id);
+      return { name };
     });
   });
 }

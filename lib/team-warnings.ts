@@ -5,7 +5,9 @@
 // organization) teams with a birthdate that can't be right.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
+import { dupLabel, orgDuplicates } from "./duplicate-numbers";
 import { hasFeature } from "./features";
+import { orgConflicts, type LeagueConflicts } from "./roster-conflicts";
 import { isOrgAdmin } from "./org-admin";
 import { wrongBirthdate } from "./roster-match";
 import type { Queryable } from "./sql";
@@ -30,6 +32,8 @@ export type TeamWarnings = {
   birthdates: WarnedTeam[] | null;
   wrong: WarnedTeam[] | null; // birthdates that can't be right (with birthdates turned on)
   numbers: WarnedTeam[] | null;
+  duplicates: WarnedTeam[] | null; // two players with one number (with uniforms or numbers turned on)
+  conflicts: LeagueConflicts[]; // roster conflicts in Leagues it plays in (always on)
   teams: number; // teams with any warning
 };
 
@@ -146,8 +150,15 @@ export async function orgTeamWarnings(q: Pick<Queryable, "query">, org: string, 
         ).rows.map((t) => ({ id: t.id, name: t.name, detail: `${t.n} player${t.n === 1 ? "" : "s"} missing` }))
       : null;
 
-  const ids = new Set([...(roster ?? []), ...(idle ?? []), ...(uniforms ?? []), ...(birthdates ?? []), ...(wrong ?? []), ...(numbers ?? [])].map((t) => t.id));
-  return { settings, setBy, uniformsKept, typedRosters, roster, idle, uniforms, birthdates, wrong, numbers, teams: ids.size };
+  const duplicates =
+    (settings.uniforms.on && uniformsKept) || (settings.numbers.on && typedRosters && !thunder)
+      ? (await orgDuplicates(q, org)).map((t) => ({ id: t.id, name: t.name, detail: dupLabel(t.numbers) }))
+      : null;
+
+  const conflicts = await orgConflicts(q, org, now);
+  const clashing = conflicts.flatMap((p) => p.conflicts.flatMap((c) => [c.a, c.b].flatMap((s) => (s.orgKey === `org:${org}` && s.sourceId ? [s.sourceId] : []))));
+  const ids = new Set([...(roster ?? []), ...(idle ?? []), ...(uniforms ?? []), ...(birthdates ?? []), ...(wrong ?? []), ...(numbers ?? []), ...(duplicates ?? [])].map((t) => t.id).concat(clashing));
+  return { settings, setBy, uniformsKept, typedRosters, roster, idle, uniforms, birthdates, wrong, numbers, duplicates, conflicts, teams: ids.size };
 }
 
 // An organization's Admins (and Owners): which warnings are on, and their numbers.

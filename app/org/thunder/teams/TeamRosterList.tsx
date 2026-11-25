@@ -1,6 +1,7 @@
 import { formatCell } from "@/lib/phone";
 import { gradeLabel } from "@/lib/grades";
 import type { TeamListItem } from "@/lib/teams";
+import { dupNumbers, isDup } from "@/lib/uniform-fields";
 import { EmailLink, JerseyNumber, PhoneLink } from "../../../ui";
 import RosterPlayerRow from "./RosterPlayerRow";
 import EligibleChip, { bornLabel } from "../../../EligibleChip";
@@ -19,6 +20,7 @@ export default function TeamRosterList({
   who: boolean;
   rules: GradeRules;
 }) {
+  const dups = dupNumbers(team.players.map((p) => p.number));
   const year = schoolYearOf(easternDate(new Date()));
   if (!team.players.length)
     return <p className="text-sm text-zinc-500">No players yet. Roster them with Roster players on this grade&apos;s card.</p>;
@@ -31,12 +33,13 @@ export default function TeamRosterList({
             <>
               <span className="flex min-w-0 flex-wrap items-center gap-1">
                 <span>
-                  <JerseyNumber n={p.number} />
+                  <JerseyNumber n={p.number} dup={isDup(p.number, dups)} />
                   {p.first} <span className="font-semibold">{p.last}</span>
                 </span>
                 <EligibleChip teamGrades={team.grades} grade={p.grade} birthdate={p.birthdate} year={year} rules={rules} />
               </span>
               <span className="text-right text-xs text-zinc-400">
+                {isDup(p.number, dups) && <span className="font-medium text-red-600 dark:text-red-400">duplicate number · </span>}
                 {!p.number && <span className="font-medium text-red-600 dark:text-red-400">no number · </span>}
                 {gradeLabel(p.grade)}
                 {p.birthdate ? bornLabel(p.birthdate) : <span className="font-medium text-red-600 dark:text-red-400"> · no birthdate</span>}

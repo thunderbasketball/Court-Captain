@@ -2,6 +2,7 @@
 // (and take practice attendance from the list). Who rostered each player is recorded.
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
+import { bringUniform, uniformToBring } from "./uniform-order";
 import { withTx } from "./sql";
 import { hasArea } from "./org-admin";
 import { normalizeCell } from "./phone";
@@ -35,7 +36,7 @@ export type RosterPlayer = {
   parents: Parent[]; // from registration, for the team's staff to reach the family
 };
 
-export type Parent = { name: string; cell: string | null; email: string | null };
+export type Parent = { name: string; cell: string | null; email: string | null; slot?: 1 | 2 }; // slot: parent 1 or 2 on the registration
 
 // Sorted by last name. Null when the viewer can't see this team.
 export async function listRoster(deps: Deps, viewer: SessionUser, teamId: string): Promise<RosterPlayer[] | null> {
@@ -54,7 +55,7 @@ export async function listRoster(deps: Deps, viewer: SessionUser, teamId: string
   );
   return r.rows.map(({ p1f, p1l, p1c, p1e, p2f, p2l, p2c, p2e, ...x }) => ({
     ...x,
-    parents: [parent(p1f, p1l, p1c, p1e), parent(p2f, p2l, p2c, p2e)].filter((v): v is Parent => !!v),
+    parents: [parent(p1f, p1l, p1c, p1e), parent(p2f, p2l, p2c, p2e)].flatMap((v, i) => (v ? [{ ...v, slot: (i + 1) as 1 | 2 }] : [])),
   }));
 }
 
@@ -163,6 +164,8 @@ export async function addPlayers(
        on conflict do nothing`,
       [teamId, list, `${viewer.firstName} ${viewer.lastName}`, deps.now()],
     );
+    // Ordered a uniform on a team they're no longer on: its number and size come with them.
+    for (const id of list) await bringUniform(q, id, teamId, null);
     return { ok: true as const, added: r.rowCount ?? 0 };
   });
 }
@@ -325,6 +328,8 @@ export async function movePlayer(
     if (!t.rows[0]) return { ok: false as const, message: "That team no longer exists." };
     const g = await q.query("select 1 from registrations where registrant_id = $1", [registrantId]);
     if (!g.rows[0]) return { ok: false as const, message: "That player isn't registered." };
+    const uniform = await uniformToBring(q, registrantId, typeof from === "string" ? from : null, teamId);
+    const moved = from !== null; // from "Not on a team" (the roster board), a team they're on stays
     await leave(q, teamId);
     await q.query(
       `insert into team_players (team_id, registrant_id, first_name, last_name, gender, grade, grade_sort, rostered_by, rostered_at)
@@ -332,6 +337,8 @@ export async function movePlayer(
        on conflict do nothing`,
       [teamId, registrantId, `${viewer.firstName} ${viewer.lastName}`, deps.now()],
     );
+    // Their uniform (number, size, Needs a uniform) moves with them, so it isn't ordered again.
+    await bringUniform(q, registrantId, teamId, moved ? uniform : null);
     return { ok: true as const };
   });
 }

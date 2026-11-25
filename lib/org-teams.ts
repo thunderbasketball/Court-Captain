@@ -30,7 +30,7 @@ import {
 } from "./team-names";
 import { matchOrCreateUser } from "./user-match";
 import { REC_CLOSED, recAllowed } from "./rec-orgs";
-import { scheduledRefusal } from "./team-guards";
+import { scheduledRefusal, leagueOnly } from "./team-guards";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -414,8 +414,8 @@ export async function createOrgTeam(
 }
 
 // Change a team's gender, grades or level (Admins and Directors of Teams). Its name follows the rule again, and so does
-// its copy in a League. A REC team needs REC open to the organization. While it's in a League program that hasn't ended,
-// it can't change (its division and games depend on them): it's withdrawn from that program first.
+// its copy in a League. A REC team needs REC open to the organization. While it's registered in a League program that hasn't ended,
+// only the League can change them (lib/league-team-change).
 export async function updateOrgTeam(
   deps: Deps,
   viewer: SessionUser,
@@ -451,10 +451,7 @@ export async function updateOrgTeam(
           order by p.starts_on limit 1`,
         [id, deps.now()],
       );
-      if (inLeague.rows[0])
-        throw new TeamError(
-          `${cur.name} is registered in ${inLeague.rows[0].name}, where its division and games depend on its gender, grade and level. Withdraw it from ${inLeague.rows[0].name} first, change it, then register it again.`,
-        );
+      if (inLeague.rows[0]) throw new TeamError(leagueOnly(cur.name, inLeague.rows[0].name));
       await q.query(
         "update org_teams set gender = $3, grade_low = $4, grade = $5, level = $6, updated_by = $7, updated_at = $8 where id = $1 and org = $2",
         [id, o, gender, nums[0], nums.at(-1), level, by(viewer), deps.now()],

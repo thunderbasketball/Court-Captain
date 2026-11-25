@@ -3,8 +3,8 @@
 import { CoachBadge, LevelTag, TeamName, type CoachTag } from "../../../ui";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Alert } from "../../../client-ui";
-import { placeGame } from "../actions";
+import { Alert, useConfirm } from "../../../client-ui";
+import { placeGame, unscheduleGym } from "../actions";
 import { useTouchDrag } from "../../../touch-drag";
 
 export type GridTeam = {
@@ -28,6 +28,8 @@ export type GridGame = {
   court: string | null;
   starts: string | null;
   locked: boolean; // published: it can't be moved
+  level: string; // the game's: REC are placed first
+  wrong: string | null; // to correct: a team changed grade or level after it was made
 };
 export type GridGymView = {
   key: string;
@@ -69,12 +71,16 @@ const label = (t: string) => {
 // Each move is saved at once, and checked on the server (open, free, neither team already playing then).
 export function GridBoard({
   day,
+  programId,
   gyms,
   games: initial,
   minutes,
   divisions,
+  wide = false,
 }: {
+  wide?: boolean; // Scheduler View: every gym open, side by side as the screen allows
   day: string; // YYYY-MM-DD: the Game Day (for its gyms' printable scoresheets)
+  programId: string; // the program being scheduled (Unschedule all takes off only its games)
   gyms: GridGymView[];
   games: GridGame[];
   minutes: number;
@@ -89,14 +95,31 @@ export function GridBoard({
     setSeen(initial);
     setGames(initial);
   }
-  const [opened, setOpened] = useState<Set<string>>(new Set());
+  const [opened, setOpened] = useState<Set<string>>(() => new Set(wide ? gyms.map((g) => g.key) : []));
   const [picked, setPicked] = useState<string | null>(null);
   // Shift-click (or Cmd/Ctrl-click) picks several games to move together.
   const [selected, setSelected] = useState<string[]>([]);
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [, start] = useTransition();
+  const [busy2, start] = useTransition();
+  const [confirm, dialog] = useConfirm();
+  const unschedule = async (g: GridGymView, n: number) => {
+    if (
+      !(await confirm({
+        title: `Unschedule all games at ${g.name}?`,
+        message: `${n} game${n === 1 ? "" : "s"} come${n === 1 ? "s" : ""} off this gym's courts for the day. The matchups stay, ready to place again. Published games stay where they are.`,
+        confirmLabel: "Unschedule all",
+      }))
+    )
+      return;
+    setError(null);
+    start(async () => {
+      const r = await unscheduleGym(day, g.key, programId);
+      if (!r.ok) return setError(r.message);
+      router.refresh();
+    });
+  };
   const active = dragging ?? picked ?? selected[0] ?? null;
   const hosts = new Set(gyms.map((g) => g.hostId));
   const courts = new Map(gyms.flatMap((g) => g.courts.map((c) => [c.id, { ...c, gym: g }] as const)));
@@ -162,7 +185,7 @@ export function GridBoard({
     setDragging(null);
     setSelected([]);
     setError(null);
-    const moving = games.filter((x) => list.includes(x.id) && !x.locked); // in the list's order: youngest first
+    const moving = games.filter((x) => list.includes(x.id) && !x.locked); // in the list's order: REC youngest first, then COMP
     if (!moving.length) return;
     const plan = new Map<string, { court: string; starts: string } | null>();
     if (!slot) for (const g of moving) if (onGrid(g)) plan.set(g.id, null);
@@ -278,7 +301,7 @@ export function GridBoard({
         }}
         onDragEnd={() => setDragging(null)}
         {...(x.locked ? {} : touch.source(selected.includes(x.id) && selected.length > 1 ? selected.join(",") : x.id, `${h.name} vs ${v.name}`))}
-        title={`${x.locked ? "Published: can't be moved · " : ""}${h.name} vs ${v.name} · ${h.division} · ${h.group === v.group ? h.group : `${h.group}/${v.group}`}`}
+        title={`${x.wrong ? `To correct: ${x.wrong} · ` : ""}${x.locked ? "Published: can't be moved · " : ""}${h.name} vs ${v.name} · ${h.division} · ${h.group === v.group ? h.group : `${h.group}/${v.group}`}`}
         onClick={(e) => {
           e.stopPropagation();
           if (touch.justDropped()) return;
@@ -293,10 +316,11 @@ export function GridBoard({
           setPicked(on ? null : x.id);
         }}
         className={`${full ? "block h-full w-full" : "max-w-full"} ${x.locked ? "cursor-default" : "cursor-grab active:cursor-grabbing"} touch-manipulation rounded-md px-2 py-1.5 text-left text-xs shadow-sm ring-1 select-none [-webkit-touch-callout:none] ${
-          on ? "bg-scenic-navy text-white ring-scenic-navy" : genderCls(x)
+          on ? "bg-scenic-navy text-white ring-scenic-navy" : x.wrong ? "bg-red-100 ring-2 ring-red-600 dark:bg-red-500/25" : genderCls(x)
         }`}
       >
         <span className="block truncate">
+          {x.wrong && <span aria-label="To correct">⚠ </span>}
           {x.locked && <span aria-label="Published">🔒 </span>}
           <GameLevel x={x} /> <TeamName name={h.name} className="font-semibold" /> <CoachBadge tag={x.home?.coach} />
           {hostId && isHome(x, hostId) && (
@@ -325,11 +349,12 @@ export function GridBoard({
   return (
     <div className="space-y-3">
       {touch.ghost}
+      {dialog}
       {error && <Alert tone="red">{error}</Alert>}
       {selected.length > 1 && (
         <p className="flex items-center justify-between gap-2 rounded-md bg-scenic-navy/10 px-2 py-1 text-xs font-semibold text-scenic-navy dark:bg-white/10 dark:text-white">
-          {selected.length} games picked: drag one (or tap a slot) to place them in that court&apos;s next open blocks, youngest
-          first.
+          {selected.length} games picked: drag one (or tap a slot) to place them in that court&apos;s next open blocks, REC
+          youngest first, then COMP.
           <button type="button" onClick={() => setSelected([])} className="shrink-0 underline">
             Clear
           </button>
@@ -349,11 +374,13 @@ export function GridBoard({
           game&apos;s division. Drop on a selection area to take it off the grid.
         </p>
       )}
+      <div className={wide ? "grid items-start gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,30rem),1fr))]" : "space-y-3"}>
       {gyms.map((g) => {
         const open = (c: { starts: string; ends: string }, [a, b]: [string, string]) =>
           toMin(c.starts) <= toMin(a) && toMin(b) <= toMin(c.ends);
         const slots = g.blocks.reduce((n, b) => n + g.courts.filter((c) => open(c, b)).length, 0);
         const placed = games.filter((x) => onGrid(x) && courts.get(x.court!)?.gym.key === g.key).length;
+        const free = games.filter((x) => onGrid(x) && !x.locked && courts.get(x.court!)?.gym.key === g.key).length;
         const home = games.filter((x) => isHome(x, g.hostId) && !onGrid(x));
         const pool = home.length ? home : noHome.filter((x) => !onGrid(x));
         return (
@@ -391,7 +418,17 @@ export function GridBoard({
               </span>
             </summary>
             {placed > 0 && (
-              <div className="flex justify-end px-3 pt-2">
+              <div className="flex flex-wrap justify-end gap-2 px-3 pt-2">
+                {free > 0 && (
+                  <button
+                    type="button"
+                    disabled={busy2}
+                    onClick={() => unschedule(g, free)}
+                    className="rounded-full px-3 py-1 text-xs font-semibold text-red-600 ring-1 ring-red-600/30 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-500/10"
+                  >
+                    Unschedule all ({free})
+                  </button>
+                )}
                 {/* A Letter page per game placed here, filled in with the teams and their rosters, to print or save as a PDF. */}
                 <a
                   href={`/print/scoresheets?day=${day}&gym=${encodeURIComponent(g.key)}`}
@@ -520,6 +557,7 @@ export function GridBoard({
           </details>
         );
       })}
+      </div>
       {games.length > 0 && (
         <section {...target("pool:none", null)} className={`overflow-hidden rounded-lg px-3 py-2 ${ring("pool:none")}`}>
           <h4 className="flex items-baseline justify-between gap-2 text-sm font-semibold">

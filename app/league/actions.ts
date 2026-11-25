@@ -3,9 +3,11 @@
 import { db } from "@/lib/db";
 import { hasFeature } from "@/lib/features";
 import { isOrgSlug } from "@/lib/orgs";
+import { leagueGyms } from "@/lib/league-gyms";
 import { MAX_FOLLOWED, followedTeams, publicLeague } from "@/lib/public-league";
 import { easternDate } from "@/lib/time";
 import { publicly } from "@/lib/public-cache";
+import { findableTeams, searchTeams } from "@/lib/team-finder";
 
 // One program's public Teams and Schedule, loaded when it's opened on the login page. No login on purpose: only what the
 // public League page already shows (team names, groups, game times and places; no contact information), and only a
@@ -17,7 +19,8 @@ export async function loadPublicProgram(org: string, id: string) {
   const today = easternDate(now);
   const p = await publicly(`program:${today}:${org}:${id}`, () => publicLeague(db, now, String(id), org)); // only that organization's programs
   if (!p) return { ok: false as const, message: "That program isn't public right now." };
-  return { ok: true as const, groups: p.groups, schedule: p.schedule, soon: p.soon, today };
+  const gyms = p.kind === "League" ? await publicly(`league-gyms:${today}:${p.id}`, () => leagueGyms(db, now, p.id)) : null;
+  return { ok: true as const, gyms, groups: p.groups, schedule: p.schedule, soon: p.soon, today };
 }
 
 // My Teams on the login page: the teams a device follows (ids kept on the device; nothing stored here). The same public
@@ -29,4 +32,13 @@ export async function loadFollowedTeams(org: string, ids: string[]) {
   const list = Array.isArray(ids) ? [...new Set(ids.filter((x) => typeof x === "string" && /^\d{1,18}$/.test(x)))].slice(0, MAX_FOLLOWED) : [];
   const teams = await publicly(`followed:${today}:${org}:${list.join(",")}`, () => followedTeams(db, now, list, org));
   return { ok: true as const, teams, today };
+}
+
+// Find your team, as they type a coach's last name (no login): teams only, no coach's name or contact. The list is read at
+// most every 30 seconds and searched here, never sent whole.
+export async function findTeams(org: string, text: string) {
+  if (!isOrgSlug(org) || !(await hasFeature(db, org, "programs"))) return { ok: false as const, message: "Not found." };
+  const now = new Date();
+  const teams = await publicly(`find:${easternDate(now)}:${org}`, () => findableTeams(db, now, org));
+  return { ok: true as const, teams: searchTeams(teams, text) };
 }

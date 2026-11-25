@@ -2,8 +2,9 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { createScenicTeam, deleteScenicTeam, updateScenicTeam } from "../actions";
+import { createScenicTeam, deleteScenicTeam, leagueChangeTeam, updateScenicTeam } from "../actions";
 import { Alert, CloseButton, Toast, dialogCls, useConfirm } from "../../../client-ui";
+import GamesWarning from "../../../GamesWarning";
 import { inputCls } from "../../../ui";
 
 type Choice = { value: string; label: string };
@@ -41,18 +42,22 @@ export function TeamEditor({ addFor, grades, team }: { addFor?: Choice[]; grades
   const [f, setF] = useState(team ? fromTeam(team) : blank);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [warn, setWarn] = useState<string[] | null>(null); // games to look at before saving
   const [busy, start] = useTransition();
-  const set = (k: keyof typeof blank) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
+  const set = (k: keyof typeof blank) => (e: { target: { value: string } }) => (setWarn(null), setF({ ...f, [k]: e.target.value }));
 
   const open = () => {
     setF(team ? fromTeam(team) : { ...blank, for: addFor?.length === 1 ? addFor[0].value : "" });
     setError(null);
+    setWarn(null);
     dialog.current?.showModal();
   };
   const save = () =>
     start(async () => {
       setError(null);
-      const r = team ? await updateScenicTeam(team.id, f) : await createScenicTeam(f);
+      const r = team ? await updateScenicTeam(team.id, f, !!warn) : await createScenicTeam(f);
+      const games = (r as { warn?: string[] }).warn;
+      if (!r.ok && games) return setWarn(games);
       if (!r.ok) return setError(r.message);
       close();
       const login = "newLogin" in r && r.newLogin ? ` ${f.coachFirst} logs in with their cell (starter PIN 1234).` : "";
@@ -180,9 +185,10 @@ export function TeamEditor({ addFor, grades, team }: { addFor?: Choice[]; grades
             </label>
           </fieldset>
           {error && <Alert tone="red">{error}</Alert>}
+          {warn && <GamesWarning games={warn} />}
           <div className="flex items-center gap-3 pt-1">
             <button type="submit" disabled={busy} className={navyBtn}>
-              {team ? "Save" : "Add team"}
+              {warn ? "Change it anyway" : team ? "Save" : "Add team"}
             </button>
           </div>
         </form>
@@ -225,5 +231,74 @@ export function DeleteTeam({ id, name }: { id: string; name: string }) {
       {error && <Toast key={error} message={error} />}
       {confirmDialog}
     </>
+  );
+}
+
+// An organization's or Thunder's registered team: only the League changes its gender, grade or level. Opens right there; its games
+// that will need correcting show first.
+export function ChangeTeam({ team, grades }: { team: TeamFields; grades: Choice[] }) {
+  const router = useRouter();
+  const start0 = { gender: team.gender as string, level: team.level as string, grade: team.grade === -1 ? "PK" : team.gradeLow === team.grade ? String(team.grade) : `${team.gradeLow}-${team.grade}` };
+  const [open, setOpen] = useState(false);
+  const [f, setF] = useState(start0);
+  const [warn, setWarn] = useState<string[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, start] = useTransition();
+  const set = (k: keyof typeof start0) => (e: { target: { value: string } }) => (setWarn(null), setF({ ...f, [k]: e.target.value }));
+  if (!open)
+    return (
+      <button
+        type="button"
+        onClick={() => (setF(start0), setWarn(null), setError(null), setOpen(true))}
+        className="rounded-full px-3 py-1 text-xs font-medium text-scenic-navy ring-1 ring-scenic-navy/30 hover:bg-zinc-50 dark:text-zinc-200 dark:ring-white/20 dark:hover:bg-zinc-800"
+      >
+        Change grade or level
+      </button>
+    );
+  return (
+    <form
+      className="w-full space-y-2 rounded-xl bg-zinc-50 p-3 dark:bg-white/5"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          setError(null);
+          const r = await leagueChangeTeam(team.id, f, !!warn);
+          const games = (r as { warn?: string[] }).warn;
+          if (!r.ok && games) return setWarn(games);
+          if (!r.ok) return setError(r.message);
+          setOpen(false);
+          router.refresh();
+        });
+      }}
+    >
+      <div className="grid grid-cols-3 gap-2">
+        <select aria-label="Gender" className={inputCls} value={f.gender} onChange={set("gender")}>
+          <option>Boys</option>
+          <option>Girls</option>
+          <option value="Coed">Coed (Pre-K)</option>
+        </select>
+        <select aria-label="Grade" className={inputCls} value={f.grade} onChange={set("grade")}>
+          {grades.map((g) => (
+            <option key={g.value} value={g.value}>
+              {g.label}
+            </option>
+          ))}
+        </select>
+        <select aria-label="Level" className={inputCls} value={f.level} onChange={set("level")}>
+          <option>REC</option>
+          <option>COMP</option>
+        </select>
+      </div>
+      {error && <Alert tone="red">{error}</Alert>}
+      {warn && <GamesWarning games={warn} />}
+      <div className="flex items-center gap-3">
+        <button type="submit" disabled={busy} className={navyBtn}>
+          {busy ? "Saving…" : warn ? "Change it anyway" : "Save"}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className="text-sm text-zinc-500">
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }

@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { SessionUser } from "@/lib/auth/service";
-import { gradeLabel } from "@/lib/grades";
 import { myDashboard } from "@/lib/me";
 import { formatCell } from "@/lib/phone";
 import { TZ } from "@/lib/time";
+import { Suspense } from "react";
 import AppHeader from "../AppHeader";
+import SupportCards from "../support/SupportCards";
+import FamilyPlayers, { PlayerCard } from "../family/FamilyPlayers";
 import OfficiatingGames from "./OfficiatingGames";
 import { Chip, EmailLink, PageTitle, PhoneLink, card } from "../ui";
 
@@ -69,21 +71,17 @@ export default async function Dashboard({ user, coachId }: { user: SessionUser; 
             {own ? "Your" : "Their"} players{d.family ? ` · ${d.family.name}` : ""}
           </h2>
           {d.family?.children.length ? (
-            <ul className="space-y-2">
-              {d.family.children.map((c) => (
-                <li key={c.name} className={`${card} flex items-center justify-between gap-3 p-4`}>
-                  <div>
-                    <p className="font-semibold">{c.name}</p>
-                    <p className="text-sm text-zinc-500">
-                      {c.gender} · {gradeLabel(c.grade)}
-                      {(c.uniformSize || c.uniformNumber) &&
-                        ` · uniform ${[c.uniformSize, c.uniformNumber && `#${c.uniformNumber}`].filter(Boolean).join(" ")}`}
-                    </p>
-                  </div>
-                  <span className="text-sm font-medium">{c.team ?? <span className="text-zinc-500">Team not set yet</span>}</span>
-                </li>
-              ))}
-            </ul>
+            own ? (
+              <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>
+                <FamilyPlayers coachId={coachId} players={d.family.children.map(({ name, gender, grade, team }) => ({ name, gender, grade, team }))} />
+              </Suspense>
+            ) : (
+              <div className="grid gap-2 lg:grid-cols-2">
+                {d.family.children.map((c) => (
+                  <PlayerCard key={c.name} c={c} />
+                ))}
+              </div>
+            )
           ) : (
             <p className="text-sm text-zinc-500">No registered players with your cell number.</p>
           )}
@@ -120,7 +118,7 @@ export default async function Dashboard({ user, coachId }: { user: SessionUser; 
           </section>
         )}
 
-        <section>
+        {!(user.isFamily && !user.hasThunderRole && !d.teams.length && !d.scenicTeams.length && !d.partners.length) && <section>
           <h2 className={h2}>{own ? "Your" : "Their"} teams</h2>
           {d.teams.length || d.scenicTeams.length || d.partners.length ? (
             <ul className="space-y-2">
@@ -162,7 +160,12 @@ export default async function Dashboard({ user, coachId }: { user: SessionUser; 
           ) : (
             <p className="text-sm text-zinc-500">You&apos;re not on a team&apos;s staff yet.</p>
           )}
-        </section>
+        </section>}
+        {own && (
+          <Suspense fallback={null}>
+            <SupportCards org={null} />
+          </Suspense>
+        )}
       </main>
     </>
   );

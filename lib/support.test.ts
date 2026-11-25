@@ -6,6 +6,7 @@ import {
   listArticles,
   publishChat,
   replyChat,
+  restoreArticle,
   saveArticle,
   setChatResolved,
   supportChats,
@@ -110,15 +111,25 @@ describe("Support", () => {
     const articles = await listArticles(db.pool);
     expect(articles.length).toBe(before + 1);
     const added = articles.find((a) => a.title === "How do I print a roster?")!;
-    expect(added).toMatchObject({ kind: "faq", body: "Open the team, then Roster." });
+    expect(added).toMatchObject({ kind: "faq", body: "Open the team, then Roster.", key: null, audiences: ["everyone"] });
 
-    expect(await saveArticle(deps(), coach, null, { kind: "howto", title: "T", body: "B" })).toMatchObject({ ok: false });
-    expect(await saveArticle(deps(), staff, null, { kind: "howto", title: "Print", body: "Step 1\nStep 2" })).toEqual({
-      ok: true,
-    });
-    expect(await saveArticle(deps(), staff, added.id, { kind: "faq", title: "Print a roster?", body: "Roster tab." })).toEqual({
-      ok: true,
-    });
+    const whoFor = { topic: "Rosters", audiences: ["coach", "nope"], features: ["court-playbook", "x"], areas: [] };
+    expect(await saveArticle(deps(), coach, null, { kind: "howto", title: "T", body: "B", ...whoFor })).toMatchObject({ ok: false });
+    expect(await saveArticle(deps(), staff, null, { kind: "howto", title: "T", body: "B", ...whoFor, audiences: ["nope"] })).toMatchObject({ ok: false });
+    expect(await saveArticle(deps(), staff, null, { kind: "howto", title: "T", body: "B", ...whoFor, topic: "x" })).toMatchObject({ ok: false });
+    expect(await saveArticle(deps(), staff, null, { kind: "howto", title: "Print", body: "Step 1\nStep 2", ...whoFor })).toEqual({ ok: true });
+    expect((await listArticles(db.pool)).find((a) => a.title === "Print")).toMatchObject({ audiences: ["coach"], features: ["court-playbook"] });
+    expect(await saveArticle(deps(), staff, added.id, { kind: "faq", title: "Print a roster?", body: "Roster tab.", ...whoFor })).toEqual({ ok: true });
+    // A library article: staff's own version, taken out, and put back.
+    expect(await saveArticle(deps(), coach, "log-in", { kind: "faq", title: "Hi", body: "B", ...whoFor })).toMatchObject({ ok: false });
+    expect(await saveArticle(deps(), staff, "log-in", { kind: "faq", title: "Hi", body: "B", ...whoFor })).toEqual({ ok: true });
+    expect((await listArticles(db.pool)).find((a) => a.id === "log-in")).toMatchObject({ title: "Hi", changed: true });
+    expect(await deleteArticle(deps(), staff, "log-in")).toEqual({ ok: true });
+    expect((await listArticles(db.pool)).find((a) => a.id === "log-in")).toBeUndefined();
+    expect((await listArticles(db.pool, true)).find((a) => a.id === "log-in")).toMatchObject({ hidden: true });
+    expect(await restoreArticle(deps(), coach, "log-in")).toMatchObject({ ok: false });
+    expect(await restoreArticle(deps(), staff, "log-in")).toEqual({ ok: true });
+    expect((await listArticles(db.pool)).find((a) => a.id === "log-in")).toMatchObject({ title: "How do I log in?", changed: false });
     expect(await deleteArticle(deps(), staff, added.id)).toEqual({ ok: true });
     expect((await listArticles(db.pool)).length).toBe(before + 1);
   });

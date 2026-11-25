@@ -1,19 +1,9 @@
 import type { SessionUser } from "@/lib/auth/service";
-import { currentContexts } from "@/lib/contexts-server";
-import { db } from "@/lib/db";
-import { listArticles, supportChats } from "@/lib/support";
-import { SupportPanel } from "./support/SupportButton";
+import { supportPanel } from "@/lib/support-panel";
+import { SupportPanel } from "./support/SupportPanel";
 
-// Support as a Home card (every organization): the same questions, guides and chats as the Support button.
+// Support as a Home card (every organization): the same as the header's ?.
 export default async function SupportCard({ user, org }: { user: SessionUser; org: string }) {
-  const [articles, chats, { contexts }] = await Promise.all([listArticles(db), supportChats(db, user, org), currentContexts(user)]);
-  return (
-    <SupportPanel
-      org={org}
-      articles={articles}
-      mine={chats.mine}
-      inbox={chats.inbox}
-      staff={contexts.some((c) => c.key === "platform")}
-    />
-  );
+  const p = await supportPanel(user, org);
+  return <SupportPanel org={org} articles={p.articles} mine={p.mine} inbox={p.inbox} staff={p.staff} others={p.others} news={p.news} version={p.version} />;
 }

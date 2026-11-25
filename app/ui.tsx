@@ -106,6 +106,12 @@ export const genderTint = (gender: string | null | undefined) =>
         ? "bg-emerald-50 ring-emerald-200 dark:bg-emerald-500/10 dark:ring-emerald-400/25"
         : null;
 
+// Its gender, from a group's name ("5th Boys COMP", "Girls 2nd–3rd").
+export const genderOf = (label: string | null | undefined) => /\b(Boys|Girls|Coed)\b/.exec(label ?? "")?.[1] ?? null;
+// The same tint for a row inside a card (no ring).
+export const genderBg = (gender: string | null | undefined) =>
+  gender === "Boys" ? "bg-blue-50/70 dark:bg-blue-500/10" : gender === "Girls" ? "bg-pink-50/70 dark:bg-pink-500/10" : gender === "Coed" ? "bg-emerald-50/70 dark:bg-emerald-500/10" : "";
+
 // A collapsible card with a title, a count, and a list inside. `gender` tints it (Boys blue, Girls pink).
 export function GroupCard({
   title,
@@ -124,7 +130,7 @@ export function GroupCard({
   gender?: string | null;
   alert?: boolean; // something inside needs attention: a red ring and a flashing title, to drill down to it
 }) {
-  const tint = genderTint(gender);
+  const tint = genderTint(gender || (typeof title === "string" ? genderOf(title) : null)); // a title like "Boys 2nd–3rd" says it
   const box = (
     <details
       className={`${tint ? `rounded-2xl shadow-sm ring-1 ${tint}` : card} group overflow-hidden ${alert ? "ring-2 ring-red-300 dark:ring-red-500/40" : ""}`}
@@ -373,10 +379,14 @@ export function CoachBadge({ tag }: { tag: CoachTag | undefined }) {
 }
 
 // A player's uniform number on a roster: white bold digits in a black box, so it stands out.
-export function JerseyNumber({ n }: { n: string | number | null | undefined }) {
+// `dup`: another player on the team has it too: a red box.
+export function JerseyNumber({ n, dup = false }: { n: string | number | null | undefined; dup?: boolean }) {
   if (n === null || n === undefined || n === "") return null;
   return (
-    <span className="mr-1.5 inline-flex h-5 min-w-6 items-center justify-center rounded bg-black px-1 align-middle text-xs font-bold text-white tabular-nums ring-1 ring-white/20">
+    <span
+      title={dup ? "Another player on the team has this number" : undefined}
+      className={`mr-1.5 inline-flex h-5 min-w-6 items-center justify-center rounded px-1 align-middle text-xs font-bold text-white tabular-nums ring-1 ring-white/20 ${dup ? "bg-red-600" : "bg-black"}`}
+    >
       {n}
     </span>
   );

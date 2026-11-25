@@ -74,7 +74,10 @@ export async function findComplete(deps: Deps, cellInput: unknown, code: unknown
   return { step: "found", players: await playersOf(deps, cell) };
 }
 
-export async function playersOf(deps: Pick<Deps, "pool" | "now">, cell: string): Promise<FoundPlayer[]> {
+export const playersOf = (deps: Pick<Deps, "pool" | "now">, cell: string) => playersBy(deps, { cell }, null);
+
+// A parent's players (their cell), or these registrations; `only`: only those on one of these teams, with that team.
+export async function playersBy(deps: Pick<Deps, "pool" | "now">, who: { cell: string } | { ids: string[] }, only: string[] | null): Promise<FoundPlayer[]> {
   const today = easternDate(deps.now());
   const r = await deps.pool.query<{
     id: string;
@@ -93,11 +96,11 @@ export async function playersOf(deps: Pick<Deps, "pool" | "now">, cell: string):
        left join player_programs pp on pp.id = r.program_id
        left join organizations o on o.slug = coalesce(pp.org, 'thunder')
        left join lateral (select x.id, x.name from team_players p join teams x on x.id = p.team_id
-                           where p.registrant_id = r.registrant_id order by x.name limit 1) t on true
-      where (r.parent1_cell = $1 or r.parent2_cell = $1)
+                           where p.registrant_id = r.registrant_id and ($4::bigint[] is null or x.id = any($4::bigint[])) order by x.name limit 1) t on true
+      where (r.parent1_cell = $1 or r.parent2_cell = $1 or r.registrant_id = any($3)) and ($4::bigint[] is null or t.id is not null)
         and (pp.ends_on is null or pp.ends_on >= $2::date - 30)
       order by lower(r.first_name), lower(r.last_name)`,
-    [cell, today],
+    ["cell" in who ? who.cell : null, today, "ids" in who ? who.ids : [], only],
   );
   const teamIds = [...new Set(r.rows.map((p) => p.team_id).filter((t): t is string => !!t))];
   const teams = new Map(await Promise.all(teamIds.map(async (id) => [id, await teamOf(deps, id, today)] as const)));

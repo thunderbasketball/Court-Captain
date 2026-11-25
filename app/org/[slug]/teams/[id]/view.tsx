@@ -288,6 +288,7 @@ async function TeamBody({
         <PaidNotice />
       </Suspense>
       <TeamPage
+        org={slug}
         embedded={embedded}
         back={canManage && !embedded ? `/org/${slug}?open=teams#teams` : null}
         opened={opened}

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { PublicFinal } from "@/lib/score-share";
+import { ShareIcon, shareIconBtn } from "./ShareButton";
 import SharePanel from "./SharePanel";
 
 // A finished game on the public pages: "Final 34–28" (this line's first team first) and Share, which opens its picture right
@@ -36,9 +37,11 @@ export default function FinalScore({
             type="button"
             aria-expanded={open}
             onClick={() => setOpen((x) => !x)}
-            className="rounded-full px-2.5 py-1 text-xs font-semibold text-thunder-blue ring-1 ring-thunder-blue/40 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-white/5"
+            aria-label={open ? "Close" : "Share this final"}
+            title={open ? "Close" : "Share"}
+            className={`${shareIconBtn} ${open ? "bg-blue-50 dark:bg-white/10" : ""}`}
           >
-            {open ? "Close" : "Share"}
+            <ShareIcon />
           </button>
         )}
       </span>

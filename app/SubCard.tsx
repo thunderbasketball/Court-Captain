@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { genderOf, genderTint } from "./ui";
 
 const Chevron = () => (
   <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden className="size-5 shrink-0 text-zinc-400 transition-transform [details[open]>summary_&]:rotate-180">
@@ -39,7 +40,7 @@ export default function SubCard({
             ? "bg-white ring-red-300 dark:bg-zinc-900 dark:ring-red-500/40"
             : warn
               ? "bg-amber-50 ring-amber-300 dark:bg-amber-500/10 dark:ring-amber-500/40"
-              : "bg-white ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10"
+              : (genderTint(genderOf(title)) ?? "bg-white ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10") // Boys blue, Girls pink, Coed green
         }`}
         open={open}
       >

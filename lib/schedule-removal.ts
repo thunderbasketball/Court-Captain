@@ -132,32 +132,39 @@ export async function decideRemoval(deps: Deps, viewer: SessionUser, id: unknown
 
 // TBD in the team's place in each of its games; returns how many changed, or why it can't.
 async function toTbd(q: PoolClient, programId: string, teamId: string): Promise<number | string> {
-  const games = await q.query<{ id: string; day: string; team_a: string; team_b: string | null; home_side: "a" | "b" | null }>(
-    `select id::text, day::text, team_a::text, team_b::text, home_side from scenic_matchups
-      where program_id = $1 and $2 in (team_a, team_b) for update`,
-    [programId, teamId],
-  );
+  const games = await q.query<{ id: string }>("select id::text from scenic_matchups where program_id = $1 and $2 in (team_a, team_b) for update", [programId, teamId]);
   for (const g of games.rows) {
-    const other = g.team_a === teamId ? g.team_b : g.team_a;
-    if (!other) {
-      await q.query("delete from scenic_matchups where id = $1", [g.id]); // it against TBD: no game left
-      continue;
-    }
-    const clash = await q.query(
-      "select 1 from scenic_matchups where program_id = $1 and day = $2 and team_a = $3 and team_b is null and id <> $4",
-      [programId, g.day, other, g.id],
-    );
-    if (clash.rowCount) {
-      const name = (await q.query<{ name: string }>("select name from scenic_teams where id = $1", [other])).rows[0]?.name;
-      return `${name} already plays TBD on ${g.day}. Change that game on the Grid first, then approve.`;
-    }
-    // The other team stays home or away as it was; it's now side "a" (TBD has no side).
-    const otherWasHome = g.home_side === (g.team_a === other ? "a" : "b");
-    await q.query("update scenic_matchups set team_a = $2, team_b = null, home_side = $3 where id = $1", [
-      g.id,
-      other,
-      g.home_side === null ? null : otherWasHome ? "a" : "b",
-    ]);
+    const no = await gameToTbd(q, g.id, teamId);
+    if (no) return `${no} Change that game on the Grid first, then approve.`;
   }
   return games.rows.length;
+}
+
+// TBD in a team's place in one game; or why it can't.
+export async function gameToTbd(q: PoolClient, gameId: string, teamId: string): Promise<string | null> {
+  const g = (
+    await q.query<{ program: string; day: string; team_a: string; team_b: string | null; home_side: "a" | "b" | null; fill: string | null }>(
+      "select program_id::text as program, day::text, team_a::text, team_b::text, home_side, fill_team::text as fill from scenic_matchups where id = $1 for update",
+      [gameId],
+    )
+  ).rows[0];
+  if (!g) return null;
+  const other = g.team_a === teamId ? g.team_b : g.team_a;
+  if (!other || g.fill === other) {
+    await q.query("delete from scenic_matchups where id = $1", [gameId]); // it against TBD, or a team filling in for it: no game left
+    return null;
+  }
+  const clash = await q.query("select 1 from scenic_matchups where program_id = $1 and day = $2 and team_a = $3 and team_b is null and id <> $4", [g.program, g.day, other, gameId]);
+  if (clash.rowCount) {
+    const name = (await q.query<{ name: string }>("select name from scenic_teams where id = $1", [other])).rows[0]?.name;
+    return `${name} already plays TBD on ${g.day}.`;
+  }
+  // The other team stays home or away as it was; it's now side "a" (TBD has no side).
+  const otherWasHome = g.home_side === (g.team_a === other ? "a" : "b");
+  await q.query("update scenic_matchups set team_a = $2, team_b = null, fill_team = null, filled_by = null, filled_at = null, home_side = $3 where id = $1", [
+    gameId,
+    other,
+    g.home_side === null ? null : otherWasHome ? "a" : "b",
+  ]);
+  return null;
 }

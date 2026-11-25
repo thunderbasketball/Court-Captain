@@ -8,6 +8,7 @@ import type { SessionUser } from "./auth/service";
 import { canSeeRoster } from "./rosters";
 import { withTx } from "./sql";
 import { SIZES, type UniformRow } from "./uniform-fields";
+import { SENT_HERE } from "./uniform-order";
 import { hasArea, isOrgOwner, isThunderAdmin } from "./org-admin";
 
 export { SIZES, duplicateNumbers, isMissing, jerseyName, type UniformRow } from "./uniform-fields";
@@ -19,15 +20,15 @@ const isId = (v: unknown): v is string => typeof v === "string" && /^\d{1,18}$/.
 const isRegistrant = (v: unknown): v is string => typeof v === "string" && /^[\w-]{1,40}$/.test(v);
 
 // The newest vendor order (not cancelled) this player is on with the number and size they have now, for a query with
-// team_players p and team_uniforms u. A player changed after an order isn't on it any more (they go in the next one).
+// team_players p and team_uniforms u (an order for a team they've left counts too). A player changed after an order isn't on it any more (they go in the next one).
 const ORDER_OF = `select o.order_no, o.sent_at from uniform_vendor_sent s join uniform_vendor_sends o on o.id = s.send_id
-  where s.team_id = p.team_id and s.registrant_id = p.registrant_id and o.cancelled_at is null
+  where ${SENT_HERE} and o.cancelled_at is null
     and s.number = u.number and s.size = u.size and (u.reorder_at is null or o.sent_at > u.reorder_at)
   order by o.sent_at desc, o.id desc limit 1`;
 
 // The newest vendor order (not cancelled) this player went in at all, as lo: Needs a uniform then means a new one.
 const LAST_ORDER = `select o.order_no, o.sent_at from uniform_vendor_sent s join uniform_vendor_sends o on o.id = s.send_id
-  where s.team_id = p.team_id and s.registrant_id = p.registrant_id and o.cancelled_at is null
+  where ${SENT_HERE} and o.cancelled_at is null
   order by o.sent_at desc, o.id desc limit 1`;
 
 // Locked: they have their uniform (on a vendor order, or a number with no new uniform ordered), unless unlocked since

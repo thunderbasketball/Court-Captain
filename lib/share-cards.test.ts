@@ -25,7 +25,7 @@ describe("an organization's share pictures", () => {
     const h = { ...base, own: [winter], counts: { teams: 110, divisions: 8, orgs: 6 }, recruiting: ["Scenic City Officials"], openable: true };
     const cards = shareCards(h);
     expect(cards.map((c) => c.key)).toEqual(["register", "divisions", "tipoff", "numbers", "follow", "officials"]);
-    expect(cards[0]).toMatchObject({ href: "/register-team/scenic-city?program=7", text: "Scenic City Basketball: Winter team registration is open through Feb 14." });
+    expect(cards[0]).toMatchObject({ href: "/register-team/scenic-city?program=7", text: "Scenic City Basketball: Winter new team registration is open through Feb 14." });
     expect(cards[0].lines).toContainEqual({ text: "REC", side: "Invited organizations" });
     expect(cards[2].big).toEqual({ value: "11", label: "days to go" });
     expect(cards[3].tiles.map((t) => t.value)).toEqual([110, 8, 6]);

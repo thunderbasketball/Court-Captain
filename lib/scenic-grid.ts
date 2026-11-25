@@ -457,6 +457,22 @@ export async function placeGame(
   return withTx(deps.pool, async (q) => {
     // One placement at a time per Game Day, so two Schedulers can't fill the same slot.
     await q.query("select pg_advisory_xact_lock(hashtext('scenic-grid:' || $1))", [game.day]);
+    const clash = await slotClash(q, { day: game.day, matchupId, court: slot.court as string, starts, a: game.a, b: game.b, len, lens, minutes: grid.minutes });
+    if (clash) return { ok: false as const, message: clash };
+    const put = await q.query(
+      `update scenic_matchups set court_key = $2, starts = $3::time, placed_by = $4, placed_at = $5
+        where id = $1 and (court_key is null or not scenic_game_published(program_id, day, team_a))`,
+      [matchupId, slot.court, starts, by, deps.now()],
+    );
+    return put.rowCount ? { ok: true as const } : { ok: false as const, message: PUBLISHED(game.day, game.level) };
+  });
+}
+
+// Why a game can't be at that court and time: another game there, or one of its teams or coaches already playing then.
+async function slotClash(
+  q: Pick<Queryable, "query">,
+  g: { day: string; matchupId: string; court: string; starts: string; a: string; b: string | null; len: number; lens: string; minutes: number },
+): Promise<string | null> {
     const clash = await q.query<{ taken: boolean; name: string | null }>(
       `select m.court_key = $3 and m.starts = $4::time as taken,
               (select t.name from scenic_teams t where t.id in (m.team_a, m.team_b) and t.id in ($5::bigint, $6::bigint) limit 1) as name
@@ -467,11 +483,11 @@ export async function placeGame(
                    and m.starts < $4::time + make_interval(mins => $7)
                    and $4::time < m.starts + make_interval(mins => coalesce(($8::jsonb ->> to_char(m.starts, 'HH24:MI'))::int, $9))))
         order by 1 desc limit 1`,
-      [game.day, matchupId, slot.court, starts, game.a, game.b, len, lens, grid.minutes],
+      [g.day, g.matchupId, g.court, g.starts, g.a, g.b, g.len, g.lens, g.minutes],
     );
     const c = clash.rows[0];
-    if (c?.taken) return { ok: false as const, message: "That slot already has a game. Move that game first." };
-    if (c) return { ok: false as const, message: `${c.name} is already playing then.` };
+    if (c?.taken) return "That slot already has a game. Move that game first.";
+    if (c) return `${c.name} is already playing then.`;
     // No one coaches two games at once: a Head or Assistant Coach of either team with another game that close.
     const coach = await q.query<{ name: string; key: string }>(
       `select x.c->>'name' as name, x.c->>'key' as key
@@ -484,21 +500,45 @@ export async function placeGame(
           and x.c->>'key' in (select y.c->>'key' from scenic_teams t cross join lateral json_array_elements(${TEAM_COACHES}) y(c)
                                where t.id in ($4::bigint, $5::bigint))
         limit 1`,
-      [game.day, matchupId, starts, game.a, game.b, len, lens, grid.minutes],
+      [g.day, g.matchupId, g.starts, g.a, g.b, g.len, g.lens, g.minutes],
     );
     if (coach.rows[0])
-      return {
-        ok: false as const,
-        message: coach.rows[0].key.startsWith("b:")
-          ? `A team bound to this game (${coach.rows[0].name}) already plays then: bound teams never play at the same time.`
-          : `${coach.rows[0].name} already coaches a game then (one coach, one game at a time).`,
-      };
-    const put = await q.query(
-      `update scenic_matchups set court_key = $2, starts = $3::time, placed_by = $4, placed_at = $5
-        where id = $1 and (court_key is null or not scenic_game_published(program_id, day, team_a))`,
-      [matchupId, slot.court, starts, by, deps.now()],
+      return coach.rows[0].key.startsWith("b:")
+        ? `A team bound to this game (${coach.rows[0].name}) already plays then: bound teams never play at the same time.`
+        : `${coach.rows[0].name} already coaches a game then (one coach, one game at a time).`;
+  return null;
+}
+
+// A placed game getting an opponent (a TBD filled in): why that team can't play then, or null.
+export async function fillClash(deps: Deps, viewer: SessionUser, q: Pick<Queryable, "query">, m: { id: string; day: string; a: string; b: string; court: string; starts: string }): Promise<string | null> {
+  const grid = await dayGrid(deps, viewer, m.day);
+  if (!grid) return "That court isn't open for games that day.";
+  const len = lengthAt(grid, m.starts);
+  const asked = await requestClash(deps.pool, m.day, [m.b], toMin(m.starts), len);
+  if (asked) return `${asked.team} asked not to play ${asked.blocks.join(" or ")} (schedule request).`;
+  const lens = JSON.stringify(Object.fromEntries((grid.slots ?? []).map((x) => [x.start, x.minutes])));
+  return slotClash(q, { ...m, matchupId: m.id, len, lens, minutes: grid.minutes });
+}
+
+// Unschedule all games at a gym that day: this program's games there come off the grid (the matchups stay). Published and
+// scored games stay where they are. Admins and Directors of Scheduling only.
+export async function unscheduleGym(deps: Deps, viewer: SessionUser, day: unknown, gymKey: unknown, programId: unknown): Promise<Result<{ off: number; kept: number }>> {
+  if (!isDate(day) || typeof gymKey !== "string" || !isMatchupId(programId)) return { ok: false, message: "Pick a gym." };
+  if (!(await isScheduler(deps.pool, viewer)))
+    return { ok: false, message: "Only a Scenic City Admin or Director of Scheduling can do that." };
+  const gym = (await dayGrid(deps, viewer, day))?.gyms.find((g) => g.key === gymKey);
+  if (!gym) return { ok: false, message: "That gym isn't open for games that day." };
+  return withTx(deps.pool, async (q) => {
+    await q.query("select pg_advisory_xact_lock(hashtext('scenic-grid:' || $1))", [day]);
+    const at = "program_id = $1 and day = $2::date and court_key = any($3::text[])";
+    const courts = gym.courts.map((c) => c.id);
+    const r = await q.query(
+      `update scenic_matchups set court_key = null, starts = null, placed_by = $4, placed_at = $5
+        where ${at} and score_a is null and forfeit is null and not scenic_game_published(program_id, day, team_a)`,
+      [programId, day, courts, `${viewer.firstName} ${viewer.lastName}`, deps.now()],
     );
-    return put.rowCount ? { ok: true as const } : { ok: false as const, message: PUBLISHED(game.day, game.level) };
+    const kept = await q.query(`select 1 from scenic_matchups where ${at}`, [programId, day, courts]);
+    return { ok: true as const, off: r.rowCount ?? 0, kept: kept.rowCount ?? 0 };
   });
 }
 

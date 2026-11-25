@@ -34,6 +34,14 @@ export const duplicateNumbers = (rows: Pick<UniformRow, "number">[]) => {
   return new Set([...seen].filter(([, n]) => n > 1).map(([num]) => num));
 };
 
+// The same for a plain list of numbers ("07" is "7"; "0" and "00" are different), lowest first.
+export const dupNumbers = (numbers: (string | null | undefined)[]): string[] =>
+  [...duplicateNumbers(numbers.map((n) => ({ number: n?.trim() ? (n.trim() === "00" ? "00" : /^\d+$/.test(n.trim()) ? String(Number(n)) : n.trim()) : null })))].sort(
+    (a, b) => Number(a) - Number(b) || a.localeCompare(b),
+  );
+// Is this number one of them?
+export const isDup = (n: string | null | undefined, dups: string[]) => !!n && dupNumbers([n, n]).some((x) => dups.includes(x));
+
 // The last name as printed on a jersey: ALL CAPS, without a suffix (Jr, III…) or a "#11" someone typed in.
 // Keeps the small prefix of names like McCrobey, MacDonald, DeShields, LaFleur: McCROBEY, MacDONALD, DeSHIELDS.
 // "Mc" always stays (even if typed "MCCROBEY"); other prefixes only when the name was typed with the inner capital.

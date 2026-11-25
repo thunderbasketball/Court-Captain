@@ -2,6 +2,14 @@
 
 import { useState } from "react";
 
+// The Share icon, the same everywhere: a box with an arrow up out of it.
+export const ShareIcon = ({ className = "size-[18px]" }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+    <path d="M12 3v12M7.5 7.5 12 3l4.5 4.5M8 11H6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-2" />
+  </svg>
+);
+export const shareIconBtn = "grid size-8 shrink-0 place-items-center rounded-full text-thunder-blue hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-white/5";
+
 // Share a public page: the phone's share sheet (text, email, any app) where there is one, else copies the link.
 // `label`: an icon-only button (the header's, beside the organization's name) named this for screen readers.
 export default function ShareButton({
@@ -52,10 +60,7 @@ export default function ShareButton({
           title={label}
           className={`grid size-8 shrink-0 place-items-center rounded-full text-thunder-blue hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-white/5 ${className}`}
         >
-          {/* Share: a box with an arrow up out of it */}
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="size-[18px]" aria-hidden>
-            <path d="M12 3v12M7.5 7.5 12 3l4.5 4.5M8 11H6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-2" />
-          </svg>
+          <ShareIcon />
         </button>
       ) : (
         <button

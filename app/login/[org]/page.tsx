@@ -18,7 +18,8 @@ import { ApplyToOfficiate } from "../../officials/ApplyToOfficiate";
 import SubCard from "../../SubCard";
 import FindMyPlayer from "../../find-player/FindMyPlayer";
 import { heroFor } from "@/lib/public-org";
-import { pageCards, publicFacts } from "@/lib/public-facts";
+import PublicHelp from "./PublicHelp";
+import { pageCards, publicFacts, publicHelp } from "@/lib/public-facts";
 import ShareGallery from "./ShareGallery";
 import { loadPublicProgram } from "../../league/actions";
 import PublicHero from "./PublicHero";
@@ -133,6 +134,7 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
     recruiting: recruiting.length > 0,
     openable: [...programs, ...leagues].some((p) => p.openable),
   });
+  const help = await publicHelp(org);
   const gallery = (await pageCards(org, o.name, f)).map(({ card, v }) => ({ key: card.key, label: card.label, text: card.text, v }));
   // Its one program opens by itself (or, with none and no teams of its own, the one League): something to look at.
   const openables = programs.filter((p) => p.openable);
@@ -140,7 +142,7 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
   const first = openables.length === 1 ? openables[0] : onlyLeague;
   const loaded = first ? await loadPublicProgram(first.org ?? org, first.id) : null;
   const opened = first && loaded?.ok ? { id: first.id, data: loaded } : undefined;
-  const right = programs.length > 0 || leagues.length > 0 || teams.length > 0 || gyms.length > 0 || players || recruiting.length > 0 || gallery.length > 0;
+  const right = programs.length > 0 || leagues.length > 0 || teams.length > 0 || gyms.length > 0 || players || recruiting.length > 0 || gallery.length > 0 || help.length > 0;
   return (
     <>
       <PublicHero org={org} name={o.name} color={o.color} logo={o.bigLogo} hero={hero}>
@@ -210,6 +212,7 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
                 ))}
               </section>
             )}
+            {help.length > 0 && <PublicHelp articles={help} />}
           </div>
         )}
       </div>

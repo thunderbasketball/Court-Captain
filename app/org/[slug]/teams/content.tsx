@@ -1,3 +1,4 @@
+import { dupNumbers } from "@/lib/uniform-fields";
 import { wrongBirthdate } from "@/lib/roster-match";
 import { notFound, redirect } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
@@ -157,6 +158,7 @@ export async function OrgTeamsContent({
               players: t.players,
               missingBirthdates: noBirthdate(t.id),
               missingNumbers: noNumber(t.id),
+              duplicateNumbers: dupNumbers((rosters[t.id] ?? []).map((p) => p.jersey)),
               wrongBirthdates: wrongDates(t.id),
             })
           }
@@ -178,6 +180,7 @@ export async function OrgTeamsContent({
               roster={{ count: t.players, list: <OrgRosterList players={rosters[t.id] ?? []} /> }}
               missingBirthdates={noBirthdate(t.id)}
               missingNumbers={noNumber(t.id)}
+              duplicateNumbers={dupNumbers((rosters[t.id] ?? []).map((p) => p.jersey))}
               wrongBirthdates={wrongDates(t.id)}
               schedule={{
                 items: (schedules[t.id] ?? []).length + (own[t.id] ?? []).length + (scrims[t.id] ?? []).length,

@@ -6,7 +6,7 @@ import FinalScore from "./FinalScore";
 import { ShareToggle } from "./SharePanel";
 import { groupKey } from "@/lib/share-keys";
 import { FollowStar } from "./FollowTeams";
-import { card } from "./ui";
+import { card, genderBg, genderOf, genderTint } from "./ui";
 import DirectionsLink from "./DirectionsLink";
 
 const weekday = (iso: string) =>
@@ -40,16 +40,16 @@ export function ProgramSchedule({ days, today, soon }: { days: PublicDay[] | nul
         <details key={d.date} className={`${card} group overflow-hidden`} open={d.date === next}>
           <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 font-semibold [&::-webkit-details-marker]:hidden">
             <span>
-              {weekday(d.date)} <span className="font-normal text-zinc-500">· {d.games.length} games</span>
+              {weekday(d.date)} <span className="font-normal text-zinc-500">· {d.games.length} {d.games.length === 1 ? "game" : "games"}</span>
             </span>
             <span aria-hidden className="text-xs text-zinc-400 transition [details[open]>summary_&]:rotate-90">
               ▶
             </span>
           </summary>
           <ScheduleSoon levels={d.soon} className="border-t border-zinc-100 px-4 py-2 dark:border-white/5" />
-          <ul className="divide-y divide-zinc-100 border-t border-zinc-100 text-sm dark:divide-white/5 dark:border-white/5">
+          <ul className="grid border-t border-zinc-100 text-sm lg:grid-cols-2 dark:border-white/5">
             {d.games.map((g, i) => (
-              <li key={i} className="flex gap-3 px-4 py-2.5">
+              <li key={i} className={`flex gap-3 border-b border-zinc-100 px-4 py-2.5 dark:border-white/5 ${genderBg(genderOf(g.group))}`}>
                 <span className="w-16 shrink-0 font-medium tabular-nums">{g.starts ? timeLabel(g.starts) : "TBA"}</span>
                 <span className="min-w-0">
                   <span className="block">
@@ -77,6 +77,9 @@ const Arrow = () => (
     ▶
   </span>
 );
+const teamsLabel = (n: number) => `${n} ${n === 1 ? "team" : "teams"}`;
+// Cards in as many columns as fit, an opened one the whole width.
+const columns = "grid grid-cols-[repeat(auto-fill,minmax(min(15rem,100%),1fr))] items-start gap-2 [&>details[open]]:col-span-full";
 const summaryCls = "flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 [&::-webkit-details-marker]:hidden";
 
 // A program by Division, then REC and COMP, then Grade (each a card that opens in place). A grade's card: Standings on top
@@ -111,19 +114,24 @@ export function ProgramDivisions({
   // REC first, then COMP.
   for (const d of divisions) d.levels.sort((a, b) => (a.level === b.level ? 0 : a.level === "REC" ? -1 : 1));
   const count = (gs: PublicGroup[]) => gs.reduce((n, g) => n + g.teams.length, 0);
+  // As many columns as fit (a phone: one): Boys together, then Girls; an opened card takes the whole width, its own cards
+  // in columns inside it.
+  const genders = [...new Set(divisions.map((d) => d.name.split(" ")[0]))];
   return (
-    <div className="space-y-2">
-      {divisions.map((d) => (
-        <details key={d.name} className={`${card} overflow-hidden`}>
+    <div className="space-y-4">
+      {genders.map((gender) => (
+      <div key={gender} className={columns}>
+      {divisions.filter((d) => d.name.split(" ")[0] === gender).map((d) => (
+        <details key={d.name} className={`overflow-hidden rounded-2xl shadow-sm ring-1 ${genderTint(gender) ?? "bg-white ring-zinc-950/5 dark:bg-zinc-900 dark:ring-white/10"}`}>
           <summary className={summaryCls}>
             <span className="font-semibold">
-              {d.name} <span className="font-normal text-zinc-500">· {count(d.levels.flatMap((l) => l.grades))} teams</span>
+              {d.name} <span className="font-normal text-zinc-500">· {teamsLabel(count(d.levels.flatMap((l) => l.grades)))}</span>
             </span>
             <Arrow />
           </summary>
-          <div className="space-y-2 border-t border-zinc-100 p-2 dark:border-white/5">
+          <div className={`${columns} border-t border-zinc-100 p-2 dark:border-white/5`}>
             {d.levels.map((l) => (
-              <details key={l.level} className="overflow-hidden rounded-lg ring-1 ring-zinc-950/10 dark:ring-white/10">
+              <details key={l.level} className="overflow-hidden rounded-lg bg-white/70 ring-1 ring-zinc-950/10 dark:bg-black/20 dark:ring-white/10">
                 <summary className={summaryCls}>
                   <span className="flex items-center gap-2 font-semibold">
                     <span
@@ -135,11 +143,11 @@ export function ProgramDivisions({
                     >
                       {l.level}
                     </span>
-                    <span className="font-normal text-zinc-500">{count(l.grades)} teams</span>
+                    <span className="font-normal text-zinc-500">{teamsLabel(count(l.grades))}</span>
                   </span>
                   <Arrow />
                 </summary>
-                <div className="space-y-2 border-t border-zinc-100 p-2 dark:border-white/5">
+                <div className={`${columns} border-t border-zinc-100 p-2 dark:border-white/5`}>
                   {l.grades.map((g) => (
                     <GradeCard key={g.label} org={org} program={program} g={g} schedule={schedule} today={today} soon={soon.includes(g.level)} follow={follow} />
                   ))}
@@ -149,6 +157,8 @@ export function ProgramDivisions({
           </div>
         </details>
       ))}
+      </div>
+      ))}
     </div>
   );
 }
@@ -157,14 +167,15 @@ function GradeCard({ org, program, g, schedule, today, soon, follow }: { org: st
   const days = schedule?.map((d) => ({ ...d, games: d.games.filter((x) => x.group === g.label) })).filter((d) => d.games.length) ?? null;
   const next = days?.find((d) => d.date >= today); // the coming Game Day: its picture to share
   return (
-    <details className="overflow-hidden rounded-lg bg-zinc-50/60 ring-1 ring-zinc-950/5 dark:bg-white/5 dark:ring-white/10">
+    <details className={`overflow-hidden rounded-lg ring-1 ${genderTint(genderOf(g.label)) ?? "bg-zinc-50/60 ring-zinc-950/5 dark:bg-white/5 dark:ring-white/10"}`}>
       <summary className={summaryCls}>
         <span className="font-semibold">
-          {g.grade} <span className="font-normal text-zinc-500">· {g.teams.length} teams</span>
+          {g.grade} <span className="font-normal text-zinc-500">· {teamsLabel(g.teams.length)}</span>
         </span>
         <Arrow />
       </summary>
-      <div className="space-y-3 border-t border-zinc-100 p-2 dark:border-white/5">
+      {/* Standings beside the Schedule where there's room. */}
+      <div className="grid gap-4 border-t border-zinc-100 p-2 lg:grid-cols-2 dark:border-white/5">
         <section>
           <h4 className="px-2 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Standings</h4>
           {program && g.teams.some((t) => t.w + t.l > 0) && (

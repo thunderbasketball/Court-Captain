@@ -43,14 +43,18 @@ async function RegisterTeam({
   const programs = await openPrograms(db, new Date());
   return (
     <>
+      <Link href={`/login/${org}`} className="mb-4 inline-block text-sm font-medium text-thunder-blue hover:underline dark:text-blue-400">
+        ← Back to {o.name}
+      </Link>
       <div className="mb-6 flex flex-col items-center gap-2 text-center">
         <OrgLogo src={o.bigLogo} name={o.name} color={o.color} className="size-24 rounded-2xl text-4xl" />
-        <h1 className="text-xl font-semibold tracking-tight">Register</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Register new teams</h1>
         <p className="text-sm text-zinc-500">{o.name}</p>
       </div>
       <div className={`${card} p-5`}>
         {programs.length ? (
           <TeamSignupForm
+            org={org}
             grades={GRADE_CHOICES}
             programs={programs}
             today={easternDate(new Date())}

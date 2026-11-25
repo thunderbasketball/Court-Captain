@@ -158,6 +158,24 @@ describe("publishing REC and COMP separately", () => {
     expect((await dayGrid(deps(), dee, D2))!.minutes).toBe(60);
     expect((await games()).find((g) => g.id === comp.id)).toMatchObject({ court, starts: "09:55" });
 
+    // REC and COMP created separately: the other level's games stay the very same, published or not.
+    const both = await games();
+    const ofLevel = (l: string, list = both) => list.filter((g) => g.level === l);
+    expect(await createMatchups(deps(), dee, prog, D1, div, [], "REC")).toMatchObject({ ok: true, created: 1 });
+    expect(ofLevel("COMP", await games())).toEqual(ofLevel("COMP"));
+    await publish("COMP", false);
+    expect(await createDayMatchups(deps(), dee, D1, prog, "REC")).toMatchObject({ ok: true, created: 1, divisions: 1 });
+    expect(ofLevel("COMP", await games())).toEqual(ofLevel("COMP")); // not published, still left alone
+    const recNow = ofLevel("REC", await games());
+    expect(await createDayMatchups(deps(), dee, D1, prog, "COMP")).toMatchObject({ ok: true, created: 1 });
+    expect(ofLevel("REC", await games())).toEqual(recNow);
+    expect(ofLevel("COMP", await games())[0]).toMatchObject({ court, starts: "09:55" }); // the same pair keeps its slot
+    expect(await createMatchups(deps(), dee, prog, D1, div, [], "ALL")).toMatchObject({ ok: false });
+    expect(await createDayMatchups(deps(), dee, D1, prog, "x")).toMatchObject({ ok: false });
+    await publish("COMP");
+    expect(await createMatchups(deps(), dee, prog, D1, div, [], "COMP")).toMatchObject({ ok: false, message: expect.stringContaining("COMP schedule is published") });
+    expect(await createDayMatchups(deps(), dee, D1, prog, "COMP")).toMatchObject({ ok: true, created: 0, notes: ["COMP: published, left as it is"] });
+
     // Matchups: COMP's stay the same game; REC's are made again.
     const before = (await games()).find((g) => g.level === "COMP")!;
     expect(await createMatchups(deps(), dee, prog, D1, div)).toMatchObject({ ok: true, created: 1 });
@@ -179,7 +197,8 @@ describe("publishing REC and COMP separately", () => {
 
     // Unpublished: it moves.
     await publish("COMP", false);
-    expect(await put(comp.id, "09:00")).toEqual({ ok: true });
+    const compNow = (await games()).find((g) => g.level === "COMP")!; // created again above
+    expect(await put(compNow.id, "09:00")).toEqual({ ok: true });
   });
 
   it("what the live site publishes the old way (a whole day) counts for both levels", async () => {

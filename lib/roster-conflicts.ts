@@ -18,6 +18,7 @@ type Result = { ok: true } | { ok: false; message: string };
 const isId = (v: unknown): v is string => typeof v === "string" && /^\d{1,18}$/.test(v);
 
 type Player = TeamFacts & {
+  sourceId: string | null; // the team in its organization's own list
   first: string;
   last: string;
   dob: string | null;
@@ -28,7 +29,7 @@ type Player = TeamFacts & {
   locked: boolean;
 };
 
-export type ConflictSide = { name: string; dob: string | null; grade: string | null; team: string; org: string; division: string; locked: boolean };
+export type ConflictSide = { name: string; dob: string | null; grade: string | null; team: string; org: string; division: string; locked: boolean; orgKey: string; teamId: string; sourceId: string | null };
 export type RosterConflict = {
   pair: string;
   strength: Strength;
@@ -36,7 +37,8 @@ export type RosterConflict = {
   broken: string[]; // the rules it breaks (empty: allowed)
   a: ConflictSide;
   b: ConflictSide;
-  review: { decision: "different" | "allowed"; by: string } | null;
+  review: { decision: "different" | "allowed"; by: string; reason: string | null } | null;
+  allowed: string | null; // why it's allowed: within the rules, or the League's own reason (null: it isn't)
 };
 export type OddBirthdate = { name: string; dob: string; why: string; team: string; org: string };
 export type RosterReport = {
@@ -55,6 +57,7 @@ const gradeOf = (g: string | null): number | null => (g === null || g === "" ? n
 async function playersOf(q: Pick<Queryable, "query">, programId: string): Promise<{ teams: number; players: Player[]; facts: Map<string, TeamFacts> }> {
   const r = await q.query<{
     team_id: string;
+    source_id: string | null;
     team: string;
     level: string;
     division_id: string;
@@ -66,7 +69,7 @@ async function playersOf(q: Pick<Queryable, "query">, programId: string): Promis
     locked: boolean;
     players: { first: string; last: string; dob: string | null; grade: string | null }[];
   }>(
-    `select st.id::text as team_id, st.name as team, g.level, d.id::text as division_id, d.gender, d.grade_low as low, d.grade_high as high,
+    `select st.id::text as team_id, coalesce(st.thunder_team_id, st.org_team_id)::text as source_id, st.name as team, g.level, d.id::text as division_id, d.gender, d.grade_low as low, d.grade_high as high,
             -- An outside club's teams share a partner; FastBreak's are each their own.
             case when ot.id is not null then 'org:' || ot.org when st.thunder_team_id is not null then 'org:thunder'
                  when pa.org_slug is not null then 'org:' || pa.org_slug
@@ -99,6 +102,7 @@ async function playersOf(q: Pick<Queryable, "query">, programId: string): Promis
     players: r.rows.flatMap((t) =>
       t.players.map((p) => ({
         teamId: t.team_id,
+        sourceId: t.source_id,
         team: t.team,
         level: t.level,
         divisionId: t.division_id,
@@ -120,12 +124,19 @@ const pairKey = (programId: string, a: Player, b: Player) =>
   createHash("sha256").update([programId, ...[entryKey(a), entryKey(b)].sort()].join("||")).digest("hex");
 const RANK: Record<Strength, number> = { Conflict: 0, Likely: 1, Check: 2 };
 
+// Why a player on two rosters is allowed: the League's own reason, or the rules it keeps.
+function whyAllowed(a: Player, b: Player, broken: string[], r: { decision: string; by: string; reason: string | null } | undefined): string | null {
+  if (r?.decision === "allowed") return `The League allowed it${r.reason ? `: ${r.reason}` : ""} (${r.by})`;
+  if (r || broken.length) return null;
+  return `Within the rules: same organization, different divisions${a.level === b.level ? `, both ${a.level}` : ""}`;
+}
+
 // The report itself (the caller has checked who may see it). Players are compared only within the same birthdate or the
 // same name, so a big League stays quick.
 export async function rosterReport(q: Pick<Queryable, "query">, programId: string, now: Date): Promise<RosterReport> {
   const [{ teams, players }, reviews] = await Promise.all([
     playersOf(q, programId),
-    q.query<{ pair: string; decision: "different" | "allowed"; by: string }>("select pair, decision, reviewed_by as by from roster_conflict_reviews where program_id = $1", [programId]),
+    q.query<{ pair: string; decision: "different" | "allowed"; by: string; reason: string | null }>("select pair, decision, reviewed_by as by, reason from roster_conflict_reviews where program_id = $1", [programId]),
   ]);
   const reviewed = new Map(reviews.rows.map((r) => [r.pair, r]));
   const buckets = new Map<string, number[]>();
@@ -151,6 +162,9 @@ export async function rosterReport(q: Pick<Queryable, "query">, programId: strin
     org: p.org,
     division: `${p.division} ${p.level}`,
     locked: p.locked,
+    orgKey: p.orgKey,
+    teamId: p.teamId,
+    sourceId: p.sourceId,
   });
   for (const list of buckets.values())
     for (let x = 0; x < list.length; x++)
@@ -165,7 +179,7 @@ export async function rosterReport(q: Pick<Queryable, "query">, programId: strin
         if (m.strength === "Check" && (a.teamId === b.teamId || !broken.length)) continue; // twins on one team; or fine even if it is them
         const pair = pairKey(programId, a, b);
         const r = reviewed.get(pair);
-        const c: RosterConflict = { pair, ...m, broken, a: side(a), b: side(b), review: r ? { decision: r.decision, by: r.by } : null };
+        const c: RosterConflict = { pair, ...m, broken, a: side(a), b: side(b), review: r ? { decision: r.decision, by: r.by, reason: r.reason } : null, allowed: whyAllowed(a, b, broken, r) };
         (r ? out.reviewed : broken.length ? out.conflicts : out.allowed).push(c);
       }
   const order = (a: RosterConflict, b: RosterConflict) => RANK[a.strength] - RANK[b.strength] || a.a.name.localeCompare(b.a.name) || a.a.team.localeCompare(b.a.team);
@@ -191,31 +205,97 @@ export async function rosterConflicts(deps: Deps, viewer: SessionUser, programId
 }
 
 // Different players, allowed, or (null) back to be looked at.
-export async function reviewConflict(deps: Deps, viewer: SessionUser, programId: unknown, pair: unknown, decision: unknown): Promise<Result> {
+export async function reviewConflict(deps: Deps, viewer: SessionUser, programId: unknown, pair: unknown, decision: unknown, reason?: unknown): Promise<Result> {
   if (!isId(programId) || typeof pair !== "string" || !/^[0-9a-f]{64}$/.test(pair)) return { ok: false, message: "That isn't there any more." };
   if (decision !== null && decision !== "different" && decision !== "allowed") return { ok: false, message: "Pick what it is." };
   if (!(await mayReview(deps.pool, viewer, programId))) return { ok: false, message: "Only the League's Owners, Admins and Directors of Programs can do that." };
+  const why = typeof reason === "string" ? reason.trim().replace(/\s+/g, " ").slice(0, 200) : "";
+  if (decision === "allowed" && why.length < 3) return { ok: false, message: "Say why it's allowed." };
   if (decision === null) await deps.pool.query("delete from roster_conflict_reviews where program_id = $1 and pair = $2", [programId, pair]);
   else
     await deps.pool.query(
-      `insert into roster_conflict_reviews (program_id, pair, decision, reviewed_by, reviewed_at)
-       select p.id, $2, $3, $4, $5 from scenic_programs p where p.id = $1
-       on conflict (program_id, pair) do update set decision = excluded.decision, reviewed_by = excluded.reviewed_by, reviewed_at = excluded.reviewed_at`,
-      [programId, pair, decision, `${viewer.firstName} ${viewer.lastName}`, deps.now()],
+      `insert into roster_conflict_reviews (program_id, pair, decision, reviewed_by, reviewed_at, reason)
+       select p.id, $2, $3, $4, $5, $6 from scenic_programs p where p.id = $1
+       on conflict (program_id, pair) do update set decision = excluded.decision, reviewed_by = excluded.reviewed_by, reviewed_at = excluded.reviewed_at, reason = excluded.reason`,
+      [programId, pair, decision, `${viewer.firstName} ${viewer.lastName}`, deps.now(), decision === "allowed" ? why : null],
     );
   return { ok: true };
 }
 
-// Home's To Do: each current League's Conflict and Likely pairs still to look at (the caller is one of its Admins).
-export async function openConflicts(q: Pick<Queryable, "query">, org: string, now: Date): Promise<{ programId: string; program: string; n: number }[]> {
+// Pure: a report's pairs for a Home or Warnings card: Conflict and Likely still to look at, and players on two rosters allowed.
+const brief = (r: RosterReport) => ({
+  conflicts: r.conflicts.filter((c) => c.strength !== "Check"),
+  allowed: [...r.allowed, ...r.reviewed.filter((c) => c.allowed)],
+});
+export type LeagueConflicts = { programId: string; program: string; conflicts: RosterConflict[]; allowed: RosterConflict[] };
+export const openCount = (list: LeagueConflicts[]) => list.reduce((n, p) => n + p.conflicts.length, 0);
+export const allowedCount = (list: LeagueConflicts[]) => list.reduce((n, p) => n + p.allowed.length, 0);
+
+// Home's To Do: each current League's pairs (the caller is one of its Admins).
+export async function openConflicts(q: Pick<Queryable, "query">, org: string, now: Date): Promise<LeagueConflicts[]> {
   const r = await q.query<{ id: string; name: string }>("select id::text, name from scenic_programs where org = $1 and kind = 'League' and ends_on >= $2::date order by starts_on", [
     org,
     easternDate(now),
   ]);
   const out = await Promise.all(
-    r.rows.map(async (p) => ({ programId: p.id, program: p.name, n: (await rosterReport(q, p.id, now)).conflicts.filter((c) => c.strength !== "Check").length })),
+    r.rows.map(async (p) => ({ programId: p.id, program: p.name, ...brief(await rosterReport(q, p.id, now)) })),
   );
-  return out.filter((x) => x.n > 0);
+  return out.filter((x) => x.conflicts.length + x.allowed.length > 0);
+}
+
+// An organization with teams in someone else's Leagues still going: their pairs that involve its teams: not allowed, to warn
+// its staff; allowed, to note (the caller has checked who). Another organization's player and team aren't named. Only the League decides.
+export async function orgConflicts(q: Pick<Queryable, "query">, org: string, now: Date): Promise<LeagueConflicts[]> {
+  const r = await q.query<{ id: string; name: string }>(
+    `select p.id::text, p.name from scenic_programs p
+      where p.kind = 'League' and p.org <> $1 and p.ends_on >= $2::date
+        and exists (select 1 from scenic_registrations g join scenic_teams t on t.id = g.team_id
+                      left join org_teams ot on ot.id = t.org_team_id left join partners pa on pa.id = t.partner_id
+                     where g.program_id = p.id and g.removed_at is null
+                       and (ot.org = $1 or pa.org_slug = $1 or ($1 = 'thunder' and t.thunder_team_id is not null)))
+      order by p.starts_on`,
+    [org, easternDate(now)],
+  );
+  const key = `org:${org}`;
+  const other: ConflictSide = { name: "Another player", dob: null, grade: null, team: "Another organization's team", org: "", division: "", locked: false, orgKey: "", teamId: "", sourceId: null };
+  const mine = (list: RosterConflict[]) =>
+    list
+      .filter((c) => c.a.orgKey === key || c.b.orgKey === key)
+      .map((c) => (c.a.orgKey === key ? { ...c, b: c.b.orgKey === key ? c.b : other } : { ...c, a: c.b, b: other }));
+  const out = await Promise.all(
+    r.rows.map(async (p) => {
+      const x = brief(await rosterReport(q, p.id, now));
+      return { programId: p.id, program: p.name, conflicts: mine(x.conflicts), allowed: mine(x.allowed) };
+    }),
+  );
+  return out.filter((x) => x.conflicts.length + x.allowed.length > 0);
+}
+
+// A team's players on another of its Leagues' rosters too, for its team page (the caller may see the team): allowed, just
+// noted with why; not allowed, a warning with the rule. Another organization's team isn't named.
+export type Doubled = { name: string; maybe: boolean; other: string; program: string; allowed: string | null; broken: string[] };
+export async function teamDoubles(q: Pick<Queryable, "query">, team: { thunderTeamId: string } | { orgTeamId: string } | { teamId: string }, now: Date): Promise<Doubled[]> {
+  const [col, id] = "thunderTeamId" in team ? ["thunder_team_id", team.thunderTeamId] : "orgTeamId" in team ? ["org_team_id", team.orgTeamId] : ["id", team.teamId];
+  const regs = await q.query<{ programId: string; program: string; teamId: string }>(
+    `select p.id::text as "programId", p.name as program, t.id::text as "teamId" from scenic_teams t
+       join scenic_registrations r on r.team_id = t.id and r.removed_at is null
+       join scenic_programs p on p.id = r.program_id and p.kind = 'League' and p.ends_on >= $2::date
+      where t.${col} = $1 order by p.starts_on`,
+    [id, easternDate(now)],
+  );
+  const lists = await Promise.all(
+    regs.rows.map(async (g) => {
+      const x = brief(await rosterReport(q, g.programId, now));
+      return [...x.conflicts, ...x.allowed].flatMap((c) => {
+        const me = c.a.teamId === g.teamId ? c.a : c.b.teamId === g.teamId ? c.b : null;
+        if (!me) return [];
+        const them = me === c.a ? c.b : c.a;
+        const other = them.teamId === me.teamId ? "this roster twice" : them.orgKey === me.orgKey ? them.team : "another organization's team";
+        return [{ name: me.name, maybe: c.strength !== "Conflict", other, program: g.program, allowed: c.allowed, broken: c.broken }];
+      });
+    }),
+  );
+  return lists.flat();
 }
 
 // ---- Warnings while adding players (SPEC.md section 13): the same match and rule, before they're saved ----

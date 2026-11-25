@@ -2,6 +2,9 @@
 
 import { useState, useTransition } from "react";
 import type { PublicDay, PublicGroup } from "@/lib/public-league";
+import type { LeagueGym } from "@/lib/league-gyms";
+import LeagueGyms from "../../LeagueGyms";
+import SubCard from "../../SubCard";
 import { REC_LIMITED } from "@/lib/program-options";
 import { loadPublicProgram } from "../../league/actions";
 import { ProgramDivisions } from "../../PublicProgramViews";
@@ -20,7 +23,7 @@ export type ProgramCard = {
   openable: boolean; // taps open its Teams (and a League's Schedule); a player program (season) just shows
 };
 
-type Loaded = { groups: PublicGroup[]; schedule: PublicDay[] | null; soon: string[]; today: string };
+type Loaded = { gyms: LeagueGym[] | null; groups: PublicGroup[]; schedule: PublicDay[] | null; soon: string[]; today: string };
 
 
 // The organization's programs on its login page, no login needed (SPEC.md section 14): open for registration, under
@@ -105,7 +108,7 @@ function Program({ org, p, initial }: { org: string; p: ProgramCard; initial: Lo
             href={`/register-team/${org}?program=${p.id}`}
             className="shrink-0 rounded-full bg-thunder-blue px-3.5 py-1.5 text-sm font-semibold text-white hover:bg-thunder-blue/90"
           >
-            Register
+            Register new team
           </Link>
         )}
       </div>
@@ -117,8 +120,16 @@ function Program({ org, p, initial }: { org: string; p: ProgramCard; initial: Lo
           {loading && !data && <p className="p-2 text-sm text-zinc-500">Loading…</p>}
           {error && <p className="p-2 text-sm text-red-600">{error}</p>}
           {data && <ProgramDivisions org={p.org ?? org} program={p.id} groups={data.groups} schedule={data.schedule} today={data.today} soon={data.soon} follow={!p.org} />}
+          {/* A League's gyms: where its games are. */}
+          {data?.gyms && (
+            <div className="mt-2">
+              <SubCard title="Gyms" count={data.gyms.length || undefined}>
+                <LeagueGyms gyms={data.gyms} />
+              </SubCard>
+            </div>
+          )}
           {data && p.org && (
-            <Link href={`/league/${p.org}?l=${p.id}`} className="mt-2 block px-1 text-sm font-medium text-thunder-blue hover:underline dark:text-blue-400">
+            <Link href={`/league/${p.org}?l=${p.id}&from=${org}`} className="mt-2 block px-1 text-sm font-medium text-thunder-blue hover:underline dark:text-blue-400">
               Public view of the League →
             </Link>
           )}

@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
 import type { Mail } from "./email";
-import { addPlayers } from "./rosters";
+import { addPlayers, movePlayer, removePlayer } from "./rosters";
 import { createTestDb } from "./testing/db";
-import { saveUniform } from "./uniforms";
+import { listUniforms, saveUniform, setNeedsUniform } from "./uniforms";
 import { cancelOrder, orderCsv, pastOrders, previewVendorOrder, saveVendor, sendToVendor, vendorView } from "./uniform-vendor";
 
 const person = (coachId: string, firstName: string, isDirector = false, areas?: SessionUser["thunderAreas"]): SessionUser => ({
@@ -96,18 +96,35 @@ describe("uniform vendor", () => {
     expect(await sendToVendor(deps(), coach, false)).toMatchObject({ ok: false });
   });
 
+  it("a duplicate number is blocked from the order until it's changed, even from Send everyone", async () => {
+    await saveVendor(deps(), earl, "orders@vendor.com", "");
+    await saveUniform(deps(), earl, teams["10B Butcher"], "b2", { number: "12" }); // Dawson's
+    const v = (await vendorView(deps(), earl))!;
+    expect(v.ready.map((r) => r.name)).toEqual(["KIMSEY", "ROGERS"]);
+    expect(v.held.map((h) => [h.name, h.missing]).sort()).toEqual([
+      ["DAWSON", "duplicate number #12"],
+      ["MATTHEWS", "no size"],
+      ["OGLE", "duplicate number #12"],
+    ]);
+    expect(await sendToVendor(deps(), earl, true)).toMatchObject({ ok: true, players: 2 });
+    expect(sent[0].text).not.toContain("DAWSON");
+    await saveUniform(deps(), earl, teams["10B Butcher"], "b2", { number: "1" });
+    expect(await sendToVendor(deps(), earl, false)).toMatchObject({ ok: true, players: 2 });
+    expect(sent[1].text).toContain("DAWSON  #12");
+  });
+
   it("emails the new players with the order number; the next send has only new ones", async () => {
     await saveVendor(deps(), earl, "orders@vendor.com", "earl@thunder.org");
-    expect(await sendToVendor(deps(), earl, false)).toEqual({ ok: true, players: 4, orderNo: "20261120" });
+    expect(await sendToVendor(deps(), earl, false)).toMatchObject({ ok: true, players: 4, orderNo: "20261120" });
     expect(sent[0]).toMatchObject({ to: "orders@vendor.com", cc: ["earl@thunder.org", "earl@me.com"], subject: "Thunder Basketball uniform order #20261120: 4 players" });
     expect(sent[0].text).toContain("GIRLS\n3G Campbell  KIMSEY  #0  YM\n3G Campbell  ROGERS  #2  YS\n\nBOYS\n10B Butcher  OGLE  #1  AM");
     expect(sent[0].attachments?.[0]).toMatchObject({ filename: "Thunder uniform order 20261120.csv", contentType: "text/csv" });
 
     expect(await sendToVendor(deps(), earl, false)).toEqual({ ok: false, message: "No new uniforms to send." });
     await saveUniform(deps(), earl, teams["3G Campbell"], "g3", { size: "YS" }); // Matthews now complete
-    expect(await sendToVendor(deps(), earl, false)).toEqual({ ok: true, players: 1, orderNo: "20261120-2" }); // same day
+    expect(await sendToVendor(deps(), earl, false)).toMatchObject({ ok: true, players: 1, orderNo: "20261120-2" }); // same day
     t = new Date("2026-11-21T15:00:00Z");
-    expect(await sendToVendor(deps(), earl, true)).toEqual({ ok: true, players: 5, orderNo: "20261121" }); // Send everyone
+    expect(await sendToVendor(deps(), earl, true)).toMatchObject({ ok: true, players: 5, orderNo: "20261121" }); // Send everyone
 
     const past = (await pastOrders(deps(), earl))!;
     expect(past.map((o) => [o.orderNo, o.players.length, o.everyone])).toEqual([
@@ -116,7 +133,7 @@ describe("uniform vendor", () => {
       ["20261120", 4, false],
     ]);
     expect(past[1].players[0]).toMatchObject({ team: "3G Campbell", name: "MATTHEWS", number: "5", size: "YS" });
-    expect((await vendorView(deps(), earl))?.last).toMatchObject({ orderNo: "20261121", players: 5, sentBy: "Earl X" });
+    expect((await vendorView(deps(), earl))?.last).toMatchObject({ orderNo: "20261121", counts: "5 players", sentBy: "Earl X" });
   });
 
   it("the preview is the email Send sends, with the sender copied; nothing is sent or recorded", async () => {
@@ -166,7 +183,7 @@ describe("uniform vendor", () => {
     expect(await cancelOrder(deps(), earl, "20261120", false)).toMatchObject({ ok: false }); // already cancelled
 
     sent = [];
-    expect(await sendToVendor(deps(), earl, false)).toEqual({ ok: true, players: 4, orderNo: "20261120-2" });
+    expect(await sendToVendor(deps(), earl, false)).toMatchObject({ ok: true, players: 4, orderNo: "20261120-2" });
     expect((await pastOrders(deps(), earl))!.map((o) => [o.orderNo, !!o.cancelled, o.canCancel])).toEqual([
       ["20261120-2", false, true],
       ["20261120", true, false],
@@ -213,5 +230,58 @@ describe("uniform vendor", () => {
       '9B C,"SMITH, JR",4,YM',
       "",
     ]);
+  });
+
+  it("an order follows the player to a new team: not ordered again, number and size come along; a 2nd team, a real change or a new uniform still counts", async () => {
+    const other = (
+      await db.pool.query<{ id: string }>("insert into teams (name, gender, grades, grade_sort, level, created_by) values ('4G Epps', 'Girls', '{4}', 4, 'COMP', 'x') returning id::text")
+    ).rows[0].id;
+    const here = teams["3G Campbell"];
+    const ready = async () => (await vendorView(deps(), earl))!.ready.map((r) => `${r.team} ${r.name}`);
+    const mine = async (team: string, id: string) => (await listUniforms(deps(), earl, team))?.find((r) => r.registrantId === id);
+    expect(await saveVendor(deps(), earl, "v@example.com", "")).toMatchObject({ ok: true });
+    expect(await sendToVendor(deps(), earl, false)).toMatchObject({ ok: true, players: 4 });
+    expect(await ready()).toEqual([]);
+
+    // Moved straight to another team.
+    expect(await movePlayer(deps(), earl, "g1", other)).toEqual({ ok: true });
+    expect(await ready()).toEqual([]);
+    expect(await mine(other, "g1")).toMatchObject({ number: "2", size: "YS", orderNo: "20261120", locked: true });
+    expect(await mine(here, "g1")).toBeUndefined();
+    expect((await vendorView(deps(), earl))!.sentPlayers).toBe(4);
+
+    // Taken off, then put on another team later (and from the roster board's Not on a team).
+    expect(await removePlayer(deps(), earl, here, "g2")).toEqual({ ok: true });
+    expect(await addPlayers(deps(), earl, other, ["g2"])).toMatchObject({ ok: true });
+    expect(await mine(other, "g2")).toMatchObject({ number: "0", size: "YM", orderNo: "20261120" });
+    expect(await movePlayer(deps(), earl, "g2", null)).toEqual({ ok: true });
+    expect(await movePlayer(deps(), earl, "g2", here, null)).toEqual({ ok: true });
+    expect(await mine(here, "g2")).toMatchObject({ number: "0", size: "YM", orderNo: "20261120" });
+    expect(await ready()).toEqual([]);
+
+    // Not ordered yet: their number, size and Needs a uniform move too, and they're ordered once, on the new team.
+    await movePlayer(deps(), earl, "g3", other);
+    expect(await mine(other, "g3")).toMatchObject({ number: "5", size: null });
+    await setNeedsUniform(deps(), earl, teams["10B Butcher"], "b3", true);
+    await saveUniform(deps(), earl, teams["10B Butcher"], "b3", { size: "AL" });
+    await movePlayer(deps(), earl, "b3", other);
+    expect(await mine(other, "b3")).toMatchObject({ number: "7", size: "AL", ordered: true });
+    expect(await ready()).toEqual(["4G Epps LEE"]);
+
+    // Needs a new one after moving: in the next order, once.
+    t = new Date("2026-11-21T15:00:00Z");
+    expect(await setNeedsUniform(deps(), earl, other, "g1", true)).toMatchObject({ ok: true });
+    expect(await ready()).toContain("4G Epps ROGERS");
+    expect(await setNeedsUniform(deps(), earl, other, "g1", false)).toMatchObject({ ok: true });
+    expect(await ready()).not.toContain("4G Epps ROGERS");
+
+    // On a 2nd team while still on the first: each team has its own, as before.
+    expect(await addPlayers(deps(), earl, here, ["g1"], true)).toMatchObject({ ok: true });
+    expect(await mine(here, "g1")).toMatchObject({ number: "2", size: "YS" }); // ordered for 3G Campbell itself
+    expect(await addPlayers(deps(), earl, other, ["b1"], true)).toMatchObject({ ok: true });
+    expect(await mine(other, "b1")).toMatchObject({ number: null, orderNo: null });
+    // A cancelled order doesn't follow anyone.
+    expect(await cancelOrder(deps(), earl, "20261120", false)).toEqual({ ok: true });
+    expect((await mine(other, "g1"))?.orderNo).toBeNull();
   });
 });

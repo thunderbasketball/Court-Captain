@@ -34,9 +34,9 @@ export async function listOrgMembers(
      where (exists (select 1 from org_roles o where o.coach_id = u.coach_id and o.org = $1)
             or exists (select 1 from org_team_coaches c join org_teams t on t.id = c.team_id
                        where c.coach_id = u.coach_id and t.org = $1))
-       and not exists (select 1 from platform_admins p where p.coach_id = u.coach_id) -- CourtCaptain staff stay in the background
+       and (u.coach_id = $2 or not exists (select 1 from platform_admins p where p.coach_id = u.coach_id)) -- CourtCaptain staff stay in the background (but see themselves)
      order by lower(u.last_name), lower(u.first_name)`,
-    [org],
+    [org, viewer.coachId],
   );
   return { users: r.rows, admin };
 }

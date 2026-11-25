@@ -2,6 +2,7 @@
 // grade requirements, no Head Coach, a coach's cell or email missing, or no players), Uniforms while any rostered
 // player still needs a number or size (as lib/uniforms.ts uniformsMissing, across every team).
 import type { Queryable } from "./sql";
+import { orgDuplicates } from "./duplicate-numbers";
 import { memo } from "./request-memo";
 import { rosterIssue, schoolYearOf } from "./eligibility";
 import { orgGradeRules } from "./grade-rules";
@@ -12,7 +13,7 @@ export function directorAlerts(q: Pick<Queryable, "query">, now: Date): Promise<
   return memo(q, "director-alerts", () => readDirectorAlerts(q, now));
 }
 async function readDirectorAlerts(q: Pick<Queryable, "query">, now: Date): Promise<{ teams: boolean; uniforms: boolean }> {
-  const [teams, uniforms, { rules }] = await Promise.all([
+  const [teams, uniforms, { rules }, dups] = await Promise.all([
     q.query<{ grades: string[]; missing: boolean; players: { grade: string; birthdate: string | null }[] }>(
       `select t.grades,
               (not exists (select 1 from team_staff s where s.team_id = t.id and s.role = 'HeadCoach') -- no Head Coach (or only named)
@@ -33,10 +34,11 @@ async function readDirectorAlerts(q: Pick<Queryable, "query">, now: Date): Promi
                           or ((coalesce(g.uniform_needed, false) or u.needs_uniform_at is not null) and u.size is null)) as n`,
     ),
     orgGradeRules(q, "thunder", now),
+    orgDuplicates(q, "thunder"), // two players with one number
   ]);
   const year = schoolYearOf(easternDate(now));
   return {
-    teams: teams.rows.some((t) => t.missing || !!rosterIssue(t.grades, t.players, year, rules)),
-    uniforms: uniforms.rows[0].n,
+    teams: dups.length > 0 || teams.rows.some((t) => t.missing || !!rosterIssue(t.grades, t.players, year, rules)),
+    uniforms: uniforms.rows[0].n || dups.length > 0,
   };
 }

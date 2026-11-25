@@ -13,6 +13,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ org: str
   const max = wide ? (c.big ? 1 : 4) : c.big ? 3 : 9;
   const lines = c.lines.length > max ? c.lines.slice(0, max - 1) : c.lines;
   const more = c.lines.length - lines.length;
+  const address = publicAddress(o.slug) ?? o.name;
+  const tall = !wide && c.foot.length + address.length > 56;
   const many = lines.length + (more ? 1 : 0) > 4;
   const rowSize = wide ? 30 : many ? 34 : 44;
   const row = (l: { text: string; side?: string }, i: number) => (
@@ -62,9 +64,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ org: str
         {lines.map(row)}
         {more > 0 && <div style={{ display: "flex", padding: "0 28px", fontSize: rowSize * 0.85, color: "rgba(255,255,255,0.85)" }}>{`+ ${more} more`}</div>}
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: wide ? 24 : 30 }}>
-        <div style={{ display: "flex", padding: wide ? "10px 24px" : "14px 30px", borderRadius: 999, background: "#ffffff", color: "#0b1020", fontFamily: "Bold" }}>{c.foot}</div>
-        <div style={{ display: "flex", color: "rgba(255,255,255,0.9)" }}>{publicAddress(o.slug) ?? o.name}</div>
+      {/* The button and the address: side by side, or the address under it when the two don't fit on one line. */}
+      <div style={{ display: "flex", flexDirection: tall ? "column" : "row", gap: 16, justifyContent: "space-between", alignItems: tall ? "flex-start" : "center", fontSize: wide ? 24 : 30 }}>
+        <div style={{ display: "flex", flexShrink: 0, padding: wide ? "10px 24px" : "14px 30px", borderRadius: 999, background: "#ffffff", color: "#0b1020", fontFamily: "Bold" }}>{c.foot}</div>
+        <div style={{ display: "flex", flexShrink: 0, color: "rgba(255,255,255,0.9)", fontSize: address.length > 54 ? 24 : wide ? 24 : 30 }}>{address}</div>
       </div>
     </div>,
   );

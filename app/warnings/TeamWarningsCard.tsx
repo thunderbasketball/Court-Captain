@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { orgTeamWarnings, type WarnedTeam } from "@/lib/team-warnings";
+import { allowedCount, openCount } from "@/lib/roster-conflicts";
+import OurConflicts from "../OurConflicts";
 import SubCard from "../SubCard";
 
 function TeamList({ teams, base }: { teams: WarnedTeam[]; base: string }) {
@@ -31,6 +33,7 @@ export default async function TeamWarningsCard({ org, base }: { org: string; bas
     w.birthdates && { key: "birthdates", title: "Birthdate missing", teams: w.birthdates },
     w.wrong && { key: "wrong", title: "Birthdate can't be right", teams: w.wrong },
     w.numbers && { key: "numbers", title: "Uniform number missing", teams: w.numbers },
+    w.duplicates && { key: "duplicates", title: "Duplicate uniform numbers", teams: w.duplicates },
   ].filter((p): p is { key: string; title: string; teams: WarnedTeam[] } => !!p);
   return (
     <SubCard
@@ -38,8 +41,13 @@ export default async function TeamWarningsCard({ org, base }: { org: string; bas
       count={`${w.teams} team${w.teams === 1 ? "" : "s"}`}
       alert={w.teams > 0}
     >
-      {parts.length ? (
+      {parts.length || w.conflicts.length ? (
         <div className="space-y-2">
+          {w.conflicts.length > 0 && (
+            <SubCard title="Roster conflicts" count={openCount(w.conflicts) || `${allowedCount(w.conflicts)} allowed`} alert={openCount(w.conflicts) > 0}>
+              <OurConflicts list={w.conflicts} base={base} />
+            </SubCard>
+          )}
           {parts.map((p) => (
             <SubCard key={p.key} title={p.title} count={p.teams.length} alert={p.teams.length > 0}>
               <TeamList teams={p.teams} base={base} />

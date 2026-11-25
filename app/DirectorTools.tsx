@@ -13,7 +13,13 @@ const AREAS_NOTE =
 
 type AreaOption = { key: string; name: string; covers: string };
 export type Director = { id: string; name: string; owner: boolean; admin: boolean; areas: string[]; removal?: string | null; me?: boolean };
-type Person = { id: string; name: string };
+type Person = { id: string; name: string; me?: boolean }; // me: the person looking (listed first, as Myself)
+// Given by name to anyone on staff, Owners and Admins too.
+const NAMED_ROLES = ["officials", "scores", "scheduling"] as const;
+export type NamedRole = (typeof NAMED_ROLES)[number];
+const NAMED_ROLE: Record<NamedRole, string> = { officials: "Officials Assigner", scores: "Director of Scores", scheduling: "Director of Scheduling" };
+const NAMED_ABOUT: Record<NamedRole, string> = { officials: "assigns officials to games", scores: "enters game scores", scheduling: "makes the game schedule" };
+const a = (n: NamedRole) => (n === "officials" ? "an" : "a");
 
 // On an organization's Users page (SPEC.md section 14): Admins add Directors and change their areas; Owners also add and
 // remove Admins (the CourtCaptain page manages Owners). The people are listed with everyone else on that page; these are
@@ -97,19 +103,20 @@ export function DirectorButtons({
   ownerOptions?: Person[]; // Owners: who can be made another Owner
   staff?: Director[]; // its Owners, Admins and Directors (any of them can be the Officials Assigner)
 }) {
-  // CourtOfficials: anyone on staff not yet an Officials Assigner, then everyone else who could be a Director.
-  const assigning = areas.some((a) => a.key === "officials");
-  const assignerOptions = [
-    ...staff.filter((d) => !d.areas.includes("officials")).map((d) => ({ id: d.id, name: d.name })),
-    ...options,
-  ].filter((p, i, all) => all.findIndex((x) => x.id === p.id) === i);
+  // The Officials Assigner and Directors of Scores and Scheduling: only its staff who aren't one yet, yourself first
+  // (someone else is a New person).
+  const namedOptions = (area: NamedRole) =>
+    staff
+      .filter((d) => !d.areas.includes(area))
+      .map((d) => ({ id: d.id, name: d.name, me: d.me }))
+      .sort((a, b) => Number(b.me ?? false) - Number(a.me ?? false));
   return (
     <>
-      {assigning && (
-        <PopUp label="Officials Assigner (assigns officials to games)" title="Add an Officials Assigner" className={menuItem} note={AREAS_NOTE}>
-          {(close) => <AssignerForm org={org} options={assignerOptions} onDone={close} />}
+      {NAMED_ROLES.filter((n) => areas.some((a) => a.key === n)).map((n) => (
+        <PopUp key={n} label={`${NAMED_ROLE[n]} (${NAMED_ABOUT[n]})`} title={`Add ${a(n)} ${NAMED_ROLE[n]}`} className={menuItem} note={AREAS_NOTE}>
+          {(close) => <AssignerForm org={org} options={namedOptions(n)} area={n} onDone={close} />}
         </PopUp>
-      )}
+      ))}
       {directorsOn && (
         <PopUp label="Director (choose their areas)" title="Add a Director" className={menuItem} note={AREAS_NOTE}>
           {(close) => <DirectorForm org={org} areas={areas} options={options} onDone={close} />}
@@ -146,13 +153,13 @@ export function DirectorRole({
   canManageAdmins: boolean;
 }) {
   const names = Object.fromEntries(areas.map((a) => [a.key, a.name]));
-  // CourtOfficials: the Assigner (officials area) can be given to Owners and Admins too, by name.
-  const assigning = areas.some((a) => a.key === "officials");
-  const assigner = assigning && person.areas.includes("officials");
+  // The Officials Assigner and Director of Scores can be given to Owners and Admins too, by name.
+  const offered = NAMED_ROLES.filter((n) => areas.some((a) => a.key === n));
+  const named = offered.filter((n) => person.areas.includes(n)).map((n) => ` · ${NAMED_ROLE[n]}`).join("");
   const label = person.owner
-    ? `Owner · every area${person.removal ? " · removal waiting for their approval" : ""}${assigner ? " · Officials Assigner" : ""}`
+    ? `Owner · every area${person.removal ? " · removal waiting for their approval" : ""}${named}`
     : person.admin
-      ? `Admin · every area${assigner ? " · Officials Assigner" : ""}`
+      ? `Admin · every area${named}`
       : person.areas.length
         ? person.areas.map((a) => (a === "officials" ? "Officials Assigner" : `Director of ${names[a] ?? a}`)).join(" · ")
         : "Director · no areas yet";
@@ -186,18 +193,21 @@ export function DirectorRole({
           },
         ]
       : []),
-    ...(person.admin && assigning
-      ? [
-          assigner
+    ...(person.admin
+      ? offered.map((n) =>
+          person.areas.includes(n)
             ? {
-                key: "assigner",
-                label: "Remove Officials Assigner",
+                key: n,
+                label: `Remove ${NAMED_ROLE[n]}`,
                 danger: true,
-                ask: `Remove ${person.name} as Officials Assigner? They won't schedule officials any more.`,
-                run: () => setAssigner(org, person.id, false),
+                ask:
+                  n === "officials"
+                    ? `Remove ${person.name} as Officials Assigner? They won't schedule officials any more.`
+                    : `Remove ${person.name} as ${NAMED_ROLE[n]}? As an ${person.owner ? "Owner" : "Admin"} they can still ${n === "scores" ? "enter scores" : "make the schedule"}.`,
+                run: () => setAssigner(org, person.id, false, n),
               }
-            : { key: "assigner", label: "Make Officials Assigner", danger: false, ask: null, run: () => setAssigner(org, person.id, true) },
-        ]
+            : { key: n, label: `Make ${NAMED_ROLE[n]}`, danger: false, ask: null, run: () => setAssigner(org, person.id, true, n) },
+        )
       : []),
   ];
   return (
@@ -295,8 +305,9 @@ function RoleGear({ name, actions }: { name: string; actions: RoleAction[] }) {
 }
 
 
-// Admins: pick a person (on staff already, or someone new by name and cell) to make an Officials Assigner.
-function AssignerForm({ org, options, onDone }: { org: string; options: Person[]; onDone: () => void }) {
+// Admins: pick a person (yourself, its staff, or someone new by name and cell) to make an Officials Assigner or Director of
+// Scores.
+export function AssignerForm({ org, options, area, onDone }: { org: string; options: Person[]; area: NamedRole; onDone?: () => void }) {
   const router = useRouter();
   const [pick, setPick] = useState("");
   const [person, setPerson] = useState({ first: "", last: "", cell: "" });
@@ -311,9 +322,9 @@ function AssignerForm({ org, options, onDone }: { org: string; options: Person[]
           setError(null);
           const id = await chosenId(org, pick, person, setError);
           if (!id) return;
-          const r = await setAssigner(org, id, true);
+          const r = await setAssigner(org, id, true, area);
           if (!r.ok) return setError(r.message);
-          onDone();
+          onDone?.();
           router.refresh();
         });
       }}
@@ -324,7 +335,7 @@ function AssignerForm({ org, options, onDone }: { org: string; options: Person[]
         setPick={setPick}
         person={person}
         setPerson={setPerson}
-        prompt="Pick a person to make an Officials Assigner…"
+        prompt={`Pick a person to make ${a(area)} ${NAMED_ROLE[area]}…`}
       />
       {error && <p className="text-sm text-red-600">{error}</p>}
       <div className="flex items-center gap-3">
@@ -333,11 +344,13 @@ function AssignerForm({ org, options, onDone }: { org: string; options: Person[]
           disabled={busy || !pick}
           className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-zinc-900"
         >
-          Make Officials Assigner
+          Make {NAMED_ROLE[area]}
         </button>
-        <button type="button" onClick={onDone} className="text-sm text-zinc-500">
-          Cancel
-        </button>
+        {onDone && (
+          <button type="button" onClick={onDone} className="text-sm text-zinc-500">
+            Cancel
+          </button>
+        )}
       </div>
     </form>
   );
@@ -527,7 +540,7 @@ function PersonPicker({
         <option value={NEW_PERSON}>New person…</option>
         {options.map((o) => (
           <option key={o.id} value={o.id}>
-            {o.name}
+            {o.me ? `Myself (${o.name})` : o.name}
           </option>
         ))}
       </select>

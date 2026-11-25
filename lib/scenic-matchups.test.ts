@@ -1,9 +1,50 @@
 import { describe, expect, it } from "vitest";
+import { hostRoom, hostShares, planOrder } from "./host-room";
 import { assignHome, planMatchups, type HomeTeam, type MatchTeam } from "./scenic-matchups";
 
 const t = (id: string, need = 1, club = id, grade = 4, level = "REC"): MatchTeam => ({ id, need, club, grade, level });
 const k = (a: string, b: string) => (Number(a) < Number(b) ? `${a}-${b}` : `${b}-${a}`);
 const pairs = (p: { pairs: [string, string][] }) => p.pairs.map(([a, b]) => k(a, b)).sort();
+
+describe("how many home games a host has room for", () => {
+  const courts = [
+    { id: "any", hostId: "H", slots: 3, divisions: null },
+    { id: "young", hostId: "H", slots: 2, divisions: ["d1"] },
+    { id: "er", hostId: "E", slots: 5, divisions: null },
+  ];
+  it("its open slots for the division, less its other teams' games, on the court with fewer divisions first", () => {
+    expect([...hostRoom(courts, [], "d1")]).toEqual([["H", 5], ["E", 5]]);
+    expect(hostRoom(courts, [], "d2").get("H")).toBe(3);
+    expect(hostRoom(courts, [{ hostId: "H", divisionId: "d1" }, { hostId: "H", divisionId: "d1" }], "d2").get("H")).toBe(3); // on "young"
+    expect(hostRoom(courts, [{ hostId: "H", divisionId: "d2" }, { hostId: "H", divisionId: "d2" }], "d1").get("H")).toBe(3);
+    expect(hostRoom(courts, [{ hostId: "E", divisionId: "d1", court: "any" }], "d2").get("H")).toBe(2); // another's game placed there
+    expect(hostRoom(courts, Array.from({ length: 99 }, () => ({ hostId: "H", divisionId: "d2" })), "d2").get("H")).toBe(0);
+    expect(hostRoom(courts, [{ hostId: null, divisionId: "d2" }], "d2").get("E")).toBe(5);
+  });
+  it("shares: even over the day looking at every group, a host held by its courts makes up for it where it can", () => {
+    const group = (id: string, divisionId: string, games: number, need: Record<string, number>) => ({ id, divisionId, games, need: new Map(Object.entries(need)) });
+    // City's one court takes only d1 (6 slots); Thunder's takes any. City's share is all in d1, Thunder's mostly in d2.
+    const two = [{ id: "c", hostId: "City", slots: 6, divisions: ["d1"] }, { id: "t", hostId: "T", slots: 20, divisions: null }];
+    const groups = [group("d1", "d1", 6, { City: 7, T: 5 }), group("d2", "d2", 6, { City: 8, T: 6 })];
+    let s = hostShares(two, [], new Map(), groups);
+    expect([s.get("d1")!.get("City"), s.get("d1")!.get("T") ?? 0, s.get("d2")!.get("City") ?? 0, s.get("d2")!.get("T")]).toEqual([6, 0, 0, 6]);
+    // Less room than its teams need: as much as it has, the earlier group first.
+    s = hostShares([{ id: "c", hostId: "City", slots: 3, divisions: null }], [], new Map(), [group("rec", "d1", 2, { City: 4 }), group("comp", "d1", 4, { City: 8 })]);
+    expect([s.get("rec")!.get("City"), s.get("comp")!.get("City")]).toEqual([2, 1]);
+    // What's already made counts: T has 4, so City gets more here.
+    const free = [{ id: "c", hostId: "City", slots: 9, divisions: null }, { id: "t", hostId: "T", slots: 9, divisions: null }];
+    s = hostShares(free, [], new Map([["T", 4]]), [group("d1", "d1", 6, { City: 6, T: 6 })]);
+    expect([s.get("d1")!.get("City"), s.get("d1")!.get("T")]).toEqual([5, 1]);
+    // Never more than its teams' games; nothing to share is nothing.
+    s = hostShares(free, [], new Map(), [group("d1", "d1", 6, { City: 2, T: 10 })]);
+    expect([s.get("d1")!.get("City"), s.get("d1")!.get("T")]).toEqual([2, 4]);
+    expect(hostShares([], [], new Map(), [group("d1", "d1", 6, {})]).get("d1")!.size).toBe(0);
+  });
+  it("REC first, youngest to oldest, then COMP", () => {
+    const g = (level: string, grade: number, index: number) => ({ level, grade, index });
+    expect(planOrder([g("COMP", 2, 0), g("REC", 8, 1), g("REC", 2, 3), g("REC", 2, 2)]).map((x) => `${x.level}${x.grade}.${x.index}`)).toEqual(["REC2.2", "REC2.3", "REC8.1", "COMP2.0"]);
+  });
+});
 
 describe("planning matchups", () => {
   it("gives every team its games guaranteed, never the same pair twice in a day", () => {
@@ -129,5 +170,54 @@ describe("planning matchups", () => {
     expect(pairs(p)).toContain(k("1", "3"));
     // Without the coach's other game, nothing prefers GPS, but every team still gets its game.
     expect(planMatchups(teams, new Map()).short).toEqual([]);
+  });
+
+  it("hosting: home is the team whose organization hosts; every game gets a host where it can; hosts share the home games", () => {
+    const h = (club: string, host: number, last: HomeTeam["last"] = null): HomeTeam => ({ club, last, homeGames: 0, host });
+    const teams = new Map([
+      ["1", h("City", 2)],
+      ["2", h("Solo", 0)],
+      ["3", h("Away", 1)], // hosts, but no gym open that day
+      ["4", h("ER", 2)],
+      ["5", h("City", 2, "H")],
+    ]);
+    expect(assignHome([{ a: "2", b: "1" }], teams)).toEqual(["b"]);
+    expect(assignHome([{ a: "2", b: "5" }], teams)).toEqual(["b"]); // even home last time
+    expect(assignHome([{ a: "3", b: "4" }], teams)).toEqual(["b"]); // the one with a gym open
+    expect(assignHome([{ a: "2", b: "3" }], teams)).toEqual(["b"]);
+    expect(assignHome([{ a: "1", b: null }, { a: "2", b: null }], teams)[0]).toBe("a"); // against TBD, the host is home
+    // Two hosts: the one two home games ahead in the division is away, even if it was away last time.
+    const two = new Map([["1", h("City", 2, "A")], ["4", h("ER", 2, "H")]]);
+    expect(assignHome([{ a: "1", b: "4" }], two)).toEqual(["a"]);
+    expect(assignHome([{ a: "1", b: "4" }], two, new Map([["City", { home: 2, total: 4 }]]))).toEqual(["b"]);
+    // No room left at City: it's away to another host, and has no gym like one whose gyms are closed.
+    expect(assignHome([{ a: "1", b: "4" }], two, new Map([["ER", { home: 9, total: 9 }]]), new Map(), new Map([["City", 0], ["ER", 5]]))).toEqual(["b"]);
+
+    // Four host teams and four that can't host: each game has a host, never two that can't.
+    const list = ["1", "2", "3", "4", "5", "6", "7", "8"].map((id) => ({ ...t(id, 1, `C${id}`), host: Number(id) <= 4 ? 2 : 0 }));
+    for (const [a, b] of planMatchups(list, new Map()).pairs) expect([a, b].filter((x) => Number(x) <= 4)).toHaveLength(1);
+    // Like the League: City has 6 teams, ER 3, Thunder 3: home games 2 each, not 4 for City; with room for only 1, ER has 1.
+    const clubs = ["City", "City", "City", "City", "City", "City", "ER", "ER", "ER", "Thunder", "Thunder", "Thunder"];
+    const league = clubs.map((c, i) => ({ ...t(String(i + 1), 1, c), host: 2 }));
+    const home = new Map(league.map((x) => [x.id, { club: x.club, last: null, homeGames: 0, host: 2 } as HomeTeam]));
+    const count = (ps: [string, string][]) => {
+      const games = ps.map(([a, b]) => ({ a, b }));
+      const n: Record<string, number> = {};
+      assignHome(games, home).forEach((s, i) => {
+        const c = home.get(s === "a" ? games[i].a : games[i].b)!.club;
+        n[c] = (n[c] ?? 0) + 1;
+      });
+      return n;
+    };
+    const p = planMatchups(league, new Map(), 300, new Map(), (ps) => Object.values(count(ps)).reduce((s, v) => s + v * v, 0) * 8);
+    expect(count(p.pairs)).toEqual({ City: 2, ER: 2, Thunder: 2 });
+    const room = new Map([["City", 9], ["ER", 1], ["Thunder", 9]]);
+    const list2 = p.pairs.map(([a, b]) => ({ a, b }));
+    const sides = assignHome(list2, home, new Map(), new Map(), room);
+    const er = list2.filter((g, i) => home.get(sides[i] === "a" ? g.a : g.b)!.club === "ER");
+    expect(er.length).toBeLessThanOrEqual(1);
+    // Over the whole day: Thunder already has 4 home games in other divisions, so here it has fewer.
+    const day = assignHome(list2, home, new Map([["Thunder", { home: 4, total: 8 }]]));
+    expect(list2.filter((g, i) => home.get(day[i] === "a" ? g.a : g.b)!.club === "Thunder").length).toBeLessThanOrEqual(1);
   });
 });

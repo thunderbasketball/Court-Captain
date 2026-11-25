@@ -122,12 +122,14 @@ export async function syncThunderCopyNames(q: Pick<PoolClient, "query">) {
   await q.query(`update scenic_teams st set name = ${COPY_NAME("t")} from teams t where st.thunder_team_id = t.id`);
 }
 
-// After a Thunder team's name, Alternate name or Head Coach changes: its copy in Scenic City follows.
+// After a Thunder team's name, Alternate name, Head Coach, gender, grades or level changes: its copy in Scenic City follows.
 export async function syncThunderCopy(q: Pick<PoolClient, "query">, teamId: string) {
   await q.query(
     `update scenic_teams st set name = ${COPY_NAME("t")},
-            coach_id = (select s.coach_id from team_staff s where s.team_id = t.id and s.role = 'HeadCoach')
-     from teams t where st.thunder_team_id = t.id and t.id = $1`,
+            coach_id = (select s.coach_id from team_staff s where s.team_id = t.id and s.role = 'HeadCoach'),
+            gender = t.gender, level = t.level, grade = g.hi, grade_low = case when g.hi - g.lo > 1 then g.hi else g.lo end
+     from teams t cross join lateral (select min(case x when 'K' then 0 else x::int end) as lo, max(case x when 'K' then 0 else x::int end) as hi from unnest(t.grades) x) g
+     where st.thunder_team_id = t.id and t.id = $1`,
     [teamId],
   );
 }
