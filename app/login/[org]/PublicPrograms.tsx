@@ -25,25 +25,34 @@ type Loaded = { groups: PublicGroup[]; schedule: PublicDay[] | null; soon: strin
 
 // The organization's programs on its login page, no login needed (SPEC.md section 14): open for registration, under
 // way, or ended in the last 30 days. Tap one to open it right here: Division → REC / COMP → Grade (Standings, Schedule).
-export default function PublicPrograms({ org, programs, title = "Programs" }: { org: string; programs: ProgramCard[]; title?: string }) {
+// `opened`: the program already open when the page arrives, with what's inside it.
+export default function PublicPrograms({
+  org,
+  programs,
+  title = "Programs",
+  opened,
+}: {
+  org: string;
+  programs: ProgramCard[];
+  title?: string;
+  opened?: { id: string; data: Loaded };
+}) {
   if (!programs.length) return null;
   return (
-    <>
-      <section className="mt-4 space-y-2 lg:mt-0">
-      <h2 className="text-xs font-semibold tracking-wide text-zinc-500 uppercase">{title}</h2>
+    <section className="space-y-2">
+      <h2 className="px-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">{title}</h2>
       <ul className="space-y-2">
         {programs.map((p) => (
-          <Program key={p.id} org={org} p={p} />
+          <Program key={p.id} org={org} p={p} initial={opened?.id === p.id ? opened.data : null} />
         ))}
       </ul>
-      </section>
-    </>
+    </section>
   );
 }
 
-function Program({ org, p }: { org: string; p: ProgramCard }) {
-  const [open, setOpen] = useState(false);
-  const [data, setData] = useState<Loaded | null>(null);
+function Program({ org, p, initial }: { org: string; p: ProgramCard; initial: Loaded | null }) {
+  const [open, setOpen] = useState(initial !== null);
+  const [data, setData] = useState<Loaded | null>(initial);
   const [error, setError] = useState<string | null>(null);
   const [loading, start] = useTransition();
 
@@ -107,7 +116,7 @@ function Program({ org, p }: { org: string; p: ProgramCard }) {
         <div className="mt-3">
           {loading && !data && <p className="p-2 text-sm text-zinc-500">Loading…</p>}
           {error && <p className="p-2 text-sm text-red-600">{error}</p>}
-          {data && <ProgramDivisions org={p.org ?? org} groups={data.groups} schedule={data.schedule} today={data.today} soon={data.soon} follow={!p.org} />}
+          {data && <ProgramDivisions org={p.org ?? org} program={p.id} groups={data.groups} schedule={data.schedule} today={data.today} soon={data.soon} follow={!p.org} />}
           {data && p.org && (
             <Link href={`/league/${p.org}?l=${p.id}`} className="mt-2 block px-1 text-sm font-medium text-thunder-blue hover:underline dark:text-blue-400">
               Public view of the League →

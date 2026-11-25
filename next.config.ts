@@ -33,6 +33,10 @@ const nextConfig: NextConfig = {
     ];
   },
   partialPrefetching: true,
+  // The score pictures read these from disk (lib/picture.tsx).
+  outputFileTracingIncludes: Object.fromEntries(
+    ["/score/*/image", "/share/*/*/image"].map((r) => [r, ["./assets/fonts/*.ttf", "./public/brand/*.png"]]),
+  ),
   turbopack: { rules: { "*.css": { loaders: ["@tailwindcss/turbopack"], as: "*.css" } } },
 };
 

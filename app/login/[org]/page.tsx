@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { currentUser, devBypass } from "@/lib/auth/server";
@@ -8,34 +7,44 @@ import { orgInfo } from "@/lib/org-registry";
 import { isOrgSlug } from "@/lib/orgs";
 import type { Metadata } from "next";
 import { orgMetadata } from "@/lib/org-metadata";
-import OrgLogo from "../../OrgLogo";
 import LoginFlow from "../LoginFlow";
-import { card } from "../../ui";
 import { followRename } from "@/lib/org-rename";
-import { hasFeature } from "@/lib/features";
-import { orgLeagues, orgPublicTeams, publicPrograms } from "@/lib/public-league";
 import OrgTeams from "./OrgTeams";
-import { easternDate } from "@/lib/time";
-import { publicly } from "@/lib/public-cache";
 import { shortDate } from "@/lib/program-options";
 import PublicPrograms, { type ProgramCard } from "./PublicPrograms";
-import { gamesOfTheWeek } from "@/lib/games-of-week";
 import GamesOfTheWeek from "./GamesOfTheWeek";
 import { MyTeams } from "../../FollowTeams";
-import { recruitingOn } from "@/lib/officials";
 import { ApplyToOfficiate } from "../../officials/ApplyToOfficiate";
 import SubCard from "../../SubCard";
 import FindMyPlayer from "../../find-player/FindMyPlayer";
+import { heroFor } from "@/lib/public-org";
+import { pageCards, publicFacts } from "@/lib/public-facts";
+import ShareGallery from "./ShareGallery";
+import { loadPublicProgram } from "../../league/actions";
+import PublicHero from "./PublicHero";
+import LoginPanel from "./LoginPanel";
+import OurGyms from "./OurGyms";
 
 // The organization's logo as the tab icon (and on a phone's home screen) and its name in the tab title.
 export async function generateMetadata({ params }: PageProps<"/login/[org]">): Promise<Metadata> {
-  return orgMetadata((await params).org);
+  const { org } = await params;
+  const base = await orgMetadata(org);
+  const o = isOrgSlug(org) ? await orgInfo(db, org) : null;
+  if (!o) return base;
+  // A texted or posted link shows its name and logo.
+  const description = `${o.name}: programs, teams, schedules and standings.`;
+  return {
+    ...base,
+    description,
+    metadataBase: new URL(process.env.APP_URL || "http://localhost:3000"),
+    openGraph: { title: o.name, description, url: `/login/${org}`, siteName: "CourtCaptain", ...(o.bigLogo ? { images: [o.bigLogo] } : {}) },
+  };
 }
 
 export default function OrgLoginPage({ params }: PageProps<"/login/[org]">) {
   return (
-    // A phone: one column. A wide screen: the login side (left) and the programs (right, wide).
-    <main className="mx-auto w-full max-w-sm flex-1 px-4 py-10 lg:max-w-6xl">
+    // A phone: one column. A wide screen: the banner across, then the login side (left) and the programs (right, wide).
+    <main className="mx-auto w-full max-w-xl flex-1 px-4 pt-4 pb-10 lg:max-w-6xl lg:pt-6">
       <Suspense fallback={<p className="text-center text-zinc-500">Loading…</p>}>
         <OrgLogin params={params} />
       </Suspense>
@@ -43,8 +52,8 @@ export default function OrgLoginPage({ params }: PageProps<"/login/[org]">) {
   );
 }
 
-// Each organization's main page (its login link, SPEC.md section 14): its logo and name, "Powered by CourtCaptain", the
-// login box, then what anyone may see (My teams, Programs, Officials). Logged in: the same page, with "Open <name>" in
+// Each organization's main page (its login link, SPEC.md section 14): its banner (logo, name,
+// season numbers, buttons), the login box, then what anyone may see (My teams, Programs, Teams, gyms, Officials). Logged in: the same page, with "Open <name>" in
 // place of the login box (the header's logo leads here).
 async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"] }) {
   const { org } = await params;
@@ -56,10 +65,8 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
   // The organization's programs, no login (open for registration, under way, or ended in the last 30 days), the same for
   // every organization: its team programs (Leagues and the like: tap for Teams and Schedule; outside teams register here
   // while Team Registrations is on), then its player programs (seasons).
-  const now = new Date();
-  const today = easternDate(now);
-  const showPrograms = await hasFeature(db, org, "programs");
-  const teamSignup = showPrograms && (await hasFeature(db, org, "team-registration"));
+  const f = await publicFacts(org, new Date());
+  const { today, players, teams, gyms, recruiting, week } = f;
   const status = (regCloses: string | null, startsOn: string | null, endsOn: string | null) =>
     regCloses && regCloses >= today
       ? `Register by ${shortDate(regCloses)}`
@@ -70,49 +77,37 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
           : endsOn
             ? `Ended ${shortDate(endsOn)}`
             : "Under way";
-  const players = await hasFeature(db, org, "player-registration"); // CourtPlayers
-  const seasons: ProgramCard[] = players
-    ? (
-        await db.query<{ id: string; name: string; kind: string; reg_closes: string | null; starts_on: string | null; ends_on: string | null }>(
-          `select id::text, name, kind, reg_closes::text, starts_on::text, ends_on::text from player_programs
-            where org = $1 and reg_opens <= $2::date and (ends_on is null or ends_on >= $2::date - 30)
-            order by starts_on nulls last, lower(name)`,
-          [org, today],
-        )
-      ).rows.map((p) => ({
-        id: `p${p.id}`,
-        name: p.name,
-        kind: p.kind,
-        dates: p.starts_on && p.ends_on ? `${shortDate(p.starts_on)} – ${shortDate(p.ends_on)}` : "",
-        status: status(p.reg_closes, p.starts_on, p.ends_on),
-        logo: null,
-        recLimited: false,
-        register: false,
-        openable: false,
-      }))
-    : [];
-  const programs: ProgramCard[] = showPrograms
-    ? (await publicly(`programs:${today}:${org}`, () => publicPrograms(db, now, org))).map((p) => ({
-        id: p.id,
-        name: p.name,
-        kind: p.kind,
-        dates: `${shortDate(p.startsOn)} – ${shortDate(p.endsOn)}`,
-        status: p.registering
-          ? `Register by ${shortDate(p.regCloses)}`
-          : p.startsOn > today
-            ? `Starts ${shortDate(p.startsOn)}`
-            : p.endsOn >= today
-              ? `Under way · ends ${shortDate(p.endsOn)}`
-              : `Ended ${shortDate(p.endsOn)}`,
-        logo: p.logo,
-        recLimited: p.recLimited,
-        register: teamSignup && p.registering,
-        openable: true,
-      }))
-    : [];
+  const seasons: ProgramCard[] = f.seasons.map((p) => ({
+    id: `p${p.id}`,
+    name: p.name,
+    kind: p.kind,
+    dates: p.starts_on && p.ends_on ? `${shortDate(p.starts_on)} – ${shortDate(p.ends_on)}` : "",
+    status: status(p.reg_closes, p.starts_on, p.ends_on),
+    logo: null,
+    recLimited: false,
+    register: false,
+    openable: false,
+  }));
+  const programs: ProgramCard[] = f.own.map((p) => ({
+    id: p.id,
+    name: p.name,
+    kind: p.kind,
+    dates: `${shortDate(p.startsOn)} – ${shortDate(p.endsOn)}`,
+    status: p.registering
+      ? `Register by ${shortDate(p.regCloses)}`
+      : p.startsOn > today
+        ? `Starts ${shortDate(p.startsOn)}`
+        : p.endsOn >= today
+          ? `Under way · ends ${shortDate(p.endsOn)}`
+          : `Ended ${shortDate(p.endsOn)}`,
+    logo: p.logo,
+    recLimited: p.recLimited,
+    register: f.teamSignup && p.registering,
+    openable: true,
+  }));
   programs.push(...seasons);
-  // The Leagues (another organization's programs) its teams are in: the same public view, opened right here.
-  const leagues: ProgramCard[] = (await publicly(`leagues:${today}:${org}`, () => orgLeagues(db, now, org))).map((p) => ({
+  // The Leagues (another organization's programs) its teams are in, or its gyms host: the same public view, opened right here.
+  const leagues: ProgramCard[] = f.leagues.map((p) => ({
     id: p.id,
     name: p.name,
     kind: p.kind,
@@ -124,79 +119,100 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
     org: p.org,
     openable: p.org === "scenic-city", // the League page is Scenic City's for now
   }));
-  const recruiting = await recruitingOn(db, org);
+  const hero = heroFor({
+    org,
+    today,
+    own: f.own.map((p) => ({ ...p, register: f.teamSignup && p.registering })),
+    seasons: f.seasons.map((p) => ({ name: p.name, regCloses: p.reg_closes, startsOn: p.starts_on })),
+    leagues: f.leagues,
+    teams: teams.length,
+    counts: f.counts,
+    gyms: gyms.length,
+    hosting: f.hosting,
+    players,
+    recruiting: recruiting.length > 0,
+    openable: [...programs, ...leagues].some((p) => p.openable),
+  });
+  const gallery = (await pageCards(org, o.name, f)).map(({ card, v }) => ({ key: card.key, label: card.label, text: card.text, v }));
+  // Its one program opens by itself (or, with none and no teams of its own, the one League): something to look at.
+  const openables = programs.filter((p) => p.openable);
+  const onlyLeague = !openables.length && !teams.length && leagues.length === 1 && leagues[0].openable ? leagues[0] : null;
+  const first = openables.length === 1 ? openables[0] : onlyLeague;
+  const loaded = first ? await loadPublicProgram(first.org ?? org, first.id) : null;
+  const opened = first && loaded?.ok ? { id: first.id, data: loaded } : undefined;
+  const right = programs.length > 0 || leagues.length > 0 || teams.length > 0 || gyms.length > 0 || players || recruiting.length > 0 || gallery.length > 0;
   return (
-    <div className="lg:grid lg:grid-cols-[22rem_minmax(0,1fr)] lg:items-start lg:gap-8">
-      {/* Left on a wide screen: who it is, the login, My teams and Games of the Week. */}
-      <div>
-      <div className="mb-7 flex flex-col items-center gap-2 text-center">
-        <OrgLogo src={o.bigLogo} name={o.name} color={o.color} className="size-36 rounded-2xl text-5xl" />
-        <h1 className="text-xl font-semibold tracking-tight">{o.name}</h1>
-        <p className="flex items-center gap-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-          Powered by
-          <Image src="/brand/courtcaptain-192.png" alt="" width={192} height={128} className="h-4 w-auto" />
-          <span className="font-semibold text-thunder-orange">CourtCaptain</span>
-        </p>
-      </div>
-      {devBypass && !user && (
-        <p className="mb-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-inset ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-200">
-          Testing mode: enter your cell, then code 123456. New numbers become Directors. No emails sent.
-        </p>
-      )}
-      {user ? (
-        <div className={`${card} flex items-center justify-between gap-3 p-4`}>
-          <p className="min-w-0 text-sm text-zinc-500">
-            Logged in as <span className="font-semibold text-zinc-800 dark:text-zinc-100">{user.firstName}</span>
-          </p>
-          <Link href={into} className="shrink-0 rounded-full bg-thunder-blue px-4 py-2 text-sm font-semibold text-white">
+    <>
+      <PublicHero org={org} name={o.name} color={o.color} logo={o.bigLogo} hero={hero}>
+        {user && (
+          <Link href={into} className="rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-zinc-900 shadow hover:bg-white/90">
             Open {o.short || o.name} →
           </Link>
+        )}
+      </PublicHero>
+      <div className={`mt-4 lg:mt-6 ${right ? "lg:grid lg:grid-cols-[22rem_minmax(0,1fr)] lg:items-start lg:gap-8" : "mx-auto max-w-sm"}`}>
+        {/* Left on a wide screen: the login, My teams and Games of the Week. */}
+        <div>
+          {devBypass && !user && (
+            <p className="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-inset ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-200">
+              Testing mode: enter your cell, then code 123456. New numbers become Directors. No emails sent.
+            </p>
+          )}
+          {user ? (
+            <p className="px-1 text-sm text-zinc-500">
+              Logged in as <span className="font-semibold text-zinc-800 dark:text-zinc-100">{user.firstName}</span>
+            </p>
+          ) : (
+            <LoginPanel>
+              {/* Thunder asks a new account why they're joining; any other organization's new account logs straight in. */}
+              {/* Other organizations: their Director sets up coaches first, so a cell it doesn't know is told so. */}
+              <LoginFlow join={org === "thunder" ? undefined : org} next={into} staffOnly={org === "thunder" ? undefined : o.name} />
+            </LoginPanel>
+          )}
+          {programs.length > 0 && (
+            <>
+              {/* The teams this device follows (☆ on a program's Standings). */}
+              <MyTeams org={org} />
+              {/* The coming Game Day's best REC and COMP matchups (its Leagues, once a schedule is published). */}
+              {week && <GamesOfTheWeek week={week} />}
+            </>
+          )}
         </div>
-      ) : (
-        <div className={`${card} p-5`}>
-          {/* Thunder asks a new account why they're joining; any other organization's new account logs straight in. */}
-          {/* Other organizations: their Director sets up coaches first, so a cell it doesn't know is told so. */}
-          <LoginFlow join={org === "thunder" ? undefined : org} next={into} staffOnly={org === "thunder" ? undefined : o.name} />
-        </div>
-      )}
-      {/* Programs: tap one to see its Teams and (a League's, once published) Schedule; Register while it's open. */}
-      {programs.length > 0 && (
-        <>
-          {/* The teams this device follows (☆ on a program's Standings). */}
-          <MyTeams org={org} />
-          {/* The coming Game Day's best REC and COMP matchups (its Leagues, once a schedule is published). */}
-          {await (async () => {
-            const week = await publicly(`week:${today}:${org}`, () => gamesOfTheWeek(db, now, org));
-            return week ? <GamesOfTheWeek week={week} /> : null;
-          })()}
-        </>
-      )}
+        {/* Right on a wide screen: Programs (Divisions, Standings, schedules), its teams, gyms, Parents, Officials. */}
+        {right && (
+          <div className="mt-6 space-y-6 lg:mt-0">
+            {/* Pictures to share: registration, the countdown, Games of the Week, officials wanted… from what's true today. */}
+            <ShareGallery org={org} items={gallery} />
+            {(programs.length > 0 || leagues.length > 0) && (
+              <div id="programs" className="scroll-mt-4 space-y-6">
+                <PublicPrograms org={org} programs={programs} opened={opened} />
+                <PublicPrograms org={org} programs={leagues} title="League" opened={opened} />
+              </div>
+            )}
+            {/* Its teams in a current event, with their League games; ☆ follows one on this device. Names and games only. */}
+            <OrgTeams org={org} teams={teams} today={today} />
+            {/* A parent: their player's team, practices and games (a code to the email on the registration; no login). */}
+            {players && (
+              <section id="parents" className="scroll-mt-4 space-y-2">
+                <h2 className="px-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Parents</h2>
+                <SubCard title="Find my player's team">
+                  <FindMyPlayer today={today} />
+                </SubCard>
+              </section>
+            )}
+            <OurGyms gyms={gyms} day={f.gymDay} />
+            {/* Apply to officiate: this organization's (with Accept recruits on) and its officials groups'. */}
+            {recruiting.length > 0 && (
+              <section id="officials" className="scroll-mt-4 space-y-2">
+                <h2 className="px-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Officials</h2>
+                {recruiting.map((r) => (
+                  <ApplyToOfficiate key={r.org} org={r.org} name={r.name} />
+                ))}
+              </section>
+            )}
+          </div>
+        )}
       </div>
-      {/* Right on a wide screen: Programs (Divisions, Standings, schedules), its teams, Parents, Officials. */}
-      <div className="lg:pt-1">
-      <PublicPrograms org={org} programs={programs} />
-      <PublicPrograms org={org} programs={leagues} title="League" />
-      {/* Its teams in a current event, with their League games; ☆ follows one on this device. Names and games only. */}
-      <OrgTeams org={org} teams={await publicly(`teams:${today}:${org}`, () => orgPublicTeams(db, now, org))} today={today} />
-      {/* A parent: their player's team, practices and games (a code to the email on the registration; no login). */}
-      {players && (
-        <section className="mt-6 space-y-2">
-          <h2 className="px-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Parents</h2>
-          <SubCard title="Find my player's team">
-            <FindMyPlayer today={today} />
-          </SubCard>
-        </section>
-      )}
-      {/* Apply to officiate: this organization's (with Accept recruits on) and its officials groups'. */}
-      {recruiting.length > 0 && (
-        <section className="mt-6 space-y-2">
-          <h2 className="px-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Officials</h2>
-          {recruiting.map((r) => (
-            <ApplyToOfficiate key={r.org} org={r.org} name={r.name} />
-          ))}
-        </section>
-      )}
-      </div>
-    </div>
+    </>
   );
 }

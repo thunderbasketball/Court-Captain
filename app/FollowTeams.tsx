@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore, useTransition } fro
 import type { FollowedGame, FollowedTeam } from "@/lib/public-league";
 import { timeLabel } from "@/lib/time";
 import { loadFollowedTeams } from "./league/actions";
+import FinalScore from "./FinalScore";
 import DirectionsLink from "./DirectionsLink";
 
 // Following teams with no login (SPEC.md section 14): the followed team ids live on this device only (browser storage,
@@ -120,11 +121,11 @@ export function MyTeams({ org }: { org: string }) {
   );
 }
 
-export type Game = FollowedGame & { program: string };
+export type Game = FollowedGame & { program: string; team: string; group: string };
 
 export function GameLine({ g, past = false }: { g: Game; past?: boolean }) {
   return (
-    <li className={`flex gap-2 ${past ? "opacity-50" : ""}`}>
+    <li className={`flex gap-2 ${past && !g.final ? "opacity-50" : ""}`}>
       <span className="w-24 shrink-0 text-zinc-500">
         {day(g.date)}
         <span className="block text-xs">{g.starts ? timeLabel(g.starts) : "Time TBA"}</span>
@@ -140,6 +141,7 @@ export function GameLine({ g, past = false }: { g: Game; past?: boolean }) {
             <DirectionsLink href={g.map} />
           </span>
         )}
+        <FinalScore final={g.final} first={g.team} second={g.opponent} firstIs={g.home ? "home" : "away"} group={g.group} />
       </span>
     </li>
   );
@@ -156,9 +158,10 @@ function TeamCard({ org, team, today }: { org: string; team: FollowedTeam; today
   const [panel, setPanel] = useState<"roster" | "schedule" | null>(null);
   const until = plusDays(today, SOON_DAYS);
   const all: Game[] = team.programs
-    .flatMap((p) => (p.games ?? []).map((g) => ({ ...g, program: p.name })))
+    .flatMap((p) => (p.games ?? []).map((g) => ({ ...g, program: p.name, team: team.name, group: p.group })))
     .sort((a, b) => a.date.localeCompare(b.date) || (a.starts ?? "99").localeCompare(b.starts ?? "99"));
   const soon = all.filter((g) => g.date >= today && g.date <= until);
+  const last = all.filter((g) => g.final && g.date < today).at(-1); // its latest final, on the card with what's coming
   const posted = team.programs.some((p) => p.games !== null);
   const later = [...new Set(team.programs.filter((p) => p.soon).map((p) => p.level))];
   const show = (p: "roster" | "schedule") => setPanel((x) => (x === p ? null : p));
@@ -183,6 +186,11 @@ function TeamCard({ org, team, today }: { org: string; team: FollowedTeam; today
 
       {/* Collapsed: the next 21 days. */}
       <div className="px-3 pb-3">
+        {last && (
+          <ul className="mt-1 text-sm">
+            <GameLine g={last} past />
+          </ul>
+        )}
         {soon.length ? (
           <ul className="mt-1 space-y-1.5 text-sm">
             {soon.map((g, i) => (
@@ -232,7 +240,7 @@ function TeamCard({ org, team, today }: { org: string; team: FollowedTeam; today
                   ) : p.games.length ? (
                     <ul className="space-y-1.5 text-sm">
                       {p.games.map((g, i) => (
-                        <GameLine key={i} g={{ ...g, program: p.name }} past={g.date < today} />
+                        <GameLine key={i} g={{ ...g, program: p.name, team: team.name, group: p.group }} past={g.date < today} />
                       ))}
                     </ul>
                   ) : (

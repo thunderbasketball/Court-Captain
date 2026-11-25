@@ -2,6 +2,9 @@
 // place on the organization's login page. No hooks, so server and client pages both use them.
 import type { PublicDay, PublicGroup } from "@/lib/public-league";
 import { timeLabel } from "@/lib/time";
+import FinalScore from "./FinalScore";
+import { ShareToggle } from "./SharePanel";
+import { groupKey } from "@/lib/share-keys";
 import { FollowStar } from "./FollowTeams";
 import { card } from "./ui";
 import DirectionsLink from "./DirectionsLink";
@@ -58,6 +61,7 @@ export function ProgramSchedule({ days, today, soon }: { days: PublicDay[] | nul
                     {g.gym && ` · ${g.gym}${g.court ? `, ${g.court}` : ""}`}
                     <DirectionsLink href={g.map} />
                   </span>
+                  <FinalScore final={g.final} first={g.away} second={g.home} firstIs="away" group={g.group} />
                 </span>
               </li>
             ))}
@@ -85,8 +89,10 @@ export function ProgramDivisions({
   today,
   soon,
   follow = true,
+  program,
 }: {
   org: string;
+  program?: string; // its id: Share on each grade's Standings and Schedule
   groups: PublicGroup[];
   schedule: PublicDay[] | null;
   today: string;
@@ -135,7 +141,7 @@ export function ProgramDivisions({
                 </summary>
                 <div className="space-y-2 border-t border-zinc-100 p-2 dark:border-white/5">
                   {l.grades.map((g) => (
-                    <GradeCard key={g.label} org={org} g={g} schedule={schedule} today={today} soon={soon.includes(g.level)} follow={follow} />
+                    <GradeCard key={g.label} org={org} program={program} g={g} schedule={schedule} today={today} soon={soon.includes(g.level)} follow={follow} />
                   ))}
                 </div>
               </details>
@@ -147,8 +153,9 @@ export function ProgramDivisions({
   );
 }
 
-function GradeCard({ org, g, schedule, today, soon, follow }: { org: string; g: PublicGroup; schedule: PublicDay[] | null; today: string; soon: boolean; follow: boolean }) {
+function GradeCard({ org, program, g, schedule, today, soon, follow }: { org: string; program?: string; g: PublicGroup; schedule: PublicDay[] | null; today: string; soon: boolean; follow: boolean }) {
   const days = schedule?.map((d) => ({ ...d, games: d.games.filter((x) => x.group === g.label) })).filter((d) => d.games.length) ?? null;
+  const next = days?.find((d) => d.date >= today); // the coming Game Day: its picture to share
   return (
     <details className="overflow-hidden rounded-lg bg-zinc-50/60 ring-1 ring-zinc-950/5 dark:bg-white/5 dark:ring-white/10">
       <summary className={summaryCls}>
@@ -160,6 +167,16 @@ function GradeCard({ org, g, schedule, today, soon, follow }: { org: string; g: 
       <div className="space-y-3 border-t border-zinc-100 p-2 dark:border-white/5">
         <section>
           <h4 className="px-2 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Standings</h4>
+          {program && g.teams.some((t) => t.w + t.l > 0) && (
+            <div className="px-2 pb-1">
+              <ShareToggle
+                at={`/share/${org}/${groupKey("standings", program, g.label)}`}
+                v={`${today}-${g.teams.reduce((n, t) => n + t.w + t.l, 0)}`}
+                text={`${g.label} standings`}
+                file={`${groupKey("standings", program, g.label)}`}
+              />
+            </div>
+          )}
           <table className="w-full text-sm">
             <thead>
               <tr className="text-xs text-zinc-500">
@@ -194,6 +211,16 @@ function GradeCard({ org, g, schedule, today, soon, follow }: { org: string; g: 
         <section>
           <h4 className="px-2 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Schedule</h4>
           {soon && <ScheduleSoon levels={[g.level]} className="px-2 pb-1" />}
+          {program && next && (
+            <div className="px-2 pb-2">
+              <ShareToggle
+                at={`/share/${org}/${groupKey("schedule", program, g.label)}`}
+                v={`${next.date}-${next.games.length}`}
+                text={`${g.label} games, ${weekday(next.date)}`}
+                file={`${groupKey("schedule", program, g.label)}`}
+              />
+            </div>
+          )}
           {days === null ? (soon ? null : (
             <p className="px-2 text-sm text-zinc-600 dark:text-zinc-300">The schedule isn&apos;t posted yet. Check back soon.</p>
           )) : !days.length ? (soon ? null : (
@@ -201,7 +228,7 @@ function GradeCard({ org, g, schedule, today, soon, follow }: { org: string; g: 
           )) : (
             <ul className="space-y-2">
               {days.map((d) => (
-                <li key={d.date} className={`rounded-lg bg-white ring-1 ring-zinc-950/5 dark:bg-zinc-900 dark:ring-white/10 ${d.date < today ? "opacity-60" : ""}`}>
+                <li key={d.date} className={`rounded-lg bg-white ring-1 ring-zinc-950/5 dark:bg-zinc-900 dark:ring-white/10 ${d.date < today && !d.games.some((x) => x.final) ? "opacity-60" : ""}`}>
                   <p className="border-b border-zinc-100 px-3 py-1.5 text-sm font-semibold dark:border-white/5">{weekday(d.date)}</p>
                   <ul className="divide-y divide-zinc-100 text-sm dark:divide-white/5">
                     {d.games.map((x, i) => (
@@ -218,6 +245,7 @@ function GradeCard({ org, g, schedule, today, soon, follow }: { org: string; g: 
                               <DirectionsLink href={x.map} />
                             </span>
                           )}
+                          <FinalScore final={x.final} first={x.away} second={x.home} firstIs="away" group={g.label} />
                         </span>
                       </li>
                     ))}

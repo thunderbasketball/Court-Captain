@@ -9,6 +9,7 @@ import { orgHasArea } from "./org-admin";
 import { PLACE_SQL } from "./scenic-games";
 import { directionsUrl } from "./directions";
 import { takeSnapshots } from "./roster-snapshot";
+import { finalOf, type PublicFinal } from "./score-share";
 import { PROGRAM_LOGO_SQL } from "./scenic-programs";
 import { gradeLabel, gradeRange } from "./scenic-teams";
 import { withTx, type Queryable } from "./sql";
@@ -71,6 +72,7 @@ export type PublicGame = {
   away: string;
   homeId: string | null; // the teams' ids (a device follows teams by id)
   awayId: string | null;
+  final: PublicFinal | null; // once its score is entered
 };
 export type PublicDay = { date: string; games: PublicGame[]; soon: string[] }; // soon: levels not published yet that day
 
@@ -135,7 +137,7 @@ export async function publicLeague(q: Pick<Queryable, "query">, now: Date, id: u
   const soon = soonLevels(league, levels, on, today);
   if (!league.published) return { ...league, groups, schedule: null, soon };
 
-  const schedule = await programSchedule(q, id, true);
+  const schedule = await programSchedule(q, id, true, now);
   for (const d of schedule) d.soon = d.date < today ? [] : levels.filter((l) => !on.has(`${d.date} ${l}`));
   return { ...league, groups, schedule, soon };
 }
@@ -147,7 +149,7 @@ const soonLevels = (p: { kind: string; endsOn: string }, levels: readonly string
 
 // A League's games by day (date, time, gym, court, group, home and away; DEV teams left out): `publishedOnly`, the events
 // published (the public page); all of them, for Scenic City's own program page at any time (past programs too).
-export async function programSchedule(q: Pick<Queryable, "query">, id: string, publishedOnly = false): Promise<PublicDay[]> {
+export async function programSchedule(q: Pick<Queryable, "query">, id: string, publishedOnly = false, now = new Date()): Promise<PublicDay[]> {
   const games = await q.query<{
     date: string;
     starts: string | null;
@@ -164,8 +166,13 @@ export async function programSchedule(q: Pick<Queryable, "query">, id: string, p
     a_id: string;
     b_id: string | null;
     home_side: string | null;
+    id: string;
+    score_a: number | null;
+    score_b: number | null;
+    forfeit: "a" | "b" | null;
+    scored_at: Date | null;
   }>(
-    `select m.day::text as date, to_char(m.starts, 'HH24:MI') as starts, place.gym, place.court,
+    `select m.id::text, m.score_a, m.score_b, m.forfeit, m.scored_at, m.day::text as date, to_char(m.starts, 'HH24:MI') as starts, place.gym, place.court,
             place.map_lat, place.map_lng, place.map_place, g.grade, d.gender, g.level, ta.name as a, tb.name as b, ta.id::text as a_id, tb.id::text as b_id, m.home_side
        from scenic_matchups m
        join scenic_teams ta on ta.id = m.team_a
@@ -196,6 +203,7 @@ export async function programSchedule(q: Pick<Queryable, "query">, id: string, p
       away: aHome ? b : m.a,
       homeId: aHome ? m.a_id : m.b_id,
       awayId: aHome ? m.b_id : m.a_id,
+      final: m.b === null ? null : finalOf(m, now),
     });
   }
   return schedule;
@@ -214,6 +222,7 @@ export type FollowedGame = {
   map: string | null; // Directions to the gym
   opponent: string;
   home: boolean;
+  final: PublicFinal | null;
 };
 // games null: none of its level's schedule is posted. soon: its level has nothing coming published yet.
 export type FollowedProgram = { id: string; name: string; group: string; level: string; games: FollowedGame[] | null; soon: boolean };
@@ -287,7 +296,7 @@ export async function followedTeams(q: Pick<Queryable, "query">, now: Date, ids:
     if (!mine.length) continue;
     const on = p.kind === "League" ? await publishedLevels(q, p.id) : new Map<string, string>();
     const scheduled = p.kind === "League" && p.published;
-    if (scheduled && !schedules.has(p.id)) schedules.set(p.id, await programSchedule(q, p.id, true));
+    if (scheduled && !schedules.has(p.id)) schedules.set(p.id, await programSchedule(q, p.id, true, now));
     for (const r of mine) {
       let games: FollowedGame[] | null = null;
       if (scheduled && [...on.keys()].some((k) => k.endsWith(` ${r.level}`))) {
@@ -296,7 +305,7 @@ export async function followedTeams(q: Pick<Queryable, "query">, now: Date, ids:
           for (const g of d.games) {
             const home = g.homeId === r.team;
             if (!home && g.awayId !== r.team) continue;
-            games.push({ date: d.date, starts: g.starts, gym: g.gym, court: g.court, map: g.map, opponent: home ? g.away : g.home, home });
+            games.push({ date: d.date, starts: g.starts, gym: g.gym, court: g.court, map: g.map, opponent: home ? g.away : g.home, home, final: g.final });
           }
         }
       }
@@ -331,7 +340,7 @@ export async function orgPublicTeams(q: Pick<Queryable, "query">, now: Date, org
   for (const p of programs) {
     const mine = regs.rows.filter((r) => r.program === p.id);
     if (!mine.length) continue;
-    const schedule = p.kind === "League" && p.published ? await programSchedule(q, p.id, true) : null;
+    const schedule = p.kind === "League" && p.published ? await programSchedule(q, p.id, true, now) : null;
     const on = p.kind === "League" ? await publishedLevels(q, p.id) : new Map<string, string>();
     for (const r of mine) {
       const t = teams.get(r.team) ?? { id: r.team, name: r.name, programs: [] };
@@ -385,7 +394,7 @@ function gamesOf(schedule: PublicDay[], team: string): FollowedGame[] {
     for (const g of d.games) {
       const home = g.homeId === team;
       if (!home && g.awayId !== team) continue;
-      games.push({ date: d.date, starts: g.starts, gym: g.gym, court: g.court, map: g.map, opponent: home ? g.away : g.home, home });
+      games.push({ date: d.date, starts: g.starts, gym: g.gym, court: g.court, map: g.map, opponent: home ? g.away : g.home, home, final: g.final });
     }
   return games;
 }

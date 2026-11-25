@@ -14,7 +14,7 @@ export default function OrgTeams({ org, teams, today }: { org: string; teams: Or
   const mine = followed.flatMap((id) => teams.filter((t) => t.id === id));
   const rest = teams.filter((t) => !followed.includes(t.id));
   return (
-    <section className="mt-6 space-y-2">
+    <section id="teams" className="scroll-mt-4 space-y-2">
       <h2 className="px-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Teams</h2>
       {mine.length > 0 && (
         <SubCard title="My teams" count={mine.length} open>
@@ -32,7 +32,7 @@ export default function OrgTeams({ org, teams, today }: { org: string; teams: Or
 
 function TeamList({ org, teams, today }: { org: string; teams: OrgPublicTeam[]; today: string }) {
   return (
-    <ul className="divide-y divide-zinc-100 dark:divide-white/5">
+    <ul className="grid gap-x-6 px-1 lg:grid-cols-2">
       {teams.map((t) => (
         <TeamRow key={t.id} org={org} team={t} today={today} />
       ))}
@@ -44,13 +44,14 @@ function TeamList({ org, teams, today }: { org: string; teams: OrgPublicTeam[]; 
 function TeamRow({ org, team, today }: { org: string; team: OrgPublicTeam; today: string }) {
   const [open, setOpen] = useState(false);
   const games: Game[] = team.programs
-    .flatMap((p) => (p.games ?? []).map((g) => ({ ...g, program: p.name })))
+    .flatMap((p) => (p.games ?? []).map((g) => ({ ...g, program: p.name, team: team.name, group: p.group })))
     .sort((a, b) => a.date.localeCompare(b.date) || (a.starts ?? "99").localeCompare(b.starts ?? "99"));
-  const next = games.find((g) => g.date >= today);
+  const next = games.find((g) => g.date >= today && !g.final);
+  const last = games.filter((g) => g.final).at(-1); // its latest final, shown closed too
   const posted = team.programs.some((p) => p.games !== null);
   const soon = [...new Set(team.programs.filter((p) => p.soon).map((p) => p.level))];
   return (
-    <li className="py-2.5">
+    <li className="border-b border-zinc-100 py-2.5 dark:border-white/5">
       <div className="flex items-start gap-1.5">
         <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="min-w-0 flex-1 text-left">
           <span className="block truncate font-semibold">{team.name}</span>
@@ -62,9 +63,16 @@ function TeamRow({ org, team, today }: { org: string; team: OrgPublicTeam; today
         </button>
         <FollowStar org={org} id={team.id} name={team.name} />
       </div>
-      {posted && (open ? games.length > 0 : !!next) && (
+      {posted && (open ? games.length > 0 : !!next || !!last) && (
         <ul className="mt-2 space-y-1.5 text-sm">
-          {open ? games.map((g, i) => <GameLine key={i} g={g} past={g.date < today} />) : next && <GameLine g={next} />}
+          {open ? (
+            games.map((g, i) => <GameLine key={i} g={g} past={g.date < today} />)
+          ) : (
+            <>
+              {last && <GameLine g={last} past />}
+              {next && <GameLine g={next} />}
+            </>
+          )}
         </ul>
       )}
     </li>
