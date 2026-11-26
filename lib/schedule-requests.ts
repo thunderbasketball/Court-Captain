@@ -325,3 +325,20 @@ export async function requestClash(
   }
   return null;
 }
+
+// Each team's schedule request on a Game Day (requests open for it): the blocks it asked not to play, as times, for the Grid
+// to show before a game is dropped there (placeGame checks it again).
+export type AskedOff = { label: string; start: number; end: number }; // minutes from midnight
+export async function requestsOff(q: Pick<Queryable, "query">, day: string): Promise<Map<string, AskedOff[]>> {
+  const r = await q.query<{ team: string; blocks: string[]; settings: { blocks: Block[]; max: number } | null }>(
+    `select q.team_id::text as team, q.blocks, ${SETTINGS_SQL("q.program_id")} as settings
+       from scenic_schedule_requests q
+       join program_game_days d on d.program_id = q.program_id and d.requests_at is not null
+       join game_days g on g.id = d.game_day_id and g.day = q.day
+      where q.day = $1::date`,
+    [day],
+  );
+  return new Map(
+    r.rows.map((x) => [x.team, settingsOf(x.settings).blocks.filter((b) => x.blocks.includes(b.key)).map((b) => ({ label: b.label, start: b.start, end: b.end }))]),
+  );
+}

@@ -36,6 +36,14 @@ export default async function FamilyPlayers({ coachId, players }: { coachId: str
             {teams.map(({ t, kid }) => (
               <SubCard key={t.id} title={t.name} count={t.level} open>
                 <div className="space-y-3">
+                  {t.conflicts
+                    .filter((x) => x.name.trim().toLowerCase() === kid.name.trim().toLowerCase())
+                    .map((x) => (
+                      <p key={x.text} className="rounded-xl bg-red-50 p-3 text-sm text-red-700 ring-1 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/30">
+                        <span className="font-semibold">On two rosters: </span>
+                        {x.text} The organization and the League are sorting it out; ask your coach if you have questions.
+                      </p>
+                    ))}
                   <p className="text-sm font-medium">
                     <JerseyNumber n={kid.number} />
                     {kid.number ? "" : "Number not set yet"}

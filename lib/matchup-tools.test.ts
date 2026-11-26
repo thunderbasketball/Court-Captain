@@ -3,11 +3,11 @@ import type { SessionUser } from "./auth/service";
 import { setDayPublished } from "./public-league";
 import { scheduledGames } from "./scenic-games";
 import { placeGame, unscheduleGym } from "./scenic-grid";
-import { leagueChangeTeam } from "./league-team-change";
+import { playIn, playInChoices } from "./league-team-change";
 import { orgMetrics } from "./org-metrics";
 import { correctGame, gamesToCorrect } from "./schedule-corrections";
-import { addGame, clearMatchups, createDayMatchups, createMatchups, fillTbd, saveMatchups } from "./scenic-matchups";
-import { gameDaySchedule } from "./scenic-programs";
+import { addGame, clearMatchups, createDayMatchups, createMatchups, fillTbd, saveMatchups, switchHome } from "./scenic-matchups";
+import { gameDaySchedule, poolFor, setDivisionGender } from "./scenic-programs";
 import { updateScenicTeam, type TeamInput } from "./scenic-teams";
 import { updateTeam } from "./teams";
 import { createTestDb, grant } from "./testing/db";
@@ -82,6 +82,41 @@ describe("Scheduler: unschedule a gym, clear a division, fill in a TBD", () => {
     for (const g of list) expect(name(g.home === "a" ? g.a : g.b)).toMatch(/^Host|^CompA/);
     expect(list.some((g) => [g.a, g.b].includes(t.Solo))).toBe(true); // not two Host teams against each other, with Solo left out
   });
+
+  it("home and away switched by hand (against TBD too): kept with who did it; never a published or scored game", async () => {
+    const list = await games();
+    const g = list.find((x) => x.b && ![x.a, x.b].includes(t.CompA))!;
+    expect(await switchHome(deps(), bo, g.id)).toMatchObject({ ok: false }); // not a Director of Scheduling
+    expect(await switchHome(deps(), dee, "x")).toMatchObject({ ok: false });
+    expect(await switchHome(deps(), dee, g.id)).toEqual({ ok: true, placed: false });
+    const [after] = await q<{ home: string; by: string }>("select home_side as home, home_set_by as by from scenic_matchups where id = $1", [g.id]);
+    expect(after).toEqual({ home: g.home === "a" ? "b" : "a", by: "Dee X" });
+    expect(await place(g.id, "09:00")).toEqual({ ok: true });
+    expect(await switchHome(deps(), dee, g.id)).toEqual({ ok: true, placed: true }); // back again; stays on the grid
+    expect((await games()).find((x) => x.id === g.id)).toMatchObject({ home: g.home, court });
+    const open = list.find((x) => x.b === null);
+    expect(open).toBeTruthy();
+    expect(await switchHome(deps(), dee, open!.id)).toMatchObject({ ok: true });
+    expect((await games()).find((x) => x.id === open!.id)!.home).toBe(open!.home === "b" ? "a" : "b"); // TBD home, or back
+    await setDayPublished(deps(), dee, prog, D1, "REC", true);
+    expect(await switchHome(deps(), dee, g.id)).toMatchObject({ ok: false, message: expect.stringContaining("published") });
+  }, 60_000);
+
+  it("a coach's games at different gyms are never back to back; at one gym that's fine", async () => {
+    await q("update scenic_teams set coach_id = '5550003' where id in ($1, $2)", [t.Host1, t.CompA]);
+    const host = (await q("select partner_id::text as id from scenic_teams where id = $1", [t.Host1]))[0].id;
+    const gym2 = (await q("insert into partner_gyms (partner_id, name, created_by) values ($1, 'Gym 2', 't') returning id::text", [host]))[0].id;
+    const court2 = (await q("insert into partner_courts (gym_id, name, created_by) values ($1, 'Court A', 't') returning id::text", [gym2]))[0].id;
+    await q("insert into court_hours (court_id, game_day_id, starts, ends, set_by) select $1, id, '09:00', '17:00', 't' from game_days", [court2]);
+    const list = await games();
+    const g1 = list.find((x) => [x.a, x.b].includes(t.Host1))!;
+    const g2 = list.find((x) => [x.a, x.b].includes(t.CompA))!;
+    expect(await place(g1.id, "09:00")).toEqual({ ok: true });
+    const at2 = (starts: string) => placeGame(deps(), dee, g2.id, { court: court2, starts });
+    expect(await at2("09:55")).toMatchObject({ ok: false, message: expect.stringContaining("back to back at different gyms") }); // right after, across town
+    expect(await place(g2.id, "09:55")).toEqual({ ok: true }); // the same gym, back to back
+    expect(await at2("10:50")).toEqual({ ok: true }); // a game's break (the Grid shows it yellow)
+  }, 60_000);
 
   it("unschedules every game at a gym, leaving the matchups; published and scored ones stay", async () => {
     const [g1, g2, g3] = await games();
@@ -172,25 +207,68 @@ describe("Scheduler: unschedule a gym, clear a division, fill in a TBD", () => {
     return { d2, pool, six };
   }
 
-  it("a registered team whose grade or level changes moves; its games are warned of first, then shown until corrected", async () => {
+  it("the League places a team to play in another division (its own gender and grade stay); a division can be Coed", async () => {
+    await q("insert into director_areas (coach_id, org, area, granted_by) values ('9913694', 'scenic-city', 'teams', 't')");
+    const { d2 } = await otherDivision();
+    const six = (await q("insert into scenic_grade_groups (division_id, grade, level) values ($1, 6, 'REC') returning id::text", [d2]))[0].id;
+    const sixRec = (await q("insert into scenic_pools (group_id, name) values ($1, 'A') returning id::text", [six]))[0].id;
+    const gd = (await q("insert into scenic_divisions (program_id, gender, grade_low, grade_high) values ($1, 'Girls', 5, 5) returning id::text", [prog]))[0].id;
+    const gg = (await q("insert into scenic_grade_groups (division_id, grade, level) values ($1, 5, 'REC') returning id::text", [gd]))[0].id;
+    const gPool = (await q("insert into scenic_pools (group_id, name) values ($1, 'A') returning id::text", [gg]))[0].id;
+    const g5 = (await q("insert into scenic_teams (name, gender, grade_low, grade, level, partner_id, created_by, updated_by) select 'G5', 'Girls', 5, 5, 'REC', id, 't', 't' from partners where name = 'Away' returning id::text"))[0].id;
+    await q("insert into scenic_registrations (program_id, team_id, pool_id, registered_by, all_season) values ($1, $2, $3, 't', true)", [prog, g5, gPool]);
+    const recPool = (await q("select pool_id::text as id from scenic_registrations where team_id = $1", [t.Host1]))[0].id; // Boys 5th REC
+    const compPool = (await q("select pool_id::text as id from scenic_registrations where team_id = $1", [t.CompA]))[0].id;
+    const where = async (id: string) => (await q<{ id: string; by: string | null; why: string | null }>("select pool_id::text as id, plays_in_by as by, plays_in_why as why from scenic_registrations where team_id = $1", [id]))[0];
+
+    // Finley's case: a Girls team in the Boys division, with why.
+    expect(await playIn(deps(), bo, g5, prog, recPool, "x", false)).toMatchObject({ ok: false });
+    expect(await playIn(deps(), dee, g5, prog, recPool, " ", false)).toMatchObject({ ok: false, message: expect.stringContaining("Say why") });
+    expect(await playIn(deps(), dee, g5, prog, compPool, "x", false)).toMatchObject({ ok: false, message: expect.stringContaining("REC pool") });
+    expect(await playIn(deps(), dee, g5, prog, recPool, "No Girls 5th REC", false)).toEqual({ ok: true });
+    expect(await where(g5)).toEqual({ id: recPool, by: "Dee X", why: "No Girls 5th REC" });
+    const [choice] = await playInChoices(db.pool, g5, now);
+    expect(choice.playsIn).toMatchObject({ label: expect.stringContaining("Boys 5th"), by: "Dee X", why: "No Girls 5th REC" });
+    expect((await where(g5)).id).toBe(recPool);
+
+    // Koch's case: up a grade. It has games that day: asked first, then they're to correct.
+    const warned = await playIn(deps(), dee, t.Host1, prog, sixRec, "Plays up", false);
+    expect(warned).toMatchObject({ ok: false, warn: [expect.stringContaining("Host1")] });
+    expect(await playIn(deps(), dee, t.Host1, prog, sixRec, "Plays up", true)).toEqual({ ok: true });
+    expect((await gamesToCorrect(db.pool, { org: "scenic-city" }, now)).some((g) => g.teams.includes(t.Host1))).toBe(true);
+    // Back in its own: cleared.
+    expect(await playIn(deps(), dee, t.Host1, prog, recPool, "", true)).toEqual({ ok: true });
+    expect(await where(t.Host1)).toEqual({ id: recPool, by: null, why: null });
+
+    // Boys 5th made Coed: it keeps its teams; then a Girls 5th COMP team registers into it.
+    expect(await setDivisionGender(deps(), bo, div, "Coed")).toMatchObject({ ok: false });
+    expect(await setDivisionGender(deps(), dee, div, "Girls")).toMatchObject({ ok: false, message: expect.stringContaining("aren't Girls") });
+    expect(await setDivisionGender(deps(), dee, div, "Coed")).toEqual({ ok: true, label: "Coed 5th" });
+    expect(await poolFor(db.pool as never, prog, { gender: "Girls", grade: 5, level: "COMP" })).toMatchObject({ gender: "Coed" });
+    expect(await poolFor(db.pool as never, prog, { gender: "Girls", grade: 5, level: "REC" })).toMatchObject({ gender: "Girls" }); // its own first
+    expect(await setDivisionGender(deps(), dee, div, "Boys")).toEqual({ ok: true, label: "Boys 5th" }); // G5 plays in (placed by the League)
+  }, 120_000);
+
+  it("a registered team's own changes never move it; the League moves it (Play in), its games warned of first, then to correct", async () => {
     await q("insert into director_areas (coach_id, org, area, granted_by) values ('9913694', 'scenic-city', 'teams', 't')");
     const { pool } = await otherDivision();
     const solo = (await games()).find((g) => g.b && [g.a, g.b].includes(t.Solo))!;
-    const edit = (grade: string, level: string, anyway = false) =>
-      updateScenicTeam(deps(), dee, t.Solo, { name: "Solo", gender: "Boys", grade, level, coachFirst: "Bo", coachLast: "X", coachCell: "4235550003", for: "solo" } satisfies TeamInput, anyway);
+    const edit = (grade: string, level: string) =>
+      updateScenicTeam(deps(), dee, t.Solo, { name: "Solo", gender: "Boys", grade, level, coachFirst: "Bo", coachLast: "X", coachCell: "4235550003", for: "solo" } satisfies TeamInput);
     const where = async () => (await q<{ id: string; by: string | null }>("select pool_id::text as id, moved_by as by from scenic_registrations where team_id = $1", [t.Solo]))[0];
     const todo = () => gamesToCorrect(db.pool, { org: "scenic-city" }, now);
     const before = await where();
-    expect(await edit("8", "COMP", true)).toMatchObject({ ok: false, message: expect.stringContaining("has no Boys 8th COMP") });
-    expect(await edit("5", "REC")).toMatchObject({ ok: true }); // the same: stays
+    expect(await edit("8", "COMP")).toMatchObject({ ok: true }); // the team may change; its division doesn't
+    expect(await where()).toEqual(before);
+    expect(await todo()).toEqual([]);
+    expect(await edit("5-6", "COMP")).toMatchObject({ ok: true });
     await place(solo.id, "09:55");
     await setDayPublished(deps(), dee, prog, D1, "REC", true);
-    const warned = await edit("5-6", "COMP");
+    const warned = await playIn(deps(), dee, t.Solo, prog, pool, "Plays up", false);
     expect(warned).toMatchObject({ ok: false, warn: [expect.stringMatching(/^Dec 5 9:55 AM at Gym: .*Solo.* · published$/)] });
     expect(await where()).toEqual(before); // nothing changed yet
-    expect((await q("select level as id from scenic_teams where id = $1", [t.Solo]))[0].id).toBe("REC");
     expect(await todo()).toEqual([]);
-    expect(await edit("5-6", "COMP", true)).toMatchObject({ ok: true });
+    expect(await playIn(deps(), dee, t.Solo, prog, pool, "Plays up", true)).toEqual({ ok: true });
     expect(await where()).toEqual({ id: pool, by: "Dee X" });
     // Left as it was, and to correct: on Home's To Do for the League's Admins.
     expect((await games()).find((g) => g.id === solo.id)).toMatchObject({ a: solo.a, b: solo.b, starts: "09:55" });
@@ -245,42 +323,23 @@ describe("Scheduler: unschedule a gym, clear a division, fill in a TBD", () => {
     expect(await add(t.CompB, six)).toMatchObject({ ok: false, message: expect.stringContaining("published") });
   }, 90_000);
 
-  it("registered: only the League changes a team's gender, grade or level, an organization's and Thunder's too", async () => {
-    const { pool, six } = await otherDivision();
-    await q("insert into director_areas (coach_id, org, area, granted_by) values ('9913694', 'scenic-city', 'teams', 't') on conflict do nothing");
+  it("registered: its organization changes anything about the team; its division doesn't move", async () => {
     const earl = { ...person("9913694", "Earl"), isDirector: true, isAdmin: true, hasThunderRole: true } as SessionUser;
-    const poolOf = async (id: string) => (await q("select pool_id::text as id from scenic_registrations where team_id = $1", [id]))[0].id;
-    const change = (id: string, grade: string, level: string, anyway = false, who = dee) => leagueChangeTeam(deps(), who, id, { gender: "Boys", grade, level }, anyway);
     // Thunder's: refused on its own page (even to the League's Admin there), unless nothing about it changes.
     const tt = (await q("insert into teams (name, gender, grades, grade_sort, level, created_by) values ('5B Lee', 'Boys', '{5}', 5, 'REC', 't') returning id::text"))[0].id;
     await q("update scenic_teams set thunder_team_id = $1 where id = $2", [tt, t.Solo]);
     const edit = (grades: string[], level: string) => updateTeam(deps() as never, earl, tt, { gender: "Boys", grades, level, practiceLocations: "Gym" });
-    expect(await edit(["6"], "COMP")).toMatchObject({ ok: false, message: expect.stringContaining("is registered in Winter: only the League can change") });
-    expect(await edit(["5"], "REC")).toMatchObject({ ok: true });
-    expect(await change(t.Solo, "6", "COMP", true, bo)).toMatchObject({ ok: false });
-    expect(await change(t.Solo, "nope", "COMP", true)).toMatchObject({ ok: false });
-    expect(await change(t.Solo, "6", "COMP")).toMatchObject({ ok: false, warn: [expect.stringContaining("not on the grid")] });
-    expect((await q("select level as id from teams where id = $1", [tt]))[0].id).toBe("REC"); // nothing changed yet
-    expect(await change(t.Solo, "6", "COMP", true)).toEqual({ ok: true });
-    expect((await q("select name || ' ' || grades[1] || ' ' || level as id from teams where id = $1", [tt]))[0].id).toBe("6B Lee 6 COMP");
-    expect((await q("select grade || ' ' || level as id from scenic_teams where id = $1", [t.Solo]))[0].id).toBe("6 COMP");
-    expect(await poolOf(t.Solo)).toBe(pool);
-    expect(await gamesToCorrect(db.pool, { programId: prog }, now)).toHaveLength(1);
-    // An organization's: the same.
-    await q("insert into organizations (slug, name, short_name, kind) values ('club', 'Club', 'Club', 'Organization') on conflict do nothing");
-    const ot = (await q("insert into org_teams (org, name, gender, grade_low, grade, level, created_by) values ('club', '6B Fox', 'Boys', 6, 6, 'COMP', 't') returning id::text"))[0].id;
-    await q("update scenic_teams set org_team_id = $1 where id = $2", [ot, six]);
-    expect(await change(six, "5", "REC", true)).toEqual({ ok: true });
-    expect((await q("select grade || ' ' || level as id from org_teams where id = $1", [ot]))[0].id).toBe("5 REC");
-    // Not registered now: its organization's again.
-    await q("delete from scenic_registrations where team_id = $1", [six]);
-    expect(await change(six, "6", "COMP", true)).toMatchObject({ ok: false, message: expect.stringContaining("its organization changes it") });
-    // A Solo team's owner: everything else, not its grade or level.
+    const poolOf = async () => (await q("select pool_id::text as id from scenic_registrations where team_id = $1", [t.Solo]))[0].id;
+    const before = await poolOf();
+    expect(await edit(["6"], "COMP")).toMatchObject({ ok: true });
+    expect((await q("select grade || ' ' || level as id from scenic_teams where id = $1", [t.Solo]))[0].id).toBe("6 COMP"); // its copy follows
+    expect(await poolOf()).toBe(before);
+    // A Solo team's owner too.
     await q("update scenic_teams set partner_id = null, owner_coach_id = '5550003', coach_id = '5550003' where id = $1", [t.CompB]);
     await grant(db.pool, "5550003 scenic-city Solo");
     const own = (name: string, level: string) =>
-      updateScenicTeam(deps(), bo, t.CompB, { name, gender: "Boys", grade: "5", level, coachFirst: "Bo", coachLast: "X", coachCell: "4235550003" } satisfies TeamInput, true);
-    expect(await own("CompB", "REC")).toMatchObject({ ok: false, message: expect.stringContaining("only the League can change") });
+      updateScenicTeam(deps(), bo, t.CompB, { name, gender: "Boys", grade: "5", level, coachFirst: "Bo", coachLast: "X", coachCell: "4235550003" } satisfies TeamInput);
+    expect(await own("CompB", "REC")).toMatchObject({ ok: true });
     expect(await own("Renamed", "COMP")).toMatchObject({ ok: true });
   }, 90_000);
 });

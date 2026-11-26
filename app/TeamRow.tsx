@@ -57,7 +57,7 @@ export default function TeamRow({
   // ↗ the team's page opened right under the row (built on the server only while open); left out: ↗ goes to its page
   page?: { id: string; content: ReactNode | null };
   issue?: string | null; // a roster problem ("1 Too old"): the name turns red with a badge saying it
-  registrations?: { program: string; paid: boolean }[]; // its current registrations, under its name
+  registrations?: { program: string; paid: boolean; playsIn?: string | null }[]; // its current registrations, under its name
   href: string;
   name: string;
   altName: string | null;
@@ -172,6 +172,12 @@ export default function TeamRow({
                   ✓ {registrations.map((r) => `${r.program}${r.paid ? " · Paid" : ""}`).join(", ")}
                 </span>
               )}
+              {/* Placed by the League in another division: where, and why. */}
+              {registrations?.filter((r) => r.playsIn).map((r) => (
+                <span key={r.program} className="block truncate text-xs font-medium text-violet-700 dark:text-violet-300">
+                  Plays in {r.playsIn}
+                </span>
+              ))}
             </span>
             {/* Its level right behind its name (REC or COMP). */}
             <Chip tone={level === "COMP" ? "orange" : "zinc"}>{level}</Chip>

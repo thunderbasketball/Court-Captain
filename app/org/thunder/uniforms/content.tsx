@@ -16,7 +16,7 @@ import { CancelOrder, SendToVendor, VendorSettings } from "./VendorPanel";
 import { UniformSearch, type UniformHit } from "./UniformSearch";
 import OrderSpares, { WaitingSpares } from "./OrderSpares";
 import { dupLabel, orgDuplicates } from "@/lib/duplicate-numbers";
-import { SPARE_ITEMS, orderCounts, spareCount, spareSummary, type Spare } from "@/lib/spare-items";
+import { SPARE_ITEMS, orderCounts, spareCount, type Spare } from "@/lib/spare-items";
 
 import { PageFrame } from "../../../ui";
 

@@ -224,7 +224,7 @@ export async function teamPrograms(
     `select p.id::text, p.kind, p.name, p.starts_on::text as "startsOn", p.ends_on::text as "endsOn",
             p.reg_opens::text as "regOpens", p.reg_closes::text as "regCloses", p.fee_cents as "feeCents",
             exists (select 1 from scenic_divisions d join scenic_grade_groups g on g.division_id = d.id
-                    where d.program_id = p.id and d.gender = t.gender and g.grade = t.grade and g.level = t.level) as fits,
+                    where d.program_id = p.id and (d.gender = t.gender or d.gender = 'Coed') and g.grade = t.grade and g.level = t.level) as fits,
             not ${recOpenSql("p.id", "t.level", "(select pa.id from partners pa where pa.org_slug = t.org)")} as "recClosed",
             o.name as pool, d.gender, d.grade_low as low, d.grade_high as high, g.grade, g.level,
             r.registered_by as "regBy", r.paid, r.removed_by as "removedBy",

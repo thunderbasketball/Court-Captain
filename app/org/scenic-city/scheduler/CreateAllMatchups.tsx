@@ -46,7 +46,7 @@ export function CreateAllMatchups({ day, programId, label, levels }: { day: stri
   return (
     <div className="space-y-2">
       <p className="text-xs font-semibold text-zinc-500">{label}, every division</p>
-      <div className="flex gap-2">
+      <div className="flex flex-col gap-2">
         {levels.map((l) => (
           <button
             key={l.level}

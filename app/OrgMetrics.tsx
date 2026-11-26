@@ -1,3 +1,4 @@
+import BusyCoachList from "./BusyCoachList";
 import Link from "next/link";
 import type { SessionUser } from "@/lib/auth/service";
 import { db } from "@/lib/db";
@@ -42,6 +43,7 @@ export function todoCounts(m: Metrics) {
     roles: m.missingRoles.length,
     corrections: m.corrections.length,
     duplicates: m.duplicates.length,
+    busy: m.busy.length,
     conflicts: openCount(m.rosterConflicts),
     ours: openCount(m.teamConflicts),
   };
@@ -157,6 +159,11 @@ export default function OrgMetrics({
                 ))}
               </ul>
               <p className="pt-2 text-xs text-zinc-500">Two players on the team have the same number.</p>
+            </SubCard>
+          )}
+          {m.busy.length > 0 && (
+            <SubCard title="Coaches on more than 2 teams" count={m.busy.length} alert>
+              <BusyCoachList list={m.busy} base={base} />
             </SubCard>
           )}
           {m.unpublished.length > 0 && (

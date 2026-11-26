@@ -4,6 +4,7 @@ import { useState, useTransition, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ConflictSide, LeagueConflicts, RosterConflict, RosterReport } from "@/lib/roster-conflicts";
+import { ruleWhy } from "@/lib/roster-match";
 import SubCard from "../../../SubCard";
 import { reviewRosterConflict } from "../actions";
 
@@ -154,6 +155,11 @@ function Pair({ programId, c, canAct, base }: { programId: string; c: RosterConf
         <Side s={c.b} base={base} />
       </div>
       {c.allowed && <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">✓ {c.allowed}</p>}
+      {!c.allowed && !c.review && c.broken.length > 0 && (
+        <p className="text-xs text-red-700 dark:text-red-300">
+          <span className="font-semibold">Why it isn&apos;t allowed:</span> {ruleWhy(c.broken)}
+        </p>
+      )}
       {c.review?.decision === "different" && <p className="text-xs text-zinc-500">Different players · {c.review.by}</p>}
       {canAct && (c.review || c.broken.length > 0) && (
         <div className="flex flex-wrap gap-2">

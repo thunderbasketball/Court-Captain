@@ -117,7 +117,7 @@ export async function openPrograms(q: Pick<Queryable, "query">, now: Date): Prom
 async function levelIn(q: Pick<Queryable, "query">, programId: string, gender: string, grade: number) {
   const r = await q.query<{ level: string }>(
     `select g.level from scenic_divisions d join scenic_grade_groups g on g.division_id = d.id
-      where d.program_id = $1 and d.gender = $2 and g.grade = $3`,
+      where d.program_id = $1 and (d.gender = $2 or d.gender = 'Coed') and g.grade = $3`,
     [programId, gender, grade],
   );
   const levels = r.rows.map((x) => x.level);

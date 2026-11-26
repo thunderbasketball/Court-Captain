@@ -2,6 +2,8 @@
 // verified, their cell on a player's registration connects them to each team that player is on. For each: their player's number
 // and size, what's coming (✓ / ✗ by them), the whole schedule, the staff, and the roster as first names, last initials and
 // numbers. Never other families' contacts. Connected each time from the registrations, so a change there shows at once.
+import { teamDoubles } from "./roster-conflicts";
+import { ruleWhy } from "./roster-match";
 import { upcomingForTeam, type TeamPractice } from "./practice/schedule";
 import type { Deps } from "./auth/service";
 import { rsvpsFor, type Rsvp } from "./event-attendance";
@@ -24,6 +26,7 @@ export type FamilyTeam = {
   own: OwnPractice[];
   scrims: TeamScrimmage[];
   rsvps: Record<string, Record<string, Rsvp>>;
+  conflicts: { name: string; text: string }[]; // their player also on another roster in a League, against its rules (and why)
 };
 type D = Pick<Deps, "pool" | "now">;
 const ROLE: Record<string, string> = { HeadCoach: "Head Coach", AsstCoach: "Asst Coach", Manager: "Team Manager", TeamParent: "Team Parent" };
@@ -53,13 +56,19 @@ export async function familyTeams(deps: D, coachId: string): Promise<{ verified:
     teams: await Promise.all(
       ids.map(async (id) => {
         const mine = kids.rows.filter((k) => k.team === id);
-        return { id, name: mine[0].name, gender: mine[0].gender, level: mine[0].level, kids: mine.map((k) => ({ player: k.player, firstName: k.first, name: `${k.first} ${k.last}`, number: k.number, size: k.size })), ...(await teamDetails(deps, id, mine.map((k) => k.player))) };
+        const theirs = mine.map((k) => ({ player: k.player, firstName: k.first, name: `${k.first} ${k.last}`, number: k.number, size: k.size }));
+        const names = new Set(theirs.map((k) => k.name.trim().toLowerCase()));
+        // Only their own players, and only ones against the rules (the other team isn't named when it's another organization's).
+        const conflicts = (await teamDoubles(deps.pool, { thunderTeamId: id }, deps.now()))
+          .filter((d) => !d.allowed && names.has(d.name.trim().toLowerCase()))
+          .map((d) => ({ name: d.name, text: `${d.name} ${d.maybe ? "may also be" : "is also"} on ${d.other} in ${d.program}. ${ruleWhy(d.broken)}` }));
+        return { id, name: mine[0].name, gender: mine[0].gender, level: mine[0].level, kids: theirs, conflicts, ...(await teamDetails(deps, id, mine.map((k) => k.player))) };
       }),
     ),
   };
 }
 
-async function teamDetails(deps: D, id: string, players: string[]): Promise<Omit<FamilyTeam, "id" | "name" | "gender" | "level" | "kids">> {
+async function teamDetails(deps: D, id: string, players: string[]): Promise<Omit<FamilyTeam, "id" | "name" | "gender" | "level" | "kids" | "conflicts">> {
   const ref = { org: "thunder", teamId: id };
   const [staff, roster, league, practices, own, scrims] = await Promise.all([
     deps.pool.query<{ role: string; name: string; cell: string }>(

@@ -1,7 +1,7 @@
 // Scenic City teams (SPEC.md section 13, build step 6: Team Registrations). Kept apart from Thunder's teams.
 // A partner's contacts make its teams; a Solo coach makes their own. Directors of Teams (and Admins) see and edit all.
 // Each team names a coach by cell: that cell is their login (made if new), and they get the Scenic City Coach role.
-import { AskFirst, placeAgain } from "./scenic-replace";
+import { AskFirst } from "./scenic-replace";
 import { easternDate } from "./time";
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
@@ -12,7 +12,7 @@ import { normalizeCell } from "./phone";
 import { cleanPlaceName } from "./scenic-partners";
 import { withTx, type Queryable } from "./sql";
 import { matchOrCreateUser } from "./user-match";
-import { scheduledRefusal, leagueOnly, registeredLeague } from "./team-guards";
+import { scheduledRefusal } from "./team-guards";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string; warn?: string[] };
@@ -335,7 +335,6 @@ export async function updateScenicTeam(
   viewer: SessionUser,
   id: unknown,
   input: TeamInput,
-  anyway: unknown = false, // it has games: they've seen which
 ): Promise<Result<{ newLogin: boolean }>> {
   if (!isId(id)) return { ok: false, message: "That team no longer exists." };
   return run(async () => {
@@ -358,13 +357,8 @@ export async function updateScenicTeam(
       if (!t.rows[0]) throw new TeamError("That team no longer exists.");
       if (t.rows[0].org_team_id) throw new TeamError("This team is managed by its organization.");
       if (!(await canEdit(q, viewer, t.rows[0]))) throw new TeamError("You can't change this team.");
-      // Registered: only the League changes its gender, grade or level.
-      const c = t.rows[0];
-      const staff = await isTeamsDirector(q, viewer);
-      if (!staff && (c.gender !== f.gender || c.grade_low !== f.grade.low || c.grade !== f.grade.grade || c.level !== f.level)) {
-        const league = await registeredLeague(q, [id], deps.now());
-        if (league) throw new TeamError(leagueOnly(c.name, league));
-      }
+      // Registered or not, its gender, grade and level may change; a registered team's division doesn't (only the League's
+      // Play in another division moves it).
       const coach = await coachFor(q, f, viewer, deps.now());
       await q.query(
         // The coach now has a cell and login: no longer waiting.
@@ -373,9 +367,6 @@ export async function updateScenicTeam(
          where id = $1`,
         [id, f.name, f.gender, f.grade.low, f.grade.grade, coach.coachId, by(viewer), deps.now(), f.level],
       );
-      // A changed gender, grade or level moves it in each League it's registered in (asking first when it has games).
-      const placed = await placeAgain(q, id, staff, anyway === true, by(viewer), deps.now());
-      if ("error" in placed) throw new TeamError(placed.error);
       if (t.rows[0].coach_id !== coach.coachId) await dropScenicCoachIfIdle(q, t.rows[0].coach_id, by(viewer));
       return { newLogin: coach.newLogin };
     });

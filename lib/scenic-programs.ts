@@ -355,7 +355,9 @@ async function readProgram(deps: Deps, viewer: SessionUser, id: string): Promise
   if (status === "open" || manage)
     for (const t of mine) {
       if (registered.has(t.id)) continue;
-      const d = divisionList.find((x) => x.gender === t.gender && t.grade >= x.gradeLow && t.grade <= x.gradeHigh);
+      // Its own gender's division, else a Coed one (Coed takes Boys and Girls teams).
+      const holds = (x: (typeof divisionList)[number]) => t.grade >= x.gradeLow && t.grade <= x.gradeHigh && x.groups.some((y) => y.grade === t.grade && y.level === t.level);
+      const d = divisionList.find((x) => x.gender === t.gender && holds(x)) ?? divisionList.find((x) => x.gender === "Coed" && holds(x));
       const g = d?.groups.find((x) => x.grade === t.grade && x.level === t.level);
       if (d && g && !recOk(t)) cantRegister.push({ name: t.name, why: "REC here is only for the organizations Scenic City picked" });
       else if (d && g)
@@ -929,6 +931,42 @@ export async function removeDivision(deps: Deps, viewer: SessionUser, divisionId
   );
 }
 
+// Directors of Programs: a K-and-up division switched between Boys, Girls and Coed (Coed takes Boys and Girls teams), its
+// grades, pools and teams kept. Not to Boys or Girls while a team of the other gender is in it (unless the League placed it
+// there to play in: plays_in_by), nor onto another division of that gender with the same grades.
+export async function setDivisionGender(deps: Deps, viewer: SessionUser, divisionId: unknown, gender: unknown): Promise<Result<{ label: string }>> {
+  if (!isId(divisionId)) return { ok: false, message: "That division no longer exists." };
+  if (gender !== "Boys" && gender !== "Girls" && gender !== "Coed") return { ok: false, message: "Pick Boys, Girls or Coed." };
+  return run(() =>
+    withTx(deps.pool, async (q) => {
+      if (!(await isProgramsDirector(q, viewer))) throw new ProgramError(programsOnly);
+      const d = (
+        await q.query<{ program: string; gender: string; gradeLow: number; gradeHigh: number; others: number }>(
+          `select program_id::text as program, gender, grade_low as "gradeLow", grade_high as "gradeHigh",
+                  (select count(*)::int from scenic_registrations r join scenic_pools o on o.id = r.pool_id join scenic_grade_groups g on g.id = o.group_id
+                     join scenic_teams t on t.id = r.team_id
+                    where g.division_id = d.id and r.removed_by is null and r.plays_in_by is null and t.gender <> $2) as others
+             from scenic_divisions d where id = $1 for update`,
+          [divisionId, gender],
+        )
+      ).rows[0];
+      if (!d) throw new ProgramError("That division no longer exists.");
+      if (d.gradeLow < 0) throw new ProgramError("Pre-K is its own Coed division.");
+      if (d.gender === gender) return { label: divisionLabel({ ...d, gender }) };
+      if (gender !== "Coed" && d.others)
+        throw new ProgramError(`${d.others} team${d.others === 1 ? "" : "s"} in it ${d.others === 1 ? "isn't" : "aren't"} ${gender}. Move ${d.others === 1 ? "it" : "them"} first, or keep it Coed.`);
+      const clash = await q.query<{ gender: string; gradeLow: number; gradeHigh: number }>(
+        `select gender, grade_low as "gradeLow", grade_high as "gradeHigh" from scenic_divisions
+          where program_id = $1 and id <> $2 and gender = $3 and grade_low <= $5 and grade_high >= $4 limit 1`,
+        [d.program, divisionId, gender, d.gradeLow, d.gradeHigh],
+      );
+      if (clash.rows[0]) throw new ProgramError(`That overlaps ${divisionLabel(clash.rows[0])}.`);
+      await q.query("update scenic_divisions set gender = $2 where id = $1", [divisionId, gender]);
+      return { label: divisionLabel({ ...d, gender }) };
+    }),
+  );
+}
+
 export type GradeLevelInput = { gender: unknown; grade: unknown; level: unknown; on: unknown };
 
 // Grades accepted (Directors of Programs): turn one grade at one level on or off, Boys and Girls separately. On adds its
@@ -1082,13 +1120,14 @@ export async function moveTeam(
 
 // ---- Registering teams ----
 
-// The grade group's pool with the fewest teams (first by name on a tie), for a team of this gender, grade and level.
+// The grade group's pool with the fewest teams (first by name on a tie), for a team of this gender, grade and level: its own
+// gender's division, else a Coed one (Coed divisions take Boys and Girls teams).
 export async function poolFor(q: PoolClient, programId: string, t: { gender: string; grade: number; level: string }) {
   const r = await q.query<{ id: string; name: string; gender: string; gradeLow: number; gradeHigh: number }>(
     `select o.id::text, o.name, d.gender, d.grade_low as "gradeLow", d.grade_high as "gradeHigh"
      from scenic_divisions d join scenic_grade_groups g on g.division_id = d.id join scenic_pools o on o.group_id = g.id
-     where d.program_id = $1 and d.gender = $2 and g.grade = $3 and g.level = $4
-     order by (select count(*) from scenic_registrations r where r.pool_id = o.id), o.name limit 1`,
+     where d.program_id = $1 and (d.gender = $2 or d.gender = 'Coed') and g.grade = $3 and g.level = $4
+     order by d.gender = $2 desc, (select count(*) from scenic_registrations r where r.pool_id = o.id), o.name limit 1`,
     [programId, t.gender, t.grade, t.level],
   );
   return r.rows[0] ?? null;

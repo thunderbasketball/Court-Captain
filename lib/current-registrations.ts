@@ -1,9 +1,21 @@
 // A team's current registrations (events that haven't ended, not taken out), for its card on the Teams list: "✓ Winter
 // (26/27) · Paid" under its name (Thunder's and every organization's teams).
 import type { Queryable } from "./sql";
+import { gradeLabel, gradeRange } from "./scenic-teams";
 import { easternDate } from "./time";
 
-export type CurrentRegistration = { program: string; paid: boolean };
+// playsIn: placed by the League in another division ("Boys 2nd–3rd · 2nd: plays up"), else null.
+export type CurrentRegistration = { program: string; paid: boolean; playsIn: string | null };
+type Row = { id: string; program: string; paid: boolean; g: string | null; low: number | null; high: number | null; grade: number | null; why: string | null };
+const PLAYS_IN = `(select d.gender from scenic_pools o join scenic_grade_groups gg on gg.id = o.group_id join scenic_divisions d on d.id = gg.division_id where o.id = r.pool_id and r.plays_in_by is not null) as g,
+      (select d.grade_low from scenic_pools o join scenic_grade_groups gg on gg.id = o.group_id join scenic_divisions d on d.id = gg.division_id where o.id = r.pool_id) as low,
+      (select d.grade_high from scenic_pools o join scenic_grade_groups gg on gg.id = o.group_id join scenic_divisions d on d.id = gg.division_id where o.id = r.pool_id) as high,
+      (select gg.grade from scenic_pools o join scenic_grade_groups gg on gg.id = o.group_id where o.id = r.pool_id) as grade, r.plays_in_why as why`;
+const toReg = (x: Row): CurrentRegistration => ({
+  program: x.program,
+  paid: x.paid,
+  playsIn: x.g ? `${x.g} ${gradeRange(x.low!, x.high!)} · ${gradeLabel(x.grade!, x.grade!)}${x.why ? `: ${x.why}` : ""}` : null,
+});
 
 // The organization's teams, and how many aren't registered in any event that hasn't ended (its Home's Teams card:
 // "Teams (5 · 1 not registered)"). Thunder's teams, or the organization's own.
@@ -35,13 +47,13 @@ export async function eventTeamsCount(q: Pick<Queryable, "query">, org: string, 
 // League teams' current registrations by their League id (Scenic City's Teams list cards).
 export async function leagueRegistrations(q: Pick<Queryable, "query">, ids: string[], now: Date): Promise<Record<string, CurrentRegistration[]>> {
   if (!ids.length) return {};
-  const r = await q.query<{ id: string; program: string; paid: boolean }>(
-    `select r.team_id::text as id, p.name as program, r.paid from scenic_registrations r join scenic_programs p on p.id = r.program_id
+  const r = await q.query<Row>(
+    `select r.team_id::text as id, p.name as program, r.paid, ${PLAYS_IN} from scenic_registrations r join scenic_programs p on p.id = r.program_id
       where r.team_id = any($1::bigint[]) and p.ends_on >= $2::date and r.removed_by is null order by p.starts_on, lower(p.name)`,
     [ids, easternDate(now)],
   );
   const out: Record<string, CurrentRegistration[]> = {};
-  for (const x of r.rows) (out[x.id] ??= []).push({ program: x.program, paid: x.paid });
+  for (const x of r.rows) (out[x.id] ??= []).push(toReg(x));
   return out;
 }
 
@@ -63,14 +75,14 @@ export async function currentRegistrations(
 ): Promise<Record<string, CurrentRegistration[]>> {
   if (!ids.length) return {};
   const col = kind === "thunder" ? "st.thunder_team_id" : "st.org_team_id";
-  const r = await q.query<{ id: string; program: string; paid: boolean }>(
-    `select ${col}::text as id, p.name as program, r.paid from scenic_registrations r
+  const r = await q.query<Row>(
+    `select ${col}::text as id, p.name as program, r.paid, ${PLAYS_IN} from scenic_registrations r
        join scenic_teams st on st.id = r.team_id join scenic_programs p on p.id = r.program_id
       where ${col} = any($1::bigint[]) and p.ends_on >= $2::date and r.removed_by is null
       order by p.starts_on, lower(p.name)`,
     [ids, easternDate(now)],
   );
   const out: Record<string, CurrentRegistration[]> = {};
-  for (const x of r.rows) (out[x.id] ??= []).push({ program: x.program, paid: x.paid });
+  for (const x of r.rows) (out[x.id] ??= []).push(toReg(x));
   return out;
 }

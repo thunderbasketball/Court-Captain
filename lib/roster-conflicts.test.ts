@@ -96,12 +96,11 @@ describe("roster conflicts in a League", () => {
     expect(r.allowed[0].allowed).toBe("Within the rules: same organization, different divisions, both COMP");
     expect(r.conflicts.map((c) => c.allowed)).toEqual([null, null]);
 
-    // Its organizations see theirs, the other organization's player and team not named; not the League itself.
+    // Its organizations see theirs, with the other organization and team (not the player's birthdate or a link); not the League itself.
     const ours = (await orgConflicts(db.pool, "bbb", now))[0];
-    expect(ours).toMatchObject({ program: "Winter", allowed: [], conflicts: [{ a: { team: "B4", name: "Zoe Two" }, b: { name: "Another player", team: "Another organization's team", dob: null } }] });
-    expect(JSON.stringify(ours)).not.toContain("A4");
+    expect(ours).toMatchObject({ program: "Winter", allowed: [], conflicts: [{ a: { team: "B4", name: "Zoe Two" }, b: { team: "A4", dob: null, teamId: "", sourceId: null } }] });
     const theirs = (await orgConflicts(db.pool, "aaa", now))[0];
-    expect(theirs.conflicts.map((c) => [c.a.team, c.b.team].sort())).toEqual([["A4", "ARec"], ["A4", "Another organization's team"]]);
+    expect(theirs.conflicts.map((c) => [c.a.team, c.b.team].sort())).toEqual([["A4", "ARec"], ["A4", "B4"]]);
     expect(theirs.allowed.map((c) => [c.a.team, c.b.team].sort())).toEqual([["A4", "A6"]]);
     expect(await orgConflicts(db.pool, "scenic-city", now)).toEqual([]);
     expect(await orgConflicts(db.pool, "thunder", now)).toEqual([]);
@@ -109,8 +108,8 @@ describe("roster conflicts in a League", () => {
     // On each team's page.
     const doubles = async (id: string) => (await teamDoubles(db.pool, { orgTeamId: id }, now)).map((d) => [d.name, d.other, !!d.allowed]).sort();
     expect(await doubles(a6.ot)).toEqual([["Ava Up", "A4", true]]);
-    expect(await doubles(b4.ot)).toEqual([["Zoe Two", "another organization's team", false]]);
-    expect(await doubles(a4.ot)).toEqual([["Ava Up", "A6", true], ["Max Mix", "ARec", false], ["Zoe Two", "another organization's team", false]]);
+    expect(await doubles(b4.ot)).toEqual([["Zoe Two", "AAA · A4", false]]);
+    expect(await doubles(a4.ot)).toEqual([["Ava Up", "A6", true], ["Max Mix", "ARec", false], ["Zoe Two", "BBB · B4", false]]);
     expect(await teamDoubles(db.pool, { orgTeamId: a4.ot }, new Date("2029-01-01"))).toEqual([]); // over
 
     // Decided: kept with who, only by a Director of Programs; changed or taken back.
@@ -122,7 +121,7 @@ describe("roster conflicts in a League", () => {
     expect(await reviewConflict(deps, dee, prog, pair, "allowed")).toMatchObject({ ok: false }); // why?
     expect(await reviewConflict(deps, dee, prog, pair, "allowed", "  Board vote\n Nov 20 ")).toEqual({ ok: true });
     expect((await look()).reviewed[0].allowed).toBe("The League allowed it: Board vote Nov 20 (Dee X)");
-    expect(await doubles(b4.ot)).toEqual([["Zoe Two", "another organization's team", true]]);
+    expect(await doubles(b4.ot)).toEqual([["Zoe Two", "AAA · A4", true]]);
     expect(await reviewConflict(deps, dee, prog, pair, "different")).toEqual({ ok: true });
     r = await look();
     expect(r.conflicts).toHaveLength(1);

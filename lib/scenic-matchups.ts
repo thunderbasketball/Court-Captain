@@ -867,6 +867,35 @@ export async function fillTbd(deps: Deps, viewer: SessionUser, matchupId: unknow
   });
 }
 
+// Switch a game's home and away (a Director of Scheduling drags one team onto the other, or onto its TBD): not published or
+// scored. Against TBD, home "b" means TBD is home (the team visits).
+// Its place on the Grid stays (the grid then shows it at the visitors' gym, to move if wanted). Who and when are kept.
+export async function switchHome(deps: Deps, viewer: SessionUser, matchupId: unknown): Promise<Result<{ placed: boolean }>> {
+  if (!isId(matchupId)) return { ok: false, message: "Pick a game." };
+  if (!(await isScheduler(deps.pool, viewer)))
+    return { ok: false, message: "Only a Scenic City Admin or Director of Scheduling can do that." };
+  return withTx(deps.pool, async (q) => {
+    const m = (
+      await q.query<{ home: "a" | "b" | null; placed: boolean; published: boolean; scored: boolean }>(
+        `select home_side as home, court_key is not null as placed, scenic_game_published(program_id, day, team_a) as published,
+                (score_a is not null or forfeit is not null) as scored
+           from scenic_matchups where id = $1 for update`,
+        [matchupId],
+      )
+    ).rows[0];
+    if (!m) return { ok: false as const, message: "That game was changed. Reload the page." };
+    if (m.published) return { ok: false as const, message: "That game is published, so it can't be changed. Unpublish its level for the day first." };
+    if (m.scored) return { ok: false as const, message: "That game has a score." };
+    await q.query("update scenic_matchups set home_side = $2, home_set_by = $3, home_set_at = $4 where id = $1", [
+      matchupId,
+      (m.home ?? "a") === "a" ? "b" : "a",
+      `${viewer.firstName} ${viewer.lastName}`,
+      deps.now(),
+    ]);
+    return { ok: true as const, placed: m.placed };
+  });
+}
+
 // Create all matchups for one Game Day (or only REC's or COMP's): every League's divisions playing that day, in the League's order, each created again
 // as Create matchups does (a coach's teams in an earlier division guide the later ones). Admins and Directors of
 // Scheduling only.

@@ -3,6 +3,8 @@ export type HostCourt = { id: string; hostId: string; slots: number; divisions: 
 export type HostUse = { hostId: string | null; divisionId: string; court?: string | null }; // a game already made, at home there
 export type HostGroup = { id: string; divisionId: string; games: number; need: Map<string, number> }; // a division's level: its games, and each host's team-games in it
 
+// What a home game more than a host's fair part of a group costs, far above evening out the day (1000 a game).
+const FAIR = 1_000_000;
 const takes = (c: HostCourt, d: string) => !c.divisions || c.divisions.includes(d);
 
 // Each court's slots left: games on it take theirs; the others, in order, take one at their home organization, on a court for fewer
@@ -27,10 +29,12 @@ export function hostRoom(courts: HostCourt[], used: HostUse[], divisionId: strin
   return room;
 }
 
-// Each host's share of the home games in each group still to be made: as many games as possible get a home gym, the hosts' home games
-// over the whole day (`base`: those already made) as even as they can be, never more than its teams there or its open slots allow.
+// Each host's share of the home games in each group still to be made: as many games as possible get a home gym; in each group, each
+// host's teams about half their games at home (the same part of its games as every other host's there); then the hosts' home games
+// over the whole day (`base`: those already made) as even as they can be; never more than its teams there or its open slots allow.
 // When there isn't room for all, earlier groups (as listed) come first. A minimum-cost flow: host → its courts' slots → (host, group)
-// up to its teams' games → the group's games; a host's n-th home game of the day costs more than its (n-1)th.
+// → the group's games. A host's k-th home game in a group of its n team-games costs (2k − 1)/n of a lot (so each host's part, k/n,
+// comes out even); its n-th home game of the day costs a little more than its (n-1)th.
 export function hostShares(courts: HostCourt[], used: HostUse[], base: Map<string, number>, groups: HostGroup[]): Map<string, Map<string, number>> {
   const left = slotsLeft(courts, used);
   type Arc = { to: number; cap: number; cost: number; rev: number };
@@ -51,7 +55,7 @@ export function hostShares(courts: HostCourt[], used: HostUse[], base: Map<strin
   };
   const [S, T] = [node("S"), node("T")];
   const shares = new Map<string, Map<string, number>>(groups.map((g) => [g.id, new Map()]));
-  const flows: { g: string; h: string; arc: Arc; cap: number }[] = [];
+  const flows: { g: string; h: string; arcs: Arc[] }[] = [];
   for (const h of new Set(courts.map((c) => c.hostId))) {
     const most = groups.reduce((n, g) => n + (g.need.get(h) ?? 0), 0);
     const from = base.get(h) ?? 0;
@@ -62,10 +66,10 @@ export function hostShares(courts: HostCourt[], used: HostUse[], base: Map<strin
     }
     for (const g of groups) {
       const n = g.need.get(h) ?? 0;
-      if (n) flows.push({ g: g.id, h, cap: n, arc: arc(`x${h}/${g.id}`, `g${g.id}`, n) });
+      if (n) flows.push({ g: g.id, h, arcs: Array.from({ length: n }, (_, k) => arc(`x${h}/${g.id}`, `g${g.id}`, 1, Math.round((FAIR * (2 * k + 1)) / n))) });
     }
   }
-  groups.forEach((g, i) => arc(`g${g.id}`, "T", g.games, i));
+  groups.forEach((g, i) => arc(`g${g.id}`, "T", g.games, i * 10 * FAIR)); // short of room: earlier groups first
   for (;;) {
     // The cheapest way for one more game (Bellman–Ford: small graph, some arcs cost less than nothing).
     const dist = graph.map(() => Infinity);
@@ -91,7 +95,10 @@ export function hostShares(courts: HostCourt[], used: HostUse[], base: Map<strin
       v = u;
     }
   }
-  for (const f of flows) if (f.cap - f.arc.cap > 0) shares.get(f.g)!.set(f.h, f.cap - f.arc.cap);
+  for (const f of flows) {
+    const n = f.arcs.filter((a) => a.cap === 0).length;
+    if (n > 0) shares.get(f.g)!.set(f.h, n);
+  }
   return shares;
 }
 

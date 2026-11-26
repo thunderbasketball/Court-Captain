@@ -28,6 +28,7 @@ import {
   RegistrationSettings,
   TeamOffButton,
   RemoveDivision,
+  DivisionGender,
   RemovePool,
   TeamMenu,
 } from "../ProgramTools";
@@ -431,9 +432,10 @@ export async function ProgramContent({
                           </div>
                         </li>
                       ))}
-                    {manage && !d.teams && (
-                      <li className="flex justify-end px-4 py-3">
-                        <RemoveDivision id={d.id} label={d.label} />
+                    {manage && (d.gradeLow >= 0 || !d.teams) && (
+                      <li className="flex flex-wrap items-center justify-end gap-3 px-4 py-3">
+                        {d.gradeLow >= 0 && <DivisionGender id={d.id} gender={d.gender} />}
+                        {!d.teams && <RemoveDivision id={d.id} label={d.label} />}
                       </li>
                     )}
                   </GroupCard>

@@ -12,6 +12,7 @@ import {
   moveTeam,
   registerTeam,
   removeDivision,
+  setDivisionGender,
   removePool,
   saveProgram,
   setGradeLevel,
@@ -842,6 +843,38 @@ export function AddDivision({
         </form>
       </dialog>
     </>
+  );
+}
+
+// Directors of Programs: a K-and-up division switched between Boys, Girls and Coed (Coed takes Boys and Girls teams); its teams stay.
+export function DivisionGender({ id, gender }: { id: string; gender: string }) {
+  const router = useRouter();
+  const [busy, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <label className="flex items-center gap-2 text-xs text-zinc-500">
+      Division for
+      <select
+        aria-label="Division for"
+        disabled={busy}
+        value={gender}
+        onChange={(e) => {
+          const g = e.target.value;
+          setError(null);
+          start(async () => {
+            const r = await setDivisionGender(id, g);
+            if (r.ok) router.refresh();
+            else setError(r.message);
+          });
+        }}
+        className="rounded-md bg-white px-1.5 py-0.5 text-xs text-zinc-900 ring-1 ring-zinc-950/15 dark:bg-zinc-900 dark:text-zinc-100 dark:ring-white/15"
+      >
+        <option>Boys</option>
+        <option>Girls</option>
+        <option value="Coed">Coed (Boys and Girls)</option>
+      </select>
+      {error && <Toast key={error} message={error} />}
+    </label>
   );
 }
 

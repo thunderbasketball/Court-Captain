@@ -2,6 +2,7 @@
 // trend), teams, players not on a team, teams missing a Head Coach or players, uniform prep, practice slots, coaches'
 // use of the app (last login, longest ago first) and what's waiting on them. Only what the organization's features
 // have. Thunder's come from its registrations and teams; another organization's from its own teams.
+import { busyCoaches, type BusyCoach } from "./busy-coaches";
 import { memo } from "./request-memo";
 import type { SessionUser } from "./auth/service";
 import { orgFeatures } from "./features";
@@ -66,6 +67,7 @@ export type OrgMetrics = {
   missingRoles: { area: "scores" | "scheduling"; options: { id: string; name: string; me?: boolean }[]; off: boolean }[];
   // Teams with two players sharing a number: its own, and (its Leagues') the ones registered.
   duplicates: { id: string; name: string; numbers: string[] }[];
+  busy: BusyCoach[]; // coaches on more than 2 of its teams
 };
 
 const count = async (q: Pick<Queryable, "query">, sql: string, params: unknown[] = []) =>
@@ -78,7 +80,7 @@ export async function orgMetrics(deps: Deps, viewer: SessionUser, org: string): 
   const has = await orgFeatures(q, org);
   const thunder = org === "thunder";
   const teamsOn = has.has("team-building");
-  const [registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished, rosterConflicts, missingRoles, duplicates, teamConflicts, corrections, use] = await Promise.all([
+  const [registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished, rosterConflicts, missingRoles, duplicates, teamConflicts, corrections, use, busy] = await Promise.all([
     thunder && has.has("player-registration") ? registrationMetrics(q, now) : null,
     teamsOn ? teamCounts(q, org) : null,
     thunder && has.has("player-registration") ? notOnTeamMetrics(q) : null,
@@ -98,8 +100,9 @@ export async function orgMetrics(deps: Deps, viewer: SessionUser, org: string): 
     teamsOn ? orgConflicts(q, org, now) : [],
     has.has("programs") ? gamesToCorrect(q, { org }, now) : [],
     coachUse(q, org, now),
+    teamsOn || has.has("programs") ? busyCoaches(q, org, now) : [],
   ]);
-  return { registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished, rosterConflicts, missingRoles, duplicates, teamConflicts, corrections, coachUse: use };
+  return { registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished, rosterConflicts, missingRoles, duplicates, teamConflicts, corrections, coachUse: use, busy };
 }
 
 async function rolesNeeded(deps: Deps, viewer: SessionUser, org: string): Promise<OrgMetrics["missingRoles"]> {

@@ -2,6 +2,7 @@ import { connection } from "next/server";
 import { cache } from "react";
 import { db } from "@/lib/db";
 import { teamDoubles } from "@/lib/roster-conflicts";
+import { ruleWhy } from "@/lib/roster-match";
 
 const read = cache(async (org: string, id: string) => {
   await connection();
@@ -24,9 +25,10 @@ export default async function TeamDoubles({ org, id, className = "mt-2" }: { org
           <li className="font-semibold">ON TWO ROSTERS, NOT ALLOWED</li>
           {bad.map((d, i) => (
             <li key={i}>
-              {line(d)}: {d.broken.join(", ")}.
+              {line(d)}. {ruleWhy(d.broken)}
             </li>
           ))}
+          <li className="text-xs">To fix it: take the player off one roster, fix a name or birthdate that&rsquo;s wrong, or ask the League.</li>
         </ul>
       )}
       {fine.length > 0 && (

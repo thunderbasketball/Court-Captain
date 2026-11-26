@@ -30,7 +30,7 @@ import {
 } from "./team-names";
 import { matchOrCreateUser } from "./user-match";
 import { REC_CLOSED, recAllowed } from "./rec-orgs";
-import { scheduledRefusal, leagueOnly } from "./team-guards";
+import { scheduledRefusal } from "./team-guards";
 
 type Deps = { pool: Pool; now: () => Date };
 type Result<T = object> = ({ ok: true } & T) | { ok: false; message: string };
@@ -414,8 +414,8 @@ export async function createOrgTeam(
 }
 
 // Change a team's gender, grades or level (Admins and Directors of Teams). Its name follows the rule again, and so does
-// its copy in a League. A REC team needs REC open to the organization. While it's registered in a League program that hasn't ended,
-// only the League can change them (lib/league-team-change).
+// its copy in a League. A REC team needs REC open to the organization. Registered in a League, its division there stays: only the
+// League moves it (Play in another division, lib/league-team-change).
 export async function updateOrgTeam(
   deps: Deps,
   viewer: SessionUser,
@@ -445,13 +445,6 @@ export async function updateOrgTeam(
       if (!cur) throw new TeamError("That team no longer exists.");
       if (cur.gender === gender && cur.grade_low === nums[0] && cur.grade === nums.at(-1) && cur.level === level) return { name: cur.name };
       if (level === "REC" && cur.level !== "REC" && !(await recAllowed(q, o, deps.now()))) throw new TeamError(REC_CLOSED);
-      const inLeague = await q.query<{ name: string }>(
-        `select p.name from scenic_registrations r join scenic_teams st on st.id = r.team_id join scenic_programs p on p.id = r.program_id
-          where st.org_team_id = $1 and r.removed_by is null and p.ends_on >= ($2::timestamptz at time zone 'America/New_York')::date
-          order by p.starts_on limit 1`,
-        [id, deps.now()],
-      );
-      if (inLeague.rows[0]) throw new TeamError(leagueOnly(cur.name, inLeague.rows[0].name));
       await q.query(
         "update org_teams set gender = $3, grade_low = $4, grade = $5, level = $6, updated_by = $7, updated_at = $8 where id = $1 and org = $2",
         [id, o, gender, nums[0], nums.at(-1), level, by(viewer), deps.now()],

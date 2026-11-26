@@ -36,16 +36,3 @@ export async function isScheduled(q: Pick<Queryable, "query">, programId: string
 }
 
 export const SCHEDULED_REFUSAL = "It's already on the schedule for this event, so it can't withdraw. Request removal from the schedule instead.";
-
-// The League (not ended) one of these teams (scenic_teams ids) is registered in, or null.
-export async function registeredLeague(q: Pick<Queryable, "query">, teamIds: string[], now: Date): Promise<string | null> {
-  if (!teamIds.length) return null;
-  const r = await q.query<{ name: string }>(
-    `select p.name from scenic_registrations r join scenic_programs p on p.id = r.program_id
-      where r.team_id = any($1::bigint[]) and r.removed_by is null and p.ends_on >= $2::date order by p.starts_on limit 1`,
-    [teamIds, easternDate(now)],
-  );
-  return r.rows[0]?.name ?? null;
-}
-// Registered: only the League changes its gender, grade or level.
-export const leagueOnly = (team: string, league: string) => `${team} is registered in ${league}: only the League can change its gender, grade or level. Ask the League.`;

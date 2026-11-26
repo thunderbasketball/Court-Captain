@@ -79,8 +79,8 @@ export async function setContact(partnerId: string, coachId: string, on: boolean
 export async function createScenicTeam(input: teams.TeamInput) {
   return guarded((u) => teams.createScenicTeam(deps, u, input), "team-registration");
 }
-export async function updateScenicTeam(id: string, input: teams.TeamInput, anyway = false) {
-  return guarded((u) => teams.updateScenicTeam(deps, u, id, input, anyway === true), "team-registration");
+export async function updateScenicTeam(id: string, input: teams.TeamInput) {
+  return guarded((u) => teams.updateScenicTeam(deps, u, id, input), "team-registration");
 }
 export async function setScenicCoachEmail(id: string, email: string) {
   return guarded((u) => teams.setScenicCoachEmail(deps, u, id, String(email)), "team-registration");
@@ -235,8 +235,11 @@ export async function createDayMatchups(day: string, programId: string, level: s
   return guarded((u) => matchups.createDayMatchups(deps, u, day, programId, level), "programs");
 }
 // A registered team's gender, grade or level (League staff; an organization's or Thunder's team too).
-export async function leagueChangeTeam(id: string, input: { gender: string; grade: string; level: string }, anyway = false) {
-  return guarded((u) => changes.leagueChangeTeam(deps, u, id, input, anyway === true), "team-registration");
+export async function playIn(teamId: string, programId: string, poolId: string, why: string, anyway = false) {
+  return guarded((u) => changes.playIn(deps, u, teamId, programId, poolId, why, anyway === true), "team-registration");
+}
+export async function setDivisionGender(id: string, gender: string) {
+  return guarded((u) => programs.setDivisionGender(deps, u, id, gender), "programs");
 }
 // Scheduler: a game to correct: TBD in a team's place (null: remove the game).
 export async function correctGame(matchupId: string, teamId: string | null) {
@@ -248,6 +251,9 @@ export async function clearMatchups(programId: string, day: string, divisionId: 
 }
 export async function addGame(programId: string, day: string, divisionId: string, a: string, b: string | null) {
   return guarded((u) => matchups.addGame(deps, u, programId, day, divisionId, a, b), "programs");
+}
+export async function switchHome(matchupId: string) {
+  return guarded((u) => matchups.switchHome(deps, u, matchupId), "programs");
 }
 export async function fillTbd(matchupId: string, teamId: string | null) {
   return guarded((u) => matchups.fillTbd(deps, u, matchupId, teamId), "programs");

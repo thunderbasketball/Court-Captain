@@ -134,7 +134,7 @@ describe("teams for a registered organization", () => {
     ).rows[0].id;
     expect(await edit({ level: "COMP", grades: ["4", "5"] })).toMatchObject({ ok: true });
     expect(await edit({ level: "REC", grades: ["4", "5"] })).toMatchObject({ ok: false, message: expect.stringContaining("REC is only") });
-    // Registered in that League: no change until it's withdrawn.
+    // Registered in that League: the team may change; its division there doesn't (only the League moves it).
     await db.pool.query(
       `insert into scenic_divisions (program_id, gender, grade_low, grade_high) values ($1, 'Boys', 4, 5);
        insert into scenic_grade_groups (division_id, grade, level) select id, 5, 'COMP' from scenic_divisions;
@@ -144,9 +144,10 @@ describe("teams for a registered organization", () => {
       "insert into scenic_registrations (program_id, team_id, pool_id, registered_by) select $1, id, (select id from scenic_pools), 't' from scenic_teams where org_team_id = $2",
       [p, made.id],
     );
-    expect(await edit({ level: "COMP", grades: ["5"] })).toMatchObject({ ok: false, message: expect.stringContaining("is registered in Winter: only the League can change") });
-    await db.pool.query("update scenic_registrations set removed_by = 'x'");
+    const poolOf = async () => (await db.pool.query<{ id: string }>("select pool_id::text as id from scenic_registrations")).rows[0].id;
+    const before = await poolOf();
     expect(await edit({ level: "COMP", grades: ["5"] })).toEqual({ ok: true, name: "5B East Ridge TBD" });
+    expect(await poolOf()).toBe(before);
   });
 
   it("teams are named Grade + Gender + Head Coach (TBD until one), numbered when the same; renamed when the Head Coach changes", async () => {

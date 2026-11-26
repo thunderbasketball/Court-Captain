@@ -21,23 +21,43 @@ describe("how many home games a host has room for", () => {
     expect(hostRoom(courts, Array.from({ length: 99 }, () => ({ hostId: "H", divisionId: "d2" })), "d2").get("H")).toBe(0);
     expect(hostRoom(courts, [{ hostId: null, divisionId: "d2" }], "d2").get("E")).toBe(5);
   });
-  it("shares: even over the day looking at every group, a host held by its courts makes up for it where it can", () => {
+  it("shares: in each group about half of each host's teams' games at home, then even over the day", () => {
     const group = (id: string, divisionId: string, games: number, need: Record<string, number>) => ({ id, divisionId, games, need: new Map(Object.entries(need)) });
-    // City's one court takes only d1 (6 slots); Thunder's takes any. City's share is all in d1, Thunder's mostly in d2.
+    // City's one court takes only d1 (6 slots); Thunder's takes any. In d1 each about half its teams' games (City 7, T 5: a tie
+    // for the last one, given to City, which has no home games in d2); d2 all Thunder's (City can't host it).
     const two = [{ id: "c", hostId: "City", slots: 6, divisions: ["d1"] }, { id: "t", hostId: "T", slots: 20, divisions: null }];
     const groups = [group("d1", "d1", 6, { City: 7, T: 5 }), group("d2", "d2", 6, { City: 8, T: 6 })];
     let s = hostShares(two, [], new Map(), groups);
-    expect([s.get("d1")!.get("City"), s.get("d1")!.get("T") ?? 0, s.get("d2")!.get("City") ?? 0, s.get("d2")!.get("T")]).toEqual([6, 0, 0, 6]);
+    expect([s.get("d1")!.get("City"), s.get("d1")!.get("T") ?? 0, s.get("d2")!.get("City") ?? 0, s.get("d2")!.get("T")]).toEqual([4, 2, 0, 6]);
     // Less room than its teams need: as much as it has, the earlier group first.
     s = hostShares([{ id: "c", hostId: "City", slots: 3, divisions: null }], [], new Map(), [group("rec", "d1", 2, { City: 4 }), group("comp", "d1", 4, { City: 8 })]);
     expect([s.get("rec")!.get("City"), s.get("comp")!.get("City")]).toEqual([2, 1]);
-    // What's already made counts: T has 4, so City gets more here.
+    // Half each, even when T already has 4 home games that day.
     const free = [{ id: "c", hostId: "City", slots: 9, divisions: null }, { id: "t", hostId: "T", slots: 9, divisions: null }];
     s = hostShares(free, [], new Map([["T", 4]]), [group("d1", "d1", 6, { City: 6, T: 6 })]);
-    expect([s.get("d1")!.get("City"), s.get("d1")!.get("T")]).toEqual([5, 1]);
+    expect([s.get("d1")!.get("City"), s.get("d1")!.get("T")]).toEqual([3, 3]);
+    // With no fair part to decide it (one team each), what's already made counts: City gets the game.
+    s = hostShares(free, [], new Map([["T", 4]]), [group("d1", "d1", 1, { City: 1, T: 1 })]);
+    expect([s.get("d1")!.get("City"), s.get("d1")!.get("T") ?? 0]).toEqual([1, 0]);
+    // Earl's Boys K–1st: City 7 teams (its court K–1st only), ER 5, Thunder 2, RAA 1, EHYA 1: 8 games, each about half.
+    const k1 = [
+      { id: "c", hostId: "City", slots: 13, divisions: ["d1"] },
+      { id: "e", hostId: "ER", slots: 13, divisions: null },
+      { id: "t", hostId: "T", slots: 13, divisions: null },
+      { id: "r", hostId: "RAA", slots: 13, divisions: null },
+      { id: "h", hostId: "EHYA", slots: 26, divisions: null },
+    ];
+    s = hostShares(k1, [], new Map(), [group("d1", "d1", 8, { City: 7, ER: 5, T: 2, RAA: 1, EHYA: 1 })]);
+    const d1 = s.get("d1")!;
+    expect([...d1.values()].reduce((a, b) => a + b, 0)).toBe(8);
+    expect(d1.get("City")).toBeGreaterThanOrEqual(3);
+    expect(d1.get("City")).toBeLessThanOrEqual(4);
+    expect(d1.get("ER")).toBeGreaterThanOrEqual(2);
+    expect(d1.get("ER")).toBeLessThanOrEqual(3);
+    expect(d1.get("T")).toBe(1);
     // Never more than its teams' games; nothing to share is nothing.
     s = hostShares(free, [], new Map(), [group("d1", "d1", 6, { City: 2, T: 10 })]);
-    expect([s.get("d1")!.get("City"), s.get("d1")!.get("T")]).toEqual([2, 4]);
+    expect([s.get("d1")!.get("City"), s.get("d1")!.get("T")]).toEqual([1, 5]); // half of each
     expect(hostShares([], [], new Map(), [group("d1", "d1", 6, {})]).get("d1")!.size).toBe(0);
   });
   it("REC first, youngest to oldest, then COMP", () => {

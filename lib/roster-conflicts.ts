@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { orgHasArea } from "./org-admin";
-import { matchPlayers, normName, oddBirthdate, rulesBroken, type Strength, type TeamFacts } from "./roster-match";
+import { matchPlayers, normName, oddBirthdate, ruleWhy, rulesBroken, type Strength, type TeamFacts } from "./roster-match";
 import { schoolYearOf } from "./eligibility";
 import { gradeLabel, gradeRange } from "./scenic-teams";
 import type { Queryable } from "./sql";
@@ -244,7 +244,8 @@ export async function openConflicts(q: Pick<Queryable, "query">, org: string, no
 }
 
 // An organization with teams in someone else's Leagues still going: their pairs that involve its teams: not allowed, to warn
-// its staff; allowed, to note (the caller has checked who). Another organization's player and team aren't named. Only the League decides.
+// its staff; allowed, to note (the caller has checked who). Another organization's side shows its organization, team and division
+// (not the player's birthdate or a link to its team). Only the League decides.
 export async function orgConflicts(q: Pick<Queryable, "query">, org: string, now: Date): Promise<LeagueConflicts[]> {
   const r = await q.query<{ id: string; name: string }>(
     `select p.id::text, p.name from scenic_programs p
@@ -257,11 +258,11 @@ export async function orgConflicts(q: Pick<Queryable, "query">, org: string, now
     [org, easternDate(now)],
   );
   const key = `org:${org}`;
-  const other: ConflictSide = { name: "Another player", dob: null, grade: null, team: "Another organization's team", org: "", division: "", locked: false, orgKey: "", teamId: "", sourceId: null };
+  const other = (s: ConflictSide): ConflictSide => ({ ...s, dob: null, grade: null, locked: false, orgKey: "", teamId: "", sourceId: null });
   const mine = (list: RosterConflict[]) =>
     list
       .filter((c) => c.a.orgKey === key || c.b.orgKey === key)
-      .map((c) => (c.a.orgKey === key ? { ...c, b: c.b.orgKey === key ? c.b : other } : { ...c, a: c.b, b: other }));
+      .map((c) => (c.a.orgKey === key ? { ...c, b: c.b.orgKey === key ? c.b : other(c.b) } : { ...c, a: c.b, b: other(c.a) }));
   const out = await Promise.all(
     r.rows.map(async (p) => {
       const x = brief(await rosterReport(q, p.id, now));
@@ -272,7 +273,7 @@ export async function orgConflicts(q: Pick<Queryable, "query">, org: string, now
 }
 
 // A team's players on another of its Leagues' rosters too, for its team page (the caller may see the team): allowed, just
-// noted with why; not allowed, a warning with the rule. Another organization's team isn't named.
+// noted with why; not allowed, a warning with the rule, naming the other team (and its organization).
 export type Doubled = { name: string; maybe: boolean; other: string; program: string; allowed: string | null; broken: string[] };
 export async function teamDoubles(q: Pick<Queryable, "query">, team: { thunderTeamId: string } | { orgTeamId: string } | { teamId: string }, now: Date): Promise<Doubled[]> {
   const [col, id] = "thunderTeamId" in team ? ["thunder_team_id", team.thunderTeamId] : "orgTeamId" in team ? ["org_team_id", team.orgTeamId] : ["id", team.teamId];
@@ -290,7 +291,7 @@ export async function teamDoubles(q: Pick<Queryable, "query">, team: { thunderTe
         const me = c.a.teamId === g.teamId ? c.a : c.b.teamId === g.teamId ? c.b : null;
         if (!me) return [];
         const them = me === c.a ? c.b : c.a;
-        const other = them.teamId === me.teamId ? "this roster twice" : them.orgKey === me.orgKey ? them.team : "another organization's team";
+        const other = them.teamId === me.teamId ? "this roster twice" : them.orgKey === me.orgKey ? them.team : `${them.org} · ${them.team}`;
         return [{ name: me.name, maybe: c.strength !== "Conflict", other, program: g.program, allowed: c.allowed, broken: c.broken }];
       });
     }),
@@ -302,11 +303,6 @@ export async function teamDoubles(q: Pick<Queryable, "query">, team: { thunderTe
 
 export type AddTo = { orgTeamId: string } | { thunderTeamId: string } | { teamId: string } | { teamId: string; programId: string };
 export type AddEntry = { first: string; last: string; dob: string | null; grade: number | null };
-const RULE: Record<string, string> = {
-  "REC and COMP": "A player can't be on a REC and a COMP team.",
-  "Different organizations": "A player can be on teams in only one organization.",
-  "Same division": "A player can't be on two teams in the same division.",
-};
 
 // Each entry's warnings (one list per entry): a player who looks the same on another team of a League this team is
 // registered in, against the rule. Another organization's team and player aren't named. With `programId` only that League
@@ -344,8 +340,8 @@ export async function addWarnings(q: Pick<Queryable, "query">, to: AddTo, entrie
         const who = `${e.first} ${e.last}`.trim();
         const is = m.strength === "Conflict" ? "is on" : "may be on";
         const line = sameOrg
-          ? `${who} ${is} ${p.team} (${p.division} ${p.level}) in ${g.program}. ${broken.map((b) => RULE[b] ?? b).join(" ")}`
-          : `${who} ${is} another organization's team in ${g.program}. ${broken.map((b) => RULE[b] ?? b).join(" ")}`;
+          ? `${who} ${is} ${p.team} (${p.division} ${p.level}) in ${g.program}. ${ruleWhy(broken)}`
+          : `${who} ${is} another organization's team in ${g.program}. ${ruleWhy(broken)}`;
         if (!out[i].includes(line)) out[i].push(line);
       }
     });

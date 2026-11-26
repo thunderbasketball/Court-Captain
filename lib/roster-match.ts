@@ -141,3 +141,11 @@ export function oddBirthdate(dob: string | null, grade: number | null, schoolYea
   if (grade !== null && Math.abs(schoolYear - year - (grade + 6)) > 3) return `Born ${year}, ${grade === -1 ? "Pre-K" : grade === 0 ? "K" : `grade ${grade}`}`;
   return null;
 }
+
+// Each rule a pair breaks, in plain words: why it isn't allowed (shown to the organizations, coaches and families).
+const RULE: Record<string, string> = {
+  "REC and COMP": "A player can't be on a REC and a COMP team.",
+  "Different organizations": "A player can be on teams in only one organization.",
+  "Same division": "A player can't be on two teams in the same division.",
+};
+export const ruleWhy = (broken: readonly string[]) => broken.map((b) => RULE[b] ?? b).join(" ");

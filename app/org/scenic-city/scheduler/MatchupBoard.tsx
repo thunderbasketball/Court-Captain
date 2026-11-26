@@ -4,7 +4,8 @@ import { CoachBadge, LevelTag, TeamName, type CoachTag } from "../../../ui";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, useConfirm } from "../../../client-ui";
-import { addGame, clearMatchups, createMatchups, fillTbd, saveMatchups } from "../actions";
+import { addGame, clearMatchups, createMatchups, fillTbd, saveMatchups, switchHome } from "../actions";
+import { announce } from "./board-events";
 
 // group: "4th REC"; level: REC or COMP; coach: set when its coach has another team playing that day.
 export type BoardTeam = { id: string; name: string; group: string; level: string; coach?: CoachTag; need: number; division?: string };
@@ -59,6 +60,20 @@ export function MatchupBoard({
   const [games, setGames] = useState<Game[]>(start0);
   const [next, setNext] = useState(initial.length);
   const [picked, setPicked] = useState<Picked | null>(null);
+  // After a save elsewhere (home and away switched, a game placed) the page refreshes with the server's games: take them in,
+  // unless there are changes here not saved yet.
+  const sig0 = JSON.stringify(initial);
+  const [seen, setSeen] = useState({ sig: sig0, start: start0 });
+  if (seen.sig !== sig0) {
+    // Nothing unsaved here, or what's here is what was just saved (take the server's home sides too).
+    const clean = sign(games) === sign(seen.start) || sign(games) === sign(start0);
+    setSeen({ sig: sig0, start: start0 });
+    if (clean) {
+      setGames(start0);
+      setNext(initial.length);
+      setPicked(null);
+    }
+  }
   const [over, setOver] = useState<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null); // the team being dragged
   // The team being dragged or tapped: every team it already plays lights up (other Game Days amber, today red).
@@ -125,6 +140,8 @@ export function MatchupBoard({
       const into = slot(target[0]);
       const was = into[target[1]];
       const other = into[target[1] === "a" ? "b" : "a"];
+      // A team dropped on the other side of its own game (its opponent, or TBD): switch home and away (saved at once).
+      if (fromSlot && fromSlot[0] === target[0] && other === p.team) return flipHome(into);
       if (other === p.team) return setNote({ tone: "red", lines: [`${team.get(p.team)?.name} can't play itself.`] });
       if (!fromSlot && was !== p.team && placed(p.team) >= (team.get(p.team)?.need ?? 0))
         return setNote({ tone: "red", lines: [`${team.get(p.team)?.name} already has all its games.`] });
@@ -151,7 +168,22 @@ export function MatchupBoard({
     // A fill-in left alone had only the extra game: it goes too.
     list = list.filter((g) => g.a || g.b);
     setGames(list);
+    return list;
   }
+
+  // Every change here is saved at once (with the others not saved yet), so the Grid always shows the matchups.
+  const act = (p: Picked, to: string) => {
+    const list = move(p, to);
+    if (!list) return;
+    // Saved games whose teams changed: the Grid shows them at once (the left team home until the save says otherwise).
+    announce(
+      list.flatMap((g) => {
+        const was = games.find((x) => x.key === g.key);
+        return g.id && was && (was.a !== g.a || was.b !== g.b) ? [{ id: g.id, home: g.a, away: g.b }] : [];
+      }),
+    );
+    save(list);
+  };
 
   const dropProps = (id: string) => ({
     onDragOver: (e: React.DragEvent) => {
@@ -165,12 +197,12 @@ export function MatchupBoard({
       setDragging(null);
       try {
         const p = JSON.parse(e.dataTransfer.getData("text/plain")) as Picked;
-        if (typeof p?.team === "string" && typeof p.from === "string") move(p, id);
+        if (typeof p?.team === "string" && typeof p.from === "string") act(p, id);
       } catch {
         // Not one of our teams.
       }
     },
-    onClick: () => picked && move(picked, id),
+    onClick: () => picked && act(picked, id),
   });
   const ring = (id: string) =>
     over === id
@@ -196,7 +228,7 @@ export function MatchupBoard({
         onDragEnd={() => setDragging(null)}
         onClick={(e) => {
           e.stopPropagation();
-          if (picked && picked.from !== from) return move(picked, from); // tap a team to swap with it
+          if (picked && picked.from !== from) return act(picked, from); // tap a team to swap with it
           if (locked(id)) return;
           setPicked(on ? null : { team: id, from });
         }}
@@ -229,10 +261,32 @@ export function MatchupBoard({
     );
   }
 
-  const save = () =>
+  const flipHome = (g: Game) => {
+    if (dirty || !g.id) return setNote({ tone: "red", lines: ["Save or undo your changes first, then switch home and away."] });
+    // Shown at once (the home team on the left), saved behind it; put back if the save is refused.
+    const before = games;
+    setGames(games.map((x) => (x.key === g.key ? { ...x, a: x.b, b: x.a, home: "a" } : x)));
+    announce([{ id: g.id, home: g.b, away: g.a }]); // the board shows the home team on the left
+    start(async () => {
+      const r = await switchHome(g.id!);
+      if (!r.ok) {
+        setGames(before);
+        return setNote({ tone: "red", lines: [r.message] });
+      }
+      const home = g.home === "b" ? g.a : g.b;
+      const away = g.home === "b" ? g.b : g.a;
+      setNote({
+        tone: "green",
+        lines: [`${home ? `${team.get(home)?.name ?? "That team"} is home now` : `TBD is home now: ${team.get(away!)?.name ?? "the team"} visits`}.${r.placed ? " The game stays where it is on the Grid: move it to their gym if needed." : ""}`],
+      });
+      router.refresh();
+    });
+  };
+
+  const save = (now: Game[] = games) =>
     start(async () => {
       // A game with one team plays TBD.
-      const list = games.filter((g) => g.a || g.b).map((g) => [g.a ?? g.b!, g.a && g.b ? g.b : null] as [string, string | null]);
+      const list = now.filter((g) => g.a || g.b).map((g) => [g.a ?? g.b!, g.a && g.b ? g.b : null] as [string, string | null]);
       const r = await saveMatchups(programId, day, divisionId, list);
       setNote(
         r.ok
@@ -308,7 +362,7 @@ export function MatchupBoard({
         <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">🔒 {published.join(" and ")} published: those games stay as they are until you unpublish them.</p>
       )}
       <p className="text-xs text-zinc-500">
-        Drag a team to change a matchup (or tap it, then tap where it goes). Drop on a team to swap them. While you drag, teams it
+        Drag a team to change a matchup (or tap it, then tap where it goes); each change is saved at once and shows on the Grid. Drop on a team to swap them; on the other side of its own game (its opponent or TBD) to switch home and away. While you drag, teams it
         already plays light up: <span className="font-semibold text-amber-700 dark:text-amber-300">amber</span> on another Game
         Day, <span className="font-semibold text-red-600 dark:text-red-400">red</span> today.
       </p>
@@ -364,6 +418,33 @@ export function MatchupBoard({
                           chip(who, id)
                         ) : one && g.id && g.tbd && !dirty && !gameLocked(g) && !busy ? (
                           <FillPicker team={(g.a ?? g.b)!} teams={everyone} division={division} games={games} fills={fills} otherDays={otherDays} onPick={(id) => fill(g, id)} />
+                        ) : one && !gameLocked(g) && !busy ? (
+                          // Not saved yet: pick one of this division's teams to play here (moved in, as if dropped; then Save).
+                          <span className="block px-1 py-1 text-center text-xs">
+                            <span className="font-semibold text-zinc-600 dark:text-zinc-300">TBD</span>
+                            <select
+                              aria-label="A team to play here"
+                              onClick={(e) => e.stopPropagation()}
+                              value=""
+                              onChange={(e) => {
+                                const pickTeam = e.target.value;
+                                if (!pickTeam) return;
+                                const inGame = games.find((x) => x.a === pickTeam || x.b === pickTeam);
+                                act({ team: pickTeam, from: inGame ? `${inGame.key}:${inGame.a === pickTeam ? "a" : "b"}` : "sandbox" }, id);
+                              }}
+                              className={pickCls}
+                            >
+                              <option value="">Pick a team…</option>
+                              {teams
+                                .filter((x) => x.id !== (g.a ?? g.b) && x.level === team.get((g.a ?? g.b)!)?.level)
+                                .map((x) => (
+                                  <option key={x.id} value={x.id}>
+                                    {x.name}
+                                    {placed(x.id) < x.need ? " · in the Sandbox" : ""}
+                                  </option>
+                                ))}
+                            </select>
+                          </span>
                         ) : one ? (
                           <span className="block px-1 py-1 text-center text-xs">
                             <span className="font-semibold text-zinc-600 dark:text-zinc-300">TBD</span>
@@ -408,7 +489,7 @@ export function MatchupBoard({
         })}
       </ul>
       {!dirty && !published.includes(level) && (
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2">
           {teams.some((x) => x.level === level) && (
             <button
               type="button"
@@ -513,7 +594,7 @@ export function MatchupBoard({
             <button
               type="button"
               disabled={busy || dupes.size > 0}
-              onClick={save}
+              onClick={() => save()}
               className="flex-1 rounded-lg bg-scenic-navy px-3 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 disabled:opacity-50"
             >
               {busy ? "Saving…" : "Save changes"}
@@ -596,9 +677,10 @@ const pickCls = "mt-0.5 block w-full min-w-0 rounded-md bg-white px-1 py-1 text-
 // A TBD's slot: pick a team to play an extra game.
 function FillPicker({ onPick, ...p }: Omit<Parameters<typeof TeamOptions>[0], "team"> & { team: string; onPick: (id: string) => void }) {
   return (
-    <span className="block px-1 py-1 text-center text-xs" onClick={(e) => e.stopPropagation()}>
+    // Only the list catches a tap: the rest of the box still takes a team (its own team: home and away switch).
+    <span className="block px-1 py-1 text-center text-xs">
       <span className="font-semibold text-zinc-600 dark:text-zinc-300">TBD</span>
-      <select aria-label={`A team to play ${p.teams.find((t) => t.id === p.team)?.name ?? "this team"}`} value="" onChange={(e) => e.target.value && onPick(e.target.value)} className={pickCls}>
+      <select onClick={(e) => e.stopPropagation()} aria-label={`A team to play ${p.teams.find((t) => t.id === p.team)?.name ?? "this team"}`} value="" onChange={(e) => e.target.value && onPick(e.target.value)} className={pickCls}>
         <option value="">Pick a team…</option>
         <TeamOptions {...p} />
       </select>

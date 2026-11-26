@@ -457,7 +457,7 @@ export async function placeGame(
   return withTx(deps.pool, async (q) => {
     // One placement at a time per Game Day, so two Schedulers can't fill the same slot.
     await q.query("select pg_advisory_xact_lock(hashtext('scenic-grid:' || $1))", [game.day]);
-    const clash = await slotClash(q, { day: game.day, matchupId, court: slot.court as string, starts, a: game.a, b: game.b, len, lens, minutes: grid.minutes });
+    const clash = await slotClash(q, { day: game.day, matchupId, court: slot.court as string, starts, a: game.a, b: game.b, len, lens, minutes: grid.minutes, gyms: gymsOf(grid) });
     if (clash) return { ok: false as const, message: clash };
     const put = await q.query(
       `update scenic_matchups set court_key = $2, starts = $3::time, placed_by = $4, placed_at = $5
@@ -468,10 +468,14 @@ export async function placeGame(
   });
 }
 
-// Why a game can't be at that court and time: another game there, or one of its teams or coaches already playing then.
+// Each court's gym that day (court key → gym key), as JSON for SQL.
+const gymsOf = (grid: DayGrid) => JSON.stringify(Object.fromEntries(grid.gyms.flatMap((g) => g.courts.map((c) => [c.id, g.key]))));
+
+// Why a game can't be at that court and time: another game there, or one of its teams or coaches already playing then, or
+// playing at another gym back to back (less than a game's length between them; the Grid shows one game's break yellow).
 async function slotClash(
   q: Pick<Queryable, "query">,
-  g: { day: string; matchupId: string; court: string; starts: string; a: string; b: string | null; len: number; lens: string; minutes: number },
+  g: { day: string; matchupId: string; court: string; starts: string; a: string; b: string | null; len: number; lens: string; minutes: number; gyms: string },
 ): Promise<string | null> {
     const clash = await q.query<{ taken: boolean; name: string | null }>(
       `select m.court_key = $3 and m.starts = $4::time as taken,
@@ -506,6 +510,33 @@ async function slotClash(
       return coach.rows[0].key.startsWith("b:")
         ? `A team bound to this game (${coach.rows[0].name}) already plays then: bound teams never play at the same time.`
         : `${coach.rows[0].name} already coaches a game then (one coach, one game at a time).`;
+  // Another gym: at least a game's length between the end of one game and the start of the other.
+  const near = `m.day = $1::date and m.id <> $2 and m.court_key is not null
+          and coalesce($9::jsonb ->> m.court_key, '?' || m.court_key) <> coalesce($9::jsonb ->> $10, '?' || $10)
+          and m.starts < $3::time + make_interval(mins => $6 * 2)
+          and $3::time < m.starts + make_interval(mins => coalesce(($7::jsonb ->> to_char(m.starts, 'HH24:MI'))::int, $8) + $6)`;
+  const args = [g.day, g.matchupId, g.starts, g.a, g.b, g.len, g.lens, g.minutes, g.gyms, g.court];
+  const team = await q.query<{ name: string }>(
+    `select t.name from scenic_matchups m join scenic_teams t on t.id in (m.team_a, m.team_b) and t.id in ($4::bigint, $5::bigint)
+      where ${near} limit 1`,
+    args,
+  );
+  if (team.rows[0]) return `${team.rows[0].name} plays at another gym right before or after: back to back at different gyms isn't allowed (leave a game's time between).`;
+  const travel = await q.query<{ name: string; key: string }>(
+    `select x.c->>'name' as name, x.c->>'key' as key
+       from scenic_matchups m
+       join scenic_teams t on t.id in (m.team_a, m.team_b)
+       cross join lateral json_array_elements(${TEAM_COACHES}) x(c)
+      where ${near}
+        and x.c->>'key' in (select y.c->>'key' from scenic_teams t cross join lateral json_array_elements(${TEAM_COACHES}) y(c)
+                             where t.id in ($4::bigint, $5::bigint))
+      limit 1`,
+    args,
+  );
+  if (travel.rows[0])
+    return travel.rows[0].key.startsWith("b:")
+      ? `A team bound to this game (${travel.rows[0].name}) plays at another gym right before or after: back to back at different gyms isn't allowed.`
+      : `${travel.rows[0].name} coaches at another gym right before or after: back to back at different gyms isn't allowed (leave a game's time between).`;
   return null;
 }
 
@@ -517,7 +548,7 @@ export async function fillClash(deps: Deps, viewer: SessionUser, q: Pick<Queryab
   const asked = await requestClash(deps.pool, m.day, [m.b], toMin(m.starts), len);
   if (asked) return `${asked.team} asked not to play ${asked.blocks.join(" or ")} (schedule request).`;
   const lens = JSON.stringify(Object.fromEntries((grid.slots ?? []).map((x) => [x.start, x.minutes])));
-  return slotClash(q, { ...m, matchupId: m.id, len, lens, minutes: grid.minutes });
+  return slotClash(q, { ...m, matchupId: m.id, len, lens, minutes: grid.minutes, gyms: gymsOf(grid) });
 }
 
 // Unschedule all games at a gym that day: this program's games there come off the grid (the matchups stay). Published and

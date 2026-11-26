@@ -1,3 +1,4 @@
+import { requestsOff, type AskedOff } from "@/lib/schedule-requests";
 import type { SessionUser } from "@/lib/auth/service";
 import { Suspense, cache } from "react";
 import SubCard from "../../../SubCard";
@@ -486,9 +487,9 @@ async function DayLength({ user, date, label, who }: { user: SessionUser; date: 
 
 // A Game Day's grid, loaded in the background.
 async function DayGridCard({ user, day, coaches, published, wrong, wide = false }: { user: SessionUser; day: ScheduleDay; coaches: Map<string, CoachTag>; published: string[]; wrong: Wrong; wide?: boolean }) {
-  const grid = await dayGrid({ pool: db, now: () => new Date() }, user, day.date);
+  const [grid, off] = await Promise.all([dayGrid({ pool: db, now: () => new Date() }, user, day.date), requestsOff(db, day.date)]);
   return grid ? (
-    <Grid day={day} grid={grid} coaches={coaches} published={published} wrong={wrong} wide={wide} />
+    <Grid day={day} grid={grid} coaches={coaches} published={published} wrong={wrong} wide={wide} off={off} />
   ) : (
     <p className="py-6 text-center text-sm text-zinc-500">This Game Day&apos;s grid isn&apos;t available.</p>
   );
@@ -882,7 +883,7 @@ function TeamGames({ team, date, games, who }: { team: DateTeam; date: string; g
 // Grid: the game length at the top, then each gym open that Game Day (collapsed: host, courts, hours, games).
 // Expanded: rows of game blocks from when the gym opens, a column per court; a court's blocks outside its hours are
 // closed.
-function Grid({ day, grid, coaches, published, wrong, wide }: { day: ScheduleDay; grid: DayGrid; coaches: Map<string, CoachTag>; published: string[]; wrong: Wrong; wide: boolean }) {
+function Grid({ day, grid, coaches, published, wrong, wide, off }: { day: ScheduleDay; grid: DayGrid; coaches: Map<string, CoachTag>; published: string[]; wrong: Wrong; wide: boolean; off: Map<string, AskedOff[]> }) {
   // The day's games (both teams still playing), each League's divisions in order, with their slot on the grid.
   const team = (t: DateTeam) => ({
     id: t.teamId,
@@ -895,6 +896,7 @@ function Grid({ day, grid, coaches, published, wrong, wide }: { day: ScheduleDay
     level: t.level,
     coach: coaches.get(t.teamId),
     people: t.coaches.map((c) => c.key),
+    off: off.get(t.teamId) ?? [],
   });
   const games = day.programs
     .filter((p) => !p.bracket)

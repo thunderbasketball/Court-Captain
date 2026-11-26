@@ -23,7 +23,8 @@ import { StandardEmails } from "../../../season-guide/SeasonGuidePanel";
 import SubCard from "../../../SubCard";
 import { ImportTeamsPanel, UndoImportButton } from "../../../TeamImport";
 import { CollapseCard, GroupCard, PageTitle } from "../../../ui";
-import { ChangeTeam, DeleteTeam, TeamEditor } from "./TeamEditor";
+import { DeleteTeam, PlayInTeam, TeamEditor } from "./TeamEditor";
+import { playInChoices, type PlayIn } from "@/lib/league-team-change";
 import { addClubTeam, importClubTeams, previewClubImport, undoClubImport } from "../actions";
 
 import { PageFrame } from "../../../ui";
@@ -129,6 +130,10 @@ export async function ScenicTeamsContent({
   const [clubs, people, imports] = director
     ? await Promise.all([outsideClubs(db), scenicCoachOptions(db), listClubImports(deps, user)])
     : [[], [], null];
+  // League staff: where each opened team plays in its Leagues, to place it in another division (Play in another division).
+  const plays: Record<string, PlayIn[]> = director
+    ? Object.fromEntries(await Promise.all([...openTeams].filter((id) => /^\d{1,18}$/.test(id)).map(async (id) => [id, await playInChoices(db, id, new Date())] as const)))
+    : {};
   const when = (d: Date) =>
     d.toLocaleString("en-US", { timeZone: TZ, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
@@ -179,18 +184,19 @@ export async function ScenicTeamsContent({
               id={t.id}
               embedded
               edit={
-                t.canEdit ? (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <TeamEditor grades={GRADE_CHOICES} team={t} />
-                    <DeleteTeam id={t.id} name={t.name} />
-                  </div>
-                ) : (
-                  t.canChange && (
+                <>
+                  {t.canEdit && (
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <ChangeTeam grades={GRADE_CHOICES} team={t} />
+                      <TeamEditor grades={GRADE_CHOICES} team={t} />
+                      <DeleteTeam id={t.id} name={t.name} />
                     </div>
-                  )
-                )
+                  )}
+                  {director && (plays[t.id] ?? []).length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <PlayInTeam teamId={t.id} leagues={plays[t.id]} />
+                    </div>
+                  )}
+                </>
               }
             />
           ) : null,
