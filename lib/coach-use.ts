@@ -7,7 +7,7 @@ import { easternDate } from "./time";
 export const USE_DAYS = 7;
 // `parts`: the same for each organization in the League (Scenic City), or each team (any other organization), fewest using first.
 export type CoachUsePart = { name: string; using: number; total: number; percent: number };
-export type CoachUse = { using: number; total: number; percent: number; by: "organization" | "team"; parts: CoachUsePart[] };
+export type CoachUse = { using: number; total: number; percent: number; by: "organization" | "team" | "grade"; parts: CoachUsePart[] };
 
 // Each coach with the part they count in (a coach can count in several).
 const COACHES: Record<string, string> = {

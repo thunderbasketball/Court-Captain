@@ -12,6 +12,7 @@ import { directorsPanel, isOrgAdmin, schedulerCount, scorerCount } from "./org-a
 import type { Queryable } from "./sql";
 import { TZ, easternDate, weekOf } from "./time";
 import { coachUse, type CoachUse } from "./coach-use";
+import { rostersDone } from "./roster-done";
 import { gamesToCorrect, type GameToCorrect } from "./schedule-corrections";
 import { openConflicts, orgConflicts, type LeagueConflicts } from "./roster-conflicts";
 import { feeTrend, type FeeDay, type FeeRow } from "./fee-trend";
@@ -50,6 +51,7 @@ export type OrgMetrics = {
     blackoutDays: number;
   } | null;
   coachUse: CoachUse | null; // its coaches who used the app in the last 7 days
+  rosters: CoachUse | null; // its teams with a complete roster (no roster warning); "using" = complete
   coaches: { id: string; name: string; teams: string[]; lastLogin: Date | null }[]; // never first, then longest ago
   // Each team's use of the app: its staff's page views in the last 30 days and their last visit (least used first).
   teamUse: { id: string; name: string; views: number; lastVisit: Date | null }[];
@@ -80,7 +82,7 @@ export async function orgMetrics(deps: Deps, viewer: SessionUser, org: string): 
   const has = await orgFeatures(q, org);
   const thunder = org === "thunder";
   const teamsOn = has.has("team-building");
-  const [registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished, rosterConflicts, missingRoles, duplicates, teamConflicts, corrections, use, busy] = await Promise.all([
+  const [registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished, rosterConflicts, missingRoles, duplicates, teamConflicts, corrections, use, busy, rosters] = await Promise.all([
     thunder && has.has("player-registration") ? registrationMetrics(q, now) : null,
     teamsOn ? teamCounts(q, org) : null,
     thunder && has.has("player-registration") ? notOnTeamMetrics(q) : null,
@@ -101,8 +103,9 @@ export async function orgMetrics(deps: Deps, viewer: SessionUser, org: string): 
     has.has("programs") ? gamesToCorrect(q, { org }, now) : [],
     coachUse(q, org, now),
     teamsOn || has.has("programs") ? busyCoaches(q, org, now) : [],
+    (org === "scenic-city" ? has.has("programs") : teamsOn) ? rostersDone(q, org, now, !thunder || has.has("uniforms")) : null,
   ]);
-  return { registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished, rosterConflicts, missingRoles, duplicates, teamConflicts, corrections, coachUse: use, busy };
+  return { registrations, teams, notOnTeam, missing, uniforms, practices, coaches, waiting, teamUse, unpublished, rosterConflicts, missingRoles, duplicates, teamConflicts, corrections, coachUse: use, busy, rosters };
 }
 
 async function rolesNeeded(deps: Deps, viewer: SessionUser, org: string): Promise<OrgMetrics["missingRoles"]> {
@@ -276,6 +279,7 @@ async function coachLogins(q: Pick<Queryable, "query">, org: string): Promise<Or
 }
 
 // Join requests (people waiting to be let in) and Support chats started in this organization.
+export const COMP_DUE_DAYS = 6; // a COMP schedule is due this many days before its Game Day (REC: shown as the next few)
 async function unpublishedEvents(q: Pick<Queryable, "query">, org: string, now: Date): Promise<OrgMetrics["unpublished"]> {
   const r = await q.query<OrgMetrics["unpublished"][number]>(
     `select p.id::text as "programId", p.name as program, e.day::text, e.bracket, array_agg(l.level order by l.level desc) as levels
@@ -287,6 +291,7 @@ async function unpublishedEvents(q: Pick<Queryable, "query">, org: string, now: 
                       where r.program_id = p.id and r.removed_by is null) l on true
       where p.org = $1 and p.kind = 'League' and e.day >= $2::date
         and not exists (select 1 from scenic_published_schedules d where d.program_id = p.id and d.day = e.day and d.level = l.level)
+        and (l.level <> 'COMP' or e.day <= $2::date + ${COMP_DUE_DAYS}) -- COMP is due 6 days before its Game Day
       group by p.id, p.name, e.day, e.bracket
       order by e.day, lower(p.name) limit 3`, // the next few
     [org, easternDate(now)],

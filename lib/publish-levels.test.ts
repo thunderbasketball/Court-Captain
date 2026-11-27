@@ -85,9 +85,15 @@ describe("publishing REC and COMP separately", () => {
     const look = async () => (await publicLeague(db.pool, now, prog))!;
     expect(await look()).toMatchObject({ schedule: null, soon: ["REC", "COMP"] });
     expect((await scheduledGames(db.pool, [t.REC1]))[t.REC1][0].published).toBe(false);
+    // COMP is due 6 days before its Game Day: listed only from then.
     expect((await orgMetrics(deps(), dee, "scenic-city"))!.unpublished).toMatchObject([
+      { day: D1, levels: ["REC"] },
+      { day: D2, levels: ["REC"] },
+    ]);
+    const sixBefore = { pool: db.pool, now: () => new Date("2026-11-29T15:00:00Z") };
+    expect((await orgMetrics(sixBefore, dee, "scenic-city"))!.unpublished).toMatchObject([
       { day: D1, levels: ["REC", "COMP"] },
-      { day: D2, levels: ["REC", "COMP"] },
+      { day: D2, levels: ["REC"] },
     ]);
 
     // Who, what: Directors of Programs or Scheduling; a real level and Game Day.

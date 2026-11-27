@@ -110,6 +110,7 @@ export default function OrgMetrics({
   return (
     <section aria-label="Metrics" className="space-y-2">
       {m.coachUse && <CoachUseTile use={m.coachUse} />}
+      {m.rosters && <CoachUseTile use={m.rosters} label="of rosters complete" note="complete first. Complete: players, each with a birthdate and number, no number twice." />}
       {m.registrations && (
         <SubCard title="Registrations" count={m.registrations.total}>
           <p className="mb-2 text-xs text-zinc-500">
@@ -181,7 +182,7 @@ export default function OrgMetrics({
                   </li>
                 ))}
               </ul>
-              <p className="pt-2 text-xs text-zinc-500">The next few. Publish REC and COMP each on the Scheduler.</p>
+              <p className="pt-2 text-xs text-zinc-500">The next few (COMP from 6 days before its Game Day). Publish REC and COMP each on the Scheduler.</p>
             </SubCard>
           )}
           {m.rosterConflicts.length > 0 && (

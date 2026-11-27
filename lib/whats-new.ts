@@ -22,6 +22,34 @@ const everyoneIn = ["coach", "staff", "parent", "official", ...managers] as cons
 
 export const RELEASES: readonly Release[] = [
   {
+    version: "1.18",
+    kind: "minor",
+    date: "2026-11-27",
+    title: "Rosters complete; COMP schedules when they're due",
+    items: [
+      {
+        key: "rosters-complete",
+        title: "How many rosters are complete",
+        purpose: "See at a glance how many teams still have roster work to do, and where: the League by each organization, any other organization by grade.",
+        how: [
+          "Open Home: it's under the coaches percentage at the top.",
+          "A roster is complete with no roster warning: it has players, each with a birthdate and a number, and no number twice.",
+          "Tap it to see each organization's (or grade's), the fewest complete first.",
+        ],
+        who: ["admin", "owner"],
+      },
+      {
+        key: "comp-due-6-days",
+        title: "COMP schedules listed when they're due",
+        purpose: "A COMP schedule is due 6 days before its Game Day, so To Do no longer lists it earlier.",
+        how: ["Home → To Do → Schedules not published shows a Game Day's COMP from 6 days before it; REC as before."],
+        who: managers,
+        needs: ["court-teams"],
+        areas: ["scheduling"],
+      },
+    ],
+  },
+  {
     version: "1.17",
     kind: "minor",
     date: "2026-11-27",

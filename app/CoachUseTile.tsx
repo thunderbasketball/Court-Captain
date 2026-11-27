@@ -15,16 +15,24 @@ function Bar({ percent }: { percent: number }) {
   );
 }
 
-// Home: the share of its coaches using the app in the last 7 days, at a glance. Tap to open each organization's (a League)
-// or each team's, fewest using first.
-export default function CoachUseTile({ use }: { use: CoachUse }) {
+// Home: the share of its coaches using the app in the last 7 days (or, with `label`, of another count such as its rosters
+// complete), at a glance. Tap to open each organization's (a League), each team's or each grade's, fewest first.
+export default function CoachUseTile({
+  use,
+  label = "of coaches used the app in the last 7 days",
+  note = "using first. A coach on several counts in each.",
+}: {
+  use: CoachUse;
+  label?: string;
+  note?: string;
+}) {
   return (
     <details className="group rounded-xl bg-white ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10">
       <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-2.5 [&::-webkit-details-marker]:hidden">
         <span className={`text-2xl font-semibold tabular-nums ${tone(use.percent)[0]}`}>{use.percent}%</span>
         <div className="min-w-0 flex-1">
           <p className="text-sm">
-            of coaches used the app in the last 7 days{" "}
+            {label}{" "}
             <span className="text-zinc-500 tabular-nums">
               ({use.using} of {use.total})
             </span>
@@ -36,7 +44,7 @@ export default function CoachUseTile({ use }: { use: CoachUse }) {
         </span>
       </summary>
       <div className="border-t border-zinc-950/5 px-4 py-2.5 dark:border-white/10">
-        <p className="mb-2 text-xs text-zinc-500">By {use.by}, fewest using first. A coach on several counts in each.</p>
+        <p className="mb-2 text-xs text-zinc-500">By {use.by}, fewest {note}</p>
         <ul className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
           {use.parts.map((p) => (
             <li key={p.name} className="text-sm">
