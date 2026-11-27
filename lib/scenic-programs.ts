@@ -491,7 +491,8 @@ export type Matchup = {
 
 // The Scheduler (Admins and Directors of Scheduling): every League's upcoming Game Days (and Brackets, on their first
 // Bracket Day) on one list, soonest first, each with the teams playing. Null for anyone else.
-export async function gameDaySchedule(deps: Deps, viewer: SessionUser): Promise<{ today: string; days: ScheduleDay[] } | null> {
+// `played`: the current Leagues' Game Days already played too (the Schedule analysis shows them greyed).
+export async function gameDaySchedule(deps: Deps, viewer: SessionUser, played = false): Promise<{ today: string; days: ScheduleDay[] } | null> {
   if (!(await seesSchedule(deps.pool, viewer))) return null;
   const today = easternDate(deps.now());
   const ids = await deps.pool.query<{ id: string }>(
@@ -547,7 +548,7 @@ export async function gameDaySchedule(deps: Deps, viewer: SessionUser): Promise<
     );
     for (const list of Object.values(games)) list.splice(0, list.length, ...list.filter((g) => g.programId === p.id));
     for (const e of teamsByDate(p)) {
-      if (e.lastDate < today) continue;
+      if (e.lastDate < today && !played) continue;
       const day = byDay.get(e.date) ?? { date: e.date, playing: 0, games: 0, programs: [] };
       const matchups = e.bracket
         ? []

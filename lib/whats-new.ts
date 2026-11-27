@@ -79,6 +79,18 @@ export const RELEASES: readonly Release[] = [
         who: ["public", "parent", "coach", "staff", "director", "admin", "owner"],
       },
       {
+        key: "analysis-rec-comp",
+        title: "Schedule analysis: REC and COMP apart",
+        purpose: "See each level's progress on a Game Day on its own: REC can be done while COMP is still to make.",
+        how: [
+          "Home → Schedule analysis.",
+          "REC and COMP show right on each Game Day's card: their teams, games guaranteed, matchups, placed games and notes.", "Open the card for the shared game slots, hosting notes and each organization.",
+        ],
+        who: ["director", "admin", "owner"],
+        needs: ["court-teams"],
+        areas: ["scheduling"],
+      },
+      {
         key: "my-teams-default",
         title: "My teams: your own teams, without following them",
         purpose: "Logged in, your organization's page shows the teams you coach or help with (and your player's team) under My teams, with the teams you follow.",

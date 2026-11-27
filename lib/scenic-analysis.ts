@@ -30,6 +30,7 @@ export type DayAnalysis = {
   bracketDays: string[]; // the Brackets' days ([] for a Game Day)
   label: string; // "Winter League 2027 Brackets" (empty for a Game Day)
   brackets: boolean; // a League's Brackets (postseason): teams and slots over its Bracket Days, no matchups yet
+  played: boolean; // its (last) day has passed: shown collapsed and greyed
   minutes: number;
   teams: number;
   gamesGuaranteed: number; // team-games promised (1GG = 1, 2GG = 2)
@@ -41,7 +42,21 @@ export type DayAnalysis = {
   short: number; // teams with fewer games than guaranteed
   divisionsWithout: number; // divisions playing that day with no matchups yet
   orgs: OrgDay[];
-  notes: { tone: "red" | "amber" | "green"; text: string }[];
+  notes: Note[]; // the day's (slots and hosting), shared by REC and COMP
+  levels: LevelDay[]; // REC and COMP apart (a Game Day; none for the Brackets)
+};
+type Note = { tone: "red" | "amber" | "green"; text: string };
+// One level's part of a Game Day: its teams, games guaranteed, matchups and placed games, and what they say.
+export type LevelDay = {
+  level: "REC" | "COMP";
+  teams: number;
+  gamesGuaranteed: number;
+  games: number;
+  tbd: number;
+  placed: number;
+  short: number;
+  divisionsWithout: number;
+  notes: Note[];
 };
 
 const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
@@ -52,11 +67,11 @@ const clock = (t: string) => {
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 export async function scheduleAnalysis(deps: Deps, viewer: SessionUser): Promise<DayAnalysis[] | null> {
-  const s = await gameDaySchedule(deps, viewer); // null unless a Scheduler (checked there)
+  const s = await gameDaySchedule(deps, viewer, true); // null unless a Scheduler (checked there); the days played too
   if (!s) return null;
-  // Every upcoming Game Day, and each League's Brackets (postseason) as one card over its Bracket Days.
+  // Every Game Day of its current Leagues (the ones played shown greyed), and each League's Brackets as one card over its Bracket Days.
   const last = (d: (typeof s.days)[number]) => d.programs.reduce((x, p) => (p.lastDate > x ? p.lastDate : x), d.date);
-  const days = s.days.filter((d) => last(d) >= s.today);
+  const days = s.days;
   // Every Game Day's grid in one go (three queries, not three a day).
   const allGrids = await dayGrids(
     deps,
@@ -165,7 +180,13 @@ export async function scheduleAnalysis(deps: Deps, viewer: SessionUser): Promise
 
       const slots = [...orgs.values()].reduce((n, o) => n + o.slots, 0);
       const gamesGuaranteed = teams.reduce((n, t) => n + need.get(t.teamId)!, 0);
-      const expected = matchups.length || Math.ceil(gamesGuaranteed / 2); // before matchups: about half the team-games
+      // Games expected: each level's matchups, or before its matchups, about half its team-games (REC and COMP are made apart).
+      const lvl = (t: { level: string } | undefined) => (t?.level === "COMP" ? "COMP" : "REC");
+      const expected = (["REC", "COMP"] as const).reduce((n, level) => {
+        const made = matchups.filter((m) => lvl(byId.get(m.a) ?? (m.b ? byId.get(m.b) : undefined)) === level).length;
+        const owed = teams.filter((t) => lvl(t) === level).reduce((x, t) => x + need.get(t.teamId)!, 0);
+        return n + (made || Math.ceil(owed / 2));
+      }, 0);
       const list = [...orgs.values()].sort((a, b) => a.name.localeCompare(b.name));
 
       // What the numbers say, most urgent first.
@@ -206,22 +227,52 @@ export async function scheduleAnalysis(deps: Deps, viewer: SessionUser): Promise
               text: `${o.name}: ${plural(o.home, "home game")} but ${plural(o.slots, "slot")} at its gyms.`,
             });
           if (o.slots > 0 && !o.teams)
-            notes.push({ tone: "green", text: `${o.name} hosts (${plural(o.slots, "slot")}) with no teams playing.` });
+            // A host with no teams of its own: how much of its gym is used.
+            notes.push({ tone: "green", text: `${o.name} hosts ${plural(o.used, "game")} in ${plural(o.slots, "slot")} (no teams of its own).` });
         }
-        if (divisionsWithout)
-          notes.push({ tone: "amber", text: `${plural(divisionsWithout, "division")} with no matchups yet.` });
-        if (short && matchups.length)
-          notes.push({ tone: "amber", text: `${plural(short, "team")} short of their games guaranteed.` });
-        const tbd = matchups.filter((m) => !m.b).length;
-        if (tbd) notes.push({ tone: "amber", text: `${plural(tbd, "TBD game")} (no opponent yet).` });
-        if (matchups.length && placed < matchups.length)
-          notes.push({ tone: "amber", text: `${plural(matchups.length - placed, "game")} not placed on the Grid yet.` });
-        if (matchups.length && placed === matchups.length) notes.push({ tone: "green", text: "Every game is on the Grid." });
+        // Matchups, TBDs and placing: in REC's and COMP's own notes (levels).
       }
+
+      // REC and COMP apart (a Coed division plays as REC); a game is its home team's level (else its other team's).
+      const levelOf = (t: { level: string } | undefined) => (t?.level === "COMP" ? "COMP" : "REC");
+      const isPlaced = (m: (typeof matchups)[number]) => !!m.court && !!m.starts && open.has(`${m.court}@${m.starts}`);
+      const levels: LevelDay[] = brackets
+        ? []
+        : (["REC", "COMP"] as const).flatMap((level) => {
+            const ts = teams.filter((t) => levelOf(t) === level);
+            const ms = matchups.filter((m) => levelOf(byId.get(m.a) ?? (m.b ? byId.get(m.b) : undefined)) === level);
+            if (!ts.length && !ms.length) return [];
+            const placedHere = ms.filter(isPlaced).length;
+            const shortHere = ts.filter((t) => (got.get(t.teamId) ?? 0) < need.get(t.teamId)!).length;
+            const divs = new Set(ts.map((t) => `${t.divisionId}`));
+            const withHere = new Set(ms.map((m) => m.divisionId));
+            const without = [...divs].filter((d) => !withHere.has(d)).length;
+            const tbdHere = ms.filter((m) => !m.b).length;
+            const n: Note[] = [];
+            if (without) n.push({ tone: "amber", text: `${plural(without, "division")} with no ${level} matchups yet.` });
+            if (shortHere && ms.length) n.push({ tone: "amber", text: `${plural(shortHere, "team")} short of their games guaranteed.` });
+            if (tbdHere) n.push({ tone: "amber", text: `${plural(tbdHere, "TBD game")} (no opponent yet).` });
+            if (ms.length && placedHere < ms.length) n.push({ tone: "amber", text: `${plural(ms.length - placedHere, "game")} not placed on the Grid yet.` });
+            if (ms.length && placedHere === ms.length) n.push({ tone: "green", text: "Every game is on the Grid." });
+            return [
+              {
+                level,
+                teams: ts.length,
+                gamesGuaranteed: ts.reduce((x, t) => x + need.get(t.teamId)!, 0),
+                games: ms.length,
+                tbd: tbdHere,
+                placed: placedHere,
+                short: shortHere,
+                divisionsWithout: without,
+                notes: n,
+              },
+            ];
+          });
 
       return {
         date: day.date,
         lastDate: last(day),
+        played: last(day) < s.today,
         bracketDays: brackets ? dates : [],
         label: brackets ? day.programs.map((p) => `${p.programName} Brackets`).join(" · ") : "",
         brackets,
@@ -237,6 +288,7 @@ export async function scheduleAnalysis(deps: Deps, viewer: SessionUser): Promise
         divisionsWithout,
         orgs: list,
         notes,
+        levels,
       };
     }),
   );
