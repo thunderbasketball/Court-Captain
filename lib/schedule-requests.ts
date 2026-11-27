@@ -13,6 +13,8 @@ import {
   RULES_NOTE,
   blockedBy,
   closesOn,
+  hourOptions,
+  hourRuns,
   parseSettings,
   type Block,
   type RequestSettings,
@@ -132,6 +134,9 @@ export type RequestDay = {
   setBy: string | null;
   off: "team" | "league" | null; // sitting out: the team chose it, or the League took it out
   offBy: string | null;
+  // The League's own blocks that day, by the hour (its Owners, Admins and Directors of Scheduling only; null for anyone else
+  // and for the Brackets): the hours blocked, the hours it can block, who set them.
+  league: { hours: number[]; options: number[]; setBy: string | null } | null;
 };
 
 // A team's upcoming League dates (each Game Day it's entered for, then the Brackets if it's in them), with its time
@@ -149,6 +154,7 @@ export async function teamRequests(deps: Deps, viewer: SessionUser, teamId: stri
     bracket_days: string[];
     requests: Record<string, { blocks: string[]; by: string }>;
     offs: Record<string, { team: boolean; by: string }>;
+    staff: Record<string, { hours: number[]; by: string }>;
     settings: SettingsRow | null;
   }>(
     `select p.id::text as program_id, p.name as program, t.level, ${SETTINGS_SQL("p.id")} as settings,
@@ -161,7 +167,9 @@ export async function teamRequests(deps: Deps, viewer: SessionUser, teamId: stri
             coalesce((select json_object_agg(q.day::text, json_build_object('blocks', q.blocks, 'by', q.set_by))
                         from scenic_schedule_requests q where q.program_id = p.id and q.team_id = t.id), '{}') as requests,
             coalesce((select json_object_agg(o.off, json_build_object('team', o.by_team, 'by', o.set_by))
-                        from scenic_team_off o where o.program_id = p.id and o.team_id = t.id), '{}') as offs
+                        from scenic_team_off o where o.program_id = p.id and o.team_id = t.id), '{}') as offs,
+            coalesce((select json_object_agg(b.day::text, json_build_object('hours', b.hours, 'by', b.set_by))
+                        from scenic_league_blocks b where b.program_id = p.id and b.team_id = t.id), '{}') as staff
        from scenic_registrations r
        join scenic_teams t on t.id = r.team_id
        join scenic_programs p on p.id = r.program_id
@@ -170,6 +178,7 @@ export async function teamRequests(deps: Deps, viewer: SessionUser, teamId: stri
     [teamId, today],
   );
   const out: RequestDay[] = [];
+  const staff = await isScheduler(deps.pool, viewer); // the League's own blocks: its Owners, Admins and Directors of Scheduling
   for (const x of r.rows) {
     const { entry } = await leagueEntry(deps.pool, x.program_id, teamId);
     if (!entry) continue;
@@ -196,6 +205,7 @@ export async function teamRequests(deps: Deps, viewer: SessionUser, teamId: stri
         setBy: req?.by ?? null,
         off: offOf(day),
         offBy: x.offs[day]?.by ?? null,
+        league: staff ? { hours: x.staff[day]?.hours ?? [], options: hourOptions(options), setBy: x.staff[day]?.by ?? null } : null,
       });
     }
     const lastBracket = x.bracket_days.at(-1);
@@ -215,6 +225,7 @@ export async function teamRequests(deps: Deps, viewer: SessionUser, teamId: stri
         setBy: null,
         off: offOf("brackets"),
         offBy: x.offs.brackets?.by ?? null,
+        league: null,
       });
   }
   return out;
@@ -301,6 +312,40 @@ export async function saveRequest(
   });
 }
 
+// The League blocks a team by the hour on one of its Game Days (an empty list: none), apart from the team's own requests
+// and their limit and close days. Its Owners, Admins and Directors of Scheduling only; the hours its time blocks cover.
+export async function saveLeagueBlock(
+  deps: Deps,
+  viewer: SessionUser,
+  teamId: unknown,
+  programId: unknown,
+  day: unknown,
+  hours: unknown,
+): Promise<Result<{ setBy: string }>> {
+  if (!isId(teamId) || !isId(programId) || !isDate(day)) return { ok: false, message: "Pick a Game Day." };
+  if (!Array.isArray(hours) || hours.length > 24 || hours.some((h) => !Number.isInteger(h))) return { ok: false, message: "Pick from the hours." };
+  return withTx(deps.pool, async (q) => {
+    if (!(await isScheduler(q, viewer)))
+      return { ok: false as const, message: "Only the League's Owners, Admins and Directors of Scheduling can block hours." };
+    await q.query("select pg_advisory_xact_lock(hashtext('sched-req:' || $1 || ':' || $2))", [teamId, day]);
+    const d = ((await teamRequests(deps, viewer, teamId)) ?? []).find((x) => x.programId === programId && x.day === day);
+    if (!d?.league) return { ok: false as const, message: "The team isn't playing that Game Day." };
+    if (day < easternDate(deps.now())) return { ok: false as const, message: "That date has passed." };
+    const options = d.league.options;
+    if ((hours as number[]).some((h) => !options.includes(h))) return { ok: false as const, message: "Pick from the hours." };
+    const list = options.filter((h) => (hours as number[]).includes(h));
+    if (!list.length)
+      await q.query("delete from scenic_league_blocks where program_id = $1 and team_id = $2 and day = $3", [programId, teamId, day]);
+    else
+      await q.query(
+        `insert into scenic_league_blocks (program_id, team_id, day, hours, set_by, set_at) values ($1, $2, $3, $4, $5, $6)
+         on conflict (program_id, team_id, day) do update set hours = excluded.hours, set_by = excluded.set_by, set_at = excluded.set_at`,
+        [programId, teamId, day, list, by(viewer), deps.now()],
+      );
+    return { ok: true as const, setBy: by(viewer) };
+  });
+}
+
 // For the Grid: the first team (of these) whose request blocks a game then, with the blocks it hits; null if none.
 export async function requestClash(
   q: Pick<Queryable, "query">,
@@ -308,7 +353,7 @@ export async function requestClash(
   teamIds: (string | null)[],
   start: number,
   minutes: number,
-): Promise<{ team: string; blocks: string[] } | null> {
+): Promise<{ team: string; blocks: string[]; league?: true } | null> {
   const ids = teamIds.filter((x): x is string => !!x);
   if (!ids.length) return null;
   const r = await q.query<{ name: string; blocks: string[]; settings: { blocks: Block[]; max: number } | null }>(
@@ -322,6 +367,15 @@ export async function requestClash(
   for (const x of r.rows) {
     const hit = blockedBy(x.blocks, start, minutes, settingsOf(x.settings).blocks);
     if (hit.length) return { team: x.name, blocks: hit };
+  }
+  // The League's own blocks (by the hour).
+  const l = await q.query<{ name: string; hours: number[] }>(
+    "select t.name, b.hours from scenic_league_blocks b join scenic_teams t on t.id = b.team_id where b.day = $1::date and b.team_id = any($2::bigint[])",
+    [day, ids],
+  );
+  for (const x of l.rows) {
+    const hit = hourRuns(x.hours).filter((b) => start < b.end && b.start < start + minutes);
+    if (hit.length) return { team: x.name, blocks: hit.map((b) => b.label), league: true };
   }
   return null;
 }
@@ -338,7 +392,11 @@ export async function requestsOff(q: Pick<Queryable, "query">, day: string): Pro
       where q.day = $1::date`,
     [day],
   );
-  return new Map(
+  const out = new Map<string, AskedOff[]>(
     r.rows.map((x) => [x.team, settingsOf(x.settings).blocks.filter((b) => x.blocks.includes(b.key)).map((b) => ({ label: b.label, start: b.start, end: b.end }))]),
   );
+  // The League's own blocks (by the hour), labeled as the League's.
+  const l = await q.query<{ team: string; hours: number[] }>("select team_id::text as team, hours from scenic_league_blocks where day = $1::date", [day]);
+  for (const x of l.rows) out.set(x.team, [...(out.get(x.team) ?? []), ...hourRuns(x.hours).map((b) => ({ ...b, label: `${b.label} (League)` }))]);
+  return out;
 }

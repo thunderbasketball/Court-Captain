@@ -32,6 +32,8 @@ import { placeGame, setGameLength } from "./scenic-grid";
 import {
   requestDays,
   requestSettings,
+  requestsOff,
+  saveLeagueBlock,
   saveRequest,
   saveRequestSettings,
   setRequestDay,
@@ -944,6 +946,27 @@ describe("Scenic City programs", () => {
     // Turning the day off: the request no longer counts.
     expect(await setRequestDay(deps(), dee, id, "2027-01-09", false)).toEqual({ ok: true });
     expect(await placeGame(deps(), fay, game, { court, starts: "09:00" })).toEqual({ ok: true });
+
+    // The League's own blocks, by the hour: its Owners, Admins and Directors of Scheduling only, any Game Day (requests
+    // closed or off); the team's coaches never see them. The Grid never places the game then.
+    expect((await teamRequests(deps(), cy, b1))![0].league).toBeNull(); // the coach doesn't see them
+    const staffDay = (await teamRequests(deps(), fay, b1))![0];
+    expect(staffDay.league).toEqual({ hours: [], options: [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], setBy: null });
+    expect(await saveLeagueBlock(deps(), cy, b1, id, "2027-01-09", [9])).toMatchObject({ ok: false });
+    expect(await saveLeagueBlock(deps(), fay, b1, id, "2027-01-09", [7])).toMatchObject({ ok: false, message: "Pick from the hours." });
+    expect(await saveLeagueBlock(deps(), fay, b1, id, "2027-01-09", [14, 9, 10])).toMatchObject({ ok: true });
+    expect((await teamRequests(deps(), fay, b1))![0].league).toMatchObject({ hours: [9, 10, 14] });
+    expect((await requestsOff(db.pool, "2027-01-09")).get(b1)).toEqual([
+      { label: "9–11 AM (League)", start: 540, end: 660 },
+      { label: "2–3 PM (League)", start: 840, end: 900 },
+    ]);
+    expect(await placeGame(deps(), fay, game, { court, starts: "10:30" })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("Baylor 4B is blocked 9–11 AM by the League"),
+    });
+    expect(await placeGame(deps(), fay, game, { court, starts: "11:00" })).toEqual({ ok: true });
+    expect(await saveLeagueBlock(deps(), fay, b1, id, "2027-01-09", [])).toMatchObject({ ok: true }); // freed
+    expect(await placeGame(deps(), fay, game, { court, starts: "09:00" })).toEqual({ ok: true });
   });
 
   it("Schedule request settings: a League sets its own blocks and limit; requests follow them", async () => {
@@ -1189,6 +1212,19 @@ describe("Scenic City programs", () => {
       ]),
     ).toEqual({ ok: true, saved: 2 });
     expect(await games("2027-01-09")).toEqual(["Baylor A vs Baylor B", "Sam A vs TBD"]);
+    // A TBD game waits for a fill-in: it isn't held against the guarantee (Baylor A: its game plus a TBD).
+    expect(
+      await save([
+        [a, b],
+        [a, null],
+      ]),
+    ).toEqual({ ok: true, saved: 2 });
+    expect(
+      await save([
+        [a, b],
+        [c, null],
+      ]),
+    ).toEqual({ ok: true, saved: 2 });
     expect(
       await save([
         [c, null],

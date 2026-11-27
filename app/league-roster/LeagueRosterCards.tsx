@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { JerseyNumber } from "../ui";
 import { useRouter } from "next/navigation";
 import { BirthdateWarning, WarningLines, useRosterWarning } from "../RosterWarning";
 import type { LeagueRoster, SnapshotPlayer } from "@/lib/roster-snapshot";
@@ -44,7 +45,9 @@ function Player({ p, mayFix, who }: { p: SnapshotPlayer; mayFix: boolean; who: b
     <li className="flex items-start justify-between gap-3 py-1.5 text-sm">
       <span className="min-w-0">
         <span className={off ? "text-zinc-400 line-through" : ""}>
-          <span className="inline-block w-8 text-zinc-500 tabular-nums">{p.jersey && `#${p.jersey}`}</span>
+          <span className="inline-flex w-8 justify-center align-middle">
+            <JerseyNumber n={p.jersey} />
+          </span>
           <span className="font-medium">
             {p.first} {p.last}
           </span>

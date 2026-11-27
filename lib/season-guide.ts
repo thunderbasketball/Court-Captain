@@ -13,7 +13,7 @@ import { hasFeature } from "./features";
 import { orgName } from "./org-registry";
 import { leagueStaff } from "./scenic-team-page";
 import { requestSettings } from "./schedule-requests";
-import { REC_DAYS_DEFAULT, closesOn } from "./schedule-request-blocks";
+import { closesOn } from "./schedule-request-blocks";
 import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
 
@@ -122,21 +122,73 @@ async function hostingAudience(q: Pick<Queryable, "query">, org: string, me: str
   };
 }
 
-// The guide's parts: a title (bold) and its lines. Turned into plain text and a formatted (html, escaped) version.
-type Part = { title?: string; lines: string[] };
+// The guide's parts: a title (bold) and its lines ("• " starts a bulleted line, "☐ " a checklist line). `tone`: a tinted box
+// (dates, policies, the checklist); `banner`: the colored title at the top; `buttons`: big tappable links. Turned into plain
+// text and an email-safe formatted version (inline styles only; everything escaped).
+type Tone = "blue" | "red" | "amber" | "green";
+type Part = { title?: string; lines: string[]; tone?: Tone; banner?: boolean; buttons?: { label: string; url: string }[] };
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-const link = (s: string) => esc(s).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>');
+const link = (s: string) => esc(s).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#1d4ed8">$1</a>');
+const NAVY = "#14213d";
+const TONES: Record<Tone, [string, string]> = {
+  blue: ["#eff6ff", "#2563eb"],
+  red: ["#fef2f2", "#dc2626"],
+  amber: ["#fffbeb", "#d97706"],
+  green: ["#f0fdf4", "#16a34a"],
+};
+function lineHtml(lines: string[]): string {
+  let out = "";
+  let list: string[] = [];
+  const flush = () => {
+    if (list.length) out += `<ul style="margin:4px 0 10px;padding-left:20px">${list.map((x) => `<li style="margin:2px 0">${x}</li>`).join("")}</ul>`;
+    list = [];
+  };
+  for (const l of lines) {
+    if (l.startsWith("• ")) list.push(link(l.slice(2)));
+    else {
+      flush();
+      out += l.startsWith("☐ ")
+        ? `<p style="margin:4px 0">&#9744;&nbsp; ${link(l.slice(2))}</p>`
+        : `<p style="margin:0 0 8px">${link(l)}</p>`;
+    }
+  }
+  flush();
+  return out;
+}
 function render(parts: Part[]): { text: string; html: string } {
-  const text = parts.map((p) => [...(p.title ? [p.title.toUpperCase()] : []), ...p.lines].join("\n")).join("\n\n");
+  const text = parts
+    .map((p) =>
+      [
+        ...(p.title ? [p.title.toUpperCase()] : []),
+        ...p.lines,
+        ...(p.buttons ?? []).map((b) => `${b.label}: ${b.url}`),
+      ].join("\n"),
+    )
+    .join("\n\n");
+  const banner = (p: Part) =>
+    `<div style="background:${NAVY};color:#ffffff;padding:22px 24px;border-radius:12px 12px 0 0">${p.lines
+      .map((l, i) => `<div style="${i === 0 ? "font-size:13px;letter-spacing:1px;text-transform:uppercase;opacity:.8" : "font-size:24px;font-weight:700;margin-top:4px"}">${esc(l)}</div>`)
+      .join("")}</div>`;
+  const block = (p: Part) => {
+    const title = p.title ? `<div style="font-size:17px;font-weight:700;margin:0 0 8px;color:${p.tone ? TONES[p.tone][1] : NAVY}">${esc(p.title)}</div>` : "";
+    const buttons = p.buttons?.length
+      ? `<div style="margin:4px 0 6px">${p.buttons
+          .map(
+            (b) =>
+              `<a href="${esc(b.url)}" style="display:inline-block;background:${NAVY};color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 16px;border-radius:8px;margin:0 6px 8px 0">${esc(b.label)}</a>`,
+          )
+          .join("")}</div>`
+      : "";
+    const inner = title + lineHtml(p.lines) + buttons;
+    return p.tone
+      ? `<div style="background:${TONES[p.tone][0]};border-left:4px solid ${TONES[p.tone][1]};border-radius:8px;padding:14px 16px;margin:0 0 18px">${inner}</div>`
+      : `<div style="margin:0 0 18px">${inner}</div>`;
+  };
   const html =
-    `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:15px;line-height:1.5;color:#18181b;max-width:640px">` +
-    parts
-      .map(
-        (p) =>
-          `<p style="margin:0 0 14px">${p.title ? `<strong style="font-size:16px">${esc(p.title)}</strong><br>` : ""}${p.lines.map(link).join("<br>")}</p>`,
-      )
-      .join("") +
-    `</div>`;
+    `<div style="background:#f4f4f5;padding:16px 8px"><div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:15px;line-height:1.5;color:#18181b;max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px">` +
+    parts.filter((p) => p.banner).map(banner).join("") +
+    `<div style="padding:20px 24px 8px">${parts.filter((p) => !p.banner).map(block).join("")}</div>` +
+    `</div></div>`;
   return { text, html };
 }
 const DAY = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
@@ -178,8 +230,20 @@ const ON_YOUR_PHONE = [
   "• Android (Chrome): tap the ⋮ menu at the top right, then Add to Home screen (or Install app), then Add.",
 ];
 
-// The guide: key dates (each current League's Game Days, Brackets and request closes), then each part of CourtCaptain
-// and how to use it; the League's own time blocks and close days.
+// Game Days by month: "December 5, 12, 19".
+const byMonth = (days: string[]) => {
+  const m = new Map<string, number[]>();
+  for (const d of days) {
+    const month = new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+    m.set(month, [...(m.get(month) ?? []), Number(d.slice(8))]);
+  }
+  return [...m].map(([month, ns]) => `${month} ${ns.join(", ")}`);
+};
+const LONG = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
+
+// The Season Guide (Earl's layout, Nov 27): a banner, why CourtCaptain, the login buttons, the checklist before the 1st game,
+// each current League's dates and deadlines, then each part of CourtCaptain and how to use it, with the League's policies
+// in boxes. Dates, request deadlines and time blocks come from the League's own settings.
 async function guide(
   q: Pick<Queryable, "query">,
   org: string,
@@ -192,81 +256,182 @@ async function guide(
   const set = leagues[0] ? await requestSettings(q, leagues[0].id) : null;
   const season = leagues.map((l) => l.name).join(" and ") || "season";
   const chat = await hasFeature(q, org, "chat");
-  const blocks = set ? set.blocks.map((b) => b.label).join(", ") : "the League's time blocks";
-  const comp = set?.compDays == null ? "the Sunday before each Game Day" : `${set.compDays} day${set.compDays === 1 ? "" : "s"} before each Game Day`;
-  const rec = `${set?.recDays ?? REC_DAYS_DEFAULT} days before the League's first Game Day (all dates at once)`;
-  const keyDates: Part[] = leagues.map((l) => ({
-    title: `Key dates: ${l.name}`,
-    lines: [
-      l.days.length ? `Game Days: ${l.days.map(DAY).join(", ")}` : "Game Days: to be announced",
-      "ROSTERS ARE LOCKED after your team's 1st game, for the rest of the season",
-      ...(l.brackets.length ? [`Brackets: ${l.brackets.map(DAY).join(", ")}`] : []),
-      ...(l.days.length ? [`REC schedule requests close: ${DAY(closesOn("REC", l.days[0], l.days[0], set ?? {}))} night`] : []),
-      ...(l.days.length ? [`COMP schedule requests close: ${comp} (first: ${DAY(closesOn("COMP", l.days[0], l.days[0], set ?? {}))} night)`] : []),
-    ],
-  }));
+  const max = set?.max ?? 2;
+  const first = leagues.find((l) => l.days.length);
+  // "the Sunday before each Game Day (6 days ahead)": the weekday its first close falls on.
+  const compWeekday = first
+    ? new Date(`${closesOn("COMP", first.days[0], first.days[0], set ?? {})}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" })
+    : null;
+  const compWhen =
+    set?.compDays == null
+      ? "the Sunday night before each Game Day"
+      : `${compWeekday ? `the ${compWeekday} before each Game Day, ` : ""}${set.compDays} day${set.compDays === 1 ? "" : "s"} ahead`;
+  const recClose = first ? LONG(closesOn("REC", first.days[0], first.days[0], set ?? {})) : null;
+  const compFirst = first ? LONG(closesOn("COMP", first.days[0], first.days[0], set ?? {})) : null;
+  const families = `${site}/login/${org}`;
   let n = 0;
   const step = (title: string, ...lines: string[]): Part => ({ title: `${++n}. ${title}`, lines });
   const parts: Part[] = [
-    { lines: ["Hi Coaches and Team Staff,"] },
+    { banner: true, lines: [name, `${season} Season Guide`] },
+    { lines: ["Hi Coaches and Team Staff,", `Welcome to the ${name} ${season} season!`] },
     {
-      title: `WE ARE USING COURTCAPTAIN FOR OUR ${season.toUpperCase()} SCHEDULE`,
+      tone: "blue",
+      title: "WE ARE USING COURTCAPTAIN THIS SEASON!",
       lines: [
-        `Welcome to the season with ${name}! Your team's schedule, game times, gyms, schedule requests, roster and payments are all in CourtCaptain.`,
-        "Please log in with your cell phone number now, so your team is ready before its 1st game. Here's how.",
+        `CourtCaptain is your central location for managing your team's participation in ${name}.`,
+        "Your schedule, game times, gym locations, schedule requests, team staff, player rosters, registrations and payments are all available in CourtCaptain.",
+        "Please log in and complete your team information before your first game. Keep this email as a reference guide throughout the season.",
       ],
     },
-    ...keyDates,
-    { title: "What's available and how to use it", lines: [] },
-    step(
-      "Log in",
-      "Your cell phone number is your login. Open your organization's login page on your phone or computer:",
-      ...logins.map((o) => `• ${o.name}: ${site}/login/${o.slug}`),
-      ...FIRST_TIME,
-      "It says Not set up yet? Your Director hasn't added you with that cell number: ask them to, then log in again.",
+    {
+      title: "Log in: pick your organization",
+      lines: ["Your cell phone number is your login."],
+      buttons: logins.map((o) => ({ label: o.name, url: `${site}/login/${o.slug}` })),
+    },
+    {
+      tone: "green",
+      title: "Before your first game",
+      lines: [
+        "☐ Log in and add CourtCaptain to your phone's home screen",
+        "☐ Check your team registration and Game Days",
+        "☐ Complete your roster: every player's name, uniform number, birthdate and grade",
+        "☐ Add your Assistant Coach and team staff",
+        "☐ Send your schedule requests before the deadline",
+        "☐ Pay any outstanding invoices",
+        "☐ Arrange your Game Day table worker",
+        "☐ Share the families' link with your parents",
+      ],
+    },
+    ...leagues.map(
+      (l): Part => ({
+        tone: "red",
+        title: `Important dates: ${l.name}`,
+        lines: [
+          "Regular Season Game Days",
+          ...(l.days.length ? byMonth(l.days).map((x) => `• ${x}`) : ["• To be announced"]),
+          ...(l.brackets.length ? ["Postseason Brackets", ...byMonth(l.brackets).map((x) => `• ${x}`)] : []),
+          "Deadlines",
+          ...(l.days.length
+            ? [
+                `• Recreational (REC) schedule requests: ${LONG(closesOn("REC", l.days[0], l.days[0], set ?? {}))}`,
+                `• Competitive (COMP) schedule requests: ${compWhen} (first: ${LONG(closesOn("COMP", l.days[0], l.days[0], set ?? {}))})`,
+              ]
+            : []),
+          "• Roster lock: immediately following your team's first game",
+        ],
+      }),
     ),
     step(
-      "Put it on your phone (like an app)",
-      ...ON_YOUR_PHONE,
-      "CourtCaptain is now an icon on your home screen: tap it to open your team, like any app.",
+      "Logging into CourtCaptain",
+      "Your cell phone number is your login. Use your organization's button above.",
+      "First-time users",
+      "• Enter the cell phone number you gave your Organization Director.",
+      "• Enter your email address if asked, then tap Email me a code.",
+      "• Enter the six-digit code sent to your email.",
+      "• Create your four-digit PIN.",
+      "Returning users: enter your cell phone number and four-digit PIN. You might be asked once to verify your email address.",
+      "Need help?",
+      "• Forgot your PIN? Tap Forgot PIN and follow the steps.",
+      "• No code? Check your Spam or Junk folder.",
+      "• It says Not set up yet? Ask your Organization Director to check your cell phone number.",
     ),
     step(
-      "Manage your team",
-      "Once you log in, your Home is your team page: its registration (your dates, 1GG or 2GG, the Brackets, Paid or Unpaid), Next 10 days, Staff, Roster and Games.",
-      "More than one team or organization? Switch between them at the top of the screen.",
-      "Tap any card to open it. A card flashing red needs something from you.",
+      "Add CourtCaptain to your phone",
+      "Open your organization's login page on your phone, then:",
+      "• iPhone (Safari): tap the Share button, then Add to Home Screen, then Add.",
+      "• Android (Chrome): tap the three-dot menu, then Add to Home screen (or Install app), then Add.",
+      "CourtCaptain now sits with your other apps.",
     ),
     step(
-      "Roster: Name, Number, Date of Birth and Grade",
-      "REQUIRED FOR EVERY PLAYER: Player Name, Uniform Number (##), Date of Birth and Grade.",
-      "Head and Assistant Coaches: open Roster and tap + Add player. No + there? Your Director sets your roster.",
-      "Your team page shows PLAYER NUMBERS or PLAYER BIRTHDATES MUST BE ENTERED until each one is in; open Roster to fill them in.",
-      ...leagues.map(
-        (l) => `${l.name} ROSTERS ARE LOCKED after your team's 1st game, for the rest of the season. Have every player on your roster before your 1st game.`,
-      ),
+      "Your team dashboard",
+      "Once you log in, your Home is your team dashboard:",
+      "• Current registrations: your Game Days, one or two-game guarantee (1GG or 2GG), the postseason brackets and payment status",
+      "• Next 10 days, Staff, Roster and Games",
+      "Coach more than one team, or in more than one organization? Switch between them at the top of the screen.",
+      "A flashing red card needs your attention.",
     ),
-    step("Staff", "Staff → + Add staff: your Assistant Coach, Team Manager or Team Parent (name, cell, email). No + there? Ask your Director to add them."),
+    step(
+      "Player rosters",
+      "Every player needs: Player Name, Uniform Number, Date of Birth and Grade.",
+      "Head and Assistant Coaches: open Roster and tap + Add player. No + Add player? Your Organization Director manages your roster.",
+      "Your dashboard warns you while any player information is missing.",
+    ),
+    {
+      tone: "amber",
+      title: "ROSTER LOCK POLICY",
+      lines: [
+        `${season} rosters lock immediately following your team's first game and stay locked through the regular season and postseason.`,
+        "It is your responsibility to have every player listed, with all required information, before your first game.",
+      ],
+    },
+    step(
+      "Team staff and coach check-in",
+      "Open Staff and tap + Add staff for your Assistant Coach, Team Manager or Team Parent: name, cell phone number and email address.",
+      "No + Add staff? Contact your Organization Director.",
+      "Each team gets free admission for two coaches. Coaches must be on the coach check-in list to get in free; coaches not listed pay admission.",
+      "Pick up your coach armband at check-in.",
+    ),
     step(
       "Schedule requests",
-      `Current Registrations → Schedule requests: for each Game Day, check the times your team CAN'T play (up to ${set?.max ?? 2} of ${blocks}), or check Sit out if you won't play that week.`,
-      `COMP teams: requests close ${comp}. REC teams: requests close ${rec}.`,
-      "NO requests are taken after requests close. If your request can't be met, you won't be scheduled that day.",
+      `Go to Current Registrations and tap Schedule Requests. For each Game Day, pick up to ${max} time block${max === 1 ? "" : "s"} when your team can't play:`,
+      ...(set ? set.blocks.map((b) => `• ${b.label}`) : []),
+      "Can't play at all that day? Pick Sit Out.",
+      ...(recClose ? [`Recreational teams: all season requests are due ${recClose}.`] : []),
+      ...(compFirst ? [`Competitive teams: requests are due ${compWhen}. The first deadline is ${compFirst}.`] : []),
+    ),
+    {
+      tone: "amber",
+      title: "SCHEDULE REQUEST POLICY",
+      lines: [
+        "• Schedule requests are not guaranteed.",
+        "• No requests are accepted after the deadline.",
+        "• If your request can't be met, your team won't be scheduled that Game Day.",
+        "• No schedule changes are made after the schedule is published: play as scheduled or sit out.",
+        "• Sending schedule requests before the deadline is the coach's responsibility.",
+      ],
+    },
+    step(
+      "Adding Game Days or a second game",
+      "Competitive teams can add Game Days or a second game. On your team dashboard tap + Add dates or + Add a 2nd Game, pick your dates and pay.",
+      "They're added to your registration once paid.",
     ),
     step(
-      "Add dates or a 2nd Game",
-      "COMP teams: on your team page, + Add dates or + Add a 2nd Game. Pick the dates and pay by card right there; they're added once it's paid.",
+      "Your game schedule",
+      "Once the schedule is published, your games show under Next 10 days and Games: date, time, gym and opponent.",
+      "Please check your schedule before every Game Day.",
     ),
-    step("Your games", "Once the schedule is published, Next 10 days and Games show each game's time, gym and opponent. Check it before every Game Day."),
-    step("Invoices and payments", "Your invoices with a balance due, and your cart, show on your Home with View invoice and Pay by card (card, Apple Pay or Google Pay)."),
-    ...(chat ? [step("Chat", `Tap 💬 at the top to message ${name}'s Directors.`)] : []),
-    step("Share with your parents", `${site}/login/${org}`, "Parents see the teams and games there without logging in, and tap ☆ to follow your team on their phone."),
     {
-      title: "Questions?",
-      lines: [`${sender.firstName} ${sender.lastName}${sender.email ? ` · ${sender.email}` : ""}, ${name}`],
+      tone: "amber",
+      title: "GAME DAY TABLE RESPONSIBILITIES",
+      lines: ["Each team provides one table worker:", "• Home team: scorebook", "• Visiting team: scoreboard and clock", "Please arrange your table worker before you arrive."],
     },
-    { lines: ["Have a great season!", name] },
+    step(
+      "Invoices and payments",
+      "Outstanding invoices and your cart show on your Home. Tap View invoice to see the charges, or Pay by card.",
+      "Pay with a credit or debit card, Apple Pay or Google Pay.",
+    ),
+    ...(chat ? [step(`Talk with ${name}'s Directors`, `Tap 💬 at the top of your screen to message ${name}'s Directors: league questions, registration help and team concerns.`)] : []),
+    {
+      title: `${++n}. Share CourtCaptain with your parents`,
+      lines: [
+        "Please share this link with all your team's families. They don't need an account or to log in to see teams and schedules.",
+        "They tap the ☆ beside your team to follow it all season.",
+        families,
+      ],
+      buttons: [{ label: `Follow ${name} teams and schedules`, url: families }],
+    },
+    {
+      lines: [
+        `Thank you for playing in ${name}. We appreciate the time and effort you give your players and look forward to a great season!`,
+      ],
+    },
+    {
+      title: "Questions or help?",
+      lines: [`${sender.firstName} ${sender.lastName}, ${name}`, ...(sender.email ? [sender.email] : [])],
+    },
+    { tone: "blue", title: "HAVE A GREAT SEASON!", lines: [name] },
   ];
-  return { subject: `${name}: we are using CourtCaptain for our ${season} schedule (season guide)`, ...render(parts) };
+  return { subject: `${name}: ${season} Season Guide (we are using CourtCaptain)`, ...render(parts) };
 }
 
 // The Hosting Guide: what a hosting site's staff do in CourtCaptain.

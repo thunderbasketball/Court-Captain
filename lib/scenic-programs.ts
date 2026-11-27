@@ -191,6 +191,7 @@ export type RegisteredTeam = {
   paidSetBy: string | null;
   canWithdraw: boolean;
   entry: Entry | null; // a League: what it registered for (1GG/2GG per date, brackets, fee)
+  prices?: Record<string, number>; // a League: each option's fee for this team (its organization's price group), in cents
   removedBy: string | null; // taken out of the whole program (still listed, crossed out)
   off: Record<string, string>; // taken out of a Game Day (YYYY-MM-DD) or "brackets" → by whom
 };
@@ -335,6 +336,7 @@ async function readProgram(deps: Deps, viewer: SessionUser, id: string): Promise
     paidSetBy: r.paid_set_by,
     canWithdraw: manage || (status === "open" && mineIds.has(r.team_id)),
     entry: terms && picked.has(r.team_id) ? entryOf(picked.get(r.team_id)!, termsOf(r)!) : null,
+    prices: terms ? Object.fromEntries(termsOf(r)!.options.map((o) => [o.kind, o.feeCents ?? 0])) : undefined,
     removedBy: r.removed_by,
     off: r.off,
   });

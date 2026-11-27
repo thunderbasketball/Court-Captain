@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { RULES_NOTE } from "@/lib/schedule-request-blocks";
+import { RULES_NOTE, hourLabel } from "@/lib/schedule-request-blocks";
 import type { RequestDay } from "@/lib/schedule-requests";
 import { Toast } from "./client-ui";
 import SubCard from "./SubCard";
-import { saveScheduleRequest, setScheduleSitOut } from "./schedule-requests/actions";
+import { saveLeagueHourBlock, saveScheduleRequest, setScheduleSitOut } from "./schedule-requests/actions";
 
 const day = (iso: string) =>
   new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
@@ -38,6 +38,21 @@ export default function ScheduleRequests({ teamId, days: initial }: { teamId: st
       return setError(r.message);
     }
     setDays((list) => list.map((x) => (same(d)(x) ? { ...x, setBy: blocks.length ? r.setBy : null } : x)));
+    router.refresh();
+  }
+
+  // The League's own blocks (its staff only): tap an hour to block or free it; saved at once.
+  async function toggleHour(d: RequestDay, h: number) {
+    if (!d.league) return;
+    const was = d.league;
+    const hours = was.hours.includes(h) ? was.hours.filter((x) => x !== h) : [...was.hours, h].sort((a, b) => a - b);
+    setDays((list) => list.map((x) => (same(d)(x) ? { ...x, league: { ...was, hours } } : x)));
+    const r = await saveLeagueHourBlock(teamId, d.programId, d.day, hours);
+    if (!r.ok) {
+      setDays((list) => list.map((x) => (same(d)(x) ? { ...x, league: was } : x)));
+      return setError(r.message);
+    }
+    setDays((list) => list.map((x) => (same(d)(x) ? { ...x, league: { ...was, hours, setBy: hours.length ? r.setBy : null } } : x)));
     router.refresh();
   }
 
@@ -134,6 +149,32 @@ export default function ScheduleRequests({ teamId, days: initial }: { teamId: st
                   </>
                 )}
                 {!d.requests && !bracket && !out && <p className="text-xs text-zinc-400">No time requests this day</p>}
+                {d.league && !out && d.league.options.length > 0 && (
+                  <div className="mt-2 rounded-lg bg-violet-50 px-2.5 py-2 ring-1 ring-violet-600/20 ring-inset dark:bg-violet-500/10">
+                    <p className="text-xs font-semibold text-violet-800 dark:text-violet-300">
+                      League blocks <span className="font-normal">· only League staff see these · tap the hours the team can&apos;t play</span>
+                    </p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {d.league.options.map((h) => {
+                        const on = d.league!.hours.includes(h);
+                        return (
+                          <button
+                            key={h}
+                            type="button"
+                            aria-pressed={on}
+                            onClick={() => toggleHour(d, h)}
+                            className={`rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ring-1 ${
+                              on ? "bg-red-600 text-white ring-red-600" : "bg-white text-zinc-700 ring-zinc-300 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-white/20"
+                            }`}
+                          >
+                            {hourLabel(h)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {d.league.hours.length > 0 && <p className="mt-1 text-xs text-zinc-500">Blocked by {d.league.setBy}</p>}
+                  </div>
+                )}
               </li>
             );
           })}

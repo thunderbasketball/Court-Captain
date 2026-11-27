@@ -3,6 +3,7 @@
 import type { PublicDay, PublicGroup } from "@/lib/public-league";
 import { timeLabel } from "@/lib/time";
 import GameShare from "./GameShare";
+import GameItem from "./GameDetails";
 import FinalScore from "./FinalScore";
 import { ShareToggle } from "./SharePanel";
 import { groupKey } from "@/lib/share-keys";
@@ -11,23 +12,50 @@ import { card, genderBg, genderOf, genderTint } from "./ui";
 import DirectionsLink from "./DirectionsLink";
 
 const weekday = (iso: string) =>
-  new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 
 // "REC Schedule will be published soon."
-export function ScheduleSoon({ levels, className = "" }: { levels: string[]; className?: string }) {
+export function ScheduleSoon({
+  levels,
+  className = "",
+}: {
+  levels: string[];
+  className?: string;
+}) {
   if (!levels.length) return null;
-  return <p className={`text-sm font-medium text-amber-700 dark:text-amber-300 ${className}`}>{levels.join(" and ")} Schedule will be published soon.</p>;
+  return (
+    <p
+      className={`text-sm font-medium text-amber-700 dark:text-amber-300 ${className}`}
+    >
+      {levels.join(" and ")} Schedule will be published soon.
+    </p>
+  );
 }
 
 // Game days, the next one open (past ones closed), games by time then gym and court. null: not published yet.
-export function ProgramSchedule({ days, today, soon }: { days: PublicDay[] | null; today: string; soon: string[] }) {
+export function ProgramSchedule({
+  days,
+  today,
+  soon,
+}: {
+  days: PublicDay[] | null;
+  today: string;
+  soon: string[];
+}) {
   if (days === null || !days.length)
     return soon.length ? (
       <div className={`${card} p-5`}>
         <ScheduleSoon levels={soon} />
       </div>
     ) : days ? (
-      <p className={`${card} p-5 text-sm text-zinc-600 dark:text-zinc-300`}>No games scheduled yet.</p>
+      <p className={`${card} p-5 text-sm text-zinc-600 dark:text-zinc-300`}>
+        No games scheduled yet.
+      </p>
     ) : (
       <p className={`${card} p-5 text-sm text-zinc-600 dark:text-zinc-300`}>
         The schedule isn&apos;t posted yet. Check back soon.
@@ -38,23 +66,43 @@ export function ProgramSchedule({ days, today, soon }: { days: PublicDay[] | nul
     <div className="space-y-3">
       <ScheduleSoon levels={soon} className="px-1" />
       {days.map((d) => (
-        <details key={d.date} className={`${card} group overflow-hidden`} open={d.date === next}>
+        <details
+          key={d.date}
+          className={`${card} group overflow-hidden`}
+          open={d.date === next}
+        >
           <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 font-semibold [&::-webkit-details-marker]:hidden">
             <span>
-              {weekday(d.date)} <span className="font-normal text-zinc-500">· {d.games.length} {d.games.length === 1 ? "game" : "games"}</span>
+              {weekday(d.date)}{" "}
+              <span className="font-normal text-zinc-500">
+                · {d.games.length} {d.games.length === 1 ? "game" : "games"}
+              </span>
             </span>
-            <span aria-hidden className="text-xs text-zinc-400 transition [details[open]>summary_&]:rotate-90">
+            <span
+              aria-hidden
+              className="text-xs text-zinc-400 transition [details[open]>summary_&]:rotate-90"
+            >
               ▶
             </span>
           </summary>
-          <ScheduleSoon levels={d.soon} className="border-t border-zinc-100 px-4 py-2 dark:border-white/5" />
+          <ScheduleSoon
+            levels={d.soon}
+            className="border-t border-zinc-100 px-4 py-2 dark:border-white/5"
+          />
           <ul className="grid border-t border-zinc-100 text-sm lg:grid-cols-2 dark:border-white/5">
             {d.games.map((g, i) => (
-              <li key={i} className={`flex flex-wrap gap-x-3 border-b border-zinc-100 px-4 py-2.5 dark:border-white/5 ${genderBg(genderOf(g.group))}`}>
-                <span className="w-16 shrink-0 font-medium tabular-nums">{g.starts ? timeLabel(g.starts) : "TBA"}</span>
+              <GameItem
+                id={g.details ?? null}
+                key={i}
+                className={`flex flex-wrap gap-x-3 border-b border-zinc-100 px-4 py-2.5 dark:border-white/5 ${genderBg(genderOf(g.group))}`}
+              >
+                <span className="w-16 shrink-0 font-medium tabular-nums">
+                  {g.starts ? timeLabel(g.starts) : "TBA"}
+                </span>
                 <span className="min-w-0 flex-1">
                   <span className="block">
-                    <span className="font-medium">{g.away}</span> <span className="text-zinc-500">at</span>{" "}
+                    <span className="font-medium">{g.away}</span>{" "}
+                    <span className="text-zinc-500">at</span>{" "}
                     <span className="font-medium">{g.home}</span>
                   </span>
                   <span className="block text-xs text-zinc-500">
@@ -62,10 +110,22 @@ export function ProgramSchedule({ days, today, soon }: { days: PublicDay[] | nul
                     {g.gym && ` · ${g.gym}${g.court ? `, ${g.court}` : ""}`}
                     <DirectionsLink href={g.map} />
                   </span>
-                  <FinalScore final={g.final} first={g.away} second={g.home} firstIs="away" group={g.group} />
+                  <FinalScore
+                    final={g.final}
+                    first={g.away}
+                    second={g.home}
+                    firstIs="away"
+                    group={g.group}
+                  />
                 </span>
-                {g.hype && !g.final && <GameShare id={g.hype} v={`${g.starts ?? ""}`} text={`GAME DAY · ${g.group}: ${g.away} at ${g.home}`} />}
-              </li>
+                {g.hype && !g.final && (
+                  <GameShare
+                    id={g.hype}
+                    v={`${g.starts ?? ""}`}
+                    text={`GAME DAY · ${g.group}: ${g.away} at ${g.home}`}
+                  />
+                )}
+              </GameItem>
             ))}
           </ul>
         </details>
@@ -75,14 +135,19 @@ export function ProgramSchedule({ days, today, soon }: { days: PublicDay[] | nul
 }
 
 const Arrow = () => (
-  <span aria-hidden className="text-xs text-zinc-400 transition [details[open]>summary_&]:rotate-90">
+  <span
+    aria-hidden
+    className="text-xs text-zinc-400 transition [details[open]>summary_&]:rotate-90"
+  >
     ▶
   </span>
 );
 const teamsLabel = (n: number) => `${n} ${n === 1 ? "team" : "teams"}`;
 // Cards in as many columns as fit, an opened one the whole width.
-const columns = "grid grid-cols-[repeat(auto-fill,minmax(min(15rem,100%),1fr))] items-start gap-2 [&>details[open]]:col-span-full";
-const summaryCls = "flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 [&::-webkit-details-marker]:hidden";
+const columns =
+  "grid grid-cols-[repeat(auto-fill,minmax(min(15rem,100%),1fr))] items-start gap-2 [&>details[open]]:col-span-full";
+const summaryCls =
+  "flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 [&::-webkit-details-marker]:hidden";
 
 // A program by Division, then REC and COMP, then Grade (each a card that opens in place). A grade's card: Standings on top
 // (its teams by Power Index, with wins, losses and PI; ☆ to follow), then its Schedule by date (once published).
@@ -104,8 +169,16 @@ export function ProgramDivisions({
   soon: string[];
   follow?: boolean;
 }) {
-  if (!groups.length) return <p className={`${card} p-5 text-sm text-zinc-600 dark:text-zinc-300`}>No teams registered yet.</p>;
-  const divisions: { name: string; levels: { level: string; grades: PublicGroup[] }[] }[] = [];
+  if (!groups.length)
+    return (
+      <p className={`${card} p-5 text-sm text-zinc-600 dark:text-zinc-300`}>
+        No teams registered yet.
+      </p>
+    );
+  const divisions: {
+    name: string;
+    levels: { level: string; grades: PublicGroup[] }[];
+  }[] = [];
   for (const g of groups) {
     let d = divisions.find((x) => x.name === g.division);
     if (!d) divisions.push((d = { name: g.division, levels: [] }));
@@ -114,72 +187,131 @@ export function ProgramDivisions({
     l.grades.push(g);
   }
   // REC first, then COMP.
-  for (const d of divisions) d.levels.sort((a, b) => (a.level === b.level ? 0 : a.level === "REC" ? -1 : 1));
-  const count = (gs: PublicGroup[]) => gs.reduce((n, g) => n + g.teams.length, 0);
+  for (const d of divisions)
+    d.levels.sort((a, b) =>
+      a.level === b.level ? 0 : a.level === "REC" ? -1 : 1,
+    );
+  const count = (gs: PublicGroup[]) =>
+    gs.reduce((n, g) => n + g.teams.length, 0);
   // As many columns as fit (a phone: one): Boys together, then Girls; an opened card takes the whole width, its own cards
   // in columns inside it.
   const genders = [...new Set(divisions.map((d) => d.name.split(" ")[0]))];
   return (
     <div className="space-y-4">
       {genders.map((gender) => (
-      <div key={gender} className={columns}>
-      {divisions.filter((d) => d.name.split(" ")[0] === gender).map((d) => (
-        <details key={d.name} className={`overflow-hidden rounded-2xl shadow-sm ring-1 ${genderTint(gender) ?? "bg-white ring-zinc-950/5 dark:bg-zinc-900 dark:ring-white/10"}`}>
-          <summary className={summaryCls}>
-            <span className="font-semibold">
-              {d.name} <span className="font-normal text-zinc-500">· {teamsLabel(count(d.levels.flatMap((l) => l.grades)))}</span>
-            </span>
-            <Arrow />
-          </summary>
-          <div className={`${columns} border-t border-zinc-100 p-2 dark:border-white/5`}>
-            {d.levels.map((l) => (
-              <details key={l.level} className="overflow-hidden rounded-lg bg-white/70 ring-1 ring-zinc-950/10 dark:bg-black/20 dark:ring-white/10">
+        <div key={gender} className={columns}>
+          {divisions
+            .filter((d) => d.name.split(" ")[0] === gender)
+            .map((d) => (
+              <details
+                key={d.name}
+                className={`overflow-hidden rounded-2xl shadow-sm ring-1 ${genderTint(gender) ?? "bg-white ring-zinc-950/5 dark:bg-zinc-900 dark:ring-white/10"}`}
+              >
                 <summary className={summaryCls}>
-                  <span className="flex items-center gap-2 font-semibold">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs ring-1 ${
-                        l.level === "COMP"
-                          ? "bg-orange-50 text-orange-700 ring-orange-300 dark:bg-orange-500/10 dark:text-orange-300"
-                          : "bg-sky-50 text-sky-700 ring-sky-300 dark:bg-sky-500/10 dark:text-sky-300"
-                      }`}
-                    >
-                      {l.level}
+                  <span className="font-semibold">
+                    {d.name}{" "}
+                    <span className="font-normal text-zinc-500">
+                      · {teamsLabel(count(d.levels.flatMap((l) => l.grades)))}
                     </span>
-                    <span className="font-normal text-zinc-500">{teamsLabel(count(l.grades))}</span>
                   </span>
                   <Arrow />
                 </summary>
-                <div className={`${columns} border-t border-zinc-100 p-2 dark:border-white/5`}>
-                  {l.grades.map((g) => (
-                    <GradeCard key={g.label} org={org} program={program} g={g} schedule={schedule} today={today} soon={soon.includes(g.level)} follow={follow} />
+                <div
+                  className={`${columns} border-t border-zinc-100 p-2 dark:border-white/5`}
+                >
+                  {d.levels.map((l) => (
+                    <details
+                      key={l.level}
+                      className="overflow-hidden rounded-lg bg-white/70 ring-1 ring-zinc-950/10 dark:bg-black/20 dark:ring-white/10"
+                    >
+                      <summary className={summaryCls}>
+                        <span className="flex items-center gap-2 font-semibold">
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-xs ring-1 ${
+                              l.level === "COMP"
+                                ? "bg-orange-50 text-orange-700 ring-orange-300 dark:bg-orange-500/10 dark:text-orange-300"
+                                : "bg-sky-50 text-sky-700 ring-sky-300 dark:bg-sky-500/10 dark:text-sky-300"
+                            }`}
+                          >
+                            {l.level}
+                          </span>
+                          <span className="font-normal text-zinc-500">
+                            {teamsLabel(count(l.grades))}
+                          </span>
+                        </span>
+                        <Arrow />
+                      </summary>
+                      <div
+                        className={`${columns} border-t border-zinc-100 p-2 dark:border-white/5`}
+                      >
+                        {l.grades.map((g) => (
+                          <GradeCard
+                            key={g.label}
+                            org={org}
+                            program={program}
+                            g={g}
+                            schedule={schedule}
+                            today={today}
+                            soon={soon.includes(g.level)}
+                            follow={follow}
+                          />
+                        ))}
+                      </div>
+                    </details>
                   ))}
                 </div>
               </details>
             ))}
-          </div>
-        </details>
-      ))}
-      </div>
+        </div>
       ))}
     </div>
   );
 }
 
-function GradeCard({ org, program, g, schedule, today, soon, follow }: { org: string; program?: string; g: PublicGroup; schedule: PublicDay[] | null; today: string; soon: boolean; follow: boolean }) {
-  const days = schedule?.map((d) => ({ ...d, games: d.games.filter((x) => x.group === g.label) })).filter((d) => d.games.length) ?? null;
+function GradeCard({
+  org,
+  program,
+  g,
+  schedule,
+  today,
+  soon,
+  follow,
+}: {
+  org: string;
+  program?: string;
+  g: PublicGroup;
+  schedule: PublicDay[] | null;
+  today: string;
+  soon: boolean;
+  follow: boolean;
+}) {
+  const days =
+    schedule
+      ?.map((d) => ({
+        ...d,
+        games: d.games.filter((x) => x.group === g.label),
+      }))
+      .filter((d) => d.games.length) ?? null;
   const next = days?.find((d) => d.date >= today); // the coming Game Day: its picture to share
   return (
-    <details className={`overflow-hidden rounded-lg ring-1 ${genderTint(genderOf(g.label)) ?? "bg-zinc-50/60 ring-zinc-950/5 dark:bg-white/5 dark:ring-white/10"}`}>
+    <details
+      className={`overflow-hidden rounded-lg ring-1 ${genderTint(genderOf(g.label)) ?? "bg-zinc-50/60 ring-zinc-950/5 dark:bg-white/5 dark:ring-white/10"}`}
+    >
       <summary className={summaryCls}>
         <span className="font-semibold">
-          {g.grade} <span className="font-normal text-zinc-500">· {teamsLabel(g.teams.length)}</span>
+          {g.grade}{" "}
+          <span className="font-normal text-zinc-500">
+            · {teamsLabel(g.teams.length)}
+          </span>
         </span>
         <Arrow />
       </summary>
       {/* Standings beside the Schedule where there's room. */}
       <div className="grid gap-4 border-t border-zinc-100 p-2 lg:grid-cols-2 dark:border-white/5">
         <section>
-          <h4 className="px-2 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Standings</h4>
+          <h4 className="px-2 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+            Standings
+          </h4>
           {program && g.teams.some((t) => t.w + t.l > 0) && (
             <div className="px-2 pb-1">
               <ShareToggle
@@ -190,39 +322,68 @@ function GradeCard({ org, program, g, schedule, today, soon, follow }: { org: st
               />
             </div>
           )}
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-xs text-zinc-500">
-                <th className="px-2 py-1 text-left font-medium">Team</th>
-                <th className="w-8 px-1 py-1 text-center font-medium">W</th>
-                <th className="w-8 px-1 py-1 text-center font-medium">L</th>
-                <th className="w-11 px-1 py-1 text-center font-medium" title="Power Index (0–1000)">PI</th>
-                <th className="w-8" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100 dark:divide-white/5">
+          {/* Tap a team: its season opens under it; opening another closes it (one at a time per grade). */}
+          <div className="text-sm">
+            <div className="grid grid-cols-[1fr_2rem_2rem_2.75rem_2rem] px-2 py-1 text-xs text-zinc-500">
+              <span className="font-medium">Team</span>
+              <span className="text-center font-medium">W</span>
+              <span className="text-center font-medium">L</span>
+              <span
+                className="text-center font-medium"
+                title="Power Index (0–1000)"
+              >
+                PI
+              </span>
+              <span />
+            </div>
+            <div className="divide-y divide-zinc-100 dark:divide-white/5">
               {g.teams.map((t) => (
-                <tr key={t.id}>
-                  <td className="px-2 py-1.5">
-                    <span className="font-medium">{t.name}</span> <span className="text-zinc-500">({t.tag})</span>
-                  </td>
-                  <td className="px-1 text-center tabular-nums">{t.w}</td>
-                  <td className="px-1 text-center tabular-nums">{t.l}</td>
-                  <td className="px-1 text-center font-semibold tabular-nums">{t.pi}</td>
-                  <td className="px-1 text-right">
+                <div key={t.id} className="flex items-start">
+                  <details
+                    name={`season-${program ?? ""}-${g.label}`}
+                    className="group/team min-w-0 flex-1"
+                  >
+                    <summary className="grid cursor-pointer list-none grid-cols-[1fr_2rem_2rem_2.75rem] items-center px-2 py-1.5 [&::-webkit-details-marker]:hidden">
+                      <span className="min-w-0">
+                        <span
+                          aria-hidden
+                          className="mr-1 inline-block text-xs text-zinc-400 transition group-open/team:rotate-90"
+                        >
+                          ›
+                        </span>
+                        <span className="font-medium">{t.name}</span>{" "}
+                        <span className="text-zinc-500">({t.tag})</span>
+                      </span>
+                      <span className="text-center tabular-nums">{t.w}</span>
+                      <span className="text-center tabular-nums">{t.l}</span>
+                      <span className="text-center font-semibold tabular-nums">
+                        {t.pi}
+                      </span>
+                    </summary>
+                    <TeamSeason
+                      id={t.id}
+                      days={days}
+                      today={today}
+                      group={g.label}
+                    />
+                  </details>
+                  <span className="flex w-8 shrink-0 justify-end pt-1">
                     {follow && <FollowStar org={org} id={t.id} name={t.name} />}
-                  </td>
-                </tr>
+                  </span>
+                </div>
               ))}
-            </tbody>
-          </table>
+            </div>
+          </div>
           <p className="px-2 pt-1 text-xs text-zinc-500">
-            PI: Power Index (0–1000), from this season&apos;s scores. Everyone starts at 500; wins against stronger teams (or playing up a grade or
+            PI: Power Index (0–1000), from this season&apos;s scores. Everyone
+            starts at 500; wins against stronger teams (or playing up a grade or
             level) count more.
           </p>
         </section>
         <section>
-          <h4 className="px-2 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Schedule</h4>
+          <h4 className="px-2 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+            Schedule
+          </h4>
           {soon && <ScheduleSoon levels={[g.level]} className="px-2 pb-1" />}
           {program && next && (
             <div className="px-2 pb-2">
@@ -234,36 +395,79 @@ function GradeCard({ org, program, g, schedule, today, soon, follow }: { org: st
               />
             </div>
           )}
-          {days === null ? (soon ? null : (
-            <p className="px-2 text-sm text-zinc-600 dark:text-zinc-300">The schedule isn&apos;t posted yet. Check back soon.</p>
-          )) : !days.length ? (soon ? null : (
-            <p className="px-2 text-sm text-zinc-600 dark:text-zinc-300">No games scheduled yet.</p>
-          )) : (
+          {days === null ? (
+            soon ? null : (
+              <p className="px-2 text-sm text-zinc-600 dark:text-zinc-300">
+                The schedule isn&apos;t posted yet. Check back soon.
+              </p>
+            )
+          ) : !days.length ? (
+            soon ? null : (
+              <p className="px-2 text-sm text-zinc-600 dark:text-zinc-300">
+                No games scheduled yet.
+              </p>
+            )
+          ) : (
             <ul className="space-y-2">
+              {/* Each Game Day its own card, closed but the next one. */}
               {days.map((d) => (
-                <li key={d.date} className={`rounded-lg bg-white ring-1 ring-zinc-950/5 dark:bg-zinc-900 dark:ring-white/10 ${d.date < today && !d.games.some((x) => x.final) ? "opacity-60" : ""}`}>
-                  <p className="border-b border-zinc-100 px-3 py-1.5 text-sm font-semibold dark:border-white/5">{weekday(d.date)}</p>
-                  <ul className="divide-y divide-zinc-100 text-sm dark:divide-white/5">
-                    {d.games.map((x, i) => (
-                      <li key={i} className="flex flex-wrap gap-x-3 px-3 py-2">
-                        <span className="w-16 shrink-0 font-medium tabular-nums">{x.starts ? timeLabel(x.starts) : "TBA"}</span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block">
-                            <span className="font-medium">{x.away}</span> <span className="text-zinc-500">at</span> <span className="font-medium">{x.home}</span>
-                          </span>
-                          {x.gym && (
-                            <span className="block text-xs text-zinc-500">
-                              {x.gym}
-                              {x.court ? `, ${x.court}` : ""}
-                              <DirectionsLink href={x.map} />
-                            </span>
-                          )}
-                          <FinalScore final={x.final} first={x.away} second={x.home} firstIs="away" group={g.label} />
+                <li key={d.date}>
+                  <details
+                    open={d.date === (next ?? days.at(-1))?.date}
+                    className={`group/day overflow-hidden rounded-lg bg-white ring-1 ring-zinc-950/5 dark:bg-zinc-900 dark:ring-white/10 ${d.date < today && !d.games.some((x) => x.final) ? "opacity-60" : ""}`}
+                  >
+                    <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-1.5 text-sm font-semibold [&::-webkit-details-marker]:hidden">
+                      <span>
+                        {weekday(d.date)}{" "}
+                        <span className="font-normal text-zinc-500">
+                          · {d.games.length}{" "}
+                          {d.games.length === 1 ? "game" : "games"}
                         </span>
-                        {x.hype && !x.final && <GameShare id={x.hype} v={`${x.starts ?? ""}`} text={`GAME DAY · ${g.label}: ${x.away} at ${x.home}`} />}
-                      </li>
-                    ))}
-                  </ul>
+                      </span>
+                      <Arrow />
+                    </summary>
+                    <ul className="divide-y divide-zinc-100 border-t border-zinc-100 text-sm dark:divide-white/5 dark:border-white/5">
+                      {d.games.map((x, i) => (
+                        <GameItem
+                          id={x.details ?? null}
+                          key={i}
+                          className="flex flex-wrap gap-x-3 px-3 py-2"
+                        >
+                          <span className="w-16 shrink-0 font-medium tabular-nums">
+                            {x.starts ? timeLabel(x.starts) : "TBA"}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block">
+                              <span className="font-medium">{x.away}</span>{" "}
+                              <span className="text-zinc-500">at</span>{" "}
+                              <span className="font-medium">{x.home}</span>
+                            </span>
+                            {x.gym && (
+                              <span className="block text-xs text-zinc-500">
+                                {x.gym}
+                                {x.court ? `, ${x.court}` : ""}
+                                <DirectionsLink href={x.map} />
+                              </span>
+                            )}
+                            <FinalScore
+                              final={x.final}
+                              first={x.away}
+                              second={x.home}
+                              firstIs="away"
+                              group={g.label}
+                            />
+                          </span>
+                          {x.hype && !x.final && (
+                            <GameShare
+                              id={x.hype}
+                              v={`${x.starts ?? ""}`}
+                              text={`GAME DAY · ${g.label}: ${x.away} at ${x.home}`}
+                            />
+                          )}
+                        </GameItem>
+                      ))}
+                    </ul>
+                  </details>
                 </li>
               ))}
             </ul>
@@ -271,5 +475,73 @@ function GradeCard({ org, program, g, schedule, today, soon, follow }: { org: st
         </section>
       </div>
     </details>
+  );
+}
+
+// One team's season in a grade card's Standings: every game it plays (published), by date, with its final once scored.
+function TeamSeason({
+  id,
+  days,
+  today,
+  group,
+}: {
+  id: string;
+  days: PublicDay[] | null;
+  today: string;
+  group: string;
+}) {
+  const games = (days ?? []).flatMap((d) =>
+    d.games
+      .filter((x) => x.homeId === id || x.awayId === id)
+      .map((x) => ({ ...x, date: d.date })),
+  );
+  if (!games.length)
+    return (
+      <p className="px-3 pb-2 text-xs text-zinc-500">
+        {days === null
+          ? "The schedule isn't posted yet."
+          : "No games scheduled yet."}
+      </p>
+    );
+  return (
+    <ul className="mx-2 mb-2 divide-y divide-zinc-100 rounded-lg bg-white text-sm ring-1 ring-zinc-950/5 dark:divide-white/5 dark:bg-zinc-900 dark:ring-white/10">
+      {games.map((x, i) => {
+        const home = x.homeId === id;
+        return (
+          <GameItem
+            id={x.details ?? null}
+            key={i}
+            className={`flex flex-wrap gap-x-3 px-3 py-2 ${x.date < today && !x.final ? "opacity-60" : ""}`}
+          >
+            <span className="w-20 shrink-0 text-zinc-500">
+              {weekday(x.date)}
+              <span className="block text-xs">
+                {x.starts ? timeLabel(x.starts) : "Time TBA"}
+              </span>
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block">
+                <span className="text-zinc-500">{home ? "vs" : "at"}</span>{" "}
+                <span className="font-medium">{home ? x.away : x.home}</span>
+              </span>
+              {x.gym && (
+                <span className="block text-xs text-zinc-500">
+                  {x.gym}
+                  {x.court ? `, ${x.court}` : ""}
+                  <DirectionsLink href={x.map} />
+                </span>
+              )}
+              <FinalScore
+                final={x.final}
+                first={x.away}
+                second={x.home}
+                firstIs="away"
+                group={group}
+              />
+            </span>
+          </GameItem>
+        );
+      })}
+    </ul>
   );
 }

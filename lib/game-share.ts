@@ -5,7 +5,17 @@ import { PLACE_SQL } from "./scenic-games";
 import { gradeLabel } from "./scenic-teams";
 import type { Queryable } from "./sql";
 
-export type GameSide = { name: string; org: string | null; from: string }; // org: its organization's slug (its logo), when it has one
+// org: its organization's slug (its logo), when it has one. lines: its name on the picture (see nameLines).
+export type GameSide = { name: string; org: string | null; from: string; lines: [string] | [string, string] };
+// A team's name on two lines: the name, then its Head Coach's last name when the name ends with it ("3G ERPR" / "Cameron");
+// else the whole name on one line.
+type Raw = { name: string; org: string | null; from: string; coach: string | null };
+export function nameLines(t: { name: string; coach: string | null }): [string] | [string, string] {
+  const c = t.coach?.trim();
+  const n = t.name.trim();
+  if (c && n.length > c.length && n.toLowerCase().endsWith(` ${c.toLowerCase()}`)) return [n.slice(0, n.length - c.length).trim(), n.slice(n.length - c.length)];
+  return [n];
+}
 export type GameCard = {
   id: string;
   org: string; // the League's organization
@@ -24,10 +34,11 @@ export async function gameCard(q: Pick<Queryable, "query">, id: unknown): Promis
   if (typeof id !== "string" || !/^\d{1,18}$/.test(id)) return null;
   const side = (t: string) => `json_build_object('name', ${t}.name,
       'org', coalesce((select pa.org_slug from partners pa where pa.id = ${t}.partner_id), (select ot.org from org_teams ot where ot.id = ${t}.org_team_id), case when ${t}.thunder_team_id is not null then 'thunder' end),
-      'from', coalesce((select pa.name from partners pa where pa.id = ${t}.partner_id), ''))`;
+      'from', coalesce((select pa.name from partners pa where pa.id = ${t}.partner_id), ''),
+      'coach', (select u.last_name from users u where u.coach_id = ${t}.coach_id))`;
   const r = await q.query<{
     id: string; org: string; program: string; day: string; starts: string; gym: string | null; court: string | null;
-    grade: number; gender: string; level: string; a: GameSide; b: GameSide; home_side: string | null;
+    grade: number; gender: string; level: string; a: Raw; b: Raw; home_side: string | null;
   }>(
     `select m.id::text, p.org, p.name as program, m.day::text, to_char(m.starts, 'HH24:MI') as starts, place.gym, place.court,
             g.grade, d.gender, g.level, ${side("ta")} as a, ${side("tb")} as b, m.home_side
@@ -42,6 +53,9 @@ export async function gameCard(q: Pick<Queryable, "query">, id: unknown): Promis
   );
   const m = r.rows[0];
   if (!m) return null;
+  // The coach's last name is used only to split a name that already ends with it; it's never sent on its own (public).
+  const side2 = ({ coach, ...t }: Raw): GameSide => ({ ...t, lines: nameLines({ name: t.name, coach }) });
+  const [a, b] = [side2(m.a), side2(m.b)];
   const aHome = (m.home_side ?? "a") === "a";
   return {
     id: m.id,
@@ -52,8 +66,8 @@ export async function gameCard(q: Pick<Queryable, "query">, id: unknown): Promis
     starts: m.starts,
     gym: m.gym,
     court: m.court,
-    home: aHome ? m.a : m.b,
-    away: aHome ? m.b : m.a,
+    home: aHome ? a : b,
+    away: aHome ? b : a,
   };
 }
 

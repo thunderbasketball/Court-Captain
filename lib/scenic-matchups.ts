@@ -643,7 +643,8 @@ export async function saveMatchups(
       return { ok: false, message: b === null ? `${ta.name} plays TBD twice.` : `${ta.name} vs ${tb!.name} is in there twice.` };
     seen.add(k);
     games0.push(fill ? { a: fill.a, b: fill.b, fill: { team: fill.b, by: fill.by, at: fill.at } } : { a, b });
-    for (const t of tb ? [ta, tb] : [ta]) {
+    // A TBD game waits for a fill-in: it isn't held against the team's guaranteed games.
+    for (const t of tb ? [ta, tb] : []) {
       if (fill) continue; // made by hand: an extra game for the fill-in, and it never takes the other's place
       count.set(t.teamId, (count.get(t.teamId) ?? 0) + 1);
       const gg = t.entry!.perDate[day];

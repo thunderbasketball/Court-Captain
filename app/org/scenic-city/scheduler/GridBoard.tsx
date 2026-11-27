@@ -1,8 +1,8 @@
 "use client";
 
 import { CoachBadge, LevelTag, TeamName, type CoachTag } from "../../../ui";
-import { useEffect, useState, useTransition } from "react";
-import { onGameChanges } from "./board-events";
+import { useEffect, useRef, useState, useTransition } from "react";
+import { onGameChanges, onShowTeam } from "./board-events";
 import { useRouter } from "next/navigation";
 import { Alert, useConfirm } from "../../../client-ui";
 import { placeGame, unscheduleGym } from "../actions";
@@ -141,6 +141,9 @@ export function GridBoard({
     [],
   );
   const [opened, setOpened] = useState<Set<string>>(() => new Set(wide ? gyms.map((g) => g.key) : []));
+  // A team tapped in Matchups: its games here light up (yellow), their gyms open, and the Scheduler View scrolls to the first.
+  const [shown, setShown] = useState<{ team: string; at: number } | null>(null);
+  useEffect(() => onShowTeam((s) => s.day === day && setShown(s.team ? { team: s.team, at: Date.now() } : null)), [day]);
   const [picked, setPicked] = useState<string | null>(null);
   // Shift-click (or Cmd/Ctrl-click) picks several games to move together.
   const [selected, setSelected] = useState<string[]>([]);
@@ -392,6 +395,7 @@ export function GridBoard({
 
   function card(x: GridGame, hostId?: string, full = false) {
     const on = active === x.id || selected.includes(x.id);
+    const lit = !on && !!shown && ids(x).includes(shown.team); // the team tapped in Matchups plays in it
     const tbd = { ...(x.home ?? x.away)!, name: "TBD" };
     const [h, v] = [x.home ?? tbd, x.away ?? tbd];
     // Linked to the picked game: one of its teams, or one of its coaches (or a bound team), plays in this one too.
@@ -414,6 +418,7 @@ export function GridBoard({
       <button
         key={x.id}
         type="button"
+        data-shown={lit || undefined}
         draggable={!x.locked && !readOnly}
         onDragStart={(e) => {
           // A picked game drags all the picked ones with it.
@@ -436,11 +441,16 @@ export function GridBoard({
             return;
           }
           setSelected([]);
+          setShown(null);
           setPicked(on ? null : x.id);
         }}
         className={`${full ? "block h-full w-full" : "block w-full"} ${x.locked ? "cursor-default" : "cursor-grab active:cursor-grabbing"} touch-manipulation rounded-md px-2 py-1.5 text-left text-xs shadow-sm ring-1 select-none [-webkit-touch-callout:none] ${
-          on ? "bg-scenic-navy text-white ring-scenic-navy" : x.wrong ? "bg-red-100 ring-2 ring-red-600 dark:bg-red-500/25" : genderCls(x)
-        } ${link ? "outline-3 outline-offset-[-3px] outline-fuchsia-600" : !x.home || !x.away ? "outline-2 outline-offset-[-2px] outline-amber-500 outline-dashed" : ""}`}
+          on
+            ? "bg-scenic-navy text-white ring-scenic-navy"
+            : lit
+              ? "bg-yellow-300 text-zinc-950 ring-4 ring-orange-500 dark:bg-yellow-400"
+              : x.wrong ? "bg-red-100 ring-2 ring-red-600 dark:bg-red-500/25" : genderCls(x)
+        } ${lit ? "animate-pulse" : link ? "outline-3 outline-offset-[-3px] outline-fuchsia-600" : !x.home || !x.away ? "outline-2 outline-offset-[-2px] outline-amber-500 outline-dashed" : ""}`}
       >
         {full ? (
           <span className="block truncate">
@@ -523,8 +533,22 @@ export function GridBoard({
     }
   }
 
+  // The team tapped in Matchups: open the gyms its games are at (or listed under), then, in the Scheduler View, bring the first
+  // into view beside the lists (the Game Day card doesn't scroll, so the page doesn't jump away from Matchups on a phone).
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!shown) return;
+    const t = setTimeout(() => {
+      const lit = [...(root.current?.querySelectorAll<HTMLElement>("[data-shown]") ?? [])];
+      for (const el of lit)
+        for (let d = el.closest("details"); d && root.current?.contains(d); d = d.parentElement?.closest("details") ?? null) d.open = true; // onToggle keeps it open
+      if (wide && lit[0]) setTimeout(() => lit[0].scrollIntoView({ behavior: "smooth", block: "center", inline: "center" }), 50);
+    }, 0);
+    return () => clearTimeout(t);
+  }, [shown, wide]);
+
   return (
-    <div className="space-y-3">
+    <div ref={root} className="space-y-3">
       {touch.ghost}
       {dialog}
       {/* Shown where it's seen, wherever the game was dropped. */}

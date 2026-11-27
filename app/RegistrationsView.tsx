@@ -14,10 +14,10 @@ import SubCard from "./SubCard";
 import { TZ } from "@/lib/time";
 
 // The Registrations card's list (rows from lib/registrations-list): a program (when there's more than one) and a view:
-// Newest first, By division, By organization, or Unpaid. Each team one line; tap it for its details and Mark paid /
+// Latest activity first, By division, By organization, or Unpaid. Each team one line; tap it for its details and Mark paid /
 // Mark unpaid (Directors of Programs; checked again on the server, who did it recorded).
 const VIEWS = [
-  { key: "newest", label: "Newest" },
+  { key: "newest", label: "Latest activity" },
   { key: "division", label: "By division" },
   { key: "org", label: "By organization" },
   { key: "unpaid", label: "Unpaid" },
@@ -25,7 +25,13 @@ const VIEWS = [
 type View = (typeof VIEWS)[number]["key"];
 
 const when = (iso: string) =>
-  new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: TZ });
+  new Date(iso).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: TZ,
+  });
 
 type Pay = { payments: Record<string, TeamCardPayment[]>; canRefund: boolean };
 
@@ -34,37 +40,65 @@ export default function RegistrationsView({
   rows: loaded,
   payments = {},
   canRefund = false,
-}: { programs: { id: string; name: string }[]; rows: TeamRegistration[] } & Partial<Pay>) {
+}: {
+  programs: { id: string; name: string }[];
+  rows: TeamRegistration[];
+} & Partial<Pay>) {
   const [program, setProgram] = useState(programs[0]?.id ?? "");
   // Marked Paid / Unpaid here: shown at once (the page refreshes behind it).
-  const [marks, setMarks] = useState<Record<string, { paid: boolean; by: string }>>({});
+  const [marks, setMarks] = useState<
+    Record<string, { paid: boolean; by: string }>
+  >({});
   const rows = loaded.map((r) => {
     const m = marks[`${r.programId}-${r.teamId}`];
     return m ? { ...r, paid: m.paid, paidSetBy: m.by } : r;
   });
-  const marked = (r: TeamRegistration, paid: boolean) => setMarks((x) => ({ ...x, [`${r.programId}-${r.teamId}`]: { paid, by: "you" } }));
+  const marked = (r: TeamRegistration, paid: boolean) =>
+    setMarks((x) => ({
+      ...x,
+      [`${r.programId}-${r.teamId}`]: { paid, by: "you" },
+    }));
   const [view, setView] = useState<View>("newest");
   const mine = rows.filter((r) => r.programId === program);
-  if (!programs.length) return <p className="text-sm text-zinc-500">No current programs.</p>;
-  const shown = view === "unpaid" ? mine.filter((r) => !r.paid && !r.out && r.feeCents !== null && r.feeCents > 0) : mine;
+  if (!programs.length)
+    return <p className="text-sm text-zinc-500">No current programs.</p>;
+  const shown =
+    view === "unpaid"
+      ? mine.filter(
+          (r) => !r.paid && !r.out && r.feeCents !== null && r.feeCents > 0,
+        )
+      : mine;
   // Grouped views: a card per division or organization, each sorted by team name.
   const groups =
     view === "division" || view === "org"
-      ? [...new Set(shown.map((r) => (view === "division" ? r.division : r.from)))]
+      ? [
+          ...new Set(
+            shown.map((r) => (view === "division" ? r.division : r.from)),
+          ),
+        ]
           .sort((a, b) => (view === "division" ? 0 : a.localeCompare(b)))
           .map((k) => ({
             key: k,
-            rows: shown.filter((r) => (view === "division" ? r.division : r.from) === k).sort((a, b) => a.team.localeCompare(b.team)),
+            rows: shown
+              .filter((r) => (view === "division" ? r.division : r.from) === k)
+              .sort((a, b) => a.team.localeCompare(b.team)),
           }))
       : null;
-  const unpaid = mine.filter((r) => !r.paid && !r.out && r.feeCents !== null && r.feeCents > 0).length;
+  const unpaid = mine.filter(
+    (r) => !r.paid && !r.out && r.feeCents !== null && r.feeCents > 0,
+  ).length;
 
   return (
     <div className="space-y-3">
       {programs.length > 1 && (
         <div className="flex flex-wrap gap-2" aria-label="Program">
           {programs.map((p) => (
-            <button key={p.id} type="button" className={pillCls(p.id === program)} onClick={() => setProgram(p.id)}>
+            <button
+              key={p.id}
+              type="button"
+              className={pillCls(p.id === program)}
+              onClick={() => setProgram(p.id)}
+            >
               {p.name}
             </button>
           ))}
@@ -72,7 +106,12 @@ export default function RegistrationsView({
       )}
       <div className="flex flex-wrap gap-2" aria-label="View">
         {VIEWS.map((v) => (
-          <button key={v.key} type="button" className={pillCls(v.key === view)} onClick={() => setView(v.key)}>
+          <button
+            key={v.key}
+            type="button"
+            className={pillCls(v.key === view)}
+            onClick={() => setView(v.key)}
+          >
             {v.label}
             {v.key === "unpaid" && unpaid > 0 ? ` (${unpaid})` : ""}
           </button>
@@ -82,19 +121,36 @@ export default function RegistrationsView({
         {mine.length} team{mine.length === 1 ? "" : "s"} registered
         {view === "unpaid" ? ` · ${shown.length} unpaid` : ""}
       </p>
-      {!shown.length && <p className="text-sm text-zinc-500">{view === "unpaid" ? "Every team is paid." : "No teams registered yet."}</p>}
+      {!shown.length && (
+        <p className="text-sm text-zinc-500">
+          {view === "unpaid"
+            ? "Every team is paid."
+            : "No teams registered yet."}
+        </p>
+      )}
       {groups ? (
         <div className="space-y-2">
           {groups.map((g) => (
             <SubCard key={g.key} title={g.key} count={g.rows.length}>
-              <Rows rows={g.rows} onMarked={marked} payments={payments} canRefund={canRefund} />
+              <Rows
+                rows={g.rows}
+                onMarked={marked}
+                payments={payments}
+                canRefund={canRefund}
+              />
             </SubCard>
           ))}
         </div>
       ) : (
         shown.length > 0 && (
           <div className="overflow-hidden rounded-xl ring-1 ring-zinc-950/10 dark:ring-white/10">
-            <Rows rows={shown} showWhen onMarked={marked} payments={payments} canRefund={canRefund} />
+            <Rows
+              rows={shown}
+              showWhen
+              onMarked={marked}
+              payments={payments}
+              canRefund={canRefund}
+            />
           </div>
         )
       )}
@@ -120,21 +176,31 @@ function Rows({
           <details className="group">
             <summary className="flex cursor-pointer list-none items-start justify-between gap-3 px-3 py-2.5 [&::-webkit-details-marker]:hidden">
               <span className="min-w-0">
-                <span className={`block font-medium ${r.out ? "text-zinc-400 line-through" : ""}`}>
-                  {r.team} <span className="font-normal text-zinc-500">({r.tag})</span>
+                <span
+                  className={`block font-medium ${r.out ? "text-zinc-400 line-through" : ""}`}
+                >
+                  {r.team}{" "}
+                  <span className="font-normal text-zinc-500">({r.tag})</span>
                 </span>
                 <span className="block text-xs text-zinc-500">
                   {r.gradeLabel} {r.level}
-                  {showWhen ? ` · ${when(r.registeredAt)}` : ""}
+                  {showWhen ? ` · ${when(r.lastAt)}` : ""}
                 </span>
               </span>
               <span className="flex shrink-0 items-center gap-2">
                 {r.feeCents !== null && r.feeCents > 0 && (
-                  <Chip tone={r.paid ? "green" : "amber"}>{r.paid ? "Paid" : "Unpaid"}</Chip>
+                  <Chip tone={r.paid ? "green" : "amber"}>
+                    {r.paid ? "Paid" : "Unpaid"}
+                  </Chip>
                 )}
                 {/* Unpaid: Mark paid right on the line, without opening it (Mark unpaid stays inside). */}
-                {r.feeCents !== null && r.feeCents > 0 && !r.paid && <PaidButton r={r} onMarked={onMarked} inline />}
-                <span aria-hidden className="text-xs text-zinc-400 transition group-open:rotate-90">
+                {r.feeCents !== null && r.feeCents > 0 && !r.paid && (
+                  <PaidButton r={r} onMarked={onMarked} inline />
+                )}
+                <span
+                  aria-hidden
+                  className="text-xs text-zinc-400 transition group-open:rotate-90"
+                >
                   ▶
                 </span>
               </span>
@@ -157,33 +223,62 @@ function Rows({
                   <dt className="text-zinc-500">Fee</dt>
                   <dd className="space-y-1.5">
                     <span className="block">
-                      {money(r.feeCents)} · {r.paid ? "Paid" : "Unpaid"}
-                      {r.paidSetBy && <span className="text-zinc-500"> · marked by {r.paidSetBy}</span>}
+                      {money(r.feeCents)} total · {r.paid ? "Paid" : "Unpaid"}
                     </span>
                     <PaidButton r={r} onMarked={onMarked} />
                   </dd>
                 </>
               )}
-              {payments[`${r.programId}-${r.teamId}`]?.length > 0 && (
-                <>
-                  <dt className="text-zinc-500">Payments</dt>
-                  <dd className="space-y-1.5">
-                    {payments[`${r.programId}-${r.teamId}`].map((p) => (
-                      <CardPaid key={p.id} p={p} canRefund={canRefund} team={{ id: r.teamId, name: r.team }} />
-                    ))}
-                  </dd>
-                </>
-              )}
-              <dt className="text-zinc-500">Registered</dt>
-              <dd>
-                {when(r.registeredAt)} by {r.registeredBy}
+              <dt className="text-zinc-500">Activity</dt>
+              <dd className="min-w-0">
+                {/* Each transaction on its own line, newest first: card payments (with their Stripe details and Refund) among the rest. */}
+                <ul className="divide-y divide-zinc-100 rounded-lg ring-1 ring-zinc-950/5 dark:divide-white/5 dark:ring-white/10">
+                  {[
+                    ...r.activity.map((a) => ({ at: a.at, a, p: null })),
+                    ...(payments[`${r.programId}-${r.teamId}`] ?? []).map(
+                      (p) => ({ at: p.at, a: null, p }),
+                    ),
+                  ]
+                    .sort((x, y) => y.at.localeCompare(x.at))
+                    .map(({ a, p }, i) =>
+                      p ? (
+                        <li key={`p${p.id}`} className="p-1">
+                          <CardPaid
+                            p={p}
+                            canRefund={canRefund}
+                            team={{ id: r.teamId, name: r.team }}
+                          />
+                        </li>
+                      ) : (
+                        <li
+                          key={i}
+                          className="flex items-start justify-between gap-3 px-2.5 py-1.5"
+                        >
+                          <span className="min-w-0">
+                            <span className="block">{a!.what}</span>
+                            <span className="block text-xs text-zinc-500">
+                              {when(a!.at)} · {a!.by}
+                            </span>
+                          </span>
+                          {a!.cents !== null && (
+                            <span className="shrink-0 font-medium tabular-nums">
+                              {money(a!.cents)}
+                            </span>
+                          )}
+                        </li>
+                      ),
+                    )}
+                </ul>
               </dd>
               <dt className="text-zinc-500">Head Coach</dt>
               <dd className="min-w-0">
                 {r.coach ?? "None yet"}
                 {r.coachCell && (
                   <span className="block">
-                    <PhoneLink cell={r.coachCell} label={formatCell(r.coachCell)} />
+                    <PhoneLink
+                      cell={r.coachCell}
+                      label={formatCell(r.coachCell)}
+                    />
                   </span>
                 )}
                 {r.coachEmail && (
@@ -244,53 +339,112 @@ function PaidButton({
             : "text-zinc-600 ring-zinc-950/15 hover:bg-zinc-50 dark:text-zinc-300 dark:ring-white/20 dark:hover:bg-white/5"
         }`}
       >
-        {busy ? "Saving…" : inline && error ? "Didn't save · retry" : next ? "Mark paid" : "Mark unpaid"}
+        {busy
+          ? "Saving…"
+          : inline && error
+            ? "Didn't save · retry"
+            : next
+              ? "Mark paid"
+              : "Mark unpaid"}
       </button>
-      {error && !inline && <span className="mt-1 block text-xs text-red-600 dark:text-red-400">{error}</span>}
+      {error && !inline && (
+        <span className="mt-1 block text-xs text-red-600 dark:text-red-400">
+          {error}
+        </span>
+      )}
     </span>
   );
 }
 
 const dollars = (c: number) => `$${(c / 100).toFixed(2)}`;
-const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: TZ });
+const day = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: TZ,
+  });
 
 // One card payment, its own card (closed: amount, date and what it was for; opened: its details and Refund). A team's
 // first registration and each addition (dates, a 2nd Game) or invoice paid are separate payments. Refund: any amount up
 // to what's left (the server checks it's the League's Owner). One payment for several teams says so.
-function CardPaid({ p, canRefund, team }: { p: TeamCardPayment; canRefund: boolean; team: { id: string; name: string } }) {
+function CardPaid({
+  p,
+  canRefund,
+  team,
+}: {
+  p: TeamCardPayment;
+  canRefund: boolean;
+  team: { id: string; name: string };
+}) {
   const left = p.paidCents - p.refundedCents;
-  const when = new Date(p.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: TZ });
+  const when = new Date(p.at).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: TZ,
+  });
   return (
     <details className="group/pay rounded-lg ring-1 ring-zinc-950/10 dark:ring-white/10">
       <summary className="flex cursor-pointer list-none items-start justify-between gap-2 px-2.5 py-1.5 [&::-webkit-details-marker]:hidden">
         <span className="min-w-0">
-          <span className="font-medium">{dollars(p.teams > 1 ? p.teamCents : p.paidCents)}</span>
-          <span className="text-zinc-500"> · {day(p.at)} · </span>
-          <span>{p.what}</span>
-          {p.refundedCents > 0 && <span className="text-xs font-medium text-amber-700 dark:text-amber-300"> · refunded {dollars(p.refundedCents)}</span>}
+          <span className="block">
+            Paid by card{p.stripe.card ? ` (${p.stripe.card})` : ""}: {p.what}
+          </span>
+          <span className="block text-xs break-all text-zinc-500">
+            {day(p.at)} · {p.by} · Stripe {p.stripe.payment ?? "not found yet"}
+          </span>
+          {p.refundedCents > 0 && (
+            <span className="block text-xs font-medium text-amber-700 dark:text-amber-300">
+              Refunded {dollars(p.refundedCents)}
+            </span>
+          )}
         </span>
-        <span aria-hidden className="text-xs text-zinc-400 transition group-open/pay:rotate-90">
-          ▶
+        <span className="flex shrink-0 items-center gap-1.5">
+          <span className="font-medium tabular-nums">
+            {dollars(p.teams > 1 ? p.teamCents : p.paidCents)}
+          </span>
+          <span
+            aria-hidden
+            className="text-xs text-zinc-400 transition group-open/pay:rotate-90"
+          >
+            ▶
+          </span>
         </span>
       </summary>
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 px-2.5 pb-2.5 text-sm">
         <dt className="text-zinc-500">For</dt>
-        <dd>{p.kind === "invoice" ? `${p.what} (paid on the invoice)` : p.what}</dd>
+        <dd>
+          {p.kind === "invoice" ? `${p.what} (paid on the invoice)` : p.what}
+        </dd>
         <dt className="text-zinc-500">Charged</dt>
         <dd>
           {dollars(p.teamCents)}
-          {p.cardFeeCents > 0 && p.teams === 1 && <span className="text-zinc-500"> + {dollars(p.cardFeeCents)} card processing</span>}
-          {p.teams === 1 ? <span className="font-medium"> = {dollars(p.paidCents)}</span> : null}
+          {p.cardFeeCents > 0 && p.teams === 1 && (
+            <span className="text-zinc-500">
+              {" "}
+              + {dollars(p.cardFeeCents)} card processing
+            </span>
+          )}
+          {p.teams === 1 ? (
+            <span className="font-medium"> = {dollars(p.paidCents)}</span>
+          ) : null}
           {p.teams > 1 && (
             <span className="block text-zinc-500">
-              one payment of {dollars(p.paidCents)} for {p.teams} teams{p.cardFeeCents > 0 ? ` (with ${dollars(p.cardFeeCents)} card processing)` : ""}
+              one payment of {dollars(p.paidCents)} for {p.teams} teams
+              {p.cardFeeCents > 0
+                ? ` (with ${dollars(p.cardFeeCents)} card processing)`
+                : ""}
             </span>
           )}
         </dd>
         <dt className="text-zinc-500">Paid</dt>
         <dd>
           {when} by {p.by}
-          {p.who !== p.by && <span className="text-zinc-500"> ({p.who})</span>} · Card (Stripe)
+          {p.who !== p.by && (
+            <span className="text-zinc-500"> ({p.who})</span>
+          )}{" "}
+          · Card (Stripe)
         </dd>
         <dt className="text-zinc-500">Stripe</dt>
         <dd className="min-w-0">
@@ -301,9 +455,14 @@ function CardPaid({ p, canRefund, team }: { p: TeamCardPayment; canRefund: boole
             <dt className="text-zinc-500">Refunds</dt>
             <dd className="space-y-0.5">
               {p.refunds.map((f, i) => (
-                <span key={i} className="block text-xs font-medium text-amber-700 dark:text-amber-300">
+                <span
+                  key={i}
+                  className="block text-xs font-medium text-amber-700 dark:text-amber-300"
+                >
                   {dollars(f.cents)} by {f.by} on {day(f.at)}
-                  <span className="block font-normal break-all text-zinc-500 select-all">{f.ref}</span>
+                  <span className="block font-normal break-all text-zinc-500 select-all">
+                    {f.ref}
+                  </span>
                 </span>
               ))}
             </dd>

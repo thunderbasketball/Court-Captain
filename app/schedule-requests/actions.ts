@@ -2,7 +2,7 @@
 
 import { VIEW_ONLY, currentUser } from "@/lib/auth/server";
 import { db } from "@/lib/db";
-import { saveRequest, saveRequestSettings, setRequestDay, setSitOut } from "@/lib/schedule-requests";
+import { saveLeagueBlock, saveRequest, saveRequestSettings, setRequestDay, setSitOut } from "@/lib/schedule-requests";
 
 const deps = { pool: db, now: () => new Date() };
 
@@ -40,4 +40,9 @@ export async function saveScheduleRequestSettings(
 // The team sits out one of its dates or the Brackets (out), or plays it again.
 export async function setScheduleSitOut(teamId: string, programId: string, what: string, out: boolean) {
   return guarded((u) => setSitOut(deps, u, String(teamId), String(programId), String(what), out === true));
+}
+
+// The League's own blocks for a team on one Game Day, by the hour (its Owners, Admins and Directors of Scheduling).
+export async function saveLeagueHourBlock(teamId: string, programId: string, day: string, hours: number[]) {
+  return guarded((u) => saveLeagueBlock(deps, u, String(teamId), String(programId), String(day), hours));
 }

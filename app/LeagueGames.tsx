@@ -8,6 +8,7 @@ import { easternDate, localParts, timeLabel } from "@/lib/time";
 import { TeamName } from "./ui";
 import DirectionsLink from "./DirectionsLink";
 import GameShare from "./GameShare";
+import GameItem from "./GameDetails";
 
 // Where and when a League game is: "9:00 AM · East Hamilton High School · Main", or not set yet.
 export function GamePlace({ g }: { g: ScheduledGame }) {
@@ -77,7 +78,7 @@ export function LeagueGames({ games, today }: { games: ScheduledGame[]; today: s
 // One line of a team's schedule: its date and time for sorting, what shows, and (games and practices) which event it is,
 // for attendance.
 // share: a published game with an opponent and a time, to share as its Game Day picture.
-export type ScheduleItem = { date: string; time: string; node: ReactNode; event: { kind: "slot" | "own" | "game" | "scrimmage"; id: string }; share?: { id: string; text: string; v: string } };
+export type ScheduleItem = { date: string; time: string; node: ReactNode; event: { kind: "slot" | "own" | "game" | "scrimmage"; id: string }; share?: { id: string; text: string; v: string }; details?: string };
 
 // A team's published League games, scrimmages, booked practices and own-gym practices, together by date and time.
 export function scheduleItems(
@@ -96,6 +97,7 @@ export function scheduleItems(
       time: g.starts ?? "99:99",
       event: { kind: "game" as const, id: g.id },
       share: g.published && g.starts && g.opponent !== "TBD" ? { id: g.id, text: `GAME DAY · ${g.opponentGroup}: ${g.home ? "vs" : "at"} ${g.opponent}`, v: `${g.date}-${g.starts}` } : undefined,
+      details: g.published && g.opponent !== "TBD" ? g.id : undefined, // its Game details (both teams' stats)
       node: (
         <>
           <HomeAway home={g.home} />{" "}
@@ -193,11 +195,11 @@ export function ScheduleList({
   return (
     <ul className="divide-y divide-zinc-100 rounded-xl bg-zinc-50 px-3 text-sm dark:divide-white/5 dark:bg-white/5">
       {items.map((x, i) => (
-        <li key={i} className={`flex flex-wrap gap-x-3 py-1.5 ${x.date < today ? "opacity-50" : ""}`}>
+        <GameItem id={x.details ?? null} key={i} className={`flex flex-wrap gap-x-3 py-1.5 ${x.date < today ? "opacity-50" : ""}`}>
           <span className="w-14 shrink-0 text-zinc-500">{shortDate(x.date)}</span>
           <span className="min-w-0 flex-1">{x.node}</span>
           {x.share && x.date >= today && <GameShare id={x.share.id} text={x.share.text} v={x.share.v} />}
-        </li>
+        </GameItem>
       ))}
     </ul>
   );

@@ -103,6 +103,7 @@ describe("public League page (no login)", () => {
             awayId: expect.any(String),
             final: null, // no score yet
             hype: null, // no time yet: nothing to share
+            details: expect.any(String), // its Game details
           },
         ],
       },
@@ -122,7 +123,7 @@ describe("public League page (no login)", () => {
     expect(await setDayPublished(deps(), user("9913694"), prog, "2026-12-12", "COMP", false)).toEqual({ ok: true });
     await db.pool.query("delete from scenic_matchups where day = '2026-12-12'");
     // Games of the Week: the coming Game Day; none qualify before any scores (week 1).
-    expect(await gamesOfTheWeek(db.pool, now, "scenic-city")).toEqual({ day: "2026-12-05", rec: [], comp: [] });
+    expect(await gamesOfTheWeek(db.pool, now, "scenic-city")).toEqual({ mode: "upcoming", day: "2026-12-05", rec: [], comp: [] });
     // A scored game the week before (Magic won 30–22): both teams have records, so their Dec 5 rematch qualifies.
     await db.pool.query(
       `insert into scenic_matchups (program_id, division_id, day, team_a, team_b, created_by, score_a, score_b, scored_by, scored_at)
@@ -136,6 +137,14 @@ describe("public League page (no login)", () => {
       { day: "2026-12-05", group: "5th Boys COMP", home: { name: "HH 5B Fay", w: 0, l: 1 }, away: { name: "Magic", w: 1, l: 0 } },
     ]);
     expect(week?.rec).toEqual([]);
+    // Game Recaps: from noon on that Game Day through Monday, its finals (here once Nov 28 is published).
+    await db.pool.query("insert into scenic_published_schedules (program_id, day, level, published_by, published_at) values ($1, '2026-11-28', 'COMP', 't', now())", [prog]);
+    const sunday = await gamesOfTheWeek(db.pool, new Date("2026-11-29T15:00:00Z"), "scenic-city");
+    expect(sunday).toMatchObject({ mode: "recap", day: "2026-11-28", rec: [] });
+    expect(sunday?.comp).toMatchObject([{ home: { name: "Magic" }, away: { name: "HH 5B Fay" }, final: { home: 30, away: 22, forfeit: null } }]);
+    expect((await gamesOfTheWeek(db.pool, new Date("2026-11-28T15:00:00Z"), "scenic-city"))?.mode).toBe("upcoming"); // 10 AM: not yet
+    expect((await gamesOfTheWeek(db.pool, now, "scenic-city"))?.mode).toBe("upcoming"); // Tuesday
+    await db.pool.query("delete from scenic_published_schedules where day = '2026-11-28'");
     await db.pool.query("delete from scenic_matchups where day = '2026-11-28'");
     expect(await setDayPublished(deps(), user("9913694"), prog, "2026-12-05", "COMP", false)).toEqual({ ok: true });
     expect((await publicLeague(db.pool, now, prog))?.schedule).toBeNull();
@@ -154,9 +163,9 @@ describe("public League page (no login)", () => {
     await setDayPublished(deps(), user("9913694"), prog, "2026-12-05", "COMP", true);
     const [magic, fay] = await followedTeams(db.pool, now, follow);
     expect(magic.programs[0].games).toEqual([
-      { date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "HH 5B Fay", home: false, final: null, hype: null },
+      { date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "HH 5B Fay", home: false, final: null, hype: null, details: expect.any(String) },
     ]);
-    expect(fay.programs[0].games).toEqual([{ date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "Magic", home: true, final: null, hype: null }]);
+    expect(fay.programs[0].games).toEqual([{ date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "Magic", home: true, final: null, hype: null, details: expect.any(String) }]);
     // The whole schedule, games already played too (the device shows the next 21 days collapsed).
     expect((await followedTeams(db.pool, new Date("2026-12-07T15:00:00Z"), [id("Magic")]))[0].programs[0].games).toHaveLength(1);
     // Locked at its 1st game: the League roster shows (without a player the League took off), not the team's roster now.
@@ -213,7 +222,7 @@ describe("public League page (no login)", () => {
     ]);
     await setDayPublished(deps(), user("9913694"), prog, "2026-12-05", "COMP", true);
     const [t] = await orgPublicTeams(db.pool, now, "scenic-city");
-    expect(t.programs[0].games).toEqual([{ date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "Magic", home: true, final: null, hype: null }]);
+    expect(t.programs[0].games).toEqual([{ date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "Magic", home: true, final: null, hype: null, details: expect.any(String) }]);
     expect(JSON.stringify(t)).not.toMatch(/Ava|Lyons|4235550|\bBo\b|roster/);
     // Once the event has ended, the team isn't listed; another organization sees none of these.
     expect(await orgPublicTeams(db.pool, new Date("2027-03-02T15:00:00Z"), "scenic-city")).toEqual([]);

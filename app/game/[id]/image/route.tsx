@@ -18,11 +18,18 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const wide = new URL(req.url).searchParams.get("shape") === "wide";
   const [leagueLogo, away, home] = await Promise.all([pictureLogo(o), teamLogo(card.away, o), teamLogo(card.home, o)]);
   const tile = wide ? 150 : 230;
+  // Each name on two lines (the coach's last name 2nd), both the same size: the size the longest line needs.
+  const lines = [...card.away.lines, ...card.home.lines];
+  const nameSize = sizeFor(lines.reduce((a, b) => (b.length > a.length ? b : a), ""), wide ? 40 : 50);
   const team = (t: GameSide, x: { logo: string | null; o: Org }, label: string) => (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: wide ? 420 : 400, gap: wide ? 12 : 18 }}>
       <LogoTile logo={x.logo} o={x.o} size={tile} />
-      <div style={{ display: "flex", textAlign: "center", justifyContent: "center", fontFamily: "Bold", fontSize: sizeFor(t.name, wide ? 40 : 50), lineHeight: 1.1, maxHeight: wide ? 92 : 170, overflow: "hidden" }}>
-        {t.name}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", fontFamily: "Bold", fontSize: nameSize, lineHeight: 1.1, maxHeight: wide ? 100 : 170, overflow: "hidden" }}>
+        {t.lines.map((l, i) => (
+          <div key={i} style={{ display: "flex" }}>
+            {l}
+          </div>
+        ))}
       </div>
       <div style={{ display: "flex", padding: "4px 18px", borderRadius: 999, fontFamily: "Bold", fontSize: wide ? 22 : 28, background: label === "HOME" ? ACCENT : "rgba(255,255,255,0.15)", color: "#ffffff" }}>
         {label}

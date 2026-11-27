@@ -71,6 +71,7 @@ describe("sharing a final (no login)", () => {
     const card = (await gameCard(db.pool, game))!;
     expect(card).toMatchObject({ id: game, org: "scenic-city", program: "Winter", group: "5th Boys COMP", day: "2026-12-05", starts: "09:00", home: { name: "Aces" }, away: { name: "Bolts" } });
     expect(gameText(card)).toBe("GAME DAY · 5th Boys COMP: Bolts at Aces");
+    expect(card.home.lines).toEqual(["Aces"]); // doesn't end with its coach's last name: one line
     expect(JSON.stringify(card)).not.toMatch(/Sam|Lee|Dee|423/);
     expect(await gameCard(db.pool, dev)).toBeNull();
     for (const bad of ["", "x", "1; drop", "999999", null, 5]) expect(await gameCard(db.pool, bad)).toBeNull();
@@ -120,4 +121,15 @@ describe("sharing a final (no login)", () => {
     await db.pool.query("delete from scenic_published_schedules");
     expect(await programSchedule(db.pool, prog, true, clock.now())).toEqual([]);
   }, 60_000);
+});
+
+describe("team names on the Game Day picture", () => {
+  it("two lines when the name ends with its Head Coach's last name; else one", async () => {
+    const { nameLines } = await import("./game-share");
+    expect(nameLines({ name: "3G ERPR Cameron", coach: "Cameron" })).toEqual(["3G ERPR", "Cameron"]);
+    expect(nameLines({ name: "3B Reinert/Gentry Reinert", coach: "reinert" })).toEqual(["3B Reinert/Gentry", "Reinert"]);
+    expect(nameLines({ name: "3B Magic Sparks", coach: "Jones" })).toEqual(["3B Magic Sparks"]);
+    expect(nameLines({ name: "Cameron", coach: "Cameron" })).toEqual(["Cameron"]);
+    expect(nameLines({ name: "4B Smith", coach: null })).toEqual(["4B Smith"]);
+  });
 });

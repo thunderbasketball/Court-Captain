@@ -6,8 +6,9 @@ import { timeLabel } from "@/lib/time";
 import { loadFollowedTeams } from "./league/actions";
 import FinalScore from "./FinalScore";
 import GameShare from "./GameShare";
+import GameItem from "./GameDetails";
 import DirectionsLink from "./DirectionsLink";
-import { genderOf, genderTint } from "./ui";
+import { JerseyNumber, genderOf, genderTint } from "./ui";
 
 // Following teams with no login (SPEC.md section 14): the followed team ids live on this device only (browser storage,
 // one list per organization), never on the server. A private window or cleared site data forgets them.
@@ -44,6 +45,24 @@ function subscribe(cb: () => void) {
 export function useFollowed(org: string): string[] {
   const raw = useSyncExternalStore(subscribe, () => readRaw(org), () => "");
   return useMemo(() => parse(raw), [raw]);
+}
+
+// Every organization's followed teams on this device (a page that runs Leagues shows them all).
+function readAll(): string {
+  try {
+    const out: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith("followed-teams:")) out.push(...parse(localStorage.getItem(k) ?? ""));
+    }
+    return [...new Set(out)].slice(0, MAX).join(",");
+  } catch {
+    return "";
+  }
+}
+function useAllFollowed(on: boolean): string[] {
+  const raw = useSyncExternalStore(subscribe, () => (on ? readAll() : ""), () => "");
+  return useMemo(() => (raw ? raw.split(",") : []), [raw]);
 }
 
 function setFollowed(org: string, ids: string[]) {
@@ -86,11 +105,15 @@ const plusDays = (iso: string, n: number) => {
 };
 const SOON_DAYS = 21;
 
-// My Teams: the teams this device follows. Shows only when following some.
-export function MyTeams({ org }: { org: string }) {
-  const followed = useFollowed(org);
+// My Teams: the person's own teams (`mine`, logged in), then the teams this device follows here (`everyOrg`: followed on
+// any organization's page). Shows only when there are some. One team's schedule open at a time.
+export function MyTeams({ org, mine = [], everyOrg = false }: { org: string; mine?: string[]; everyOrg?: boolean }) {
+  const here = useFollowed(org);
+  const all = useAllFollowed(everyOrg);
+  const followed = useMemo(() => [...new Set([...mine, ...here, ...all])].slice(0, MAX), [mine, here, all]);
   const [data, setData] = useState<{ teams: FollowedTeam[]; today: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState<{ id: string; panel: "roster" | "schedule" } | null>(null);
   const [, start] = useTransition();
   const key = followed.join(",");
 
@@ -116,7 +139,15 @@ export function MyTeams({ org }: { org: string }) {
       {shown?.length === 0 && <p className="text-sm text-zinc-500">The teams you followed aren&apos;t in any program now.</p>}
       <ul className="space-y-2">
         {shown?.map((t) => (
-          <TeamCard key={t.id} org={org} team={t} today={data!.today} />
+          <TeamCard
+            key={t.id}
+            org={org}
+            team={t}
+            today={data!.today}
+            mine={mine.includes(t.id)}
+            panel={open?.id === t.id ? open.panel : null}
+            onPanel={(p) => setOpen((x) => (x?.id === t.id && x.panel === p ? null : p ? { id: t.id, panel: p } : null))}
+          />
         ))}
       </ul>
     </section>
@@ -147,12 +178,13 @@ export function PublicTeam({ org, id }: { org: string; id: string }) {
 
 export type Game = FollowedGame & { program: string; team: string; group: string };
 
-export function GameLine({ g, past = false }: { g: Game; past?: boolean }) {
+// `noDate`: under its day's heading (DayGroups), so only its time shows.
+export function GameLine({ g, past = false, noDate = false }: { g: Game; past?: boolean; noDate?: boolean }) {
   return (
-    <li className={`flex gap-2 ${past && !g.final ? "opacity-50" : ""}`}>
-      <span className="w-24 shrink-0 text-zinc-500">
-        {day(g.date)}
-        <span className="block text-xs">{g.starts ? timeLabel(g.starts) : "Time TBA"}</span>
+    <GameItem id={g.details ?? null} className={`flex flex-wrap gap-x-2 ${past && !g.final ? "opacity-50" : ""}`}>
+      <span className={`${noDate ? "w-16" : "w-24"} shrink-0 text-zinc-500`}>
+        {!noDate && day(g.date)}
+        <span className={noDate ? "block text-sm tabular-nums" : "block text-xs"}>{g.starts ? timeLabel(g.starts) : "Time TBA"}</span>
       </span>
       <span className="min-w-0">
         <span className="flex flex-wrap items-center gap-x-2">
@@ -172,7 +204,36 @@ export function GameLine({ g, past = false }: { g: Game; past?: boolean }) {
         )}
         <FinalScore final={g.final} first={g.team} second={g.opponent} firstIs={g.home ? "home" : "away"} group={g.group} />
       </span>
-    </li>
+    </GameItem>
+  );
+}
+
+// Games by day: a card for each day (its date as the title), its games inside (time only); closed but the next day.
+function DayGroups({ games, today }: { games: Game[]; today: string }) {
+  const days = [...new Set(games.map((g) => g.date))];
+  const next = days.find((d) => d >= today) ?? days.at(-1);
+  return (
+    <div className="space-y-2 text-sm">
+      {days.map((d) => (
+        <details key={d} open={d === next} className="group/day overflow-hidden rounded-lg bg-white ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10">
+          <summary
+            className={`flex cursor-pointer list-none items-center justify-between px-3 py-1.5 font-semibold [&::-webkit-details-marker]:hidden ${d < today ? "text-zinc-400" : ""}`}
+          >
+            {day(d)}
+            <span aria-hidden className="text-xs text-zinc-400 transition group-open/day:rotate-90">
+              ▶
+            </span>
+          </summary>
+          <ul className="space-y-1.5 border-t border-zinc-100 px-3 py-2 dark:border-white/5">
+            {games
+              .filter((g) => g.date === d)
+              .map((g, i) => (
+                <GameLine key={i} g={g} past={g.date < today} noDate />
+              ))}
+          </ul>
+        </details>
+      ))}
+    </div>
   );
 }
 
@@ -183,8 +244,25 @@ const iconBtn = (on: boolean) =>
 
 // One followed team: its games in the next 21 days, and 👥 Roster and 📅 Schedule icons on the card, each opening its
 // part right here (tap again to close).
-function TeamCard({ org, team, today }: { org: string; team: FollowedTeam; today: string }) {
-  const [panel, setPanel] = useState<"roster" | "schedule" | null>(null);
+// `panel`/`onPanel`: controlled by My Teams, so opening one team closes the others (else its own).
+function TeamCard({
+  org,
+  team,
+  today,
+  mine = false,
+  panel: shared,
+  onPanel,
+}: {
+  org: string;
+  team: FollowedTeam;
+  today: string;
+  mine?: boolean;
+  panel?: "roster" | "schedule" | null;
+  onPanel?: (p: "roster" | "schedule" | null) => void;
+}) {
+  const [own, setOwn] = useState<"roster" | "schedule" | null>(null);
+  const panel = onPanel ? (shared ?? null) : own;
+  const setPanel = (f: (x: "roster" | "schedule" | null) => "roster" | "schedule" | null) => (onPanel ? onPanel(f(panel)) : setOwn(f));
   const until = plusDays(today, SOON_DAYS);
   const all: Game[] = team.programs
     .flatMap((p) => (p.games ?? []).map((g) => ({ ...g, program: p.name, team: team.name, group: p.group })))
@@ -198,12 +276,18 @@ function TeamCard({ org, team, today }: { org: string; team: FollowedTeam; today
   return (
     <li className={`rounded-xl ring-1 ${genderTint(genderOf(team.programs[0]?.group)) ?? "bg-white ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10"}`}>
       <div className="flex items-center gap-1.5 p-3 pb-1">
-        <span className="min-w-0 flex-1">
-          <span className="block truncate font-semibold">{team.name}</span>
+        {/* Tap the team: its season schedule opens (tap again to close). */}
+        <button type="button" onClick={() => show("schedule")} aria-expanded={panel === "schedule"} className="min-w-0 flex-1 text-left">
+          <span className="block truncate font-semibold">
+            {team.name}
+            {mine && (
+              <span className="ml-1.5 rounded-full bg-thunder-blue px-1.5 py-0.5 align-middle text-[10px] font-bold text-white uppercase">Your team</span>
+            )}
+          </span>
           <span className="block truncate text-xs text-zinc-500">
             {team.programs.length ? team.programs.map((p) => `${p.name} · ${p.group}`).join(" / ") : "Not in a current program"}
           </span>
-        </span>
+        </button>
         <button type="button" aria-expanded={panel === "roster"} aria-label="Roster" title="Roster" onClick={() => show("roster")} className={iconBtn(panel === "roster")}>
           👥
         </button>
@@ -213,19 +297,17 @@ function TeamCard({ org, team, today }: { org: string; team: FollowedTeam; today
         <FollowStar org={org} id={team.id} name={team.name} />
       </div>
 
-      {/* Collapsed: the next 21 days. */}
-      <div className="px-3 pb-3">
+      {/* Collapsed: the next 21 days (hidden while the full schedule is open, so no game shows twice). */}
+      <div className={`px-3 pb-3 ${panel === "schedule" ? "hidden" : ""}`}>
         {last && (
           <ul className="mt-1 text-sm">
             <GameLine g={last} past />
           </ul>
         )}
         {soon.length ? (
-          <ul className="mt-1 space-y-1.5 text-sm">
-            {soon.map((g, i) => (
-              <GameLine key={i} g={g} />
-            ))}
-          </ul>
+          <div className="mt-1">
+            <DayGroups games={soon} today={today} />
+          </div>
         ) : (
           <p className="text-xs text-zinc-500">
             {later.length ? `${later.join(" and ")} Schedule will be published soon.` : posted ? `No games in the next ${SOON_DAYS} days.` : team.programs.length ? "Schedule not posted yet." : ""}
@@ -243,8 +325,10 @@ function TeamCard({ org, team, today }: { org: string; team: FollowedTeam; today
               ) : team.roster.length ? (
                 <ul className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
                   {team.roster.map((p, i) => (
-                    <li key={i} className="flex gap-1.5">
-                      <span className="w-6 shrink-0 text-right text-zinc-500 tabular-nums">{p.jersey ? `#${p.jersey}` : ""}</span>
+                    <li key={i} className="flex items-center gap-1.5">
+                      <span className="flex w-8 shrink-0 justify-center">
+                        <JerseyNumber n={p.jersey} />
+                      </span>
                       <span className="truncate">{p.name}</span>
                     </li>
                   ))}
@@ -267,11 +351,7 @@ function TeamCard({ org, team, today }: { org: string; team: FollowedTeam; today
                   {p.games === null ? p.soon ? null : (
                     <p className="text-sm text-zinc-500">Schedule not posted yet.</p>
                   ) : p.games.length ? (
-                    <ul className="space-y-1.5 text-sm">
-                      {p.games.map((g, i) => (
-                        <GameLine key={i} g={{ ...g, program: p.name, team: team.name, group: p.group }} past={g.date < today} />
-                      ))}
-                    </ul>
+                    <DayGroups games={p.games.map((g) => ({ ...g, program: p.name, team: team.name, group: p.group }))} today={today} />
                   ) : (
                     <p className="text-sm text-zinc-500">No games scheduled yet.</p>
                   )}

@@ -103,3 +103,23 @@ export function parseSettings(
   return { ok: true, blocks, max, compDays, recDays };
 }
 
+
+// The League's own blocks, by the hour (each hour as its start, 0–23): the hours its time blocks cover (9 AM to 9 PM: 9…20).
+export function hourOptions(blocks: readonly Block[]): number[] {
+  if (!blocks.length) return [];
+  const from = Math.floor(Math.min(...blocks.map((b) => b.start)) / 60);
+  const to = Math.ceil(Math.max(...blocks.map((b) => b.end)) / 60);
+  return Array.from({ length: Math.max(0, to - from) }, (_, i) => from + i);
+}
+// "9 AM", "1 PM": an hour's start.
+export const hourLabel = (h: number) => `${h % 12 || 12} ${h < 12 ? "AM" : "PM"}`;
+// Blocked hours as runs of time ("1–3 PM"), in minutes from midnight.
+export function hourRuns(hours: readonly number[]): { label: string; start: number; end: number }[] {
+  const out: { label: string; start: number; end: number }[] = [];
+  for (const h of [...new Set(hours)].sort((a, b) => a - b)) {
+    const last = out.at(-1);
+    if (last && last.end === h * 60) last.end += 60;
+    else out.push({ label: "", start: h * 60, end: h * 60 + 60 });
+  }
+  return out.map((r) => ({ ...r, label: blockLabel(r.start, r.end) }));
+}

@@ -25,12 +25,15 @@ export async function loadPublicProgram(org: string, id: string) {
 
 // My Teams on the login page: the teams a device follows (ids kept on the device; nothing stored here). The same public
 // details only: team names, groups, game times and places.
+// Any organization's page: one that runs programs shows its own programs' games; one whose teams play in someone else's
+// League (Thunder in Scenic City's) shows every public program's.
 export async function loadFollowedTeams(org: string, ids: string[]) {
-  if (!isOrgSlug(org) || !(await hasFeature(db, org, "programs"))) return { ok: false as const, message: "Not found." };
+  if (!isOrgSlug(org)) return { ok: false as const, message: "Not found." };
   const now = new Date();
   const today = easternDate(now);
   const list = Array.isArray(ids) ? [...new Set(ids.filter((x) => typeof x === "string" && /^\d{1,18}$/.test(x)))].slice(0, MAX_FOLLOWED) : [];
-  const teams = await publicly(`followed:${today}:${org}:${list.join(",")}`, () => followedTeams(db, now, list, org));
+  const own = await hasFeature(db, org, "programs");
+  const teams = await publicly(`followed:${today}:${own ? org : "*"}:${list.join(",")}`, () => followedTeams(db, now, list, own ? org : undefined));
   return { ok: true as const, teams, today };
 }
 

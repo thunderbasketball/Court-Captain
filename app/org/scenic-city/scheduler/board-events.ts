@@ -12,3 +12,15 @@ export function onGameChanges(fn: (changes: GameChange[]) => void): () => void {
   window.addEventListener(EVENT, h);
   return () => window.removeEventListener(EVENT, h);
 }
+
+// Matchups → Grid: the team just tapped on a Game Day (team null: none), so that day's Grid lights up its games and scrolls to them.
+export type ShownTeam = { day: string; team: string | null };
+const SHOW = "scheduler:team";
+export function showTeam(shown: ShownTeam) {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent<ShownTeam>(SHOW, { detail: shown }));
+}
+export function onShowTeam(fn: (shown: ShownTeam) => void): () => void {
+  const h = (e: Event) => fn((e as CustomEvent<ShownTeam>).detail);
+  window.addEventListener(SHOW, h);
+  return () => window.removeEventListener(SHOW, h);
+}

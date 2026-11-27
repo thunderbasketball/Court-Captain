@@ -102,17 +102,20 @@ describe("the season guide email", () => {
     const p = await seasonGuidePreview(deps, dee, "scenic-city", BASE, false);
     if (!p.ok) throw new Error(p.message);
     expect(p).toMatchObject({ live: false, to: "dee@example.com", cc: ["ada@chatt.test", "hal@host.test", "ned@refs.test"], bcc: ["al@example.com", "e@example.com", "meg@example.com", "pat@example.com"], last: null });
-    expect(p.html).toContain("<strong");
-    expect(p.html).toContain("Key dates: Winter");
-    expect(p.html).toContain('<a href="https://app.test/login/scenic-city">');
-    expect(p.html).toContain("• City of Chattanooga: <a href=\"https://app.test/login/chatt\">"); // each organization's login page
+    expect(p.html).toContain("font-weight:700"); // bold headings
+    expect(p.html).toContain("Important dates: Winter");
+    expect(p.html).toContain('<a href="https://app.test/login/scenic-city"'); // the families' link and the League's login
+    expect(p.html).toMatch(/<a href="https:\/\/app\.test\/login\/chatt"[^>]*>City of Chattanooga<\/a>/); // each organization's login button
     expect(p.html).toContain("Add to Home Screen");
-    expect(p.html).toContain("WE ARE USING COURTCAPTAIN FOR OUR WINTER SCHEDULE");
+    expect(p.html).toContain("WE ARE USING COURTCAPTAIN THIS SEASON!");
     expect(p.html).toContain("Your cell phone number is your login.");
-    expect(p.html).toContain("REQUIRED FOR EVERY PLAYER: Player Name, Uniform Number (##), Date of Birth and Grade.");
-    expect(p.html).toContain("choose a 4-digit PIN");
-    expect(p.html).toContain("Winter ROSTERS ARE LOCKED after your team's 1st game");
-    expect(p.html).toContain("ROSTERS ARE LOCKED after your team's 1st game, for the rest of the season"); // in Key dates too
+    expect(p.html).toContain("Every player needs: Player Name, Uniform Number, Date of Birth and Grade.");
+    expect(p.html).toContain("Create your four-digit PIN.");
+    expect(p.html).toContain("ROSTER LOCK POLICY");
+    expect(p.html).toContain("Before your first game"); // the checklist
+    expect(p.html).toContain("SCHEDULE REQUEST POLICY");
+    expect(p.html).toContain("GAME DAY TABLE RESPONSIBILITIES");
+    expect(p.html).toContain("Roster lock: immediately following your team's first game"); // in the dates too
     expect(p.html).not.toMatch(/snapshot|change your roster/i);
     expect(p.html).not.toContain("REC teams play one game");
 

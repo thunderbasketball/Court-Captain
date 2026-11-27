@@ -73,6 +73,7 @@ export type PublicGame = {
   awayId: string | null;
   final: PublicFinal | null; // once its score is entered
   hype: string | null; // a published game with both teams and a time, not played yet: its Game Day picture (/game/<id>)
+  details: string | null; // a published game with both teams: its id, to open its Game details
 };
 export type PublicDay = { date: string; games: PublicGame[]; soon: string[] }; // soon: levels not published yet that day
 
@@ -205,6 +206,7 @@ export async function programSchedule(q: Pick<Queryable, "query">, id: string, p
       awayId: aHome ? m.b_id : m.a_id,
       final: m.b === null ? null : finalOf(m, now),
       hype: publishedOnly && m.b !== null && m.starts && m.score_a === null && !m.forfeit ? m.id : null,
+      details: publishedOnly && m.b !== null ? m.id : null,
     });
   }
   return schedule;
@@ -225,6 +227,7 @@ export type FollowedGame = {
   home: boolean;
   final: PublicFinal | null;
   hype: string | null; // its Game Day picture to share (see PublicGame)
+  details: string | null; // its Game details (see PublicGame)
 };
 // games null: none of its level's schedule is posted. soon: its level has nothing coming published yet.
 export type FollowedProgram = { id: string; name: string; group: string; level: string; games: FollowedGame[] | null; soon: boolean };
@@ -307,7 +310,7 @@ export async function followedTeams(q: Pick<Queryable, "query">, now: Date, ids:
           for (const g of d.games) {
             const home = g.homeId === r.team;
             if (!home && g.awayId !== r.team) continue;
-            games.push({ date: d.date, starts: g.starts, gym: g.gym, court: g.court, map: g.map, opponent: home ? g.away : g.home, home, final: g.final, hype: g.hype });
+            games.push({ date: d.date, starts: g.starts, gym: g.gym, court: g.court, map: g.map, opponent: home ? g.away : g.home, home, final: g.final, hype: g.hype, details: g.details });
           }
         }
       }
@@ -396,7 +399,7 @@ function gamesOf(schedule: PublicDay[], team: string): FollowedGame[] {
     for (const g of d.games) {
       const home = g.homeId === team;
       if (!home && g.awayId !== team) continue;
-      games.push({ date: d.date, starts: g.starts, gym: g.gym, court: g.court, map: g.map, opponent: home ? g.away : g.home, home, final: g.final, hype: g.hype });
+      games.push({ date: d.date, starts: g.starts, gym: g.gym, court: g.court, map: g.map, opponent: home ? g.away : g.home, home, final: g.final, hype: g.hype, details: g.details });
     }
   return games;
 }

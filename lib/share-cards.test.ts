@@ -21,29 +21,25 @@ const winter = { id: "7", name: "Winter", startsOn: "2026-12-05", endsOn: "2027-
 const keys = (h: ShareInput) => shareCards(h).map((c) => c.key);
 
 describe("an organization's share pictures", () => {
-  it("a League taking teams: registration, divisions, countdown, numbers, follow, officials", () => {
+  it("a League taking teams: registration, divisions, countdown, numbers, officials", () => {
     const h = { ...base, own: [winter], counts: { teams: 110, divisions: 8, orgs: 6 }, recruiting: ["Scenic City Officials"], openable: true };
     const cards = shareCards(h);
-    expect(cards.map((c) => c.key)).toEqual(["register", "divisions", "tipoff", "numbers", "follow", "officials"]);
+    expect(cards.map((c) => c.key)).toEqual(["register", "divisions", "tipoff", "numbers", "officials"]);
     expect(cards[0]).toMatchObject({ href: "/register-team/scenic-city?program=7", text: "Scenic City Basketball: Winter new team registration is open through Feb 14." });
     expect(cards[0].lines).toContainEqual({ text: "REC", side: "Invited organizations" });
     expect(cards[2].big).toEqual({ value: "11", label: "days to go" });
     expect(cards[3].tiles.map((t) => t.value)).toEqual([110, 8, 6]);
-    expect(cards[5].text).toBe("Scenic City Officials is looking for youth basketball officials. Apply online.");
+    expect(cards[4].text).toBe("Scenic City Officials is looking for youth basketball officials. Apply online.");
   });
 
   it("registration closed and under way: no registration or countdown pictures", () => {
-    expect(keys({ ...base, today: "2026-12-05", own: [{ ...winter, register: false }], counts: { teams: 4, divisions: 1, orgs: 1 }, openable: true })).toEqual(["numbers", "follow"]);
+    expect(keys({ ...base, today: "2026-12-05", own: [{ ...winter, register: false }], counts: { teams: 4, divisions: 1, orgs: 1 }, openable: true })).toEqual(["numbers"]);
   });
 
   it("other organizations: their teams in a League, a host's gyms; nothing to say, nothing to share", () => {
     const league = { name: "Winter", orgName: "Scenic City", startsOn: "2026-12-05" };
-    expect(keys({ ...base, org: "thunder", leagues: [league], teams: 23, gyms: [{ name: "Gym", address: null, map: null }], hosting: true, openable: true })).toEqual([
-      "tipoff",
-      "teams",
-      "follow",
-      "gyms",
-    ]);
+    // No static pictures (a team count, gym names, how to follow): only news.
+    expect(keys({ ...base, org: "thunder", leagues: [league], teams: 23, gyms: [{ name: "Gym", address: null, map: null }], hosting: true, openable: true })).toEqual(["tipoff"]);
     expect(keys({ ...base, leagues: [{ ...league, startsOn: "2027-06-01" }] })).toEqual([]); // too far off
     expect(keys({ ...base, gyms: [{ name: "Gym", address: null, map: null }] })).toEqual([]); // hosts nothing now
     expect(keys(base)).toEqual([]);
@@ -52,7 +48,7 @@ describe("an organization's share pictures", () => {
   it("Games of the Week only with games; a changed picture gets a new version", () => {
     const t = (name: string) => ({ id: name, name, w: 2, l: 1, pi: 500 });
     const g = { day: "2026-12-12", starts: "09:00", gym: null, court: null, map: null, group: "5th Boys COMP", program: "Winter", home: t("A"), away: t("B") };
-    const cards = shareCards({ ...base, week: { day: "2026-12-12", rec: [], comp: [g] } });
+    const cards = shareCards({ ...base, week: { mode: "upcoming", day: "2026-12-12", rec: [], comp: [g] } });
     expect(cards.map((c) => c.key)).toEqual(["games-comp"]);
     expect(cards[0].lines[0].text).toBe("B (2–1) at A (2–1)");
     expect(cardVersion(cards[0])).toBe(cardVersion({ ...cards[0] }));
@@ -84,5 +80,38 @@ describe("an organization's share pictures", () => {
     const fresh = { ...league, groups: [{ ...league.groups[0], teams: [team("Aces", 0, 0)] }] };
     expect(groupCard("scenic-city", fresh, st, "2026-11-24")).toBeNull();
     for (const bad of ["standings.7.nope", "x", "standings..", "rosters.7.5th-boys-comp"]) expect(groupCard("scenic-city", league, bad, "2026-11-24")).toBeNull();
+  });
+
+  it("its teams' games: the last Game Day's results (for a week), the next Game Day's games, games at its gyms, the season so far", () => {
+    const fin = (home: number, away: number) => ({ id: "1", home, away, forfeit: null, share: true });
+    const games = [
+      { team: "4G Epps", date: "2026-12-05", starts: "09:00", opponent: "5G Horne", home: false, final: fin(20, 30) }, // W 30-20
+      { team: "4G Epps", date: "2026-12-05", starts: "10:50", opponent: "4G Simmons", home: true, final: fin(18, 22) }, // L 18-22
+      { team: "3B Lindley", date: "2026-12-05", starts: "09:55", opponent: "3B Leftwich", home: true, final: { id: "2", home: null, away: null, forfeit: "away" as const, share: true } }, // W by forfeit
+      { team: "4G Epps", date: "2026-12-12", starts: "09:00", opponent: "5G Felice", home: false, final: null },
+      { team: "3B Lindley", date: "2026-12-12", starts: null, opponent: "3B Hale", home: true, final: null },
+    ];
+    const gymDay = { date: "2026-12-12", games: [{ starts: "09:00", gym: "Action Church", court: "Main", group: "3rd Girls REC", home: "A", away: "B", final: null, hype: null, details: "9" }] };
+    const cards = shareCards({ ...base, org: "thunder", name: "Thunder", today: "2026-12-07", games, gymDay });
+    expect(cards.map((c) => c.key)).toEqual(["results", "next-games", "gym-games", "season"]);
+    expect(cards[0]).toMatchObject({ kicker: "Saturday, December 5", big: { value: "2–1", label: "our games" } });
+    expect(cards[0].lines).toEqual([
+      { text: "4G Epps at 5G Horne", side: "W 30-20" },
+      { text: "3B Lindley vs 3B Leftwich", side: "W Forfeit" },
+      { text: "4G Epps vs 4G Simmons", side: "L 18-22" },
+    ]);
+    expect(cards[1]).toMatchObject({ title: "Our next 2 games", kicker: "Saturday, December 12" });
+    expect(cards[1].lines).toEqual([
+      { text: "4G Epps at 5G Felice", side: "9:00 AM" },
+      { text: "3B Lindley vs 3B Hale", side: "TBA" },
+    ]);
+    expect(cards[2]).toMatchObject({ title: "1 game at Action Church", href: "/login/thunder#gyms" });
+    expect(cards[3]).toMatchObject({ big: { value: "2–1", label: "all our teams" } });
+    expect(cards[3].lines).toEqual([
+      { text: "3B Lindley", side: "1–0" },
+      { text: "4G Epps", side: "1–1" },
+    ]);
+    // A week later the results card is gone.
+    expect(keys({ ...base, today: "2026-12-12", games })).toEqual(["next-games", "season"]);
   });
 });

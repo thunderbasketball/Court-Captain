@@ -37,7 +37,7 @@ export async function hostGyms(q: Q, org: string): Promise<PublicGym[]> {
   return r.rows.map((g) => ({ name: g.name, address: g.address, map: directionsUrl(g.lat, g.lng, g.place) }));
 }
 
-export type HostGame = { starts: string | null; gym: string | null; court: string | null; group: string; home: string; away: string; final: PublicFinal | null; hype: string | null }; // hype: its Game Day picture
+export type HostGame = { starts: string | null; gym: string | null; court: string | null; group: string; home: string; away: string; final: PublicFinal | null; hype: string | null; details: string }; // hype: its Game Day picture; details: its id, for Game details
 export type HostDay = { date: string; games: HostGame[] };
 
 // The coming day of published games at its gyms (any organization's League), by time; null when none.
@@ -89,6 +89,7 @@ export async function hostGames(q: Q, now: Date, org: string): Promise<HostDay |
         away: aHome ? m.b : m.a,
         final: finalOf(m, now),
         hype: m.starts && m.score_a === null && !m.forfeit ? m.id : null,
+        details: m.id,
       };
     }),
   };

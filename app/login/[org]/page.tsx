@@ -20,6 +20,7 @@ import FindMyPlayer from "../../find-player/FindMyPlayer";
 import { heroFor } from "@/lib/public-org";
 import PublicHelp from "./PublicHelp";
 import { pageCards, publicFacts, publicHelp } from "@/lib/public-facts";
+import { myLeagueTeams } from "@/lib/my-league-teams";
 import ShareGallery from "./ShareGallery";
 import { loadPublicProgram } from "../../league/actions";
 import PublicHero from "./PublicHero";
@@ -68,6 +69,7 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
   // while Team Registrations is on), then its player programs (seasons).
   const f = await publicFacts(org, new Date());
   const { today, players, teams, gyms, recruiting, week } = f;
+  const mine = user ? await myLeagueTeams(db, user.coachId, org, new Date(), f.own.length > 0) : [];
   const status = (regCloses: string | null, startsOn: string | null, endsOn: string | null) =>
     regCloses && regCloses >= today
       ? `Register by ${shortDate(regCloses)}`
@@ -173,8 +175,9 @@ async function OrgLogin({ params }: { params: PageProps<"/login/[org]">["params"
           )}
           {programs.length > 0 && (
             <>
-              {/* The teams this device follows (☆ on a program's Standings). */}
-              <MyTeams org={org} />
+              {/* The person's own teams (logged in) and the teams this device follows (☆ on a program's Standings); on a page
+                  that runs Leagues, the teams followed from every organization too. */}
+              <MyTeams org={org} mine={mine} everyOrg={f.own.length > 0} />
               {/* The coming Game Day's best REC and COMP matchups (its Leagues, once a schedule is published). */}
               {week && <GamesOfTheWeek week={week} />}
             </>

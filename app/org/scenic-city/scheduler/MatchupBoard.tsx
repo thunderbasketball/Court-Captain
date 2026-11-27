@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, useConfirm } from "../../../client-ui";
 import { addGame, clearMatchups, createMatchups, fillTbd, saveMatchups, switchHome } from "../actions";
-import { announce } from "./board-events";
+import { announce, showTeam } from "./board-events";
 import { useTouchDrag } from "../../../touch-drag";
 
 // group: "4th REC"; level: REC or COMP; coach: set when its coach has another team playing that day.
@@ -150,6 +150,12 @@ export function MatchupBoard({
       // A team dropped on the other side of its own game (its opponent, or TBD): switch home and away (saved at once).
       if (fromSlot && fromSlot[0] === target[0] && other === p.team) return flipHome(into);
       if (other === p.team) return setNote({ tone: "red", lines: [`${team.get(p.team)?.name} can't play itself.`] });
+      // Onto a saved game's TBD, a team that already has its games fills in: an extra game (saved at once, shown as Extra game);
+      // it keeps its own game too.
+      if (to !== "new" && !was && other && into.id && placed(p.team) >= (team.get(p.team)?.need ?? 0)) {
+        fill(games.find((g) => g.key === target[0])!, p.team);
+        return;
+      }
       if (!fromSlot && was !== p.team && placed(p.team) >= (team.get(p.team)?.need ?? 0))
         return setNote({ tone: "red", lines: [`${team.get(p.team)?.name} already has all its games.`] });
       into[target[1]] = p.team;
@@ -254,8 +260,9 @@ export function MatchupBoard({
         onClick={(e) => {
           e.stopPropagation();
           if (touch.justDropped()) return;
-          if (locked(id)) return;
+          if (locked(id)) return showTeam({ day, team: id }); // published: can't move, but the Grid still shows its games
           setPicked(on ? null : { team: id, from });
+          showTeam({ day, team: on || id === TBD ? null : id }); // the Grid shows its games
         }}
         className={`${from === "sandbox" ? "max-w-full" : "block w-full flex-1"} cursor-grab rounded-md px-2 py-1 text-left text-sm shadow-sm active:cursor-grabbing ${
           on || dragging === id

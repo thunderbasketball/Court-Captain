@@ -87,6 +87,9 @@ export async function pageCards(org: string, name: string, f: PublicFacts): Prom
     recruiting: f.recruiting.map((r) => r.name),
     openable: anyOpens(f),
     week: f.week,
+    // Its teams' published League games (each team's name with each game), and the coming day at its gyms.
+    games: f.teams.flatMap((t) => t.programs.flatMap((p) => (p.games ?? []).map((g) => ({ team: t.name, date: g.date, starts: g.starts, opponent: g.opponent, home: g.home, final: g.final })))),
+    gymDay: f.gymDay,
   });
   return cards.map((card) => ({ card, v: cardVersion(card) }));
 }

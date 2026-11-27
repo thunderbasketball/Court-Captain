@@ -452,7 +452,9 @@ export async function placeGame(
   if (asked)
     return {
       ok: false,
-      message: `${asked.team} asked not to play ${asked.blocks.join(" or ")} (schedule request). Pick another time, or take the team out of this day if it can't be met.`,
+      message: asked.league
+        ? `${asked.team} is blocked ${asked.blocks.join(" and ")} by the League. Pick another time.`
+        : `${asked.team} asked not to play ${asked.blocks.join(" or ")} (schedule request). Pick another time, or take the team out of this day if it can't be met.`,
     };
   return withTx(deps.pool, async (q) => {
     // One placement at a time per Game Day, so two Schedulers can't fill the same slot.
@@ -546,7 +548,7 @@ export async function fillClash(deps: Deps, viewer: SessionUser, q: Pick<Queryab
   if (!grid) return "That court isn't open for games that day.";
   const len = lengthAt(grid, m.starts);
   const asked = await requestClash(deps.pool, m.day, [m.b], toMin(m.starts), len);
-  if (asked) return `${asked.team} asked not to play ${asked.blocks.join(" or ")} (schedule request).`;
+  if (asked) return asked.league ? `${asked.team} is blocked ${asked.blocks.join(" and ")} by the League.` : `${asked.team} asked not to play ${asked.blocks.join(" or ")} (schedule request).`;
   const lens = JSON.stringify(Object.fromEntries((grid.slots ?? []).map((x) => [x.start, x.minutes])));
   return slotClash(q, { ...m, matchupId: m.id, len, lens, minutes: grid.minutes, gyms: gymsOf(grid) });
 }
