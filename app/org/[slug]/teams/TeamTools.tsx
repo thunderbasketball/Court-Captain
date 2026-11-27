@@ -1,7 +1,7 @@
 "use client";
 
 import { AddPersonIcon, CardPanel, PanelIcon, addIconBtn, closeCardPanel } from "../../../CardIcons";
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, Toast, useConfirm } from "../../../client-ui";
 import { fieldLabel, inputCls, pillCls, primaryBtn } from "../../../ui";
@@ -222,7 +222,9 @@ export function TeamEditButton({
   org,
   id,
   team,
+  remove,
 }: {
+  remove?: ReactNode; // Delete team, at the bottom of the open form
   org: string;
   id: string;
   team: { gender: Gender; grades: string[]; level: "COMP" | "REC"; altName: string | null; changedBy: string | null };
@@ -332,6 +334,7 @@ export function TeamEditButton({
           Cancel
         </button>
       </div>
+      {remove && <div className="border-t border-zinc-200 pt-3 dark:border-white/10">{remove}</div>}
     </form>
   );
 }

@@ -17,7 +17,7 @@ import { seesWho } from "@/lib/org-admin";
 import { requireFeature } from "@/lib/features-server";
 import { shortDate } from "@/lib/program-options";
 import { dayGrid, gameLength, gymBlocks, programGameLength, type DayGrid } from "@/lib/scenic-grid";
-import { gameDaySchedule, type DateTeam, type ScheduleDay } from "@/lib/scenic-programs";
+import { gameDaySchedule, isScheduler, type DateTeam, type ScheduleDay } from "@/lib/scenic-programs";
 import AppHeader from "../../../AppHeader";
 import { CoachBadge, LevelTag, PageTitle, TeamName, card, type CoachTag } from "../../../ui";
 import { PublishToggle, TeamOffButton } from "../programs/ProgramTools";
@@ -28,7 +28,7 @@ import { GamePlace, HomeAway } from "../../../LeagueGames";
 import type { ScheduledGame } from "@/lib/scenic-games";
 import { GameDayGear, ProgramGear } from "./GameLengthInput";
 import { GridBoard } from "./GridBoard";
-import { CreateAllMatchups } from "./CreateAllMatchups";
+import DivisionCards from "./DivisionCards";
 
 import { PageFrame } from "../../../ui";
 import { hasFeature } from "@/lib/features";
@@ -79,6 +79,8 @@ export async function SchedulerContent({
     redirect("/org/scenic-city");
   }
   const who = await seesWho(db, user, "scenic-city"); // Owners and Admins see who did it
+  // Only Directors of Scheduling change the schedule; Admins and Owners see it, view only (the server refuses changes too).
+  const canEdit = !user.actingBy && (await isScheduler(db, user));
   const q = await searchParams;
   // Only a listed Game Day or view is used; anything else falls back to the next Game Day's Teams.
   // The program being scheduled (picked at the top; the soonest League first): only its Game Days and teams show.
@@ -112,6 +114,8 @@ export async function SchedulerContent({
       {!embedded && <AppHeader user={user} context={scenic.key} tab="scheduler" />}
       <div className="flex flex-1 flex-col">
         <PageFrame embedded={embedded} className="mx-auto w-full max-w-3xl flex-1 space-y-4 px-4 py-6 lg:max-w-6xl">
+          {!canEdit && <ViewOnly />}
+          <fieldset disabled={!canEdit} className="contents">
           {!programId && <PageTitle title="Scheduler" subtitle="Each Game Day across every League: its teams, matchups and grid." />}
           {program && (
             <div>
@@ -253,11 +257,11 @@ export async function SchedulerContent({
                         <Teams day={d} coaches={coaches} who={who} />
                       </SubCard>
                       <SubCard title="Matchups" count={d.games || undefined} open={here && view === "matchups"}>
-                        <Matchups day={d} coaches={coaches} who={who} published={levels.filter((l) => published.has(`${d.date} ${l}`))} wrong={wrong} />
+                        <Matchups day={d} coaches={coaches} who={who} published={levels.filter((l) => published.has(`${d.date} ${l}`))} wrong={wrong} readOnly={!canEdit} />
                       </SubCard>
                       <SubCard title="Scheduling" open={here && view === "grid"}>
                         <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>
-                          <DayGridCard user={user} day={d} coaches={coaches} published={levels.filter((l) => published.has(`${d.date} ${l}`))} wrong={wrong} />
+                          <DayGridCard user={user} day={d} coaches={coaches} published={levels.filter((l) => published.has(`${d.date} ${l}`))} wrong={wrong} readOnly={!canEdit} />
                         </Suspense>
                       </SubCard>
                       <SubCard title="Bindings" open={here && view === "bindings"}>
@@ -271,6 +275,7 @@ export async function SchedulerContent({
               })}
             </>
           )}
+          </fieldset>
         </PageFrame>
       </div>
     </>
@@ -286,7 +291,8 @@ export async function SchedulerView({ searchParams }: { searchParams: PageProps<
   await requireFeature("scenic-city", "programs");
   const s = await gameDaySchedule({ pool: db, now: () => new Date() }, user); // null: not a Director of Scheduling (or Admin)
   if (!s) redirect("/org/scenic-city");
-  const [who, q] = await Promise.all([seesWho(db, user, "scenic-city"), searchParams]);
+  const [who, q, scheduler] = await Promise.all([seesWho(db, user, "scenic-city"), searchParams, isScheduler(db, user)]);
+  const canEdit = !user.actingBy && scheduler; // Directors of Scheduling; Admins and Owners view only
   const programs = [...new Map(s.days.flatMap((d) => d.programs.map((p) => [p.programId, { id: p.programId, name: p.programName }] as const))).values()];
   const program = programs.find((p) => p.id === q.program) ?? programs[0];
   const days = s.days
@@ -306,7 +312,9 @@ export async function SchedulerView({ searchParams }: { searchParams: PageProps<
   const done = day ? levels.filter((l) => published.has(`${day.date} ${l}`)) : [];
   return (
     <div className="flex flex-1 flex-col lg:h-dvh lg:flex-none lg:overflow-hidden">
+      <fieldset disabled={!canEdit} className="contents">
       <header className="space-y-1.5 border-b border-zinc-950/10 bg-white px-3 py-2 dark:border-white/10 dark:bg-zinc-900">
+        {!canEdit && !user.actingBy && <ViewOnly />}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
           <Link href="/org/scenic-city" className="text-sm font-medium text-thunder-blue hover:underline dark:text-blue-400">
             ← Home
@@ -392,7 +400,7 @@ export async function SchedulerView({ searchParams }: { searchParams: PageProps<
                 </Suspense>
               )}
               <SubCard title="Matchups" count={day.games || undefined} open>
-                <Matchups day={day} coaches={coaches} who={who} published={done} wrong={wrong} />
+                <Matchups day={day} coaches={coaches} who={who} published={done} wrong={wrong} readOnly={!canEdit} />
               </SubCard>
               <SubCard title="Teams" count={day.playing}>
                 <Teams day={day} coaches={coaches} who={who} />
@@ -406,12 +414,22 @@ export async function SchedulerView({ searchParams }: { searchParams: PageProps<
           </details>
           <section aria-label="Gyms" className="min-w-0 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-zinc-950/10 lg:min-h-0 lg:overflow-y-auto dark:bg-zinc-900 dark:ring-white/10">
             <Suspense fallback={<p className="text-sm text-zinc-500">Loading…</p>}>
-              <DayGridCard key={day.date} user={user} day={day} coaches={coaches} published={done} wrong={wrong} wide />
+              <DayGridCard key={day.date} user={user} day={day} coaches={coaches} published={done} wrong={wrong} wide readOnly={!canEdit} />
             </Suspense>
           </section>
         </main>
       )}
+      </fieldset>
     </div>
+  );
+}
+
+// Admins and Owners on the scheduling pages: they see everything, but only Directors of Scheduling change it.
+function ViewOnly() {
+  return (
+    <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-600/25 dark:bg-amber-500/10 dark:text-amber-200">
+      <span className="font-semibold">View only.</span> Only Directors of Scheduling change the schedule.
+    </p>
   );
 }
 
@@ -486,10 +504,10 @@ async function DayLength({ user, date, label, who }: { user: SessionUser; date: 
 }
 
 // A Game Day's grid, loaded in the background.
-async function DayGridCard({ user, day, coaches, published, wrong, wide = false }: { user: SessionUser; day: ScheduleDay; coaches: Map<string, CoachTag>; published: string[]; wrong: Wrong; wide?: boolean }) {
+async function DayGridCard({ user, day, coaches, published, wrong, wide = false, readOnly = false }: { user: SessionUser; day: ScheduleDay; coaches: Map<string, CoachTag>; published: string[]; wrong: Wrong; wide?: boolean; readOnly?: boolean }) {
   const [grid, off] = await Promise.all([dayGrid({ pool: db, now: () => new Date() }, user, day.date), requestsOff(db, day.date)]);
   return grid ? (
-    <Grid day={day} grid={grid} coaches={coaches} published={published} wrong={wrong} wide={wide} off={off} />
+    <Grid day={day} grid={grid} coaches={coaches} published={published} wrong={wrong} wide={wide} off={off} readOnly={readOnly} />
   ) : (
     <p className="py-6 text-center text-sm text-zinc-500">This Game Day&apos;s grid isn&apos;t available.</p>
   );
@@ -740,20 +758,18 @@ function Teams({ day, coaches, who }: { day: ScheduleDay; coaches: Map<string, C
 // Matchups: each League's divisions playing that day, expandable. Each has Create matchups (Admins and Directors of
 // Scheduling; the page is theirs only), its games (a vs b, by grade group), pairs that also meet on another Game Day,
 // and teams still short of their games guaranteed.
-function Matchups({ day, coaches, who, published, wrong }: { day: ScheduleDay; coaches: Map<string, CoachTag>; who: boolean; published: string[]; wrong: Wrong }) {
+function Matchups({ day, coaches, who, published, wrong, readOnly = false }: { day: ScheduleDay; coaches: Map<string, CoachTag>; who: boolean; published: string[]; wrong: Wrong; readOnly?: boolean }) {
   const leagues = day.programs.filter((p) => !p.bracket);
   if (!leagues.length) return <p className="py-6 text-center text-sm text-zinc-500">The Brackets are set up separately.</p>;
+  // Every placed game that day (any League): who's in it (teams and coaches), to find two at the same time.
+  const people = new Map(day.programs.flatMap((p) => p.teams.map((t) => [t.teamId, [t.teamId, ...t.coaches.map((c) => c.key)]] as const)));
+  const placed = day.programs.flatMap((p) => p.matchups).filter((m) => m.court && m.starts);
+  const who2 = (m: { a: string; b: string | null }) => [...(people.get(m.a) ?? []), ...(m.b ? (people.get(m.b) ?? []) : [])];
+  const clashes = (m: (typeof placed)[number]) =>
+    placed.some((y) => y.id !== m.id && y.starts === m.starts && who2(y).some((k) => who2(m).includes(k)));
+  const genderRank = (d: string) => (d.startsWith("Coed") ? 0 : d.startsWith("Boys") ? 1 : 2);
   return (
     <div className="space-y-4">
-      <CreateAllMatchups
-        day={day.date}
-        programId={day.programs[0].programId}
-        label={weekday(day.date)}
-        levels={("REC COMP".split(" ") as ("REC" | "COMP")[]).flatMap((level) => {
-          const ids = new Set(leagues.flatMap((p) => p.teams.filter((t) => t.level === level).map((t) => t.teamId)));
-          return ids.size ? [{ level, created: leagues.some((p) => p.matchups.some((m) => ids.has(m.a))), published: published.includes(level) }] : [];
-        })}
-      />
       {leagues.map((p) => (
         <div key={p.programId}>
           {day.programs.length > 1 && (
@@ -765,71 +781,80 @@ function Matchups({ day, coaches, who, published, wrong }: { day: ScheduleDay; c
             </Link>
           )}
           {!p.teams.length && <p className="mt-1 text-sm text-zinc-500">No teams yet.</p>}
-          <div className="mt-1 space-y-2">
-            {byDivision(p.teams).map(([division, teams]) => {
-              const divisionId = teams[0].divisionId;
-              const team = new Map(teams.map((t) => [t.teamId, t]));
-              const anywhere = new Map(p.teams.map((t) => [t.teamId, t]));
-              const games = p.matchups
-                .filter((m) => m.divisionId === divisionId)
-                .map((m) => ({ ...m, ta: team.get(m.a), tb: m.b ? (team.get(m.b) ?? (m.fill ? anywhere.get(m.b) : undefined)) : undefined }))
-                .sort(
-                  (x, y) =>
-                    (x.ta?.groupGrade ?? 99) - (y.ta?.groupGrade ?? 99) || (x.ta?.name ?? "").localeCompare(y.ta?.name ?? ""),
-                );
-              const playing = teams.filter((t) => !t.removedBy && !t.out);
-              const count = (id: string) => games.filter((m) => (m.a === id || m.b === id) && m.fill !== id).length; // a fill-in game is an extra one
-              const short = games.length ? playing.filter((t) => count(t.teamId) < t.entry!.perDate[p.date]) : [];
-              const status = !games.length
-                ? "Not created"
-                : `${games.length} matchup${games.length === 1 ? "" : "s"}${short.length ? ` · ${short.length} short` : ""}`;
-              return (
-                <details key={division} className="group overflow-hidden rounded-lg ring-1 ring-zinc-200 dark:ring-white/10">
-                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-zinc-50 px-3 py-2 dark:bg-white/5 [&::-webkit-details-marker]:hidden">
-                    <span className="text-sm font-semibold">
-                      <span className="mr-1 inline-block text-zinc-400 transition [details[open]>summary_&]:rotate-90">›</span>
-                      {division}
-                    </span>
-                    <span
-                      className={`shrink-0 text-xs ${games.length && !short.length ? "text-emerald-700 dark:text-emerald-300" : "text-zinc-500"}`}
-                    >
-                      {plural(playing.length, "team")} · {status}
-                    </span>
-                  </summary>
-                  <div className="px-3 py-3">
-                    <MatchupBoard
-                      key={games.map((m) => `${m.id}:${m.b ?? ""}`).join(",") || "none"}
-                      programId={p.programId}
-                      day={p.date}
-                      divisionId={divisionId}
-                      division={division}
-                      teams={playing.map((t) => ({
-                        id: t.teamId,
-                        name: t.name,
-                        group: t.group,
-                        level: t.level,
-                        coach: coaches.get(t.teamId),
-                        need: t.entry!.perDate[p.date],
-                      }))}
-                      everyone={p.teams
-                        .filter((t) => !t.removedBy && !t.out)
-                        .map((t) => ({ id: t.teamId, name: t.name, group: t.group, level: t.level, coach: coaches.get(t.teamId), need: 0, division: t.divisionName }))}
-                      // The home team always on the left (a TBD game whose team is away: TBD on the left).
-                      initial={games.map((m) => {
-                        const a = m.ta && !m.ta.removedBy && !m.ta.out ? m.a : null;
-                        const b = m.tb && !m.tb.removedBy && !m.tb.out ? m.b : null; // a fill-in may be from another division
-                        const own = { id: m.id, fill: b ? m.fill : null, placed: !!m.court, tbd: m.b === null, wrong: wrong.get(m.id) ?? null };
-                        return m.home === "b" ? { ...own, a: b, b: a, home: "a" as const } : { ...own, a, b, home: "a" as const };
-                      })}
-                      otherDays={p.otherDays}
-                      fills={p.fills}
-                      published={published}
-                    />
-                    {who && games.length > 0 && <p className="mt-2 text-xs text-zinc-500">Last saved by {games[0].createdBy}</p>}
-                  </div>
-                </details>
-              );
-            })}
+          <div className="mt-1">
+            {/* By grade, youngest first (Coed, Boys, Girls on a tie). */}
+            <DivisionCards
+              cards={byDivision(p.teams)
+                .sort(([x, a], [y, b]) => Math.min(...a.map((t) => t.groupGrade)) - Math.min(...b.map((t) => t.groupGrade)) || genderRank(x) - genderRank(y) || x.localeCompare(y))
+                .map(([division, teams]) => {
+                  const divisionId = teams[0].divisionId;
+                  const team = new Map(teams.map((t) => [t.teamId, t]));
+                  const anywhere = new Map(p.teams.map((t) => [t.teamId, t]));
+                  const games = p.matchups
+                    .filter((m) => m.divisionId === divisionId)
+                    .map((m) => ({ ...m, ta: team.get(m.a), tb: m.b ? (team.get(m.b) ?? (m.fill ? anywhere.get(m.b) : undefined)) : undefined }))
+                    .sort((x, y) => (x.ta?.groupGrade ?? 99) - (y.ta?.groupGrade ?? 99) || (x.ta?.name ?? "").localeCompare(y.ta?.name ?? ""));
+                  const playing = teams.filter((t) => !t.removedBy && !t.out);
+                  const count = (id: string) => games.filter((m) => (m.a === id || m.b === id) && m.fill !== id).length; // a fill-in game is an extra one
+                  const short = games.length ? playing.filter((t) => count(t.teamId) < t.entry!.perDate[p.date]) : [];
+                  const tbd = games.filter((m) => !m.b).length;
+                  const fix = games.filter((m) => wrong.has(m.id)).length;
+                  const clash = games.filter((m) => m.court && m.starts && clashes(m)).length;
+                  const unplaced = games.filter((m) => !m.court).length;
+                  const extra = [...new Set(games.flatMap((m) => (m.fill ? [anywhere.get(m.fill)?.name ?? "A team"] : [])))];
+                  const notes = [
+                    ...(clash ? [`⚠ ${plural(clash, "game")} at the same time as another of its team's or coach's`] : []),
+                    ...(fix ? [`⚠ ${plural(fix, "game")} to correct`] : []),
+                    ...(tbd ? [`⚠ ${tbd} TBD`] : []),
+                    ...(short.length ? [`⚠ ${short.length} short of their games`] : []),
+                    ...extra.map((n) => `Extra game: ${n}`),
+                  ];
+                  const done = games.length > 0 && !short.length && !unplaced && !notes.some((n) => n.startsWith("⚠"));
+                  return {
+                    key: divisionId,
+                    title: division,
+                    status: `${plural(playing.length, "team")} · ${games.length ? `${plural(games.length, "matchup")}${unplaced ? ` · ${unplaced} to schedule` : ""}` : "Not created"}`,
+                    tone: done ? ("green" as const) : notes.some((n) => n.startsWith("⚠")) ? ("warn" as const) : ("plain" as const),
+                    notes,
+                    body: (
+                      <>
+                        <MatchupBoard
+                          readOnly={readOnly}
+                          key={games.map((m) => `${m.id}:${m.b ?? ""}`).join(",") || "none"}
+                          programId={p.programId}
+                          day={p.date}
+                          divisionId={divisionId}
+                          division={division}
+                          teams={playing.map((t) => ({
+                            id: t.teamId,
+                            name: t.name,
+                            group: t.group,
+                            level: t.level,
+                            coach: coaches.get(t.teamId),
+                            need: t.entry!.perDate[p.date],
+                            grade: t.groupGrade,
+                            gender: t.divisionName.split(" ")[0],
+                          }))}
+                          everyone={p.teams
+                            .filter((t) => !t.removedBy && !t.out)
+                            .map((t) => ({ id: t.teamId, name: t.name, group: t.group, level: t.level, coach: coaches.get(t.teamId), need: 0, division: t.divisionName, grade: t.groupGrade, gender: t.divisionName.split(" ")[0] }))}
+                          // The home team always on the left (a TBD game whose team is away: TBD on the left).
+                          initial={games.map((m) => {
+                            const a = m.ta && !m.ta.removedBy && !m.ta.out ? m.a : null;
+                            const b = m.tb && !m.tb.removedBy && !m.tb.out ? m.b : null; // a fill-in may be from another division
+                            const own = { id: m.id, fill: b ? m.fill : null, placed: !!m.court, tbd: m.b === null, wrong: wrong.get(m.id) ?? null };
+                            return m.home === "b" ? { ...own, a: b, b: a, home: "a" as const } : { ...own, a, b, home: "a" as const };
+                          })}
+                          otherDays={p.otherDays}
+                          fills={p.fills}
+                          published={published}
+                        />
+                        {who && games.length > 0 && <p className="mt-2 text-xs text-zinc-500">Last saved by {games[0].createdBy}</p>}
+                      </>
+                    ),
+                  };
+                })}
+            />
           </div>
         </div>
       ))}
@@ -883,7 +908,7 @@ function TeamGames({ team, date, games, who }: { team: DateTeam; date: string; g
 // Grid: the game length at the top, then each gym open that Game Day (collapsed: host, courts, hours, games).
 // Expanded: rows of game blocks from when the gym opens, a column per court; a court's blocks outside its hours are
 // closed.
-function Grid({ day, grid, coaches, published, wrong, wide, off }: { day: ScheduleDay; grid: DayGrid; coaches: Map<string, CoachTag>; published: string[]; wrong: Wrong; wide: boolean; off: Map<string, AskedOff[]> }) {
+function Grid({ day, grid, coaches, published, wrong, wide, off, readOnly }: { day: ScheduleDay; grid: DayGrid; coaches: Map<string, CoachTag>; published: string[]; wrong: Wrong; wide: boolean; off: Map<string, AskedOff[]>; readOnly: boolean }) {
   // The day's games (both teams still playing), each League's divisions in order, with their slot on the grid.
   const team = (t: DateTeam) => ({
     id: t.teamId,
@@ -953,6 +978,7 @@ function Grid({ day, grid, coaches, published, wrong, wide, off }: { day: Schedu
         </p>
       )}
       <GridBoard
+        readOnly={readOnly}
         day={day.date}
         programId={day.programs[0].programId}
         gyms={gyms}

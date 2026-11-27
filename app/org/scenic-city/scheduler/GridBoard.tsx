@@ -104,7 +104,9 @@ export function GridBoard({
   minutes,
   divisions,
   wide = false,
+  readOnly = false,
 }: {
+  readOnly?: boolean; // Admins and Owners: they see it (and can pick a game to see what fits); only Directors of Scheduling change it
   wide?: boolean; // Scheduler View: every gym open, side by side as the screen allows
   day: string; // YYYY-MM-DD: the Game Day (for its gyms' printable scoresheets)
   programId: string; // the program being scheduled (Unschedule all takes off only its games)
@@ -254,6 +256,7 @@ export function GridBoard({
     setPicked(null);
     setDragging(null);
     setError(null);
+    if (readOnly) return setError("View only: only Directors of Scheduling change the schedule.");
     const g = games.find((x) => x.id === id);
     if (!g) return;
     if (g.locked) return setError(LOCKED);
@@ -284,6 +287,7 @@ export function GridBoard({
     setDragging(null);
     setSelected([]);
     setError(null);
+    if (readOnly) return setError("View only: only Directors of Scheduling change the schedule.");
     const moving = games.filter((x) => list.includes(x.id) && !x.locked); // in the list's order: REC youngest first, then COMP
     if (!moving.length) return;
     const plan = new Map<string, { court: string; starts: string } | null>();
@@ -407,7 +411,7 @@ export function GridBoard({
       <button
         key={x.id}
         type="button"
-        draggable={!x.locked}
+        draggable={!x.locked && !readOnly}
         onDragStart={(e) => {
           // A picked game drags all the picked ones with it.
           const group = selected.includes(x.id) && selected.length > 1 ? selected : null;
@@ -416,7 +420,7 @@ export function GridBoard({
           setDragging(x.id);
         }}
         onDragEnd={() => setDragging(null)}
-        {...(x.locked ? {} : touch.source(selected.includes(x.id) && selected.length > 1 ? selected.join(",") : x.id, `${h.name} vs ${v.name}`))}
+        {...(x.locked || readOnly ? {} : touch.source(selected.includes(x.id) && selected.length > 1 ? selected.join(",") : x.id, `${h.name} vs ${v.name}`))}
         title={`${x.wrong ? `To correct: ${x.wrong} · ` : ""}${x.locked ? "Published: can't be moved · " : ""}${h.name} vs ${v.name} · ${h.division} · ${h.group === v.group ? h.group : `${h.group}/${v.group}`}`}
         onClick={(e) => {
           e.stopPropagation();
@@ -612,7 +616,7 @@ export function GridBoard({
             </summary>
             {placed > 0 && (
               <div className="flex flex-wrap justify-end gap-2 px-3 pt-2">
-                {free > 0 && (
+                {free > 0 && !readOnly && (
                   <button
                     type="button"
                     disabled={busy2}

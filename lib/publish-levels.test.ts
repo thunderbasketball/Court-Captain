@@ -41,6 +41,7 @@ describe("publishing REC and COMP separately", () => {
     await db.pool.query("delete from organizations where slug not in ('thunder', 'scenic-city')");
     await q("insert into users (coach_id, first_name, last_name, cell) values ('9913694', 'Dee', 'X', '4239913694'), ('5550003', 'Bo', 'X', '4235550003')");
     await grant(db.pool, "9913694 scenic-city Director", "9913694 scenic-city Admin", "5550003 scenic-city Director");
+    await db.pool.query("insert into director_areas (coach_id, org, area, granted_by) values ('9913694', 'scenic-city', 'scheduling', 't')"); // a Director of Scheduling: only they change the schedule
     prog = (
       await q(
         `insert into scenic_programs (kind, name, starts_on, ends_on, reg_opens, reg_closes, created_by, updated_by)

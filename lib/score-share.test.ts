@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { SessionUser } from "./auth/service";
 import { followedTeams, programSchedule, publicLeague } from "./public-league";
 import { finalOf, scoreCard, shareText } from "./score-share";
+import { gameCard, gameText } from "./game-share";
 import { saveScore } from "./scores";
 import { createTestDb, grant, testClock } from "./testing/db";
 
@@ -62,6 +63,22 @@ describe("sharing a final (no login)", () => {
       ).rows[0].id;
     game = await add("Aces", "Bolts");
     dev = await add("Aces", "Sim 1 (DEV)");
+  });
+
+  it("a game coming up: shared once it has a time and its day is published, until it's played; never a simulated team", async () => {
+    expect(await gameCard(db.pool, game)).toBeNull(); // no time yet
+    await db.pool.query("update scenic_matchups set court_key = id::text, starts = '09:00' where id in ($1, $2)", [game, dev]);
+    const card = (await gameCard(db.pool, game))!;
+    expect(card).toMatchObject({ id: game, org: "scenic-city", program: "Winter", group: "5th Boys COMP", day: "2026-12-05", starts: "09:00", home: { name: "Aces" }, away: { name: "Bolts" } });
+    expect(gameText(card)).toBe("GAME DAY · 5th Boys COMP: Bolts at Aces");
+    expect(JSON.stringify(card)).not.toMatch(/Sam|Lee|Dee|423/);
+    expect(await gameCard(db.pool, dev)).toBeNull();
+    for (const bad of ["", "x", "1; drop", "999999", null, 5]) expect(await gameCard(db.pool, bad)).toBeNull();
+    await db.pool.query("delete from scenic_published_schedules");
+    expect(await gameCard(db.pool, game)).toBeNull(); // not published
+    await db.pool.query("insert into scenic_published_schedules (program_id, day, level, published_by, published_at) values ($1, '2026-12-05', 'COMP', 't', now())", [prog]);
+    await saveScore(deps(), dee, game, { home: "20", away: "30" });
+    expect(await gameCard(db.pool, game)).toBeNull(); // played
   });
 
   it("10 minutes after the score; a correction waits again; cleared, a forfeit, unpublished or a simulated team: never", async () => {

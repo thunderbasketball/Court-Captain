@@ -318,6 +318,7 @@ async function TeamBody({
                 org={slug}
                 id={t.id}
                 team={{ gender: t.gender, grades: t.grades, level: t.level, altName: t.altName, changedBy: who ? t.changedBy : null }}
+                remove={<DeleteTeamButton org={slug} id={t.id} name={t.name} block={block} />}
               />
             </div>
           )
@@ -493,7 +494,6 @@ async function TeamBody({
             body: <PlaybookCard org={slug} teamId={t.id} plays={plays} library={library ?? []} formations={formations ?? []} />,
           }
         }
-        footer={canManage && <DeleteTeamButton org={slug} id={t.id} name={t.name} block={block} />}
       />
     </>
   );

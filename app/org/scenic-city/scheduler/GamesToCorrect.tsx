@@ -1,7 +1,7 @@
 import { currentUser } from "@/lib/auth/server";
 import { gamesToCorrect, type GameToCorrect } from "@/lib/schedule-corrections";
 import { db } from "@/lib/db";
-import { isScheduler } from "@/lib/scenic-programs";
+import { seesSchedule } from "@/lib/scenic-programs";
 import { timeLabel } from "@/lib/time";
 import SubCard from "../../../SubCard";
 import CorrectButtons from "./CorrectButtons";
@@ -12,7 +12,7 @@ const day = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US"
 // is corrected: TBD in the team's place, or the game removed.
 export default async function GamesToCorrect({ programId }: { programId: string }) {
   const user = await currentUser();
-  if (!user || !(await isScheduler(db, user))) return null;
+  if (!user || !(await seesSchedule(db, user))) return null;
   const list = await gamesToCorrect(db, { programId }, new Date());
   if (!list.length) return null;
   return (

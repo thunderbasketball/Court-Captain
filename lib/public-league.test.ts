@@ -25,7 +25,7 @@ describe("public League page (no login)", () => {
     );
     await grant(db.pool, "9913694 scenic-city Director", "5550003 scenic-city Director");
     await db.pool.query(
-      "insert into director_areas (coach_id, org, area, granted_by) values ('9913694', 'scenic-city', 'programs', 'test')",
+      "insert into director_areas (coach_id, org, area, granted_by) values ('9913694', 'scenic-city', 'programs', 'test'), ('9913694', 'scenic-city', 'scheduling', 'test')",
     );
     prog = (
       await db.pool.query<{ id: string }>(
@@ -102,6 +102,7 @@ describe("public League page (no login)", () => {
             homeId: expect.any(String),
             awayId: expect.any(String),
             final: null, // no score yet
+            hype: null, // no time yet: nothing to share
           },
         ],
       },
@@ -153,9 +154,9 @@ describe("public League page (no login)", () => {
     await setDayPublished(deps(), user("9913694"), prog, "2026-12-05", "COMP", true);
     const [magic, fay] = await followedTeams(db.pool, now, follow);
     expect(magic.programs[0].games).toEqual([
-      { date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "HH 5B Fay", home: false, final: null },
+      { date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "HH 5B Fay", home: false, final: null, hype: null },
     ]);
-    expect(fay.programs[0].games).toEqual([{ date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "Magic", home: true, final: null }]);
+    expect(fay.programs[0].games).toEqual([{ date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "Magic", home: true, final: null, hype: null }]);
     // The whole schedule, games already played too (the device shows the next 21 days collapsed).
     expect((await followedTeams(db.pool, new Date("2026-12-07T15:00:00Z"), [id("Magic")]))[0].programs[0].games).toHaveLength(1);
     // Locked at its 1st game: the League roster shows (without a player the League took off), not the team's roster now.
@@ -212,7 +213,7 @@ describe("public League page (no login)", () => {
     ]);
     await setDayPublished(deps(), user("9913694"), prog, "2026-12-05", "COMP", true);
     const [t] = await orgPublicTeams(db.pool, now, "scenic-city");
-    expect(t.programs[0].games).toEqual([{ date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "Magic", home: true, final: null }]);
+    expect(t.programs[0].games).toEqual([{ date: "2026-12-05", starts: null, gym: null, court: null, map: null, opponent: "Magic", home: true, final: null, hype: null }]);
     expect(JSON.stringify(t)).not.toMatch(/Ava|Lyons|4235550|\bBo\b|roster/);
     // Once the event has ended, the team isn't listed; another organization sees none of these.
     expect(await orgPublicTeams(db.pool, new Date("2027-03-02T15:00:00Z"), "scenic-city")).toEqual([]);

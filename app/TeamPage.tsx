@@ -93,7 +93,7 @@ export default function TeamPage(p: {
   uniforms?: { count: number; alert: boolean; body: ReactNode } | null;
   practices?: { count: number; action?: ReactNode; body: ReactNode } | null;
   playbook?: { count: number; action?: ReactNode; body: ReactNode } | null; // CourtPlaybook: its coaches' plays
-  footer?: ReactNode; // Delete team
+  footer?: ReactNode; // Delete team (in the team's card, under Edit team)
 }) {
   // Numbers two players share (wherever the roster is kept): warned on the team's card, the Roster card and each player.
   const dups = dupNumbers(p.roster.rows.map((r) => r.number));
@@ -143,6 +143,8 @@ export default function TeamPage(p: {
           </div>
         </div>
         {p.edit}
+        {/* Delete team sits with Edit team, in the team's own card. */}
+        {p.footer && <div className="mt-2">{p.footer}</div>}
       </section>
 
       {p.register && (
@@ -356,7 +358,6 @@ export default function TeamPage(p: {
           {p.playbook.body}
         </CollapseCard>
       )}
-      {p.footer}
       {/* What's New and Support, for everyone here. */}
       {!p.embedded && (
         <Suspense fallback={null}>

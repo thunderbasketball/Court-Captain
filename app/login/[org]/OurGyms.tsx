@@ -1,5 +1,6 @@
 import type { HostDay, PublicGym } from "@/lib/public-org";
 import { timeLabel } from "@/lib/time";
+import GameShare from "../../GameShare";
 import FinalScore from "../../FinalScore";
 import DirectionsLink from "../../DirectionsLink";
 import SubCard from "../../SubCard";
@@ -18,9 +19,9 @@ export default function OurGyms({ gyms, day }: { gyms: PublicGym[]; day: HostDay
         <SubCard title={`Games here ${weekday(day.date)}`} count={day.games.length} open>
           <ul className="divide-y divide-zinc-100 text-sm dark:divide-white/5">
             {day.games.map((g, i) => (
-              <li key={i} className={`flex gap-3 rounded-lg px-2 py-2 ${genderBg(genderOf(g.group))}`}>
+              <li key={i} className={`flex flex-wrap gap-x-3 rounded-lg px-2 py-2 ${genderBg(genderOf(g.group))}`}>
                 <span className="w-16 shrink-0 font-medium tabular-nums">{g.starts ? timeLabel(g.starts) : "TBA"}</span>
-                <span className="min-w-0">
+                <span className="min-w-0 flex-1">
                   <span className="block">
                     <span className="font-medium">{g.away}</span> <span className="text-zinc-500">at</span> <span className="font-medium">{g.home}</span>
                   </span>
@@ -30,6 +31,7 @@ export default function OurGyms({ gyms, day }: { gyms: PublicGym[]; day: HostDay
                   </span>
                   <FinalScore final={g.final} first={g.away} second={g.home} firstIs="away" group={g.group} />
                 </span>
+                {g.hype && !g.final && <GameShare id={g.hype} v={`${g.starts ?? ""}`} text={`GAME DAY · ${g.group}: ${g.away} at ${g.home}`} />}
               </li>
             ))}
           </ul>

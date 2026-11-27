@@ -5,7 +5,7 @@
 // override sets its own start times, those times at every gym (each where a whole game fits in its hours).
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
-import { TEAM_COACHES, isScheduler } from "./scenic-programs";
+import { TEAM_COACHES, isScheduler, seesSchedule } from "./scenic-programs";
 import { withTx, type Queryable } from "./sql";
 import { timeLabel } from "./time";
 import { courtDivisionsOn } from "./scenic-courts";
@@ -89,7 +89,7 @@ export async function dayGrid(deps: Deps, viewer: SessionUser, day: unknown): Pr
 export async function dayGrids(deps: Deps, viewer: SessionUser, days: string[] | null): Promise<Map<string, DayGrid>> {
   const out = new Map<string, DayGrid>();
   const dates = days ? [...new Set(days.filter(isDate))] : null;
-  if ((dates && !dates.length) || !(await isScheduler(deps.pool, viewer))) return out;
+  if ((dates && !dates.length) || !(await seesSchedule(deps.pool, viewer))) return out;
   const d = await deps.pool.query<Omit<DayGrid, "gyms" | "slots"> & { id: string; day: string }>(
     `select gd.id::text, to_char(gd.day, 'YYYY-MM-DD') as day, coalesce(gd.minutes_override, p.game_minutes, 55) as minutes,
             gd.override_by as "setBy", (gd.minutes_override is not null or gd.slot_breaks is not null) as override,

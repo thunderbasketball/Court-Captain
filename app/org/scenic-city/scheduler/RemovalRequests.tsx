@@ -1,6 +1,6 @@
 import { currentUser } from "@/lib/auth/server";
 import { db } from "@/lib/db";
-import { isScheduler } from "@/lib/scenic-programs";
+import { seesSchedule } from "@/lib/scenic-programs";
 import { removalRequests } from "@/lib/schedule-removal";
 import SubCard from "../../../SubCard";
 import { RemovalDecision } from "./RemovalDecision";
@@ -11,7 +11,7 @@ const when = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "
 // each of its games and withdraws it; Decline leaves it on.
 export default async function RemovalRequests({ programId }: { programId: string }) {
   const user = await currentUser();
-  if (!user || !(await isScheduler(db, user))) return null;
+  if (!user || !(await seesSchedule(db, user))) return null;
   const list = await removalRequests(db, programId);
   if (!list.length) return null;
   return (

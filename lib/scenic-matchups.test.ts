@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hostRoom, hostShares, planOrder } from "./host-room";
-import { assignHome, planMatchups, type HomeTeam, type MatchTeam } from "./scenic-matchups";
+import { assignHome, homeCost, planMatchups, type HomeTeam, type MatchTeam } from "./scenic-matchups";
 
 const t = (id: string, need = 1, club = id, grade = 4, level = "REC"): MatchTeam => ({ id, need, club, grade, level });
 const k = (a: string, b: string) => (Number(a) < Number(b) ? `${a}-${b}` : `${b}-${a}`);
@@ -163,6 +163,28 @@ describe("planning matchups", () => {
     expect(assignHome(games, fresh, today).filter((x) => x === "a")).toHaveLength(1);
     // A side kept from before isn't changed.
     expect(assignHome([{ a: "1", b: "2", fixed: "a" }], teams)).toEqual(["a"]);
+  });
+
+  it("a team with two games that day: home in both or away in both, even over alternating and hosting", () => {
+    const h = (club: string, last: HomeTeam["last"] = null, host = 0): HomeTeam => ({ club, last, homeGames: 0, host });
+    // Lions (L) play M and R. M was home last time and R away, so alternating alone would split L; L stays one side.
+    const teams = new Map([
+      ["L", h("Lions", null, 2)],
+      ["M", h("Magic", "H", 2)],
+      ["R", h("Reinert", "A", 2)],
+      ["N", h("North", null, 2)],
+      ["T", h("Thunder", null, 2)],
+    ]);
+    const games = [
+      { a: "L", b: "M" },
+      { a: "T", b: "N" },
+      { a: "R", b: "L" },
+    ];
+    const sides = assignHome(games, teams);
+    const lionsHome = [sides[0] === "a", sides[2] === "b"];
+    expect(lionsHome[0]).toBe(lionsHome[1]);
+    // A list where L is split costs more than any other.
+    expect(homeCost(games, ["a", "a", "a"], teams, new Map(), new Map(), null).all).toBeGreaterThan(homeCost(games, ["a", "a", "b"], teams, new Map(), new Map(), null).all);
   });
 
   it("a coach with several teams: all home or all away, even over alternating", () => {

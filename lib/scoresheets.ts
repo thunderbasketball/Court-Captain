@@ -9,7 +9,7 @@ import { hasArea, orgHasArea } from "./org-admin";
 import { managesOfficials } from "./officials";
 import { orgInfo } from "./org-registry";
 import { TZ } from "./time";
-import { isScheduler } from "./scenic-programs";
+import { seesSchedule } from "./scenic-programs";
 import { gradeRange } from "./scenic-teams";
 
 type Deps = { pool: Pool; now?: () => Date };
@@ -40,7 +40,7 @@ export async function gymScoresheets(deps: Deps, viewer: SessionUser, day: unkno
   if (typeof day !== "string" || !DATE.test(day) || typeof gymKey !== "string" || !GYM.test(gymKey)) return null;
   const id = gymKey.slice(1);
   const partner = gymKey[0] === "p";
-  if (!(await isScheduler(deps.pool, viewer))) {
+  if (!(await seesSchedule(deps.pool, viewer))) {
     // The host's own staff: an organization's gym, its Admins and Directors of Facilities.
     const org = partner ? null : (await deps.pool.query<{ org: string }>("select org from gyms where id = $1", [id])).rows[0]?.org;
     if (!org || !(await orgHasArea(deps.pool, viewer.coachId, org, "facilities"))) return null;

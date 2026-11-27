@@ -8,7 +8,7 @@ import { addGame, clearMatchups, createMatchups, fillTbd, saveMatchups, switchHo
 import { announce } from "./board-events";
 
 // group: "4th REC"; level: REC or COMP; coach: set when its coach has another team playing that day.
-export type BoardTeam = { id: string; name: string; group: string; level: string; coach?: CoachTag; need: number; division?: string };
+export type BoardTeam = { id: string; name: string; group: string; level: string; coach?: CoachTag; need: number; division?: string; grade?: number; gender?: string };
 // A game: two sides; one empty side is TBD (no opponent yet). home: the home side as saved (unknown once changed).
 // fill: the team in it filling in for a TBD (an extra game for it). id, placed: as saved.
 type Game = { key: string; a: string | null; b: string | null; home: Side | null; fill: string | null; id?: string; placed?: boolean; tbd?: boolean; wrong?: string | null };
@@ -17,6 +17,7 @@ type Side = "a" | "b";
 // A picked team: which one, and where from ("sandbox", or a game's side "<game key>:a").
 type Picked = { team: string; from: string };
 
+const VIEW_ONLY = "View only: only Directors of Scheduling change the schedule.";
 const TBD = "TBD"; // the TBD chip
 const pairKey = (a: string, b: string) => (BigInt(a) < BigInt(b) ? `${a}-${b}` : `${b}-${a}`);
 const shortDay = (d: string) =>
@@ -43,7 +44,9 @@ export function MatchupBoard({
   otherDays,
   fills,
   published,
+  readOnly = false,
 }: {
+  readOnly?: boolean; // Admins and Owners: they see it; only Directors of Scheduling change it
   programId: string;
   day: string;
   divisionId: string;
@@ -81,6 +84,7 @@ export function MatchupBoard({
   const playsToday = (x: string, y: string) => games.some((g) => (g.a === x && g.b === y) || (g.a === y && g.b === x));
   const [note, setNote] = useState<{ tone: "green" | "red"; lines: string[] } | null>(null);
   const [busy, start] = useTransition();
+  const [working, setWorking] = useState<string | null>(null); // the button pressed ("create REC", "clear COMP"): only it says Working…
   const [confirm, dialog] = useConfirm();
   const team = new Map([...everyone, ...teams].map((t) => [t.id, t]));
   const [manual, setManual] = useState(false); // a TBD in the New game box: picking both teams
@@ -173,6 +177,7 @@ export function MatchupBoard({
 
   // Every change here is saved at once (with the others not saved yet), so the Grid always shows the matchups.
   const act = (p: Picked, to: string) => {
+    if (readOnly) return setNote({ tone: "red", lines: [VIEW_ONLY] });
     const list = move(p, to);
     if (!list) return;
     // Saved games whose teams changed: the Grid shows them at once (the left team home until the save says otherwise).
@@ -220,7 +225,7 @@ export function MatchupBoard({
     return (
       <button
         type="button"
-        draggable={!locked(id)}
+        draggable={!locked(id) && !readOnly}
         onDragStart={(e) => {
           e.dataTransfer.setData("text/plain", JSON.stringify({ team: id, from }));
           setDragging(id);
@@ -262,6 +267,7 @@ export function MatchupBoard({
   }
 
   const flipHome = (g: Game) => {
+    if (readOnly) return setNote({ tone: "red", lines: [VIEW_ONLY] });
     if (dirty || !g.id) return setNote({ tone: "red", lines: ["Save or undo your changes first, then switch home and away."] });
     // Shown at once (the home team on the left), saved behind it; put back if the save is refused.
     const before = games;
@@ -308,6 +314,7 @@ export function MatchupBoard({
       }))
     )
       return;
+    setWorking(`create ${level}`);
     start(async () => {
       const r = await createMatchups(programId, day, divisionId, level);
       if (!r.ok) return setNote({ tone: "red", lines: [r.message] });
@@ -347,6 +354,7 @@ export function MatchupBoard({
       }))
     )
       return;
+    setWorking(`clear ${level}`);
     start(async () => {
       setNote(null);
       const r = await clearMatchups(programId, day, divisionId, level);
@@ -488,7 +496,7 @@ export function MatchupBoard({
           );
         })}
       </ul>
-      {!dirty && !published.includes(level) && (
+      {!dirty && !readOnly && !published.includes(level) && (
         <div className="flex flex-col gap-2">
           {teams.some((x) => x.level === level) && (
             <button
@@ -497,7 +505,7 @@ export function MatchupBoard({
               onClick={() => create(level)}
               className="flex-1 rounded-lg bg-scenic-navy px-3 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 disabled:opacity-50"
             >
-              {busy ? "Working…" : `Create ${level} matchups${made(level) ? " again" : ""}`}
+              {busy && working === `create ${level}` ? "Working…" : `Create ${level} matchups${made(level) ? " again" : ""}`}
             </button>
           )}
           {clearable(level) > 0 && (
@@ -507,7 +515,7 @@ export function MatchupBoard({
               onClick={() => clear(level)}
               className="flex-1 rounded-lg px-3 py-2 text-sm font-semibold text-red-600 ring-1 ring-red-600/30 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-500/10"
             >
-              Clear {level} matchups ({clearable(level)})
+              {busy && working === `clear ${level}` ? "Working…" : `Clear ${level} matchups (${clearable(level)})`}
             </button>
           )}
         </div>
@@ -552,7 +560,7 @@ export function MatchupBoard({
         {/* TBD: drag (or tap) it into the New game box for a game across levels, grades or divisions. */}
         <button
           type="button"
-          draggable
+          draggable={!readOnly}
           onDragStart={(e) => e.dataTransfer.setData("text/plain", JSON.stringify({ team: TBD, from: "sandbox" }))}
           onClick={(e) => {
             e.stopPropagation();
@@ -641,7 +649,14 @@ function TeamOptions({
 }) {
   const me = teams.find((t) => t.id === team);
   const plays = (id: string) => games.some((g) => (g.a === team && g.b === id) || (g.a === id && g.b === team));
-  const list = teams.filter((t) => t.id !== team && !plays(t.id)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  // Who can fill in: the same gender (a Coed division plays either), a grade above or below at most, REC or COMP, and never a team
+  // it already plays (today or another Game Day). The server checks it again.
+  const fits = (t: BoardTeam) =>
+    !me ||
+    ((t.gender === me.gender || t.gender === "Coed" || me.gender === "Coed") &&
+      Math.abs((t.grade ?? 0) - (me.grade ?? 0)) <= 1 &&
+      !otherDays[pairKey(me.id, t.id)]);
+  const list = teams.filter((t) => t.id !== team && !plays(t.id) && fits(t)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   const used = list.filter((t) => fills[t.id]?.length);
   const fresh = list.filter((t) => !fills[t.id]?.length);
   const own = me?.level ?? "REC";

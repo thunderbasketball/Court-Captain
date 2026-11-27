@@ -97,7 +97,9 @@ export function EventLine({
   mine,
   rsvpOpen,
   children,
+  aside,
 }: {
+  aside?: ReactNode; // beside the line, outside its tap area (a game's Share)
   org: string;
   teamId: string;
   kind: string;
@@ -154,14 +156,17 @@ export function EventLine({
   );
   return (
     <li className={dim ? "opacity-50" : ""}>
-      {staff ? (
-        <button type="button" aria-expanded={open} onClick={toggle} className="flex w-full gap-3 py-1.5 text-left">
-          {line}
-          <span className={`shrink-0 self-center text-zinc-400 transition ${open ? "rotate-90" : ""}`}>›</span>
-        </button>
-      ) : (
-        <div className="flex gap-3 py-1.5">{line}</div>
-      )}
+      <div className="flex flex-wrap items-center gap-x-2">
+        {staff ? (
+          <button type="button" aria-expanded={open} onClick={toggle} className="flex min-w-0 flex-1 gap-3 py-1.5 text-left">
+            {line}
+            <span className={`shrink-0 self-center text-zinc-400 transition ${open ? "rotate-90" : ""}`}>›</span>
+          </button>
+        ) : (
+          <div className="flex min-w-0 flex-1 gap-3 py-1.5">{line}</div>
+        )}
+        {aside}
+      </div>
       {mine.length > 0 && <RsvpButtons org={org} teamId={teamId} kind={kind} eventId={eventId} players={mine} open={rsvpOpen} />}
       {open && (
         <div className="mb-2 rounded-xl bg-white p-2 ring-1 ring-zinc-200 dark:bg-zinc-900 dark:ring-white/10">

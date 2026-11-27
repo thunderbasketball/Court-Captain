@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { createScenicTeam, deleteScenicTeam, playIn, updateScenicTeam } from "../actions";
 import type { PlayIn as PlayInData } from "@/lib/league-team-change";
@@ -26,7 +26,8 @@ const navyBtn =
   "rounded-full bg-scenic-navy px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-scenic-navy";
 
 // Add a team (for a partner, or a Solo coach's own) or edit one. The coach's cell becomes their login.
-export function TeamEditor({ addFor, grades, team }: { addFor?: Choice[]; grades: Choice[]; team?: TeamFields }) {
+// remove: Delete team, at the bottom of the Edit pop-up.
+export function TeamEditor({ addFor, grades, team, remove }: { addFor?: Choice[]; grades: Choice[]; team?: TeamFields; remove?: ReactNode }) {
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const close = () => dialog.current?.close();
@@ -192,6 +193,7 @@ export function TeamEditor({ addFor, grades, team }: { addFor?: Choice[]; grades
               {warn ? "Change it anyway" : team ? "Save" : "Add team"}
             </button>
           </div>
+          {remove && <div className="border-t border-zinc-200 pt-3 dark:border-white/10">{remove}</div>}
         </form>
       </dialog>
     </>
@@ -227,7 +229,7 @@ export function DeleteTeam({ id, name }: { id: string; name: string }) {
         }}
         className="rounded-full px-3 py-1 text-xs font-medium text-red-600 ring-1 ring-red-600/30 hover:bg-red-50 disabled:opacity-50 dark:ring-red-400/30 dark:hover:bg-red-500/10"
       >
-        Delete
+        Delete team
       </button>
       {error && <Toast key={error} message={error} />}
       {confirmDialog}

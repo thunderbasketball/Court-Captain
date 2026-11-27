@@ -3,7 +3,7 @@
 // "coach" on each of its teams in TEAM_COACHES (key "b:<id>", named by its reason).
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
-import { isScheduler } from "./scenic-programs";
+import { isScheduler, seesSchedule } from "./scenic-programs";
 import { withTx } from "./sql";
 
 type Deps = { pool: Pool; now: () => Date };
@@ -18,7 +18,7 @@ const refuse = { ok: false as const, message: "Only a Scenic City Admin or Direc
 
 // Every binding made by hand, newest first, each with its teams by name. Null for anyone else.
 export async function listBindings(deps: Deps, viewer: SessionUser): Promise<Binding[] | null> {
-  if (!(await isScheduler(deps.pool, viewer))) return null;
+  if (!(await seesSchedule(deps.pool, viewer))) return null;
   const r = await deps.pool.query<Binding>(
     `select b.id::text, b.reason, b.set_by as "setBy", b.set_at as "setAt",
             coalesce((select json_agg(json_build_object('id', t.id::text, 'name', t.name) order by lower(t.name))

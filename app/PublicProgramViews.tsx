@@ -2,6 +2,7 @@
 // place on the organization's login page. No hooks, so server and client pages both use them.
 import type { PublicDay, PublicGroup } from "@/lib/public-league";
 import { timeLabel } from "@/lib/time";
+import GameShare from "./GameShare";
 import FinalScore from "./FinalScore";
 import { ShareToggle } from "./SharePanel";
 import { groupKey } from "@/lib/share-keys";
@@ -49,9 +50,9 @@ export function ProgramSchedule({ days, today, soon }: { days: PublicDay[] | nul
           <ScheduleSoon levels={d.soon} className="border-t border-zinc-100 px-4 py-2 dark:border-white/5" />
           <ul className="grid border-t border-zinc-100 text-sm lg:grid-cols-2 dark:border-white/5">
             {d.games.map((g, i) => (
-              <li key={i} className={`flex gap-3 border-b border-zinc-100 px-4 py-2.5 dark:border-white/5 ${genderBg(genderOf(g.group))}`}>
+              <li key={i} className={`flex flex-wrap gap-x-3 border-b border-zinc-100 px-4 py-2.5 dark:border-white/5 ${genderBg(genderOf(g.group))}`}>
                 <span className="w-16 shrink-0 font-medium tabular-nums">{g.starts ? timeLabel(g.starts) : "TBA"}</span>
-                <span className="min-w-0">
+                <span className="min-w-0 flex-1">
                   <span className="block">
                     <span className="font-medium">{g.away}</span> <span className="text-zinc-500">at</span>{" "}
                     <span className="font-medium">{g.home}</span>
@@ -63,6 +64,7 @@ export function ProgramSchedule({ days, today, soon }: { days: PublicDay[] | nul
                   </span>
                   <FinalScore final={g.final} first={g.away} second={g.home} firstIs="away" group={g.group} />
                 </span>
+                {g.hype && !g.final && <GameShare id={g.hype} v={`${g.starts ?? ""}`} text={`GAME DAY · ${g.group}: ${g.away} at ${g.home}`} />}
               </li>
             ))}
           </ul>
@@ -243,9 +245,9 @@ function GradeCard({ org, program, g, schedule, today, soon, follow }: { org: st
                   <p className="border-b border-zinc-100 px-3 py-1.5 text-sm font-semibold dark:border-white/5">{weekday(d.date)}</p>
                   <ul className="divide-y divide-zinc-100 text-sm dark:divide-white/5">
                     {d.games.map((x, i) => (
-                      <li key={i} className="flex gap-3 px-3 py-2">
+                      <li key={i} className="flex flex-wrap gap-x-3 px-3 py-2">
                         <span className="w-16 shrink-0 font-medium tabular-nums">{x.starts ? timeLabel(x.starts) : "TBA"}</span>
-                        <span className="min-w-0">
+                        <span className="min-w-0 flex-1">
                           <span className="block">
                             <span className="font-medium">{x.away}</span> <span className="text-zinc-500">at</span> <span className="font-medium">{x.home}</span>
                           </span>
@@ -258,6 +260,7 @@ function GradeCard({ org, program, g, schedule, today, soon, follow }: { org: st
                           )}
                           <FinalScore final={x.final} first={x.away} second={x.home} firstIs="away" group={g.label} />
                         </span>
+                        {x.hype && !x.final && <GameShare id={x.hype} v={`${x.starts ?? ""}`} text={`GAME DAY · ${g.label}: ${x.away} at ${x.home}`} />}
                       </li>
                     ))}
                   </ul>

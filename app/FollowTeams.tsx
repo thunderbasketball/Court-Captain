@@ -5,6 +5,7 @@ import type { FollowedGame, FollowedTeam } from "@/lib/public-league";
 import { timeLabel } from "@/lib/time";
 import { loadFollowedTeams } from "./league/actions";
 import FinalScore from "./FinalScore";
+import GameShare from "./GameShare";
 import DirectionsLink from "./DirectionsLink";
 import { genderOf, genderTint } from "./ui";
 
@@ -154,8 +155,13 @@ export function GameLine({ g, past = false }: { g: Game; past?: boolean }) {
         <span className="block text-xs">{g.starts ? timeLabel(g.starts) : "Time TBA"}</span>
       </span>
       <span className="min-w-0">
-        <span className="block">
-          <span className="text-zinc-500">{g.home ? "vs" : "at"}</span> <span className="font-medium">{g.opponent}</span>
+        <span className="flex flex-wrap items-center gap-x-2">
+          <span>
+            <span className="text-zinc-500">{g.home ? "vs" : "at"}</span> <span className="font-medium">{g.opponent}</span>
+          </span>
+          {g.hype && !g.final && !past && (
+            <GameShare id={g.hype} v={`${g.date}-${g.starts ?? ""}`} text={`GAME DAY · ${g.group}: ${g.home ? `${g.opponent} at ${g.team}` : `${g.team} at ${g.opponent}`}`} />
+          )}
         </span>
         {g.gym && (
           <span className="block text-xs text-zinc-500">

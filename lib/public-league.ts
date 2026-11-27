@@ -5,12 +5,11 @@
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
 import { clubAbbr } from "./scenic-club-teams";
-import { orgHasArea } from "./org-admin";
 import { PLACE_SQL } from "./scenic-games";
 import { directionsUrl } from "./directions";
 import { takeSnapshots } from "./roster-snapshot";
 import { finalOf, type PublicFinal } from "./score-share";
-import { PROGRAM_LOGO_SQL } from "./scenic-programs";
+import { PROGRAM_LOGO_SQL, isScheduler } from "./scenic-programs";
 import { gradeLabel, gradeRange } from "./scenic-teams";
 import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
@@ -73,6 +72,7 @@ export type PublicGame = {
   homeId: string | null; // the teams' ids (a device follows teams by id)
   awayId: string | null;
   final: PublicFinal | null; // once its score is entered
+  hype: string | null; // a published game with both teams and a time, not played yet: its Game Day picture (/game/<id>)
 };
 export type PublicDay = { date: string; games: PublicGame[]; soon: string[] }; // soon: levels not published yet that day
 
@@ -204,6 +204,7 @@ export async function programSchedule(q: Pick<Queryable, "query">, id: string, p
       homeId: aHome ? m.a_id : m.b_id,
       awayId: aHome ? m.b_id : m.a_id,
       final: m.b === null ? null : finalOf(m, now),
+      hype: publishedOnly && m.b !== null && m.starts && m.score_a === null && !m.forfeit ? m.id : null,
     });
   }
   return schedule;
@@ -223,6 +224,7 @@ export type FollowedGame = {
   opponent: string;
   home: boolean;
   final: PublicFinal | null;
+  hype: string | null; // its Game Day picture to share (see PublicGame)
 };
 // games null: none of its level's schedule is posted. soon: its level has nothing coming published yet.
 export type FollowedProgram = { id: string; name: string; group: string; level: string; games: FollowedGame[] | null; soon: boolean };
@@ -305,7 +307,7 @@ export async function followedTeams(q: Pick<Queryable, "query">, now: Date, ids:
           for (const g of d.games) {
             const home = g.homeId === r.team;
             if (!home && g.awayId !== r.team) continue;
-            games.push({ date: d.date, starts: g.starts, gym: g.gym, court: g.court, map: g.map, opponent: home ? g.away : g.home, home, final: g.final });
+            games.push({ date: d.date, starts: g.starts, gym: g.gym, court: g.court, map: g.map, opponent: home ? g.away : g.home, home, final: g.final, hype: g.hype });
           }
         }
       }
@@ -394,7 +396,7 @@ function gamesOf(schedule: PublicDay[], team: string): FollowedGame[] {
     for (const g of d.games) {
       const home = g.homeId === team;
       if (!home && g.awayId !== team) continue;
-      games.push({ date: d.date, starts: g.starts, gym: g.gym, court: g.court, map: g.map, opponent: home ? g.away : g.home, home, final: g.final });
+      games.push({ date: d.date, starts: g.starts, gym: g.gym, court: g.court, map: g.map, opponent: home ? g.away : g.home, home, final: g.final, hype: g.hype });
     }
   return games;
 }
@@ -430,8 +432,8 @@ export async function setDayPublished(deps: Deps, viewer: SessionUser, programId
   });
 }
 
-export const canPublish = (q: Pick<Queryable, "query">, viewer: SessionUser) =>
-  orgHasArea(q, viewer.coachId, "scenic-city", "programs", "scheduling");
+// Publishing changes the schedule: Directors of Scheduling only.
+export const canPublish = (q: Pick<Queryable, "query">, viewer: SessionUser) => isScheduler(q, viewer);
 
 // What's published of a League's schedule: "2026-12-05 REC" → who published it.
 export async function publishedLevels(q: Pick<Queryable, "query">, programId: string): Promise<Map<string, string>> {

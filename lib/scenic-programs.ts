@@ -8,7 +8,7 @@
 // Directors of Programs mark Paid.
 import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
-import { isOrgOwner, orgHasArea } from "./org-admin";
+import { isOrgOwner, orgHasArea, orgHasOwnArea } from "./org-admin";
 import { logoType, type Logo } from "./org-signup";
 import {
   REG_OPTIONS,
@@ -51,7 +51,10 @@ const programsOnly = "Only a Scenic City Director of Programs can do that.";
 
 export const isProgramsDirector = (q: Queryable, viewer: SessionUser) => orgHasArea(q, viewer.coachId, ORG, "programs");
 // Admins and Directors of Scheduling take teams out of a Game Day, the Brackets or a whole program (and restore them).
-export const isScheduler = (q: Pick<Queryable, "query">, viewer: SessionUser) => orgHasArea(q, viewer.coachId, ORG, "scheduling");
+// Changes the schedule (matchups, the Grid, game lengths, bindings, publishing, corrections, removals): Directors of Scheduling
+// only. Admins and Owners see it (seesSchedule), view only, unless they're Directors of Scheduling too.
+export const isScheduler = (q: Pick<Queryable, "query">, viewer: SessionUser) => orgHasOwnArea(q, viewer.coachId, ORG, "scheduling");
+export const seesSchedule = (q: Pick<Queryable, "query">, viewer: SessionUser) => orgHasArea(q, viewer.coachId, ORG, "scheduling");
 
 // (Read once per page: lib/request-memo.ts; always fresh in actions and transactions. So are a program, its prices and
 // its teams' choices below.)
@@ -481,7 +484,7 @@ export type Matchup = {
 // The Scheduler (Admins and Directors of Scheduling): every League's upcoming Game Days (and Brackets, on their first
 // Bracket Day) on one list, soonest first, each with the teams playing. Null for anyone else.
 export async function gameDaySchedule(deps: Deps, viewer: SessionUser): Promise<{ today: string; days: ScheduleDay[] } | null> {
-  if (!(await isScheduler(deps.pool, viewer))) return null;
+  if (!(await seesSchedule(deps.pool, viewer))) return null;
   const today = easternDate(deps.now());
   const ids = await deps.pool.query<{ id: string }>(
     `select id::text from scenic_programs where kind = 'League' and ends_on >= $1::date order by starts_on, lower(name)`,

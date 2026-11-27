@@ -252,6 +252,12 @@ export async function orgHasArea(q: Pick<Queryable, "query">, coachId: string, o
   return mine.admin || (mine.director && areas.some((a) => mine.areas.includes(a)));
 }
 
+// A Director of that area themselves (an Admin or Owner only when also a Director with it): who may change, not just see.
+export async function orgHasOwnArea(q: Pick<Queryable, "query">, coachId: string, org: OrgSlug, area: Area): Promise<boolean> {
+  const mine = await areasIn(q, coachId, org);
+  return mine.director && mine.areas.includes(area);
+}
+
 // Whether a person is an Admin there (CourtCaptain staff too), a Director, and their active areas: one question,
 // read once per page however many areas the page asks about (lib/request-memo.ts).
 function areasIn(q: Pick<Queryable, "query">, coachId: string, org: OrgSlug) {

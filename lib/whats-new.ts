@@ -22,6 +22,66 @@ const everyoneIn = ["coach", "staff", "parent", "official", ...managers] as cons
 
 export const RELEASES: readonly Release[] = [
   {
+    version: "1.16",
+    kind: "minor",
+    date: "2026-11-26",
+    title: "Schedulers schedule; Matchups at a glance",
+    items: [
+      {
+        key: "schedulers-only",
+        title: "Only Directors of Scheduling change the schedule",
+        purpose: "Admins and Owners still see every scheduling page, view only, so the schedule changes in one set of hands.",
+        how: ["Directors of Scheduling: nothing changes for you.", "Admins and Owners: open the Scheduler or Scheduler View to look; it says View only, and its buttons are off.", "To schedule, an Owner or Admin gives themselves the Scheduling area as a Director."],
+        who: ["admin", "owner", "director"],
+        needs: ["court-teams"],
+        areas: ["scheduling"],
+      },
+      {
+        key: "game-day-picture",
+        title: "Hype a game: Game Day pictures",
+        purpose: "Share any upcoming game as a picture: both teams with their organizations' logos, home and away, the day, time and gym, and the League.",
+        how: [
+          "Find the game: a public page's schedule, a team you follow, or (coaches) your team page's Next 10 days and Games.",
+          "Tap the share icon at the right of the game, then Share picture (Instagram, Facebook, X or Messages) or Save picture.",
+          "It shows once the game has a time and its day is published, until it's played.",
+        ],
+        who: ["coach", "staff", "parent", "director", "admin", "owner"],
+      },
+      {
+        key: "delete-team-in-card",
+        title: "Delete team moved",
+        purpose: "Delete team is now inside Edit team, instead of at the bottom of the team's page.",
+        how: ["Open the team and tap Edit team (Edit on the League's Teams page).", "Delete team is at the bottom, below Save."],
+        who: ["director", "admin", "owner"],
+        needs: ["has-teams"],
+        areas: ["teams"],
+      },
+      {
+        key: "public-teams-by-grade",
+        title: "Teams by grade on your public page",
+        purpose: "Families find their team faster: your public page groups teams in a card per gender and grade (Coed, Boys, then Girls, youngest first).",
+        how: ["Open your public page (tap your logo) and its Teams card.", "Open one (Boys · 3rd grade) to see its teams; ☆ still follows a team on this phone."],
+        who: ["coach", "staff", "parent", "director", "admin", "owner"],
+      },
+      {
+        key: "division-cards",
+        title: "Matchups by division, at a glance",
+        purpose: "Each division's card says how it's going, youngest first, and only one is open at a time.",
+        how: [
+          "Open Matchups: divisions are in grade order. Opening one moves it to the bottom, below the others.",
+          "Green: every matchup made and every game scheduled. Red: something to look at (a TBD, games at the same time for a team or coach, games to correct, teams short of games).",
+          "Teams playing an extra game are listed on the card.",
+          "Create REC or COMP matchups inside each division; only the button you press says Working….",
+          "A team with two games that day is home in both or away in both when matchups are created.",
+          "A TBD's Pick a team lists only teams of the same gender a grade above or below at most (REC or COMP), never one it already plays this season.",
+        ],
+        who: ["director", "admin", "owner"],
+        needs: ["court-teams"],
+        areas: ["scheduling"],
+      },
+    ],
+  },
+  {
     version: "1.15",
     kind: "minor",
     date: "2026-11-26",

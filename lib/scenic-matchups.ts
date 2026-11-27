@@ -162,7 +162,11 @@ export function assignHome(
   };
   const org = new Map([...today].map(([k, v]) => [k, { ...v }]));
   const coachAt = new Map(coachSide);
+  // A team with two games that day is home in both or away in both (before anything else).
+  const teamAt = new Map<string, "H" | "A">();
   const setCoach = (g: { a: string; b: string | null }, side: "a" | "b") => {
+    if (g.a) teamAt.set(g.a, side === "a" ? "H" : "A");
+    if (g.b) teamAt.set(g.b, side === "b" ? "H" : "A");
     for (const [id, s] of [
       [g.a, "a"],
       [g.b, "b"],
@@ -176,6 +180,11 @@ export function assignHome(
       setCoach(g, g.fixed);
       addHome(g.fixed === "a" ? g.a : g.b);
     }
+  // Splitting a team: this side's home team is away in its other game, or its away team is home there.
+  const teamSplits = (g: { a: string; b: string | null }, side: "a" | "b") => {
+    const [h, v] = side === "a" ? [g.a, g.b] : [g.b, g.a];
+    return (h && teamAt.get(h) === "A" ? 1 : 0) + (v && teamAt.get(v) === "H" ? 1 : 0);
+  };
   // Splitting a coach: this side's home team's coach is away elsewhere that day, or its away team's coach is home.
   const splits = (g: { a: string; b: string | null }, side: "a" | "b") => {
     const [h, v] = side === "a" ? [g.a, g.b] : [g.b, g.a];
@@ -217,7 +226,7 @@ export function assignHome(
   for (const { g, i } of order) {
     const score = (side: "a" | "b") => {
       const h = side === "a" ? g.a : g.b;
-      return [wrongHost(g, side), splits(g, side), Math.max(0, ahead(g, side)), breaks(g, side), -owed(g, side), h ? (teams.get(h)?.homeGames ?? 0) : 0];
+      return [teamSplits(g, side), wrongHost(g, side), splits(g, side), Math.max(0, ahead(g, side)), breaks(g, side), -owed(g, side), h ? (teams.get(h)?.homeGames ?? 0) : 0];
     };
     const [x, y] = [score("a"), score("b")];
     const at = x.findIndex((v, k) => v !== y[k]);
@@ -283,6 +292,18 @@ export function homeCost(
       }
   });
   const split = [...at.values()].reduce((n, x) => n + Math.min(x.H, x.A), 0);
+  // A team home in one game and away in its other that day.
+  const teamSides = new Map<string, { H: number; A: number }>();
+  games.forEach((g, i) => {
+    const [h, v] = sides[i] === "a" ? [g.a, g.b] : [g.b, g.a];
+    for (const [t, k] of [[h, "H"], [v, "A"]] as const)
+      if (t) {
+        const x = teamSides.get(t) ?? { H: 0, A: 0 };
+        x[k]++;
+        teamSides.set(t, x);
+      }
+  });
+  const teamSplit = [...teamSides.values()].reduce((n, x) => n + Math.min(x.H, x.A), 0);
   let over = 0;
   let even = 0;
   let list = 0;
@@ -298,7 +319,7 @@ export function homeCost(
     }
   }
   const balance = share ? off * 170 : even * 50 + list * 20;
-  return { all: wrong * 1e6 + split * 1e5 + over * 2e4 + balance + breaks * 15 + season * 0.1, plan: over * 400 + balance / 12 + breaks * 6 };
+  return { all: teamSplit * 1e7 + wrong * 1e6 + split * 1e5 + over * 2e4 + balance + breaks * 15 + season * 0.1, plan: over * 400 + balance / 12 + breaks * 6 };
 }
 
 // Games keep their grid slot when a division's matchups are saved or created again: the same pair (or the same team
@@ -849,8 +870,18 @@ export async function fillTbd(deps: Deps, viewer: SessionUser, matchupId: unknow
     if (m.b !== null) return { ok: false as const, message: "That game has an opponent now. Reload the page." };
     const [owner, t] = [teams.get(m.a), teams.get(teamId)];
     if (!owner || !t || teamId === m.a) return { ok: false as const, message: "Pick another team playing that day." };
-    const already = await q.query("select 1 from scenic_matchups where program_id = $1 and day = $2::date and $3::bigint in (team_a, team_b) and $4::bigint in (team_a, team_b)", [m.program, m.day, m.a, teamId]);
-    if (already.rowCount) return { ok: false as const, message: `${owner.name} and ${t.name} already play each other that day.` };
+    // A fill-in: the same gender (a Coed division plays either), a grade above or below at most, REC or COMP; never a team
+    // it already plays this season.
+    const gender = (x: { divisionName: string }) => x.divisionName.split(" ")[0];
+    if (gender(owner) !== gender(t) && gender(owner) !== "Coed" && gender(t) !== "Coed")
+      return { ok: false as const, message: `${t.name} is ${gender(t)}; ${owner.name} plays ${gender(owner)}.` };
+    if (Math.abs(owner.groupGrade - t.groupGrade) > 1) return { ok: false as const, message: `Pick a team a grade above or below ${owner.name} at most.` };
+    const already = await q.query<{ day: string }>(
+      "select day::text from scenic_matchups where program_id = $1 and $2::bigint in (team_a, team_b) and $3::bigint in (team_a, team_b) order by day limit 1",
+      [m.program, m.a, teamId],
+    );
+    if (already.rows[0])
+      return { ok: false as const, message: `${owner.name} and ${t.name} already play each other${already.rows[0].day === m.day ? " that day" : " this season"}.` };
     if (m.court && m.starts) {
       const clash = await fillClash(deps, viewer, q, { id: matchupId, day: m.day, a: m.a, b: teamId, court: m.court, starts: m.starts });
       if (clash) return { ok: false as const, message: `${clash} Take this game off the Grid first, or pick another team.` };

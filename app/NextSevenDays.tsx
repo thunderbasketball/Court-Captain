@@ -7,6 +7,7 @@ import { shortDate } from "@/lib/program-options";
 import { easternDate, zonedTime } from "@/lib/time";
 import { EventLine } from "./EventAttendance";
 import { scheduleItems } from "./LeagueGames";
+import GameShare from "./GameShare";
 import { card } from "./ui";
 
 const DAYS = 10; // how far ahead the card looks (was 7)
@@ -78,6 +79,7 @@ export default function NextSevenDays({
                 staff={staff}
                 mine={mine.map((p) => ({ ...p, rsvp: rsvps[key]?.[p.player] ?? null }))}
                 rsvpOpen={rsvpOpen(x.date, x.time)}
+                aside={x.share && x.date >= today && <GameShare id={x.share.id} text={x.share.text} v={x.share.v} />}
               >
                 {x.node}
               </EventLine>

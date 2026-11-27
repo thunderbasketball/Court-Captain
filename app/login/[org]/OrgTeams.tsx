@@ -24,10 +24,40 @@ export default function OrgTeams({ org, teams, today }: { org: string; teams: Or
       )}
       <SubCard title={mine.length ? "All teams" : "Teams"} count={rest.length} open={!mine.length}>
         <p className="px-1 pb-2 text-xs text-zinc-500">Tap ☆ to follow a team on this phone; it moves to My teams.</p>
-        <TeamList org={org} teams={rest.length ? rest : []} today={today} />
+        <ByGrade org={org} teams={rest} today={today} />
         {!rest.length && <p className="px-1 text-sm text-zinc-500">You follow every team.</p>}
       </SubCard>
     </section>
+  );
+}
+
+// A team's gender and grade, from the group it plays in ("3rd Boys REC" → Boys, 3rd): Pre-K, K, 1st… 12th.
+const gradeOf = (t: OrgPublicTeam) => (t.programs[0]?.group ?? "").split(" ")[0] || "Other";
+const genderOfTeam = (t: OrgPublicTeam) => genderOf(t.programs[0]?.group) ?? "Other";
+const gradeRank = (g: string) => (g === "Pre-K" ? -1 : g === "K" ? 0 : Number.parseInt(g, 10) || 99);
+const genderRank = (g: string) => ["Coed", "Boys", "Girls"].indexOf(g) + 1 || 9;
+const gradeTitle = (g: string) => (g === "Pre-K" ? "Pre-K" : g === "K" ? "Kindergarten" : g === "Other" ? "other" : `${g} grade`);
+
+// The teams in a card per gender and grade (Coed, Boys, then Girls; youngest first in each); each opens in place.
+function ByGrade({ org, teams, today }: { org: string; teams: OrgPublicTeam[]; today: string }) {
+  const key = (t: OrgPublicTeam) => `${genderOfTeam(t)}|${gradeOf(t)}`;
+  const keys = [...new Set(teams.map(key))].sort((a, b) => {
+    const [ga, xa] = a.split("|");
+    const [gb, xb] = b.split("|");
+    return genderRank(ga) - genderRank(gb) || gradeRank(xa) - gradeRank(xb);
+  });
+  return (
+    <div className="space-y-2">
+      {keys.map((k) => {
+        const [gender, grade] = k.split("|");
+        const list = teams.filter((t) => key(t) === k);
+        return (
+          <SubCard key={k} title={`${gender === "Other" ? "" : `${gender} · `}${gradeTitle(grade)}`} count={list.length}>
+            <TeamList org={org} teams={list} today={today} />
+          </SubCard>
+        );
+      })}
+    </div>
   );
 }
 

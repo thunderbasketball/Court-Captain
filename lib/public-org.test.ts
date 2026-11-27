@@ -126,7 +126,7 @@ describe("a host's public page (no login)", () => {
     const day = await hostGames(db.pool, now, "thunder");
     expect(day).toEqual({
       date: "2026-12-05",
-      games: [{ starts: "09:00", gym: "Main Gym", court: "Court 1", group: "5th Boys COMP", home: "Hoops", away: "Magic", final: null }],
+      games: [{ starts: "09:00", gym: "Main Gym", court: "Court 1", group: "5th Boys COMP", home: "Hoops", away: "Magic", final: null, hype: expect.any(String) }],
     });
     expect((await hostGames(db.pool, new Date("2026-12-06T15:00:00Z"), "thunder"))?.date).toBe("2026-12-12");
     expect(await hostGames(db.pool, new Date("2026-12-13T15:00:00Z"), "thunder")).toBeNull();

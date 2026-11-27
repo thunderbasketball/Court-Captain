@@ -1,7 +1,7 @@
 "use client";
 
 import { AddPersonIcon, CardPanel, PanelIcon, addIconBtn, closeCardPanel } from "../../../../CardIcons";
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { GRADES, LEVELS } from "@/lib/team-names";
 import type { PersonOption, Role } from "@/lib/teams";
@@ -21,7 +21,9 @@ const ROLE_CHOICES: { role: Role; label: string }[] = [
 export function TeamEditForm({
   teamId,
   initial,
+  remove,
 }: {
+  remove?: ReactNode; // Delete team, at the bottom of the open form
   teamId: string;
   initial: { gender: "Boys" | "Girls"; grades: string[]; level: string; practiceLocations: string; altName: string };
 }) {
@@ -131,6 +133,7 @@ export function TeamEditForm({
           Cancel
         </button>
       </div>
+      {remove && <div className="border-t border-zinc-200 pt-3 dark:border-white/10">{remove}</div>}
     </form>
   );
 }

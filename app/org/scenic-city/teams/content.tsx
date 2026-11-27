@@ -187,8 +187,7 @@ export async function ScenicTeamsContent({
                 <>
                   {t.canEdit && (
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <TeamEditor grades={GRADE_CHOICES} team={t} />
-                      <DeleteTeam id={t.id} name={t.name} />
+                      <TeamEditor grades={GRADE_CHOICES} team={t} remove={<DeleteTeam id={t.id} name={t.name} />} />
                     </div>
                   )}
                   {director && (plays[t.id] ?? []).length > 0 && (

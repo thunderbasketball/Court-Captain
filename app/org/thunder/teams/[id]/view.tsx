@@ -253,6 +253,15 @@ async function TeamBody({
                 practiceLocations: team.practiceLocations.join(", "),
                 altName: team.altName ?? "",
               }}
+              remove={
+                <DeleteTeamButton
+                  teamId={team.id}
+                  name={team.name}
+                  players={roster?.length ?? 0}
+                  practices={practices.length}
+                  block={await deleteBlock(db, "thunder", String(team.id), new Date())}
+                />
+              }
             />
           )
         }
@@ -485,17 +494,6 @@ async function TeamBody({
             action: <AddIcon id={playbookPanel(team.id)} label="Add a play" />,
             body: <PlaybookCard org={"thunder"} teamId={team.id} plays={plays} library={library ?? []} formations={formations ?? []} />,
           }
-        }
-        footer={
-          canEditTeam && (
-            <DeleteTeamButton
-              teamId={team.id}
-              name={team.name}
-              players={roster?.length ?? 0}
-              practices={practices.length}
-              block={await deleteBlock(db, "thunder", String(team.id), new Date())}
-            />
-          )
         }
       />
     </>

@@ -48,6 +48,7 @@ describe("Scheduler: unschedule a gym, clear a division, fill in a TBD", () => {
     await q("delete from organizations where slug = 'club'");
     await q("insert into users (coach_id, first_name, last_name, cell) values ('9913694', 'Dee', 'X', '4239913694'), ('5550003', 'Bo', 'X', '4235550003')");
     await grant(db.pool, "9913694 scenic-city Director", "9913694 scenic-city Admin", "5550003 scenic-city Director");
+    await db.pool.query("insert into director_areas (coach_id, org, area, granted_by) values ('9913694', 'scenic-city', 'scheduling', 't')"); // a Director of Scheduling: only they change the schedule
     prog = (
       await q(
         `insert into scenic_programs (kind, name, starts_on, ends_on, reg_opens, reg_closes, created_by, updated_by)
@@ -82,6 +83,18 @@ describe("Scheduler: unschedule a gym, clear a division, fill in a TBD", () => {
     for (const g of list) expect(name(g.home === "a" ? g.a : g.b)).toMatch(/^Host|^CompA/);
     expect(list.some((g) => [g.a, g.b].includes(t.Solo))).toBe(true); // not two Host teams against each other, with Solo left out
   });
+
+  it("Admins and Owners see the schedule, view only; only a Director of Scheduling changes it", async () => {
+    await q("insert into users (coach_id, first_name, last_name, cell) values ('5550007', 'Ann', 'Admin', '4235550007')");
+    await grant(db.pool, "5550007 scenic-city Admin", "5550007 scenic-city Owner");
+    const ann = person("5550007", "Ann");
+    expect(await gameDaySchedule(deps(), ann)).not.toBeNull(); // sees it
+    const g = (await games()).find((x) => x.b)!;
+    expect(await placeGame(deps(), ann, g.id, { court, starts: "09:00" })).toMatchObject({ ok: false, message: expect.stringContaining("Director of Scheduling") });
+    expect(await switchHome(deps(), ann, g.id)).toMatchObject({ ok: false });
+    expect(await setDayPublished(deps(), ann, prog, D1, "REC", true)).toMatchObject({ ok: false });
+    expect(await place(g.id, "09:00")).toEqual({ ok: true }); // Dee: a Director of Scheduling
+  }, 60_000);
 
   it("home and away switched by hand (against TBD too): kept with who did it; never a published or scored game", async () => {
     const list = await games();
@@ -155,6 +168,26 @@ describe("Scheduler: unschedule a gym, clear a division, fill in a TBD", () => {
     expect(await fillTbd(deps(), dee, g.id, owner)).toMatchObject({ ok: false });
     expect(await fillTbd(deps(), dee, g.id, "999")).toMatchObject({ ok: false });
     expect(await fillTbd(deps(), dee, g.id, "x")).toMatchObject({ ok: false });
+    // Only the same gender, a grade above or below at most, and never a team it already plays this season.
+    const reg = async (name: string, gender: string, grade: number) => {
+      const d = (await q("insert into scenic_divisions (program_id, gender, grade_low, grade_high) values ($1, $2, $3, $3) returning id::text", [prog, gender, grade]))[0].id;
+      const gg = (await q("insert into scenic_grade_groups (division_id, grade, level) values ($1, $2, 'REC') returning id::text", [d, grade]))[0].id;
+      const pl = (await q("insert into scenic_pools (group_id, name) values ($1, 'A') returning id::text", [gg]))[0].id;
+      const id = (await q("insert into scenic_teams (name, gender, grade_low, grade, level, partner_id, created_by, updated_by) select $1, $2, $3, $3, 'REC', id, 't', 't' from partners where name = 'Away' returning id::text", [name, gender, grade]))[0].id;
+      await q("insert into scenic_registrations (program_id, team_id, pool_id, registered_by, all_season) values ($1, $2, $3, 't', true)", [prog, id, pl]);
+      return id;
+    };
+    expect(await fillTbd(deps(), dee, g.id, await reg("Seven", "Boys", 7))).toMatchObject({ ok: false, message: expect.stringContaining("a grade above or below") });
+    expect(await fillTbd(deps(), dee, g.id, await reg("G5", "Girls", 5))).toMatchObject({ ok: false, message: expect.stringContaining("is Girls") });
+    const another = (await games()).find((x) => x.b && x.id !== g.id)!;
+    await q("insert into game_days (day, created_by) values ('2026-12-12', 't')");
+    await q("insert into program_game_days (program_id, game_day_id, kind, added_by) select $1, id, 'game', 't' from game_days where day = '2026-12-12'", [prog]);
+    const met = another.a === owner || another.b === owner ? null : another.a;
+    if (met) {
+      await q("insert into scenic_matchups (program_id, division_id, day, team_a, team_b, created_by) values ($1, $2, '2026-12-12', least($3::bigint, $4::bigint), greatest($3::bigint, $4::bigint), 't')", [prog, div, owner, met]);
+      expect(await fillTbd(deps(), dee, g.id, met)).toMatchObject({ ok: false, message: expect.stringContaining("this season") });
+      await q("delete from scenic_matchups where day = '2026-12-12'");
+    }
     expect(await fillTbd(deps(), dee, g.id, null)).toMatchObject({ ok: false });
     expect(await place(g.id, "09:00")).toEqual({ ok: true });
     // A COMP team with its own game then: refused; free: the game keeps its place.

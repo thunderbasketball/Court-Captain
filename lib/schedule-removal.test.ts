@@ -40,6 +40,7 @@ describe("removal from an event's schedule", () => {
       "insert into users (coach_id, first_name, last_name, cell) values ('5550001', 'Jo', 'X', '4235550001'), ('9913694', 'Dee', 'X', '4239913694')",
     );
     await grant(db.pool, "9913694 scenic-city Director", "9913694 scenic-city Admin");
+    await db.pool.query("insert into director_areas (coach_id, org, area, granted_by) values ('9913694', 'scenic-city', 'scheduling', 't')");
     await createOrganization(
       deps(),
       jo,

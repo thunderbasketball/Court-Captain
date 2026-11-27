@@ -5,7 +5,7 @@
 // a team's blocked block; a request that can't be met means the team sits out that day (the Scheduler takes it out).
 import type { Pool } from "pg";
 import type { SessionUser } from "./auth/service";
-import { TEAM_COACHES, isProgramsDirector, isScheduler, leagueEntry } from "./scenic-programs";
+import { TEAM_COACHES, isProgramsDirector, isScheduler, leagueEntry, seesSchedule } from "./scenic-programs";
 import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
 import {
@@ -114,7 +114,7 @@ export async function whoForTeam(
     [teamId, viewer.coachId],
   );
   const x = r.rows[0];
-  return { coach: x.coach, director: x.director || (await isScheduler(q, viewer)), level: x.level };
+  return { coach: x.coach, director: x.director || (await seesSchedule(q, viewer)), level: x.level };
 }
 
 export type RequestDay = {
