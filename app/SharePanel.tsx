@@ -1,5 +1,6 @@
 "use client";
 
+import { withTag } from "@/lib/social";
 import { useState, useSyncExternalStore } from "react";
 import { ShareIcon, shareIconBtn } from "./ShareButton";
 
@@ -20,7 +21,17 @@ const hasMouse = () => window.matchMedia("(pointer: fine)").matches;
 // A share picture, opened right on the page: Share picture (the phone's share sheet: Instagram, Facebook, X, Messages…),
 // Save picture, and, on a computer or where the sheet can't take a picture, X and Facebook with a link. `at`: its page
 // ("/score/12"); its picture is there too, at /image.
-export default function SharePanel({ at, v, text, file: name }: { at: string; v: string; text: string; file: string }) {
+// tag: an Instagram handle put in the caption (copied when sharing, to paste into the post).
+export default function SharePanel({ at, v, text: plain, file: name, tag }: { at: string; v: string; text: string; file: string; tag?: string }) {
+  const text = withTag(plain, tag);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      if (tag) setNote(`Caption copied with @${tag}: paste it into your Instagram post.`);
+    } catch {
+      /* no clipboard here */
+    }
+  };
   const src = `${at}/image?v=${v}`;
   const sheet = useSyncExternalStore(never, sharesFiles, () => false);
   const links = useSyncExternalStore(never, hasMouse, () => false) || !sheet;
@@ -37,6 +48,7 @@ export default function SharePanel({ at, v, text, file: name }: { at: string; v:
   };
   const share = async () => {
     if (!file) return;
+    await copy();
     try {
       await navigator.share({ files: [file], text });
     } catch (e) {
@@ -63,7 +75,7 @@ export default function SharePanel({ at, v, text, file: name }: { at: string; v:
             Share picture
           </button>
         )}
-        <a href={src} download={`${name}.png`} className={btn}>
+        <a href={src} download={`${name}.png`} onClick={() => void copy()} className={btn}>
           Save picture
         </a>
         {links && (
@@ -79,9 +91,10 @@ export default function SharePanel({ at, v, text, file: name }: { at: string; v:
       </span>
       <span className="mt-1.5 block text-xs text-zinc-500">
         {!links ? "Pick Instagram, Facebook, X or any app." : "Instagram: save the picture and post it from your phone."}
+        {tag && ` Tag @${tag}: the caption is copied for you.`}
       </span>
       {note && (
-        <span role="status" className="mt-1 block text-xs text-red-600">
+        <span role="status" className={`mt-1 block text-xs ${note.startsWith("Caption copied") ? "font-medium text-emerald-700 dark:text-emerald-400" : "text-red-600"}`}>
           {note}
         </span>
       )}

@@ -820,6 +820,15 @@ function Matchups({ day, coaches, who, published, wrong, readOnly = false }: { d
                       <>
                         <MatchupBoard
                           readOnly={readOnly}
+                          homeRate={Object.fromEntries(
+                            p.teams.map((t) => {
+                              const r = p.homeRate[t.teamId];
+                              // It can host when its school or organization has a court that takes its division.
+                              const takes = t.partnerId && t.partnerId in p.hosts ? p.hosts[t.partnerId] : undefined;
+                              const canHost = takes === null || (!!takes && takes.includes(t.divisionId));
+                              return [t.teamId, { pct: r?.games ? Math.round((r.home * 100) / r.games) : null, canHost }];
+                            }),
+                          )}
                           key={games.map((m) => `${m.id}:${m.b ?? ""}`).join(",") || "none"}
                           programId={p.programId}
                           day={p.date}

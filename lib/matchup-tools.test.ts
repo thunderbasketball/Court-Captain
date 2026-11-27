@@ -257,9 +257,15 @@ describe("Scheduler: unschedule a gym, clear a division, fill in a TBD", () => {
     // Finley's case: a Girls team in the Boys division, with why.
     expect(await playIn(deps(), bo, g5, prog, recPool, "x", false)).toMatchObject({ ok: false });
     expect(await playIn(deps(), dee, g5, prog, recPool, " ", false)).toMatchObject({ ok: false, message: expect.stringContaining("Say why") });
-    expect(await playIn(deps(), dee, g5, prog, compPool, "x", false)).toMatchObject({ ok: false, message: expect.stringContaining("REC pool") });
     expect(await playIn(deps(), dee, g5, prog, recPool, "No Girls 5th REC", false)).toEqual({ ok: true });
     expect(await where(g5)).toEqual({ id: recPool, by: "Dee X", why: "No Girls 5th REC" });
+    // REC to COMP (and back): the team stays REC; only where it plays changes.
+    expect(await playIn(deps(), dee, g5, prog, compPool, "Plays COMP", true)).toEqual({ ok: true });
+    expect(await where(g5)).toEqual({ id: compPool, by: "Dee X", why: "Plays COMP" });
+    expect((await q("select level as id from scenic_teams where id = $1", [g5]))[0].id).toBe("REC");
+    // The League's pages show it where it plays: COMP.
+    expect((await gameDaySchedule(deps(), dee))!.days[0].programs[0].teams.find((x) => x.teamId === g5)?.level).toBe("COMP");
+    expect(await playIn(deps(), dee, g5, prog, recPool, "No Girls 5th REC", true)).toEqual({ ok: true });
     const [choice] = await playInChoices(db.pool, g5, now);
     expect(choice.playsIn).toMatchObject({ label: expect.stringContaining("Boys 5th"), by: "Dee X", why: "No Girls 5th REC" });
     expect((await where(g5)).id).toBe(recPool);

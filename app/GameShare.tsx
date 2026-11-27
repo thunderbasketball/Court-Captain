@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ShareIcon, shareIconBtn } from "./ShareButton";
 import SharePanel from "./SharePanel";
+import { LEAGUE_INSTAGRAM } from "@/lib/social";
 
 // A game coming up on the public pages: Share opens its Game Day picture right here (no pop-up), to hype it.
 export default function GameShare({ id, text, v }: { id: string; text: string; v: string }) {
@@ -21,7 +22,7 @@ export default function GameShare({ id, text, v }: { id: string; text: string; v
       </button>
       {open && (
         <span className="mt-1 block w-full">
-          <SharePanel at={`/game/${id}`} file={`game-${id}`} text={text} v={v} />
+          <SharePanel at={`/game/${id}`} file={`game-${id}`} text={text} v={v} tag={LEAGUE_INSTAGRAM} />
         </span>
       )}
     </>

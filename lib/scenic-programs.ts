@@ -6,6 +6,7 @@
 // While registration is open, whoever manages a team (its partner's contacts, its Solo coach, a Director of Teams)
 // registers it; it's in at once, in the smallest pool of the grade group matching its gender, grade and level.
 // Directors of Programs mark Paid.
+import { cleanRulesUrl } from "./rules-link";
 import type { Pool, PoolClient } from "pg";
 import type { SessionUser } from "./auth/service";
 import { isOrgOwner, orgHasArea, orgHasOwnArea } from "./org-admin";
@@ -281,7 +282,10 @@ async function readProgram(deps: Deps, viewer: SessionUser, id: string): Promise
       team_org: string | null;
     }>(
       `select r.pool_id::text, t.id::text as team_id,
-              coalesce((select ot.org from org_teams ot where ot.id = t.org_team_id), case when t.thunder_team_id is not null then 'thunder' end) as team_org, t.name, t.grade_low, t.grade, t.level, p.name as partner, coalesce(og.abbr, p.abbr) as partner_abbr, og.kind = 'Team' as solo_account, t.partner_id::text,
+              coalesce((select ot.org from org_teams ot where ot.id = t.org_team_id), case when t.thunder_team_id is not null then 'thunder' end) as team_org, t.name, t.grade_low, t.grade,
+              -- The level it plays in here: its pool's (the League may place it in REC or COMP), else its own.
+              coalesce((select gg.level from scenic_pools po join scenic_grade_groups gg on gg.id = po.group_id where po.id = r.pool_id), t.level) as level,
+              p.name as partner, coalesce(og.abbr, p.abbr) as partner_abbr, og.kind = 'Team' as solo_account, t.partner_id::text,
               o.first_name || ' ' || o.last_name as owner, c.first_name || ' ' || c.last_name as coach, c.cell as coach_cell,
               coalesce(c.verified_email, c.email) as coach_email,
               ${TEAM_COACHES} as coaches,
@@ -462,6 +466,8 @@ export type ScheduleDay = {
     matchups: Matchup[];
     otherDays: Record<string, string[]>; // pair "a-b" (lower id first) → the League's other Game Days they play
     fills: Record<string, string[]>; // team → the Game Days it filled in for a TBD this season
+    homeRate: Record<string, { home: number; games: number }>; // team → its games this season (both teams known) and how many at home
+    hosts: Record<string, string[] | null>; // each school or organization with courts open that day → the divisions they take (null: any)
     // Each team's matchups on every Game Day of the League (past ones too), soonest first.
     teamGames: Record<string, ScheduledGame[]>;
   })[];
@@ -502,6 +508,32 @@ export async function gameDaySchedule(deps: Deps, viewer: SessionUser): Promise<
   const pair = (m: { programId: string; a: string; b: string | null }) => `${m.programId}:${pairOf(m.a, m.b)}`;
   const daysOf = new Map<string, string[]>();
   for (const m of all.rows) daysOf.set(pair(m), [...(daysOf.get(pair(m)) ?? []), m.day]);
+  // Who can host whom on each Game Day: each hosting school's or organization's courts open that day (its own with hours, or
+  // its gyms marked for League games) and the divisions they take (a court with none set takes any).
+  const courtRows = (
+    await deps.pool.query<{ day: string; partner: string; only: string[] }>(
+      `with k as (
+         select gd.day, c.id::text as key, g.partner_id as partner
+           from court_hours h join game_days gd on gd.id = h.game_day_id join partner_courts c on c.id = h.court_id join partner_gyms g on g.id = c.gym_id
+          where gd.day >= $1::date
+         union all
+         select a.day, 'o' || g.id || '-' || coalesce(c.id::text, 'gym'), p.id
+           from gym_availability a join gyms g on g.id = a.gym_id and g.active join partners p on p.org_slug = g.org
+           left join courts c on c.gym_id = g.id and c.name !~* '^goal'
+          where a.use = 'partner' and a.day >= $1::date)
+       select k.day::text as day, k.partner::text as partner,
+              array(select d.division_id::text from scenic_court_divisions d where d.court_key = k.key) as only
+         from k join partners p on p.id = k.partner where p.approved and p.hosts_games`,
+      [today],
+    )
+  ).rows;
+  const hostsOn = new Map<string, Record<string, string[] | null>>();
+  for (const c of courtRows) {
+    const h = hostsOn.get(c.day) ?? {};
+    hostsOn.set(c.day, h);
+    if (h[c.partner] === null) continue;
+    h[c.partner] = c.only.length ? [...(h[c.partner] ?? []), ...c.only] : null;
+  }
   const byDay = new Map<string, ScheduleDay>();
   for (const { id } of ids.rows) {
     const p = await getProgram(deps, viewer, id);
@@ -538,6 +570,15 @@ export async function gameDaySchedule(deps: Deps, viewer: SessionUser): Promise<
           if (m.programId === p.id && m.day !== e.date && m.b) (otherDays[pairOf(m.a, m.b)] ??= []).push(m.day);
       const fills: Record<string, string[]> = {};
       if (!e.bracket) for (const m of all.rows) if (m.programId === p.id && m.fill) (fills[m.fill] ??= []).push(m.day);
+      const homeRate: Record<string, { home: number; games: number }> = {};
+      if (!e.bracket)
+        for (const m of all.rows)
+          if (m.programId === p.id && m.b)
+            for (const [t, isHome] of [[m.a, m.home === "a"], [m.b, m.home === "b"]] as const) {
+              const x = (homeRate[t] ??= { home: 0, games: 0 });
+              x.games++;
+              if (isHome) x.home++;
+            }
       day.programs.push({
         ...e,
         programId: p.id,
@@ -546,6 +587,8 @@ export async function gameDaySchedule(deps: Deps, viewer: SessionUser): Promise<
         matchups,
         otherDays,
         fills,
+        homeRate,
+        hosts: hostsOn.get(e.date) ?? {},
         teamGames: e.bracket ? {} : games,
       });
       day.playing += e.playing;
@@ -735,6 +778,22 @@ export async function setProgramRules(
     "update scenic_programs set rules = $2, rules_name = $3, rules_by = $4, rules_at = $5 where id = $1",
     [id, file ? Buffer.from(file.bytes) : null, name, `${viewer.firstName} ${viewer.lastName}`, deps.now()],
   );
+  return r.rowCount ? { ok: true } : { ok: false, message: "That program no longer exists." };
+}
+
+// A League's rules as a link (Directors of Programs): an https address (a Google Doc shared to anyone with the link shows inside
+// pages and prints as a PDF). null or "" removes it. Who set it is kept.
+export async function setProgramRulesUrl(deps: Deps, viewer: SessionUser, id: unknown, url: unknown): Promise<Result> {
+  if (!isId(id)) return { ok: false, message: "That program no longer exists." };
+  const u = cleanRulesUrl(url);
+  if (u === false) return { ok: false, message: "Paste the link that starts with https:// (500 characters at most)." };
+  if (!(await isProgramsDirector(deps.pool, viewer))) return { ok: false, message: programsOnly };
+  const r = await deps.pool.query("update scenic_programs set rules_url = $2, rules_url_by = $3, rules_url_at = $4 where id = $1", [
+    id,
+    u,
+    `${viewer.firstName} ${viewer.lastName}`,
+    deps.now(),
+  ]);
   return r.rowCount ? { ok: true } : { ok: false, message: "That program no longer exists." };
 }
 

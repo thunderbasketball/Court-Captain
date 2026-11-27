@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { PublicFinal } from "@/lib/score-share";
 import { ShareIcon, shareIconBtn } from "./ShareButton";
 import SharePanel from "./SharePanel";
+import { LEAGUE_INSTAGRAM } from "@/lib/social";
 
 // A finished game on the public pages: "Final 34–28" (this line's first team first) and Share, which opens its picture right
 // here (no pop-up). `first`, `second`: the teams in the order the line names them.
@@ -45,7 +46,7 @@ export default function FinalScore({
           </button>
         )}
       </span>
-      {open && final.share && <SharePanel at={`/score/${final.id}`} file={`final-${final.id}`} text={`FINAL · ${group}: ${first} ${a}, ${second} ${b}`} v={`${final.home}-${final.away}`} />}
+      {open && final.share && <SharePanel at={`/score/${final.id}`} file={`final-${final.id}`} text={`FINAL · ${group}: ${first} ${a}, ${second} ${b}`} v={`${final.home}-${final.away}`} tag={LEAGUE_INSTAGRAM} />}
     </>
   );
 }

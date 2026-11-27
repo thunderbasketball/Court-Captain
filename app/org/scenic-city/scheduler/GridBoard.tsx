@@ -147,6 +147,7 @@ export function GridBoard({
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [hint, setHint] = useState(false); // a slot was tapped with a game picked: say to drag instead
   const [busy2, start] = useTransition();
   const [confirm, dialog] = useConfirm();
   const unschedule = async (g: GridGymView, n: number) => {
@@ -256,6 +257,7 @@ export function GridBoard({
     setPicked(null);
     setDragging(null);
     setError(null);
+    setHint(false);
     if (readOnly) return setError("View only: only Directors of Scheduling change the schedule.");
     const g = games.find((x) => x.id === id);
     if (!g) return;
@@ -287,6 +289,7 @@ export function GridBoard({
     setDragging(null);
     setSelected([]);
     setError(null);
+    setHint(false);
     if (readOnly) return setError("View only: only Directors of Scheduling change the schedule.");
     const moving = games.filter((x) => list.includes(x.id) && !x.locked); // in the list's order: REC youngest first, then COMP
     if (!moving.length) return;
@@ -380,10 +383,10 @@ export function GridBoard({
       if (/^\d+$/.test(data)) move(data, slot);
       else if (/^\d+(,\d+)+$/.test(data)) moveMany(data.split(","), slot);
     },
+    // A tap on a slot never places a game (too easy by mistake): a picked game only shows where it fits; drag it there.
     onClick: () => {
       if (touch.justDropped()) return;
-      if (selected.length) moveMany(selected, slot);
-      else if (picked) move(picked, slot);
+      if (picked || selected.length) setHint(true);
     },
   });
 
@@ -525,6 +528,18 @@ export function GridBoard({
       {touch.ghost}
       {dialog}
       {/* Shown where it's seen, wherever the game was dropped. */}
+      {hint && !error && (
+        <div role="status" className="fixed inset-x-3 bottom-4 z-50 mx-auto max-w-lg shadow-lg">
+          <Alert tone="green">
+            <span className="flex items-start justify-between gap-3">
+              <span>Drag the game to the slot to place it. Tapping a slot doesn&apos;t move it.</span>
+              <button type="button" onClick={() => setHint(false)} aria-label="Close" className="shrink-0 font-semibold">
+                ✕
+              </button>
+            </span>
+          </Alert>
+        </div>
+      )}
       {error && (
         <div role="alert" className="fixed inset-x-3 bottom-4 z-50 mx-auto max-w-lg shadow-lg">
           <Alert tone="red">
@@ -539,7 +554,7 @@ export function GridBoard({
       )}
       {selected.length > 1 && (
         <p className="flex items-center justify-between gap-2 rounded-md bg-scenic-navy/10 px-2 py-1 text-xs font-semibold text-scenic-navy dark:bg-white/10 dark:text-white">
-          {selected.length} games picked: drag one (or tap a slot) to place them in that court&apos;s next open blocks, REC
+          {selected.length} games picked: drag one to a slot to place them in that court&apos;s next open blocks, REC
           youngest first, then COMP.
           <button type="button" onClick={() => setSelected([])} className="shrink-0 underline">
             Clear
@@ -548,8 +563,8 @@ export function GridBoard({
       )}
       {!active && (
         <p className="text-xs text-zinc-500">
-          On a phone, press and hold a game, then slide it to a slot (or tap a game, then a slot). On a computer, hold Shift and
-          click games to pick several and move them together.
+          Tap a game to see where it fits, then drag it there (on a phone, press and hold it, then slide). On a computer, hold Shift
+          and click games to pick several and drag them together.
         </p>
       )}
       {active && (
@@ -557,7 +572,7 @@ export function GridBoard({
           <span className="font-semibold text-emerald-700 dark:text-emerald-300">
             {moving?.locked ? "Published: it can't be moved." : `Fits in ${fitCount} slot${fitCount === 1 ? "" : "s"}`}
           </span>{" "}
-          Tap or drop on a slot. <span className="font-semibold text-emerald-700 dark:text-emerald-300">Green</span>: it fits
+          Drag it to a slot (a tap doesn&apos;t place it). <span className="font-semibold text-emerald-700 dark:text-emerald-300">Green</span>: it fits
           at the home team&apos;s gym (white: it has no home gym, so any gym is fine). <span className="font-semibold text-amber-700 dark:text-amber-300">Amber</span>: it fits,
           but at another host&apos;s gym. <span className="font-semibold text-red-600 dark:text-red-400">Red</span>: a team in
           this game or one of its coaches (Head or Assistant) already has a game then, or one at another gym right before or after.{" "}

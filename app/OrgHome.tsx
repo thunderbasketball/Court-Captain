@@ -1,3 +1,4 @@
+import GameDaysCard from "./GameDaysCard";
 import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { currentUser, devBypass } from "@/lib/auth/server";
@@ -366,6 +367,17 @@ async function HomeCards({
                   : await myLeagueTeamsCount(db, user.coachId),
             alert: teamAlert,
             body: teamsBody,
+          },
+        ]
+      : []),
+    // Game Days: each coming Game Day of the Leagues it plays in or hosts for (an organization, not the League itself): the
+    // rules, scoresheets to print from the Friday before, the schedule at its gyms and its teams' games by grade.
+    ...(org !== "scenic-city" && (teamsArea || facilitiesArea) && (clubTeams || hostsGames)
+      ? [
+          {
+            key: "game-days",
+            title: "Game Days",
+            body: <GameDaysCard org={org} now={now} />,
           },
         ]
       : []),

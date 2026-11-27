@@ -92,13 +92,17 @@ describe("planning matchups", () => {
     );
   });
 
-  it("same organization only when nothing else is left, even if other pairs are further apart in grade", () => {
-    // Pairing across organizations costs grade differences; pairing X with X costs nothing else.
+  it("its own grade first: every team of its grade twice this season before another grade; then the same organization last", () => {
+    // Two 3rd graders (both X) and two 6th graders: each plays its own grade, even the same organization.
     const teams = [t("1", 1, "X", 3), t("2", 1, "X", 3), t("3", 1, "Y", 6), t("4", 1, "Z", 6)];
-    expect(pairs(planMatchups(teams, new Map()))).not.toContain(k("1", "2"));
-    // Once both X teams have met Y and Z on other Game Days, X vs X (new) comes before a repeat.
-    const met = new Map([k("1", "3"), k("1", "4"), k("2", "3"), k("2", "4")].map((x) => [x, 1]));
-    expect(pairs(planMatchups(teams, met))).toEqual([k("1", "2"), k("3", "4")].sort());
+    expect(pairs(planMatchups(teams, new Map()))).toEqual([k("1", "2"), k("3", "4")].sort());
+    // In its grade, another organization comes before its own.
+    const four = [t("1", 1, "X", 3), t("2", 1, "X", 3), t("5", 1, "Y", 3), t("6", 1, "Z", 3)];
+    expect(pairs(planMatchups(four, new Map()))).not.toContain(k("1", "2"));
+    // Met once: a second meeting in its grade still comes before another grade.
+    expect(pairs(planMatchups(teams, new Map([[k("1", "2"), 1], [k("3", "4"), 1]])))).toEqual([k("1", "2"), k("3", "4")].sort());
+    // Met twice (every team of its grade): now another grade, not a third meeting.
+    expect(pairs(planMatchups(teams, new Map([[k("1", "2"), 2], [k("3", "4"), 2]])))).not.toContain(k("1", "2"));
   });
 
   it("never pairs a REC team with a COMP team, even if that leaves teams short", () => {

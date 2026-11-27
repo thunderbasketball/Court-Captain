@@ -53,16 +53,26 @@ export function planMatchups(
   coachOpp: Map<string, Set<string>> = new Map(),
   evaluate: (pairs: [string, string][]) => number = () => 0, // a whole plan's extra cost (how uneven the hosts' home games are)
 ): Plan {
-  // In order of importance, each outweighing everything after it over a whole day's plan: a pair that already met on
-  // another Game Day, then two teams from the same organization (club), then two teams neither of which can host (no home
+  // In order of importance, each outweighing everything after it over a whole day's plan: a pair meeting a third time, then
+  // another grade before a team has played every team of its grade twice, then a pair that already met on another Game Day,
+  // then two teams from the same organization (club), then two teams neither of which can host (no home
   // gym for the game), then grade differences and how evenly the hosts share the home games, then a coach's team
   // playing a different organization than their other teams. REC never plays COMP (not offered at all).
   let opp = coachOpp;
   const canHost = Math.max(0, ...teams.map((t) => t.host ?? 0));
   const apart = (x: MatchTeam, other: MatchTeam) =>
     x.coach && opp.get(x.coach)?.size && !opp.get(x.coach)!.has(other.club) ? 15 : 0;
+  // Its own grade first: a team plays every team of its grade (and level) twice this season before it's paired with another
+  // grade. Meeting a team of its grade a second time is fine; a third time costs more than playing another grade.
+  const sameGrade = (x: MatchTeam, y: MatchTeam) => x.grade === y.grade && x.level === y.level && x.id !== y.id;
+  const done = new Map(teams.map((x) => [x.id, teams.filter((y) => sameGrade(x, y)).every((y) => (met.get(key(x.id, y.id)) ?? 0) >= 2)]));
+  const meetings = (a: MatchTeam, b: MatchTeam) => {
+    const m = met.get(key(a.id, b.id)) ?? 0;
+    if (a.grade !== b.grade) return m * 1_000_000 + (done.get(a.id) && done.get(b.id) ? 0 : 2_000_000);
+    return m === 0 ? 0 : m === 1 ? 1_000_000 : (m - 1) * 100_000_000;
+  };
   const cost = (a: MatchTeam, b: MatchTeam) =>
-    (met.get(key(a.id, b.id)) ?? 0) * 1_000_000 +
+    meetings(a, b) +
     (a.club === b.club ? 10_000 : 0) +
     (Math.max(a.host ?? 0, b.host ?? 0) < canHost ? 500 : 0) +
     Math.abs(a.grade - b.grade) * 20 +

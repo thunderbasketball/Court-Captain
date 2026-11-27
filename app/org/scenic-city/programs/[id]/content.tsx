@@ -211,8 +211,10 @@ export async function ProgramContent({
               logo={p.logo}
               teams={p.teams}
               rules={
-                (await db.query<{ name: string }>("select rules_name as name from scenic_programs where id = $1 and rules is not null", [p.id]))
-                  .rows[0] ?? null
+                (await db.query<{ name: string | null; url: string | null }>(
+                  "select case when rules is not null then coalesce(rules_name, 'Rules.pdf') end as name, rules_url as url from scenic_programs where id = $1",
+                  [p.id],
+                )).rows[0] ?? null
               }
             >
               <SubCard title="Game & Bracket Days">

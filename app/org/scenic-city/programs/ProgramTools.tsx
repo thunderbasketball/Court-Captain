@@ -22,6 +22,7 @@ import {
   setPaid,
   setProgramLogo,
   setProgramRules,
+  setProgramRulesUrl,
   setTeamOff,
   withdrawTeam,
 } from "../actions";
@@ -421,7 +422,7 @@ export function ProgramLogoEditor({ id, logo }: { id: string; logo: string | nul
 
 // A League's rules PDF (Directors of Programs): upload or replace it, or remove it. Hosting organizations open it from
 // their Home's Documents card.
-export function ProgramRulesEditor({ id, rules }: { id: string; rules: { name: string } | null }) {
+export function ProgramRulesEditor({ id, rules }: { id: string; rules: { name: string | null; url: string | null } | null }) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -443,7 +444,7 @@ export function ProgramRulesEditor({ id, rules }: { id: string; rules: { name: s
         save(new FormData(e.currentTarget));
       }}
     >
-      {rules && (
+      {rules?.name && (
         <p className="text-sm">
           Now:{" "}
           <a href={`/program-rules/${id}`} target="_blank" rel="noopener" className="font-medium text-thunder-blue hover:underline dark:text-blue-400">
@@ -456,9 +457,9 @@ export function ProgramRulesEditor({ id, rules }: { id: string; rules: { name: s
       {error && <Alert tone="red">{error}</Alert>}
       {done && <Alert tone="green">{done}</Alert>}
       <button type="submit" disabled={busy} className={`${navyBtn} w-full`}>
-        {busy ? "Saving…" : rules ? "Replace rules" : "Save rules"}
+        {busy ? "Saving…" : rules?.name ? "Replace rules" : "Save rules"}
       </button>
-      {rules && (
+      {rules?.name && (
         <button
           type="button"
           disabled={busy}
@@ -472,7 +473,39 @@ export function ProgramRulesEditor({ id, rules }: { id: string; rules: { name: s
           Remove rules
         </button>
       )}
+      <RulesLink id={id} url={rules?.url ?? null} />
     </form>
+  );
+}
+
+// Or a link to the rules (a Google Doc shared to anyone with the link shows inside pages and prints as a PDF).
+function RulesLink({ id, url }: { id: string; url: string | null }) {
+  const router = useRouter();
+  const [value, setValue] = useState(url ?? "");
+  const [busy, start] = useTransition();
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const save = (v: string) =>
+    start(async () => {
+      const r = await setProgramRulesUrl(id, v);
+      setNote(r.ok ? { ok: true, text: v ? "Link saved." : "Link removed." } : { ok: false, text: r.message });
+      if (r.ok) router.refresh();
+    });
+  return (
+    <div className="space-y-1.5 border-t border-zinc-200 pt-3 dark:border-white/10">
+      <span className={fieldLabel}>Or a link to the rules (Google Doc)</span>
+      <input value={value} onChange={(e) => setValue(e.target.value)} inputMode="url" placeholder="https://docs.google.com/document/d/…" className={inputCls} />
+      <div className="flex items-center gap-3">
+        <button type="button" disabled={busy} onClick={() => save(value.trim())} className={`${navyBtn} flex-1`}>
+          {busy ? "Saving…" : "Save link"}
+        </button>
+        {url && (
+          <button type="button" disabled={busy} onClick={() => (setValue(""), save(""))} className="text-sm text-red-600 hover:underline">
+            Remove link
+          </button>
+        )}
+      </div>
+      {note && <Alert tone={note.ok ? "green" : "red"}>{note.text}</Alert>}
+    </div>
   );
 }
 
@@ -1287,7 +1320,7 @@ export function ProgramSettings({
   children,
 }: {
   children?: ReactNode; // more setup cards from the page (Divisions, Game & Bracket Days)
-  rules?: { name: string } | null; // a League's rules PDF
+  rules?: { name: string | null; url: string | null } | null; // a League's rules: its PDF's name and its link
   program: ProgramFields;
   logo: string | null;
   teams: number;

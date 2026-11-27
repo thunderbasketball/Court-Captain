@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { daysUntil, heroFor, hostGames, hostGyms, hostedPrograms, programCounts, type HeroInput } from "./public-org";
 import { createTestDb } from "./testing/db";
+import { orgGameDays } from "./org-game-days";
 
 const base: HeroInput = {
   org: "east-ridge",
@@ -131,6 +132,23 @@ describe("a host's public page (no login)", () => {
     expect((await hostGames(db.pool, new Date("2026-12-06T15:00:00Z"), "thunder"))?.date).toBe("2026-12-12");
     expect(await hostGames(db.pool, new Date("2026-12-13T15:00:00Z"), "thunder")).toBeNull();
     expect(JSON.stringify(day)).not.toMatch(/4235550|Sam|Lee/);
+  }, 60_000);
+
+  it("Game Days card: each coming Game Day, games at its gyms once published, its gyms to print, the rules link", async () => {
+    await db.pool.query("delete from scenic_published_schedules; delete from scenic_matchups");
+    await db.pool.query("insert into game_days (day, created_by) values ('2026-12-05', 't') on conflict do nothing");
+    await db.pool.query("insert into program_game_days (program_id, game_day_id, kind, added_by) select $1, id, 'game', 't' from game_days where day = '2026-12-05' on conflict do nothing", [prog]);
+    expect(await orgGameDays(db.pool, "nobody", now)).toBeNull(); // no teams, no games at its gyms
+    await play("Main Gym", "2026-12-05");
+    let d = (await orgGameDays(db.pool, "thunder", now))!;
+    expect(d.leagues).toEqual([{ id: prog, name: "Winter", rules: null, url: null }]);
+    expect(d.days[0]).toMatchObject({ day: "2026-12-05", gyms: [{ name: "Main Gym", games: 1 }], atGyms: [], ours: [], waiting: 1 });
+    await db.pool.query("insert into scenic_published_schedules (program_id, day, level, published_by, published_at) values ($1, '2026-12-05', 'COMP', 't', now())", [prog]);
+    await db.pool.query("update scenic_programs set rules_url = 'https://docs.google.com/document/d/1_47RvmPehQM5Z2ZfmOcf11vvTg9j9jaLe93Bv2c11IA/edit' where id = $1", [prog]);
+    d = (await orgGameDays(db.pool, "thunder", now))!;
+    expect(d.days[0]).toMatchObject({ waiting: 0, atGyms: [{ home: "Hoops", away: "Magic", group: "5th Boys COMP", starts: "09:00", gym: "Main Gym" }] });
+    expect(d.leagues[0].url).toMatch(/^https:\/\/docs\.google\.com\//);
+    expect(JSON.stringify(d)).not.toMatch(/4235550|Sam|Lee/);
   }, 60_000);
 
   it("a program's numbers leave out simulated teams and teams sitting out; a stand-alone team isn't an organization", async () => {

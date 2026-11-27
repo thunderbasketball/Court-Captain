@@ -26,19 +26,20 @@ export type PlayIn = {
   choices: PlayInChoice[]; // every pool of its level in that League
 };
 
-// A registered team's Leagues not ended, where it plays and where it could (its own level only).
+// A registered team's Leagues not ended, where it plays and where it could (any division, grade and level, REC or COMP).
 export async function playInChoices(q: Pick<Pool, "query">, teamId: string, now: Date): Promise<PlayIn[]> {
   const r = await q.query<{
     program: string; name: string; pool: string; by: string | null; why: string | null;
-    pools: { id: string; name: string; many: boolean; gender: string; low: number; high: number; grade: number; own: boolean }[];
+    pools: { id: string; name: string; many: boolean; gender: string; low: number; high: number; grade: number; level: string; own: boolean }[];
   }>(
     `select p.id::text as program, p.name, r.pool_id::text as pool, r.plays_in_by as by, r.plays_in_why as why,
             coalesce((select json_agg(json_build_object('id', o.id::text, 'name', o.name, 'gender', d.gender, 'low', d.grade_low, 'high', d.grade_high,
-                                                         'grade', g.grade, 'own', (d.gender = t.gender or d.gender = 'Coed') and g.grade = t.grade,
+                                                         'grade', g.grade, 'level', g.level,
+                                                         'own', (d.gender = t.gender or d.gender = 'Coed') and g.grade = t.grade and g.level = t.level,
                                                          'many', (select count(*) from scenic_pools x where x.group_id = g.id) > 1)
-                                       order by array_position(array['Coed', 'Boys', 'Girls'], d.gender), d.grade_low, g.grade, o.name)
+                                       order by array_position(array['Coed', 'Boys', 'Girls'], d.gender), d.grade_low, g.grade, g.level desc, o.name)
                         from scenic_divisions d join scenic_grade_groups g on g.division_id = d.id join scenic_pools o on o.group_id = g.id
-                       where d.program_id = p.id and g.level = t.level), '[]') as pools
+                       where d.program_id = p.id), '[]') as pools
        from scenic_registrations r join scenic_programs p on p.id = r.program_id and p.kind = 'League' and p.ends_on >= $2::date
        join scenic_teams t on t.id = r.team_id
       where r.team_id = $1 and r.removed_by is null order by p.starts_on`,
@@ -47,7 +48,7 @@ export async function playInChoices(q: Pick<Pool, "query">, teamId: string, now:
   return r.rows.map((x) => {
     const choices = x.pools.map((o) => ({
       poolId: o.id,
-      label: `${o.gender} ${gradeRange(o.low, o.high)} · ${gradeLabel(o.grade, o.grade)}${o.many ? ` · ${o.name}` : ""}`,
+      label: `${o.gender} ${gradeRange(o.low, o.high)} · ${gradeLabel(o.grade, o.grade)} ${o.level}${o.many ? ` · ${o.name}` : ""}`,
       own: o.own,
     }));
     const now = choices.find((c) => c.poolId === x.pool);
@@ -61,8 +62,8 @@ export async function playInChoices(q: Pick<Pool, "query">, teamId: string, now:
   });
 }
 
-// The League (Directors of Teams, Admins, Owners) places a registered team to play in another pool of its level in a League:
-// its own gender and grade stay. Back in its own division clears it. Who, when and why are kept; its games still to come that
+// The League (Directors of Teams, Admins, Owners) places a registered team to play in another pool of a League, REC or COMP:
+// its own gender, grade and level stay. Back in its own division clears it. Who, when and why are kept; its games still to come that
 // day are left to correct (asked about first, as for a grade change).
 export async function playIn(deps: Deps, viewer: SessionUser, teamId: unknown, programId: unknown, poolId: unknown, why: unknown, anyway: unknown): Promise<Result> {
   const no = { ok: false as const, message: "Only the League's Directors of Teams, Admins and Owners can do that." };
@@ -85,7 +86,7 @@ export async function playIn(deps: Deps, viewer: SessionUser, teamId: unknown, p
       ).rows[0];
       if (!reg) throw new Refused("It isn't registered in that League now.");
       const choice = (await playInChoices(q, teamId, now)).find((p) => p.programId === programId)?.choices.find((c) => c.poolId === poolId);
-      if (!choice) throw new Refused(`Pick a ${reg.level} pool in that League (to change its level, use Change grade or level).`);
+      if (!choice) throw new Refused("Pick a pool in that League.");
       if (!choice.own && !reason) throw new Refused("Say why it plays there (the teams' organizations see it).");
       if (reg.pool === poolId) {
         await q.query("update scenic_registrations set plays_in_why = $3 where program_id = $1 and team_id = $2 and plays_in_by is not null", [programId, teamId, reason || null]);

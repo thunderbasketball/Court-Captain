@@ -286,7 +286,7 @@ export function PlayInTeam({ teamId, leagues }: { teamId: string; leagues: PlayI
                 }}
               >
                 <p className="text-xs text-zinc-500">
-                  {l.program}: now {now?.label ?? "not placed"}. Its own gender and grade stay; only where it plays changes.
+                  {l.program}: now {now?.label ?? "not placed"}. Its own gender, grade and level stay; only where it plays changes (REC or COMP too).
                 </p>
                 <select aria-label="Plays in" className={inputCls} value={pool} onChange={(e) => (setWarn(null), setPool(e.target.value))}>
                   {l.choices.map((c) => (

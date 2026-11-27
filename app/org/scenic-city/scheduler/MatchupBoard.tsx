@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Alert, useConfirm } from "../../../client-ui";
 import { addGame, clearMatchups, createMatchups, fillTbd, saveMatchups, switchHome } from "../actions";
 import { announce } from "./board-events";
+import { useTouchDrag } from "../../../touch-drag";
 
 // group: "4th REC"; level: REC or COMP; coach: set when its coach has another team playing that day.
 export type BoardTeam = { id: string; name: string; group: string; level: string; coach?: CoachTag; need: number; division?: string; grade?: number; gender?: string };
@@ -45,8 +46,10 @@ export function MatchupBoard({
   fills,
   published,
   readOnly = false,
+  homeRate = {},
 }: {
   readOnly?: boolean; // Admins and Owners: they see it; only Directors of Scheduling change it
+  homeRate?: Record<string, { pct: number | null; canHost: boolean }>; // each team's share of home games this season, and whether it can host
   programId: string;
   day: string;
   divisionId: string;
@@ -190,7 +193,24 @@ export function MatchupBoard({
     save(list);
   };
 
+  // Phones: press and hold a team (or TBD), slide it to where it goes and lift (app/touch-drag). Moving or swapping is only by
+  // dragging; a tap just picks a team to show who it already plays.
+  const touch = useTouchDrag({
+    onStart: (data) => {
+      setPicked(null);
+      setDragging((JSON.parse(data) as Picked).team);
+    },
+    onOver: (key) => setOver(key),
+    onDrop: (data, key) => {
+      setDragging(null);
+      setOver(null);
+      if (key) act(JSON.parse(data) as Picked, key);
+    },
+    onCancel: () => setDragging(null),
+  });
+
   const dropProps = (id: string) => ({
+    "data-drop": id,
     onDragOver: (e: React.DragEvent) => {
       e.preventDefault();
       setOver(id);
@@ -207,13 +227,12 @@ export function MatchupBoard({
         // Not one of our teams.
       }
     },
-    onClick: () => picked && act(picked, id),
   });
   const ring = (id: string) =>
     over === id
       ? "bg-sky-50 ring-2 ring-scenic-navy dark:bg-sky-500/10 dark:ring-white"
-      : picked && picked.from !== id
-        ? "cursor-pointer ring-1 ring-scenic-navy/40 hover:bg-sky-50 dark:ring-white/40 dark:hover:bg-sky-500/10"
+      : dragging
+        ? "ring-1 ring-scenic-navy/40 dark:ring-white/40"
         : "ring-1 ring-zinc-950/10 dark:ring-white/15";
 
   function chip(id: string, from: string) {
@@ -231,9 +250,10 @@ export function MatchupBoard({
           setDragging(id);
         }}
         onDragEnd={() => setDragging(null)}
+        {...(locked(id) || readOnly ? {} : touch.source(JSON.stringify({ team: id, from }), t?.name ?? "Team"))}
         onClick={(e) => {
           e.stopPropagation();
-          if (picked && picked.from !== from) return act(picked, from); // tap a team to swap with it
+          if (touch.justDropped()) return;
           if (locked(id)) return;
           setPicked(on ? null : { team: id, from });
         }}
@@ -262,6 +282,12 @@ export function MatchupBoard({
             </span>
           )}
         </span>
+        {/* Game Days it already played an extra game (filled in for a TBD). */}
+        {id && fills[id]?.length > 0 && (
+          <span className={`block text-[11px] font-semibold ${on || dragging === id ? "text-violet-200" : "text-violet-700 dark:text-violet-300"}`}>
+            Extra game: {fills[id].map(shortDay).join(", ")}
+          </span>
+        )}
       </button>
     );
   }
@@ -366,11 +392,12 @@ export function MatchupBoard({
 
   return (
     <div className="space-y-3">
+      {touch.ghost}
       {published.length > 0 && teams.some((t) => locked(t.id)) && (
         <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">🔒 {published.join(" and ")} published: those games stay as they are until you unpublish them.</p>
       )}
       <p className="text-xs text-zinc-500">
-        Drag a team to change a matchup (or tap it, then tap where it goes); each change is saved at once and shows on the Grid. Drop on a team to swap them; on the other side of its own game (its opponent or TBD) to switch home and away. While you drag, teams it
+        Tap a team to see who it already plays; drag it to change a matchup (on a phone, press and hold, then slide). Each change is saved at once and shows on the Grid. Drop on a team to swap them; on the other side of its own game (its opponent or TBD) to switch home and away. While you drag, teams it
         already plays light up: <span className="font-semibold text-amber-700 dark:text-amber-300">amber</span> on another Game
         Day, <span className="font-semibold text-red-600 dark:text-red-400">red</span> today.
       </p>
@@ -479,14 +506,31 @@ export function MatchupBoard({
                             )}
                           </span>
                         )}
-                        {g.home === side && (
-                          <span
-                            title="Home team"
-                            className="pointer-events-none absolute -top-1.5 -right-1 rounded-full bg-emerald-600 px-1.5 text-[10px] leading-4 font-bold text-white"
-                          >
-                            H
-                          </span>
-                        )}
+                        {/* Home: its share of home games this season ("66% H"). Away and home in under 25% of its games though it
+                            can host: the same, in red. */}
+                        {(() => {
+                          const r = who ? homeRate[who] : undefined;
+                          const pct = r?.canHost ? (r.pct ?? null) : null; // no home gym for it: no share to show
+                          if (g.home === side)
+                            return (
+                              <span
+                                title={pct === null ? "Home team" : `Home team: home in ${pct}% of its games this season`}
+                                className="pointer-events-none absolute -top-1.5 -right-1 rounded-full bg-emerald-600 px-1.5 text-[10px] leading-4 font-bold text-white"
+                              >
+                                {pct === null ? "H" : `${pct}% H`}
+                              </span>
+                            );
+                          if (g.home && who && r?.canHost && pct !== null && pct < 25)
+                            return (
+                              <span
+                                title={`Away, and home in only ${pct}% of its games this season`}
+                                className="pointer-events-none absolute -top-1.5 -right-1 rounded-full bg-red-600 px-1.5 text-[10px] leading-4 font-bold text-white"
+                              >
+                                {pct}% H
+                              </span>
+                            );
+                          return null;
+                        })()}
                       </div>
                     </div>
                   );
@@ -557,15 +601,13 @@ export function MatchupBoard({
           Sandbox
           <span className="text-xs font-normal text-zinc-500">Teams not in a matchup</span>
         </h4>
-        {/* TBD: drag (or tap) it into the New game box for a game across levels, grades or divisions. */}
+        {/* TBD: drag it into the New game box for a game across levels, grades or divisions. */}
         <button
           type="button"
           draggable={!readOnly}
           onDragStart={(e) => e.dataTransfer.setData("text/plain", JSON.stringify({ team: TBD, from: "sandbox" }))}
-          onClick={(e) => {
-            e.stopPropagation();
-            setPicked(picked?.team === TBD ? null : { team: TBD, from: "sandbox" });
-          }}
+          {...(readOnly ? {} : touch.source(JSON.stringify({ team: TBD, from: "sandbox" }), "TBD"))}
+          onClick={(e) => e.stopPropagation()}
           className={`mb-1.5 cursor-grab rounded-md border border-dashed px-3 py-1 text-sm font-semibold active:cursor-grabbing ${picked?.team === TBD ? "border-scenic-navy bg-scenic-navy text-white" : "border-zinc-400 bg-white text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300"}`}
         >
           TBD

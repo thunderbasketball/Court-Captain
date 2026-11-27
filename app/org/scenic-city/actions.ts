@@ -107,6 +107,9 @@ export async function setProgramLogo(id: string, form: FormData) {
   }, "programs");
 }
 // A League's rules PDF (checked again in lib/scenic-programs: Directors of Programs, a real PDF, 4 MB at most).
+export async function setProgramRulesUrl(id: string, url: string) {
+  return guarded((u) => programs.setProgramRulesUrl(deps, u, id, url), "programs");
+}
 export async function setProgramRules(id: string, form: FormData) {
   return guarded(async (u) => {
     const f = form.get("rules");
