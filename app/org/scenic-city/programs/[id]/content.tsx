@@ -211,8 +211,10 @@ export async function ProgramContent({
               logo={p.logo}
               teams={p.teams}
               rules={
-                (await db.query<{ name: string | null; url: string | null }>(
-                  "select case when rules is not null then coalesce(rules_name, 'Rules.pdf') end as name, rules_url as url from scenic_programs where id = $1",
+                (await db.query<{ name: string | null; url: string | null; page: string | null }>(
+                  `select case when rules is not null then coalesce(rules_name, 'Rules.pdf') end as name, rules_url as url,
+                          case when rules_md is not null then to_char(rules_md_at at time zone 'America/New_York', 'Mon FMDD, FMHH12:MI AM') || ' by ' || rules_md_by end as page
+                     from scenic_programs where id = $1`,
                   [p.id],
                 )).rows[0] ?? null
               }

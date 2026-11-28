@@ -429,9 +429,15 @@ export default async function AppHeader({
           </div>
         </div>
 
-        {orgChips.length > 1 && (
-          <nav aria-label="Switch role" className="mx-auto max-w-3xl lg:max-w-6xl">
-            <div className="flex items-center gap-2 overflow-x-auto px-4 pb-3 [scrollbar-width:none]">
+        {/* The row under it: your name (My dashboard) with your role chips beside it (they scroll sideways when there are
+          many) on the left; Check-in, Chat, Alerts, the gear and 🔍 search on the right. */}
+        <div className="mx-auto flex max-w-3xl lg:max-w-6xl items-center justify-between gap-3 px-4 pb-2">
+          <span className="flex min-w-0 items-center gap-2">
+            <Link href="/me" className="shrink-0 text-sm font-medium whitespace-nowrap text-zinc-600 hover:underline dark:text-zinc-300">
+              {user.firstName} {user.lastName}
+            </Link>
+            {orgChips.length > 1 && (
+              <nav aria-label="Switch role" className="flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
               {orgChips.map((c) => {
                 const on = c.key === context;
                 return (
@@ -439,7 +445,7 @@ export default async function AppHeader({
                     key={c.key}
                     href={`/switch?to=${encodeURIComponent(c.key)}`}
                     aria-current={on ? "true" : undefined}
-                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap ring-1 ring-inset transition-colors ${
+                    className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold whitespace-nowrap ring-1 ring-inset transition-colors ${
                       on
                         ? c.org === "thunder"
                           ? "bg-thunder-orange text-white ring-thunder-orange"
@@ -451,17 +457,9 @@ export default async function AppHeader({
                   </a>
                 );
               })}
-            </div>
-          </nav>
-        )}
+              </nav>
+            )}
 
-        {/* The row under it: your name (My dashboard) on the left; Check-in, Chat, Alerts, the gear and 🔍 search on
-          the right. */}
-        <div className="mx-auto flex max-w-3xl lg:max-w-6xl items-center justify-between gap-3 px-4 pb-2">
-          <span className="flex min-w-0 items-center gap-2">
-            <Link href="/me" className="min-w-0 truncate text-sm font-medium text-zinc-600 hover:underline dark:text-zinc-300">
-              {user.firstName} {user.lastName}
-            </Link>
             {schedulerView && (
               <Link href="/org/scenic-city/scheduler-view" className="shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold text-thunder-blue ring-1 ring-thunder-blue/30 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10">
                 Scheduler View

@@ -67,6 +67,8 @@ export type PartnerSummary = {
   registersTeams: boolean;
   approved: boolean;
   org: string | null; // set when the partner is an organization on CourtCaptain (e.g. Thunder), approved through a hosting request
+  homeId: string | null; // plays its home games at this other partner's gyms (null: its own)
+  homeName: string | null;
   contacts: { id: string; name: string }[]; // by last name
   gyms: number;
   courts: number;
@@ -81,6 +83,7 @@ export async function listPartners(
   const isDirector = asDirector && (await isScenicFacilities(deps.pool, viewer.coachId));
   const r = await deps.pool.query<PartnerSummary>(
     `select p.id::text, p.name, p.kind, p.hosts_games as "hostsGames", p.registers_teams as "registersTeams", p.approved, p.org_slug as org,
+            p.home_partner_id::text as "homeId", (select h.name from partners h where h.id = p.home_partner_id) as "homeName",
             coalesce((select json_agg(json_build_object('id', u.coach_id, 'name', u.first_name || ' ' || u.last_name)
                                 order by lower(u.last_name), lower(u.first_name))
                       from partner_contacts c join users u on u.coach_id = c.coach_id where c.partner_id = p.id), '[]') as contacts,
@@ -104,6 +107,7 @@ export type PartnerDetail = PartnerSummary & {
   canEditPartner: boolean; // Director: name, type, approval, contacts
   canEditGyms: boolean; // Director or contact: gyms and courts
   canEnterHours: boolean; // contact only: gym availability
+  hostOptions: { id: string; name: string }[]; // Directors: the approved hosting partners it could play its home games at
   managedBy: string | null; // an organization partner's gyms and availability come from its own Facilities (e.g. "Thunder Basketball")
   createdBy: string;
 };
@@ -134,12 +138,14 @@ export async function getPartner(deps: Deps, viewer: SessionUser, id: unknown, a
     canEditPartner: isDirector,
     canEditGyms: !org && (isDirector || contact),
     canEnterHours: !org && contact,
+    hostOptions: isDirector ? partners.filter((x) => x.id !== id && x.approved && x.hostsGames).map((x) => ({ id: x.id, name: x.name })) : [],
     managedBy: org ? p.name : null,
     createdBy: extra.rows[0].created_by,
   };
 }
 
-export type PartnerInput = { name: unknown; kind: unknown; hostsGames: unknown; registersTeams: unknown; approved: unknown };
+// homeId: the hosting partner whose gyms it plays its home games at (null: its own; left out: unchanged).
+export type PartnerInput = { name: unknown; kind: unknown; hostsGames: unknown; registersTeams: unknown; approved: unknown; homeId?: unknown };
 
 // Directors: add a partner (id null) or edit one.
 export async function savePartner(
@@ -155,6 +161,8 @@ export async function savePartner(
   const registers = input.registersTeams === true;
   if (!hosts && !registers) return { ok: false, message: "Choose Hosting games, Registering teams, or both." };
   if (id !== null && !isId(id)) return { ok: false, message: "That partner no longer exists." };
+  const home = input.homeId;
+  if (home !== undefined && home !== null && (!isId(home) || home === id)) return { ok: false, message: "Choose another hosting partner for its home games." };
   return run(() =>
     withTx(deps.pool, async (q) => {
       if (!(await isScenicFacilities(q, viewer.coachId))) throw new PartnerError(directorOnly);
@@ -163,10 +171,15 @@ export async function savePartner(
         id,
       ]);
       if (clash.rows[0]) throw new PartnerError(`There's already a partner named ${name}.`);
+      if (home) {
+        const h = await q.query("select 1 from partners where id = $1 and approved and hosts_games", [home]);
+        if (!h.rows[0]) throw new PartnerError("Its home games can only be at an approved partner that hosts games.");
+      }
       if (id === null) {
         const r = await q.query<{ id: string }>(
-          `insert into partners (name, kind, hosts_games, registers_teams, approved, created_by) values ($1, $2, $3, $4, $5, $6) returning id::text`,
-          [name, input.kind, hosts, registers, input.approved !== false, by(viewer)],
+          `insert into partners (name, kind, hosts_games, registers_teams, approved, created_by, home_partner_id, home_partner_by, home_partner_at)
+           values ($1, $2, $3, $4, $5, $6, $7, case when $7::bigint is not null then $6 end, case when $7::bigint is not null then now() end) returning id::text`,
+          [name, input.kind, hosts, registers, input.approved !== false, by(viewer), home ?? null],
         );
         return { id: r.rows[0].id };
       }
@@ -175,6 +188,12 @@ export async function savePartner(
         [id, name, input.kind, hosts, registers, input.approved === true],
       );
       if (!r.rowCount) throw new PartnerError("That partner no longer exists.");
+      if (home !== undefined)
+        await q.query(
+          `update partners set home_partner_id = $2, home_partner_by = $3, home_partner_at = now()
+            where id = $1 and home_partner_id is distinct from $2::bigint`,
+          [id, home, by(viewer)],
+        );
       return { id };
     }),
   );

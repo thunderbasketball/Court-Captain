@@ -13,6 +13,7 @@ import NotOnTeamBoard from "./org/thunder/players/NotOnTeamBoard";
 import { AssignerForm } from "./DirectorTools";
 import { ConflictGroups } from "./org/scenic-city/programs/RosterConflicts";
 import CoachUseTile from "./CoachUseTile";
+import CoachNudge from "./CoachNudge";
 import OurConflicts from "./OurConflicts";
 import { CorrectList } from "./org/scenic-city/scheduler/GamesToCorrect";
 import { allowedCount, openCount } from "@/lib/roster-conflicts";
@@ -65,7 +66,9 @@ export default function OrgMetrics({
   now,
   roster = false,
   canAct = false,
+  org,
 }: {
+  org?: string; // its slug: the cards' reminders to coaches
   m: Metrics;
   visits: Record<VisitRange, VisitStats> | null;
   base: string;
@@ -109,8 +112,17 @@ export default function OrgMetrics({
 
   return (
     <section aria-label="Metrics" className="space-y-2">
-      {m.coachUse && <CoachUseTile use={m.coachUse} />}
-      {m.rosters && <CoachUseTile use={m.rosters} label="of rosters complete" note="complete first. Complete: players, each with a birthdate and number, no number twice." />}
+      {m.coachUse && (
+        <CoachUseTile use={m.coachUse} action={org && canAct && <CoachNudge org={org} kind="use" count={m.coachUse.total - m.coachUse.using} />} />
+      )}
+      {m.rosters && (
+        <CoachUseTile
+          use={m.rosters}
+          label="of rosters complete"
+          note="complete first. Complete: players, each with a birthdate and number, no number twice."
+          action={org && canAct && <CoachNudge org={org} kind="rosters" count={m.rosters.total - m.rosters.using} />}
+        />
+      )}
       {m.registrations && (
         <SubCard title="Registrations" count={m.registrations.total}>
           <p className="mb-2 text-xs text-zinc-500">
@@ -420,5 +432,5 @@ export async function OrgMetricsWithVisits({
   ...props
 }: Omit<Parameters<typeof OrgMetrics>[0], "visits"> & { user: SessionUser; org: string }) {
   const visits = await visitStats({ pool: db, now: () => props.now }, user, org);
-  return <OrgMetrics {...props} visits={visits} />;
+  return <OrgMetrics {...props} org={org} visits={visits} />;
 }

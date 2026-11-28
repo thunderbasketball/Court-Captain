@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { CoachUse } from "@/lib/coach-use";
 
 const tone = (percent: number) =>
@@ -21,10 +22,12 @@ export default function CoachUseTile({
   use,
   label = "of coaches used the app in the last 7 days",
   note = "using first. A coach on several counts in each.",
+  action,
 }: {
   use: CoachUse;
   label?: string;
   note?: string;
+  action?: ReactNode; // at the top when opened (remind the coaches)
 }) {
   return (
     <details className="group rounded-xl bg-white ring-1 ring-zinc-950/10 dark:bg-zinc-900 dark:ring-white/10">
@@ -44,6 +47,7 @@ export default function CoachUseTile({
         </span>
       </summary>
       <div className="border-t border-zinc-950/5 px-4 py-2.5 dark:border-white/10">
+        {action}
         <p className="mb-2 text-xs text-zinc-500">By {use.by}, fewest {note}</p>
         <ul className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
           {use.parts.map((p) => (

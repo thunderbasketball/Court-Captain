@@ -36,6 +36,7 @@ import AppHeader from "../../../../AppHeader";
 import SubCard from "../../../../SubCard";
 import { PracticeContent } from "../../practice/content";
 import SharedTeamPage, { type TeamStaffRow } from "../../../../TeamPage";
+import { teamLogo } from "@/lib/team-logos";
 import { Chip, EmailLink, PhoneLink } from "../../../../ui";
 import AvailablePlayers from "./AvailablePlayers";
 import UniformsBoard from "./UniformsBoard";
@@ -218,10 +219,12 @@ async function TeamBody({
   // Each player's uniform number (with Uniforms), shown before their name on the Roster.
   const number = new Map((uniforms ?? []).flatMap((u) => (u.number ? [[u.registrantId, u.number] as const] : [])));
 
+  const logo = await teamLogo(db, user, "thunder", String(team.id));
   return (
     <>
       <SharedTeamPage
         org="thunder"
+        logo={{ url: logo.logo, kind: "thunder", id: String(team.id), canSet: logo.canSet }}
         embedded={embedded}
         back={asDirector && !embedded ? "/org/thunder?open=teams#teams" : null}
         opened={opened}

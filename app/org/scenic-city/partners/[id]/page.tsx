@@ -53,6 +53,7 @@ async function Partner({ params }: { params: PageProps<"/org/scenic-city/partner
         </div>
         <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
           {!p.approved && <Chip tone="amber">Not approved</Chip>}
+          {p.homeName && <Chip tone="blue">Home games at {p.homeName}</Chip>}
           {p.managedBy ? (
             <span className="text-zinc-500">
               A hosting site on CourtCaptain: {p.managedBy}&apos;s Admins and Directors of Facilities manage it (no contacts).

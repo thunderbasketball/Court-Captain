@@ -7,7 +7,16 @@ import { savePartner } from "../actions";
 import { Alert, CloseButton, Toast, dialogCls } from "../../../client-ui";
 import { fieldLabel, inputCls, pillCls, primaryBtn } from "../../../ui";
 
-type Partner = { id: string; name: string; kind: PartnerKind; hostsGames: boolean; registersTeams: boolean; approved: boolean };
+type Partner = {
+  id: string;
+  name: string;
+  kind: PartnerKind;
+  hostsGames: boolean;
+  registersTeams: boolean;
+  approved: boolean;
+  homeId?: string | null;
+  hostOptions?: { id: string; name: string }[];
+};
 
 // Scenic City Directors: "+ Add partner" (no partner given) or "Edit" one.
 export function PartnerButton({ partner }: { partner?: Partner }) {
@@ -20,6 +29,7 @@ export function PartnerButton({ partner }: { partner?: Partner }) {
     hostsGames: partner?.hostsGames ?? false,
     registersTeams: partner?.registersTeams ?? false,
     approved: partner?.approved ?? true,
+    homeId: partner?.homeId ?? null,
   };
   const [f, setF] = useState(initial);
   const [error, setError] = useState<string | null>(null);
@@ -108,6 +118,20 @@ export function PartnerButton({ partner }: { partner?: Partner }) {
               </button>
             </div>
           </div>
+          {/* Its teams' home games at another partner's gyms (e.g. a youth association at its high school's gym). */}
+          {partner && f.registersTeams && !!partner.hostOptions?.length && (
+            <label className="block">
+              <span className={fieldLabel}>Home games at</span>
+              <select className={inputCls} value={f.homeId ?? ""} onChange={(e) => setF({ ...f, homeId: e.target.value || null })}>
+                <option value="">Its own gyms</option>
+                {partner.hostOptions.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {h.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="flex items-center gap-3">
             <input
               type="checkbox"

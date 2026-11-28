@@ -9,10 +9,10 @@ export const USE_DAYS = 7;
 export type CoachUsePart = { name: string; using: number; total: number; percent: number };
 export type CoachUse = { using: number; total: number; percent: number; by: "organization" | "team" | "grade"; parts: CoachUsePart[] };
 
-// Each coach with the part they count in (a coach can count in several).
-const COACHES: Record<string, string> = {
-  thunder: "select s.coach_id, t.name as part from team_staff s join teams t on t.id = s.team_id where s.role in ('HeadCoach', 'AsstCoach')",
-  "scenic-city": `select x.coach_id, coalesce(pa.name, 'Solo coaches') as part
+// Each coach with the part they count in (a coach can count in several), and the team (its name) that puts them there.
+export const COACHES: Record<string, string> = {
+  thunder: "select s.coach_id, t.name as part, t.name as team, t.id::text as team_id from team_staff s join teams t on t.id = s.team_id where s.role in ('HeadCoach', 'AsstCoach')",
+  "scenic-city": `select x.coach_id, coalesce(pa.name, 'Solo coaches') as part, t.name as team, t.id::text as team_id
       from scenic_registrations r join scenic_programs p on p.id = r.program_id and p.org = $1 and p.ends_on >= $3::date
       join scenic_teams t on t.id = r.team_id
       left join partners pa on pa.id = t.partner_id
@@ -22,8 +22,8 @@ const COACHES: Record<string, string> = {
         union select c.coach_id from org_team_coaches c where c.team_id = t.org_team_id and c.role in ('HeadCoach', 'AsstCoach')
       ) x where r.removed_by is null`,
 };
-const ORG_COACHES =
-  "select c.coach_id, t.name as part from org_team_coaches c join org_teams t on t.id = c.team_id where t.org = $1 and t.archived_at is null and c.role in ('HeadCoach', 'AsstCoach')";
+export const ORG_COACHES =
+  "select c.coach_id, t.name as part, t.name as team, t.id::text as team_id from org_team_coaches c join org_teams t on t.id = c.team_id where t.org = $1 and t.archived_at is null and c.role in ('HeadCoach', 'AsstCoach')";
 const pct = (using: number, total: number) => Math.round((using * 100) / total);
 
 // Null when it has no coaches with logins.

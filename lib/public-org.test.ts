@@ -141,7 +141,7 @@ describe("a host's public page (no login)", () => {
     expect(await orgGameDays(db.pool, "nobody", now)).toBeNull(); // no teams, no games at its gyms
     await play("Main Gym", "2026-12-05");
     let d = (await orgGameDays(db.pool, "thunder", now))!;
-    expect(d.leagues).toEqual([{ id: prog, name: "Winter", rules: null, url: null }]);
+    expect(d.leagues).toEqual([{ id: prog, name: "Winter", rules: null, url: null, page: false }]);
     expect(d.days[0]).toMatchObject({ day: "2026-12-05", gyms: [{ name: "Main Gym", games: 1 }], atGyms: [], ours: [], waiting: 1 });
     await db.pool.query("insert into scenic_published_schedules (program_id, day, level, published_by, published_at) values ($1, '2026-12-05', 'COMP', 't', now())", [prog]);
     await db.pool.query("update scenic_programs set rules_url = 'https://docs.google.com/document/d/1_47RvmPehQM5Z2ZfmOcf11vvTg9j9jaLe93Bv2c11IA/edit' where id = $1", [prog]);

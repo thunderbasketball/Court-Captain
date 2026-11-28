@@ -24,6 +24,7 @@ import { LeagueGames, ScheduleList } from "../../../../LeagueGames";
 import { getOrgTeam } from "@/lib/org-teams";
 import AppHeader from "../../../../AppHeader";
 import TeamPage, { type TeamStaffRow } from "../../../../TeamPage";
+import { teamLogo } from "@/lib/team-logos";
 import { DateChips, ProgramButton, RegisterLeagueButton } from "../../../../leagues/LeagueButtons";
 import { easternDate } from "@/lib/time";
 import { HeadCoachEmailButton, StaffEdit, WaitingCoachButton } from "../../../../CoachContactTools";
@@ -282,6 +283,7 @@ async function TeamBody({
   ))}
 </ul>
   );
+  const logo = await teamLogo(db, user, "org", String(t.id));
   return (
     <>
       <Suspense fallback={null}>
@@ -289,6 +291,7 @@ async function TeamBody({
       </Suspense>
       <TeamPage
         org={slug}
+        logo={{ url: logo.logo, kind: "org", id: String(t.id), canSet: logo.canSet }}
         embedded={embedded}
         back={canManage && !embedded ? `/org/${slug}?open=teams#teams` : null}
         opened={opened}

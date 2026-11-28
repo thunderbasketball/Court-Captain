@@ -110,6 +110,10 @@ export async function setProgramLogo(id: string, form: FormData) {
 export async function setProgramRulesUrl(id: string, url: string) {
   return guarded((u) => programs.setProgramRulesUrl(deps, u, id, url), "programs");
 }
+// A League's rules page: read its Google Doc again (Directors of Programs, checked in lib/scenic-programs).
+export async function refreshProgramRules(id: string) {
+  return guarded((u) => programs.refreshProgramRules(deps, u, id), "programs");
+}
 export async function setProgramRules(id: string, form: FormData) {
   return guarded(async (u) => {
     const f = form.get("rules");

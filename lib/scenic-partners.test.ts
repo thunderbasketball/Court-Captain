@@ -127,6 +127,20 @@ describe("Scenic City partners, gyms, courts and game days", () => {
       approved: true,
       hostsGames: true,
     });
+
+    // Home games at another hosting partner's gyms (a youth association at its high school): set, shown, cleared.
+    const red = (r as { id: string }).id;
+    expect(await savePartner(deps(), dee, other, { ...input, name: "Other Club", homeId: other })).toMatchObject({ ok: false });
+    expect(await savePartner(deps(), dee, other, { ...input, name: "Other Club", homeId: red })).toEqual({ ok: true, id: other });
+    expect((await getPartner(deps(), dee, other))).toMatchObject({ homeId: red, homeName: "Red Bank HS" });
+    expect((await getPartner(deps(), dee, other))?.hostOptions.map((h) => h.name)).not.toContain("Other Club");
+    await db.pool.query("update partners set approved = false where id = $1", [baylor]);
+    expect(await savePartner(deps(), dee, other, { ...input, name: "Other Club", homeId: baylor })).toMatchObject({ ok: false, message: /approved partner/ });
+    await db.pool.query("update partners set approved = true where id = $1", [baylor]);
+    expect(await savePartner(deps(), dee, other, { ...input, name: "Other Club" })).toEqual({ ok: true, id: other }); // left out: unchanged
+    expect((await getPartner(deps(), dee, other))?.homeId).toBe(red);
+    expect(await savePartner(deps(), dee, other, { ...input, name: "Other Club", homeId: null })).toEqual({ ok: true, id: other });
+    expect((await getPartner(deps(), dee, other))?.homeId).toBeNull();
   });
 
   it("a contact manages their partner's gyms and courts, in order; others can't", async () => {

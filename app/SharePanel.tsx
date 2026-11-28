@@ -127,6 +127,15 @@ export default function SharePanel({
     );
     window.open("https://www.instagram.com/", "_blank", "noopener,noreferrer");
   };
+  // Facebook: the phone's share sheet (pick Facebook); on a computer, the picture saved and the caption copied, then
+  // Facebook opened to post it as a photo (a link post would show only a small preview, and none from a test site).
+  const facebook = async () => {
+    if (sheet && file) return share();
+    save.current?.click();
+    await copy();
+    setNote("Picture saved and caption copied. In Facebook, tap Photo/video, add the picture, then paste the caption.");
+    window.open("https://www.facebook.com/", "_blank", "noopener,noreferrer");
+  };
   const link = () => encodeURIComponent(`${window.location.origin}${at}`);
   const go = (url: string) => window.open(url, "_blank", "noopener,noreferrer");
   return (
@@ -139,7 +148,7 @@ export default function SharePanel({
         height={1080}
         onLoad={load}
         onError={() => setNote("The picture didn't load. Please try again.")}
-        className="aspect-square w-full rounded-lg bg-zinc-200 dark:bg-zinc-800"
+        className="h-auto w-full rounded-lg bg-zinc-200 dark:bg-zinc-800"
       />
       <span className="mt-2 flex flex-wrap gap-2">
         {sheet && (
@@ -177,9 +186,7 @@ export default function SharePanel({
         </button>
         <button
           type="button"
-          onClick={() =>
-            go(`https://www.facebook.com/sharer/sharer.php?u=${link()}`)
-          }
+          onClick={facebook}
           aria-label="Facebook"
           title="Facebook"
           className={`${icon} text-[#1877f2]`}

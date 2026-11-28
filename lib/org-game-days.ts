@@ -25,8 +25,8 @@ export type GameDay = {
   ours: DayGame[]; // its teams' published games, by grade then time
   waiting: number; // its teams' or its gyms' games not published yet
 };
-// rules: its PDF's name; url: its rules link (a Google Doc).
-export type OrgGameDays = { leagues: { id: string; name: string; rules: string | null; url: string | null }[]; days: GameDay[] };
+// rules: its PDF's name; url: its rules link (a Google Doc); page: its rules page in the app (/rules/<id>, with a search).
+export type OrgGameDays = { leagues: { id: string; name: string; rules: string | null; url: string | null; page: boolean }[]; days: GameDay[] };
 
 // Null when it has no teams in a League and hosts no games.
 export async function orgGameDays(q: Pick<Queryable, "query">, org: string, now: Date): Promise<OrgGameDays | null> {
@@ -55,8 +55,9 @@ export async function orgGameDays(q: Pick<Queryable, "query">, org: string, now:
     [today, org],
   );
   // Its Leagues: the ones its teams are registered in (not ended), and the ones with games at its gyms.
-  const leagues = await q.query<{ id: string; name: string; rules: string | null; url: string | null; day: string | null }>(
-    `select p.id::text, p.name, case when p.rules is not null then coalesce(p.rules_name, 'Rules.pdf') end as rules, p.rules_url as url, gd.day::text as day
+  const leagues = await q.query<{ id: string; name: string; rules: string | null; url: string | null; page: boolean; day: string | null }>(
+    `select p.id::text, p.name, case when p.rules is not null then coalesce(p.rules_name, 'Rules.pdf') end as rules, p.rules_url as url,
+            p.rules_md is not null as page, gd.day::text as day
        from scenic_programs p left join program_game_days pg on pg.program_id = p.id and pg.kind = 'game'
        left join game_days gd on gd.id = pg.game_day_id and gd.day >= $1::date
       where p.kind = 'League' and p.ends_on >= $1::date
@@ -102,6 +103,6 @@ export async function orgGameDays(q: Pick<Queryable, "query">, org: string, now:
     };
   });
   const seen = new Map<string, OrgGameDays["leagues"][number]>();
-  for (const l of leagues.rows) seen.set(l.id, { id: l.id, name: l.name, rules: l.rules, url: l.url });
+  for (const l of leagues.rows) seen.set(l.id, { id: l.id, name: l.name, rules: l.rules, url: l.url, page: l.page });
   return { leagues: [...seen.values()], days };
 }

@@ -23,6 +23,7 @@ import {
   setProgramLogo,
   setProgramRules,
   setProgramRulesUrl,
+  refreshProgramRules,
   setTeamOff,
   withdrawTeam,
 } from "../actions";
@@ -422,7 +423,7 @@ export function ProgramLogoEditor({ id, logo }: { id: string; logo: string | nul
 
 // A League's rules PDF (Directors of Programs): upload or replace it, or remove it. Hosting organizations open it from
 // their Home's Documents card.
-export function ProgramRulesEditor({ id, rules }: { id: string; rules: { name: string | null; url: string | null } | null }) {
+export function ProgramRulesEditor({ id, rules }: { id: string; rules: { name: string | null; url: string | null; page?: string | null } | null }) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -473,22 +474,35 @@ export function ProgramRulesEditor({ id, rules }: { id: string; rules: { name: s
           Remove rules
         </button>
       )}
-      <RulesLink id={id} url={rules?.url ?? null} />
+      <RulesLink id={id} url={rules?.url ?? null} page={rules?.page ?? null} />
     </form>
   );
 }
 
 // Or a link to the rules (a Google Doc shared to anyone with the link shows inside pages and prints as a PDF).
-function RulesLink({ id, url }: { id: string; url: string | null }) {
+function RulesLink({ id, url, page }: { id: string; url: string | null; page: string | null }) {
   const router = useRouter();
   const [value, setValue] = useState(url ?? "");
   const [busy, start] = useTransition();
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  // Saving a Google Doc link reads it into the rules page too.
   const save = (v: string) =>
     start(async () => {
       const r = await setProgramRulesUrl(id, v);
-      setNote(r.ok ? { ok: true, text: v ? "Link saved." : "Link removed." } : { ok: false, text: r.message });
-      if (r.ok) router.refresh();
+      if (!r.ok) return setNote({ ok: false, text: r.message });
+      if (!v) {
+        setNote({ ok: true, text: "Link removed." });
+        return router.refresh();
+      }
+      const f = await refreshProgramRules(id);
+      setNote(f.ok ? { ok: true, text: `Link saved. The rules page has ${f.sections} sections.` } : { ok: false, text: `Link saved, but the rules page wasn't updated: ${f.message}` });
+      router.refresh();
+    });
+  const refresh = () =>
+    start(async () => {
+      const f = await refreshProgramRules(id);
+      setNote(f.ok ? { ok: true, text: `Rules page updated (${f.sections} sections).` } : { ok: false, text: f.message });
+      if (f.ok) router.refresh();
     });
   return (
     <div className="space-y-1.5 border-t border-zinc-200 pt-3 dark:border-white/10">
@@ -504,6 +518,20 @@ function RulesLink({ id, url }: { id: string; url: string | null }) {
           </button>
         )}
       </div>
+      {/* The rules page (/rules/<program>, with a search) is the Doc's text as of its last refresh. */}
+      {url && (
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <button type="button" disabled={busy} onClick={refresh} className="font-medium text-thunder-blue hover:underline dark:text-blue-400">
+            ↻ Update the rules page from the Doc
+          </button>
+          {page && (
+            <a href={`/rules/${id}`} target="_blank" rel="noopener" className="font-medium text-thunder-blue hover:underline dark:text-blue-400">
+              Open the rules page
+            </a>
+          )}
+        </div>
+      )}
+      {page && <p className="text-xs text-zinc-500">Rules page last updated {page}. Update it after changing the Doc.</p>}
       {note && <Alert tone={note.ok ? "green" : "red"}>{note.text}</Alert>}
     </div>
   );
@@ -1320,7 +1348,7 @@ export function ProgramSettings({
   children,
 }: {
   children?: ReactNode; // more setup cards from the page (Divisions, Game & Bracket Days)
-  rules?: { name: string | null; url: string | null } | null; // a League's rules: its PDF's name and its link
+  rules?: { name: string | null; url: string | null; page?: string | null } | null; // a League's rules: its PDF's name, its link, when its rules page was last updated
   program: ProgramFields;
   logo: string | null;
   teams: number;

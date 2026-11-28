@@ -31,7 +31,7 @@ export default function ShareGallery({ org, items }: { org: string; items: Galle
                   loading="lazy"
                   width={1080}
                   height={1080}
-                  className={`aspect-square w-full rounded-lg bg-zinc-200 dark:bg-zinc-800 ${picked === i.key ? "ring-4 ring-thunder-blue" : "ring-1 ring-zinc-950/10"}`}
+                  className={`aspect-square w-full rounded-lg bg-zinc-200 object-cover object-top dark:bg-zinc-800 ${picked === i.key ? "ring-4 ring-thunder-blue" : "ring-1 ring-zinc-950/10"}`}
                 />
                 <span className="mt-1 block text-sm font-medium">{i.label}</span>
               </button>

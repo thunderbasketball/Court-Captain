@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { gameCard, type GameSide } from "@/lib/game-share";
 import { orgInfo, type Org } from "@/lib/org-registry";
-import { ACCENT, LogoTile, column, picture, pictureLogo, sizeFor } from "@/lib/picture";
+import { ACCENT, LogoTile, column, picture, pictureLogo, sizeFor, teamPictureLogo } from "@/lib/picture";
 import { publicly } from "@/lib/public-cache";
 import { timeLabel } from "@/lib/time";
 
@@ -64,9 +64,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   );
 }
 
-// A team's organization logo (its letter on a tile when it has no organization in the app, or no logo).
+// A team's logo on its tile: its own, else its organization's (its letter when it has no organization in the app, or no logo).
+// Its own team logo first, when it has one.
 async function teamLogo(t: GameSide, league: Org): Promise<{ logo: string | null; o: Org }> {
   const own = t.org ? await orgInfo(db, t.org) : null;
+  const mine = t.logo ? await teamPictureLogo(t.logo) : null;
+  if (mine) return { logo: mine, o: own ?? { ...league, name: t.from || t.name } };
   if (own) return { logo: await pictureLogo(own), o: own };
   return { logo: null, o: { ...league, name: t.from || t.name } };
 }

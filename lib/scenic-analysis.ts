@@ -137,6 +137,8 @@ export async function scheduleAnalysis(deps: Deps, viewer: SessionUser): Promise
       const seenCourt = new Set<string>();
       for (const g of allGyms) {
         const o = org(g.hostId, g.host);
+        // Teams that play their home games at another partner's gyms (EHYA at East Hamilton High): one line, named for both.
+        if (o.name !== g.host && !o.name.endsWith(` at ${g.host}`)) o.name = `${o.name} at ${g.host}`;
         const opens = g.courts.reduce((x, c) => (c.starts < x ? c.starts : x), "23:59");
         const closes = g.courts.reduce((x, c) => (c.ends > x ? c.ends : x), "00:00");
         if (!seenGym.has(g.key)) o.gyms++;

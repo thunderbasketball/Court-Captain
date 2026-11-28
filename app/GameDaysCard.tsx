@@ -41,13 +41,23 @@ export default async function GameDaysCard({ org, now }: { org: string; now: Dat
   const d = await orgGameDays(db, org, now);
   if (!d) return <p className="text-sm text-zinc-500">No League games yet: they show here once your teams are registered or your gyms host games.</p>;
   const today = easternDate(now);
-  const withRules = d.leagues.filter((l) => l.rules || l.url);
+  const withRules = d.leagues.filter((l) => l.rules || l.url || l.page);
   return (
     <div className="space-y-2">
       <SubCard title="League rules" count={withRules.length ? undefined : "not added yet"}>
         {withRules.length ? (
           <div className="space-y-3">
             {withRules.map((l) => {
+              // Its rules page in the app (with a search), when the League has one.
+              if (l.page)
+                return (
+                  <div key={l.id} className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-semibold">{l.name}</span>
+                    <a href={`/rules/${l.id}`} className="rounded-full bg-thunder-blue px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700">
+                      📖 Read and search the rules
+                    </a>
+                  </div>
+                );
               // The link (a Google Doc shows here and prints as a PDF) when there is one, else the PDF.
               const view = l.url ? rulesView(l.url) : `/program-rules/${l.id}`;
               const print = l.url ? rulesPrint(l.url) : `/program-rules/${l.id}`;

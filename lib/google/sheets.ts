@@ -45,7 +45,7 @@ type Deps = { key: ServiceAccount; fetch?: typeof fetch; now?: () => Date };
 
 const tokens = new Map<string, { token: string; expires: number }>();
 
-async function accessToken({ key, fetch: f = fetch, now = () => new Date() }: Deps, scope: string): Promise<string> {
+export async function accessToken({ key, fetch: f = fetch, now = () => new Date() }: Deps, scope: string): Promise<string> {
   const t = now().getTime();
   const cacheKey = `${key.client_email} ${scope}`;
   const cached = tokens.get(cacheKey);

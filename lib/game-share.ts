@@ -4,12 +4,14 @@
 import { PLACE_SQL } from "./scenic-games";
 import { gradeLabel } from "./scenic-teams";
 import type { Queryable } from "./sql";
+import { LEAGUE_TEAM_KEY_SQL } from "./team-logo-key";
 
 // org: its organization's slug (its logo), when it has one. lines: its name on the picture (see nameLines).
-export type GameSide = { name: string; org: string | null; from: string; lines: [string] | [string, string] };
+// logo: its own team logo's key in team_logos (lib/team-logos), drawn in place of its organization's; null when it has none.
+export type GameSide = { name: string; org: string | null; from: string; logo: string | null; lines: [string] | [string, string] };
 // A team's name on two lines: the name, then its Head Coach's last name when the name ends with it ("3G ERPR" / "Cameron");
 // else the whole name on one line.
-type Raw = { name: string; org: string | null; from: string; coach: string | null };
+type Raw = { name: string; org: string | null; from: string; logo: string | null; coach: string | null };
 export function nameLines(t: { name: string; coach: string | null }): [string] | [string, string] {
   const c = t.coach?.trim();
   const n = t.name.trim();
@@ -35,6 +37,7 @@ export async function gameCard(q: Pick<Queryable, "query">, id: unknown): Promis
   const side = (t: string) => `json_build_object('name', ${t}.name,
       'org', coalesce((select pa.org_slug from partners pa where pa.id = ${t}.partner_id), (select ot.org from org_teams ot where ot.id = ${t}.org_team_id), case when ${t}.thunder_team_id is not null then 'thunder' end),
       'from', coalesce((select pa.name from partners pa where pa.id = ${t}.partner_id), ''),
+      'logo', (select l.team_key from team_logos l where l.team_key = ${LEAGUE_TEAM_KEY_SQL(t)}),
       'coach', (select u.last_name from users u where u.coach_id = ${t}.coach_id))`;
   const r = await q.query<{
     id: string; org: string; program: string; day: string; starts: string; gym: string | null; court: string | null;

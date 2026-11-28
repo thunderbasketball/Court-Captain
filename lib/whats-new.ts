@@ -22,6 +22,82 @@ const everyoneIn = ["coach", "staff", "parent", "official", ...managers] as cons
 
 export const RELEASES: readonly Release[] = [
   {
+    version: "1.20",
+    kind: "minor",
+    date: "2026-11-28",
+    title: "League rules page with search, coach reminders, team logos, gyms on game pictures",
+    items: [
+      {
+        key: "home-games-at",
+        title: "Home games at another host's gym",
+        purpose: "A club without its own gym (East Hamilton Youth Association) gets its home games at the gym it really uses (East Hamilton High School).",
+        how: [
+          "Facilities → Hosting partners → the club → Edit, then pick the host under Home games at.",
+          "On the Scheduler Grid its home games turn green at that host's gyms.",
+          "Schedule analysis shows the club and its host on one line, without the \"no gym open\" warning.",
+        ],
+        who: ["director", "admin", "owner"],
+        needs: ["sync-scheduler"],
+      },
+      {
+        key: "coach-reminders",
+        title: "Remind coaches to use the app and finish rosters",
+        purpose: "Get every coach on the app and every roster complete before the Game Day, without writing the messages yourself.",
+        how: [
+          "Home → open \"of coaches used the app\" or \"of rosters complete\" → tap the blue Remind button.",
+          "Everyone it counts is picked (Head Coaches and Team Managers for rosters, with what each roster is missing). Untick anyone to leave them out; tap Email by a name to read theirs.",
+          "Email: each coach gets their own email, why it matters and by when (two days before the next Game Day; URGENT when it's close), copied to their team's staff and their organization's Owners, Admins and Directors of Teams. Check each one in the Send box (‹ › for the next coach). Add a note at the top if you like.",
+          "Text: one short message opens in your Messages with their numbers (19 per text), ready to send.",
+          "Who was reminded, how and by whom shows by each name.",
+        ],
+        who: ["admin", "owner"],
+      },
+      {
+        key: "rules-page",
+        title: "League rules as a page you can search",
+        purpose: "Find a rule fast on a phone at the gym, without opening a Google Doc.",
+        how: [
+          "Home → Game Days → League rules → Read and search the rules.",
+          "Type a word (overtime, press, fouls): only the sections with it show, the word highlighted.",
+          "With nothing typed, tap a section to open it, or a chip at the top to jump to it. 🖨 Print prints them all.",
+          "Directors of Programs: the page is the League's Google Doc. After changing the Doc, open the program's gear → Rules → Update the rules page from the Doc.",
+        ],
+        who: ["coach", "staff", ...managers],
+      },
+      {
+        key: "team-logo",
+        title: "Your team's own logo",
+        purpose: "Game Day pictures show your team's logo instead of your organization's.",
+        how: [
+          "Open your team's page and tap + Team logo under its name.",
+          "Choose a PNG, JPEG or WebP picture (up to 512 KB) and tap Save logo.",
+          "It shows at the top of the team's page and on its Game Day pictures. Change team logo replaces or removes it.",
+          "Head Coaches, Team Managers and the organization's Directors of Teams can set it.",
+        ],
+        who: ["coach", "staff", ...managers],
+      },
+      {
+        key: "share-games-gyms",
+        title: "Game pictures show the gym",
+        purpose: "People who see a shared schedule know where to go, not just when.",
+        how: [
+          "Share a grade's schedule, Our next games, Games at our gym or Upcoming Game Highlights.",
+          "Each game shows the first team, \"at\" the other team under it, then the gym and court, all teams the same size, with the time at the right.",
+          "Facebook on a computer: the picture is saved and its caption copied, then Facebook opens: tap Photo/video, add the picture and paste.",
+          "More than 4 games: the picture is phone-screen tall (great for Stories), in two columns past 10, so all of them fit (over 26 makes \"1 of 2\" pictures).",
+        ],
+        who: ["public", ...everyoneIn],
+      },
+      {
+        key: "chips-beside-name",
+        title: "Role chips beside your name",
+        purpose: "The header takes less room on phones.",
+        how: ["Your role and team chips (Owner, 4G Epps · Head Coach) now sit beside your name. Slide them sideways when there are many."],
+        who: [...everyoneIn],
+      },
+    ],
+  },
+  {
     version: "1.19",
     kind: "minor",
     date: "2026-11-27",

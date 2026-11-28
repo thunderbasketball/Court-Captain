@@ -1,4 +1,5 @@
 import { inName } from "@/lib/team-names";
+import TeamLogoEditor from "./TeamLogoEditor";
 import Link from "next/link";
 import { Suspense, type ReactNode } from "react";
 import TeamDoubles from "./TeamDoubles";
@@ -94,6 +95,8 @@ export default function TeamPage(p: {
   practices?: { count: number; action?: ReactNode; body: ReactNode } | null;
   playbook?: { count: number; action?: ReactNode; body: ReactNode } | null; // CourtPlaybook: its coaches' plays
   footer?: ReactNode; // Delete team (in the team's card, under Edit team)
+  // Its own logo (shown in place of its first word), and who may change it (lib/team-logos).
+  logo?: { url: string | null; kind: "thunder" | "org" | "league"; id: string; canSet: boolean };
 }) {
   // Numbers two players share (wherever the roster is kept): warned on the team's card, the Roster card and each player.
   const dups = dupNumbers(p.roster.rows.map((r) => r.number));
@@ -114,13 +117,18 @@ export default function TeamPage(p: {
       )}
       <section className={`${card} p-5`}>
         <div className="flex items-start gap-3">
-          <span
-            className={`flex size-12 shrink-0 items-center justify-center rounded-xl text-base font-bold text-white ${
-              t.gender === "Boys" ? "bg-thunder-blue" : t.gender === "Coed" ? "bg-emerald-600" : "bg-pink-600"
-            }`}
-          >
-            {t.name.split(" ")[0]}
-          </span>
+          {p.logo?.url ? (
+            // eslint-disable-next-line @next/next/no-img-element -- the team's own logo
+            <img src={p.logo.url} alt="" className="size-12 shrink-0 rounded-xl bg-white object-contain ring-1 ring-zinc-950/10" />
+          ) : (
+            <span
+              className={`flex size-12 shrink-0 items-center justify-center rounded-xl text-base font-bold text-white ${
+                t.gender === "Boys" ? "bg-thunder-blue" : t.gender === "Coed" ? "bg-emerald-600" : "bg-pink-600"
+              }`}
+            >
+              {t.name.split(" ")[0]}
+            </span>
+          )}
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-2">
               <h1 className="text-2xl font-semibold tracking-tight">
@@ -142,6 +150,7 @@ export default function TeamPage(p: {
             </Suspense>
           </div>
         </div>
+        {p.logo?.canSet && <TeamLogoEditor kind={p.logo.kind} id={p.logo.id} logo={p.logo.url} />}
         {p.edit}
         {/* Delete team sits with Edit team, in the team's own card. */}
         {p.footer && <div className="mt-2">{p.footer}</div>}

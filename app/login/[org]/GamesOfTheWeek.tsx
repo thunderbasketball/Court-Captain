@@ -6,7 +6,7 @@ import type {
   GotwGame,
   GotwTeam,
 } from "@/lib/games-of-week";
-import { GOTW_RULES, RECAP_RULES } from "@/lib/games-of-week";
+import { GOTW_RULES, RECAP_RULES } from "@/lib/games-of-week-rules";
 import { timeLabel } from "@/lib/time";
 import DirectionsLink from "../../DirectionsLink";
 import { genderBg, genderOf } from "../../ui";

@@ -88,7 +88,7 @@ describe("an organization's share pictures", () => {
       { team: "4G Epps", date: "2026-12-05", starts: "09:00", opponent: "5G Horne", home: false, final: fin(20, 30) }, // W 30-20
       { team: "4G Epps", date: "2026-12-05", starts: "10:50", opponent: "4G Simmons", home: true, final: fin(18, 22) }, // L 18-22
       { team: "3B Lindley", date: "2026-12-05", starts: "09:55", opponent: "3B Leftwich", home: true, final: { id: "2", home: null, away: null, forfeit: "away" as const, share: true } }, // W by forfeit
-      { team: "4G Epps", date: "2026-12-12", starts: "09:00", opponent: "5G Felice", home: false, final: null },
+      { team: "4G Epps", date: "2026-12-12", starts: "09:00", opponent: "5G Felice", home: false, final: null, gym: "East Hamilton High School", court: "Main" },
       { team: "3B Lindley", date: "2026-12-12", starts: null, opponent: "3B Hale", home: true, final: null },
     ];
     const gymDay = { date: "2026-12-12", games: [{ starts: "09:00", gym: "Action Church", court: "Main", group: "3rd Girls REC", home: "A", away: "B", final: null, hype: null, details: "9" }] };
@@ -102,9 +102,11 @@ describe("an organization's share pictures", () => {
     ]);
     expect(cards[1]).toMatchObject({ title: "Our next 2 games", kicker: "Saturday, December 12" });
     expect(cards[1].lines).toEqual([
-      { text: "4G Epps at 5G Felice", side: "9:00 AM" },
-      { text: "3B Lindley vs 3B Hale", side: "TBA" },
+      // Stacked in the picture: the team, "at" or "vs" the other, then the gym.
+      { text: "4G Epps at 5G Felice", side: "9:00 AM", game: { top: "4G Epps", bottom: "at 5G Felice", place: "East Hamilton High School, Main" } },
+      { text: "3B Lindley vs 3B Hale", side: "TBA", game: { top: "3B Lindley", bottom: "vs 3B Hale", place: null } },
     ]);
+    expect(cards[2].lines).toEqual([{ text: "B at A", side: "9:00 AM", game: { top: "B", bottom: "at A", place: "Action Church, Main" } }]);
     expect(cards[2]).toMatchObject({ title: "1 game at Action Church", href: "/login/thunder#gyms" });
     expect(cards[3]).toMatchObject({ big: { value: "2–1", label: "all our teams" } });
     expect(cards[3].lines).toEqual([

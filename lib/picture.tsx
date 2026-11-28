@@ -43,6 +43,15 @@ async function readLogo(org: string, path: string | null): Promise<string | null
   const bytes = await readFile(join(process.cwd(), "public/brand", file)).catch(() => null);
   return bytes ? `data:image/png;base64,${bytes.toString("base64")}` : null;
 }
+// A team's own logo (lib/team-logos), right in the picture; null when it has none that can be drawn.
+export async function teamPictureLogo(key: string): Promise<string | null> {
+  const r = await db.query<{ logo: Buffer; logo_type: string }>("select logo, logo_type from team_logos where team_key = $1", [key]);
+  const up = r.rows[0];
+  if (!up) return null;
+  if (up.logo_type === "image/png" || up.logo_type === "image/jpeg") return `data:${up.logo_type};base64,${up.logo.toString("base64")}`;
+  const png = await asPng(up.logo);
+  return png && `data:image/png;base64,${png.toString("base64")}`;
+}
 export const pictureLogo = (o: Org) => publicly(`picture-logo:${o.slug}:${o.bigLogo ?? ""}`, () => readLogo(o.slug, o.bigLogo));
 
 export function LogoTile({ logo, o, size }: { logo: string | null; o: Org; size: number }) {
@@ -64,8 +73,8 @@ export const sizeFor = (text: string, big: number) => Math.round(text.length <= 
 // A picture's parts, top to bottom (the picture maker lays a bare fragment out as a row).
 export const column = { display: "flex", flexDirection: "column", justifyContent: "space-between", width: "100%", height: "100%" } as const;
 
-// Square for Instagram, Facebook and X; wide for a link's preview.
-export async function picture(o: Org, wide: boolean, inside: ReactNode): Promise<ImageResponse> {
+// Square for Instagram, Facebook and X; wide for a link's preview; tall (a phone's screen, Stories) for many games.
+export async function picture(o: Org, wide: boolean, inside: ReactNode, tall = false): Promise<ImageResponse> {
   const el: ReactElement = (
     <div
       style={{
@@ -86,7 +95,7 @@ export async function picture(o: Org, wide: boolean, inside: ReactNode): Promise
   );
   return new ImageResponse(el, {
     width: wide ? 1200 : 1080,
-    height: wide ? 630 : 1080,
+    height: wide ? 630 : tall ? 1920 : 1080,
     fonts: [
       { name: "Bold", data: await bold, weight: 800, style: "normal" },
       { name: "Medium", data: await medium, weight: 500, style: "normal" },

@@ -17,6 +17,7 @@ import { ScheduleList } from "../../../../LeagueGames";
 import NextSevenDays from "../../../../NextSevenDays";
 import LeagueRegistrations from "../../../../LeagueRegistrations";
 import TeamPage, { type TeamStaffRow } from "../../../../TeamPage";
+import { leagueTeamRef, teamLogo } from "@/lib/team-logos";
 import { leagueRoster, mayManageLeagueTeam } from "@/lib/league-roster";
 import { leagueStaff } from "@/lib/scenic-team-page";
 import { AddLeaguePlayer, AddLeagueStaff, RemoveLeaguePlayer, RemoveLeagueStaff } from "./LeagueTeamTools";
@@ -50,11 +51,15 @@ export async function LeagueTeamView({ id, opened = "", embedded = false, edit }
   const published = games.filter((g) => g.published);
   const t = page.team;
   const schedule = requests && requests.length ? requests : null;
+  // Its logo: kept with the team it comes from (Thunder's or its organization's), or here for a Solo team.
+  const ref = await leagueTeamRef(db, id);
+  const logo = ref && { ...ref, ...(await teamLogo(db, user, ref.kind, ref.id)) };
 
   return (
     <>
       <TeamPage
         org="scenic-city"
+        logo={logo ? { url: logo.logo, kind: logo.kind, id: logo.id, canSet: logo.canSet } : undefined}
         embedded={embedded}
         back={page.manage && !embedded ? "/org/scenic-city/teams" : null}
         edit={edit}

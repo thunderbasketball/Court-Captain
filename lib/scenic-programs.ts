@@ -31,6 +31,7 @@ import { LEVELS, gradeLabel, gradeRange, teamsICanManage, type Level } from "./s
 import { memo } from "./request-memo";
 import { withTx, type Queryable } from "./sql";
 import { easternDate } from "./time";
+import { refreshRules, type RefreshResult } from "./rules-doc";
 import { scheduledGames, type ScheduledGame } from "./scenic-games";
 import { isScheduled, SCHEDULED_REFUSAL } from "./team-guards";
 
@@ -177,7 +178,7 @@ export type RegisteredTeam = {
   level: Level;
   from: string; // partner name, or "Solo · owner"
   tag: string; // shown in parentheses after the name: its organization's or club's Abbreviation, or "Solo"
-  partnerId: string | null; // the school or organization it comes from (its home gyms on the Scheduler Grid)
+  partnerId: string | null; // whose gyms are its home gyms on the Scheduler Grid: the school or organization it comes from, or the one that one plays its home games at
   coach: string | null; // an organization's team may have no Head Coach yet
   coachCell: string | null;
   coachEmail: string | null;
@@ -268,6 +269,7 @@ async function readProgram(deps: Deps, viewer: SessionUser, id: string): Promise
       partner_abbr: string | null;
       solo_account: boolean | null;
       partner_id: string | null;
+      home_id: string | null;
       owner: string | null;
       coach: string;
       coach_cell: string;
@@ -287,6 +289,7 @@ async function readProgram(deps: Deps, viewer: SessionUser, id: string): Promise
               -- The level it plays in here: its pool's (the League may place it in REC or COMP), else its own.
               coalesce((select gg.level from scenic_pools po join scenic_grade_groups gg on gg.id = po.group_id where po.id = r.pool_id), t.level) as level,
               p.name as partner, coalesce(og.abbr, p.abbr) as partner_abbr, og.kind = 'Team' as solo_account, t.partner_id::text,
+              coalesce(p.home_partner_id, t.partner_id)::text as home_id,
               o.first_name || ' ' || o.last_name as owner, c.first_name || ' ' || c.last_name as coach, c.cell as coach_cell,
               coalesce(c.verified_email, c.email) as coach_email,
               ${TEAM_COACHES} as coaches,
@@ -324,7 +327,7 @@ async function readProgram(deps: Deps, viewer: SessionUser, id: string): Promise
     level: r.level,
     from: r.partner ?? `Solo · ${r.owner}`,
     tag: r.partner && !r.solo_account ? (r.partner_abbr ?? clubAbbr(r.partner)) : "Solo",
-    partnerId: r.partner_id,
+    partnerId: r.home_id,
     coach: r.coach,
     coachCell: r.coach_cell,
     coachEmail: r.coach_email,
@@ -798,6 +801,13 @@ export async function setProgramRulesUrl(deps: Deps, viewer: SessionUser, id: un
     deps.now(),
   ]);
   return r.rowCount ? { ok: true } : { ok: false, message: "That program no longer exists." };
+}
+
+// A League's rules page (Directors of Programs): read its Google Doc again and keep the text (lib/rules-doc).
+export async function refreshProgramRules(deps: Deps, viewer: SessionUser, id: unknown): Promise<RefreshResult> {
+  if (!isId(id)) return { ok: false, message: "That program no longer exists." };
+  if (!(await isProgramsDirector(deps.pool, viewer))) return { ok: false, message: programsOnly };
+  return refreshRules(deps, viewer, id);
 }
 
 // ---- Game dates (Directors of Programs) ----
